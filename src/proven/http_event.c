@@ -40,15 +40,15 @@ static void *ev_alloc(proven_allocator_t a, proven_size_t n) {
 // Buffers
 // -----------------------------------------------------------------------------
 
-static proven_size_t buf_pending(const ev_buf_t *b) { return b->len - b->off; }
+static proven_size_t buf_pending(const proven_ev_buf_t *b) { return b->len - b->off; }
 
-static void buf_release(proven_http_event_server_t *s, ev_buf_t *b) {
+static void buf_release(proven_http_event_server_t *s, proven_ev_buf_t *b) {
     if (b->ptr && !b->borrowed) s->alloc.free_fn(s->alloc.ctx, b->ptr);
-    *b = (ev_buf_t){ 0 };
+    *b = (proven_ev_buf_t){ 0 };
 }
 
 /* Make the buffer own its pending bytes, with room for `more` behind them. */
-static bool buf_own(proven_http_event_server_t *s, ev_buf_t *b, proven_size_t more) {
+static bool buf_own(proven_http_event_server_t *s, proven_ev_buf_t *b, proven_size_t more) {
     proven_size_t have = buf_pending(b);
     if (!b->borrowed && b->off == 0 && b->cap >= have + more) return true;
     if (!b->borrowed && b->cap >= have + more) {
@@ -66,7 +66,7 @@ static bool buf_own(proven_http_event_server_t *s, ev_buf_t *b, proven_size_t mo
     return true;
 }
 
-static bool buf_append(proven_http_event_server_t *s, ev_buf_t *b, const proven_byte_t *p, proven_size_t n) {
+static bool buf_append(proven_http_event_server_t *s, proven_ev_buf_t *b, const proven_byte_t *p, proven_size_t n) {
     if (n == 0) return true;
     if (!buf_own(s, b, n)) return false;
     proven_sys_mem_copy(b->ptr + b->len, p, n);
@@ -415,7 +415,7 @@ static void ev_input(proven_http_stream_t *c, const proven_byte_t *p, proven_siz
     if (buf_pending(&c->stash) == 0) {
         /* The common case: parse where the bytes lie, and copy aside only what is left over. */
         buf_release(s, &c->stash);
-        c->stash = (ev_buf_t){ .ptr = (proven_byte_t *)(proven_uintptr_t)p, .len = n, .cap = 0, .off = 0, .borrowed = true };
+        c->stash = (proven_ev_buf_t){ .ptr = (proven_byte_t *)(proven_uintptr_t)p, .len = n, .cap = 0, .off = 0, .borrowed = true };
     } else if (!buf_append(s, &c->stash, p, n)) {
         ev_kill(c, PROVEN_ERR_NOMEM);
         return;
@@ -534,7 +534,7 @@ static proven_err_t ev_take(proven_http_event_server_t *s, const proven_net_conn
 }
 
 static void ev_on_accept(void *ctx, proven_u8 got) {
-    ev_listener_t *l = ctx;
+    proven_ev_listener_t *l = ctx;
     proven_http_event_server_t *s = l->server;
     (void)got;
     while (s->conn_count + s->h3_count < s->cfg.max_connections) {
@@ -635,7 +635,7 @@ proven_err_t proven_http_event_server_listen(proven_http_event_server_t *s, prov
     if (!s) return PROVEN_ERR_INVALID_ARG;
     if (s->draining) return PROVEN_ERR_INVALID_STATE;
     if (s->listener_count == EV_MAX_LISTENERS) return PROVEN_ERR_OUT_OF_BOUNDS;
-    ev_listener_t *l = &s->listeners[s->listener_count];
+    proven_ev_listener_t *l = &s->listeners[s->listener_count];
     proven_net_addr_t got;
     proven_err_t e = proven_net_listen(at, 1024, &l->listener, &got);
     if (e != PROVEN_OK) return e;

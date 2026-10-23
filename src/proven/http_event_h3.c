@@ -21,7 +21,7 @@
  * its streams. A table from connection ID to driver tells datagrams apart; every ID a
  * connection gives its peer is in it, and the one the client chose for its first packets.
  *
- * A handler is given an h3s_t as its `proven_http_stream_t *`, whose first member is the head
+ * A handler is given an proven_h3s_t as its `proven_http_stream_t *`, whose first member is the head
  * http_event.c reads: `kind` sends every call here, as for HTTP/2.
  *
  * Re-entrancy, as in http_event_h2.c: streams and drivers count the entries on the stack and
@@ -44,7 +44,7 @@ typedef struct h3d h3d_t;
 typedef struct h3e h3e_t;
 
 typedef struct h3s {
-    ev_head_t h;                       /* first: what http_event.c reads */
+    proven_ev_head_t h;                       /* first: what http_event.c reads */
     h3d_t *d;                          /* not to be followed once `dead` */
     struct h3s *prev, *next;
     void *user;
@@ -65,7 +65,7 @@ typedef struct h3s {
     bool end_asked;                    /* the end goes when `out` has drained */
     bool engine_done;                  /* the engine has this side's end already, or the stream is gone from it */
     bool blocked;                      /* the engine took less than offered: it says when there is room (STREAM_WRITABLE) */
-} h3s_t;
+} proven_h3s_t;
 
 struct h3e {
     struct ev_h3 *x;
@@ -81,7 +81,7 @@ struct h3e {
     proven_byte_t pend[H3_BATCH];
 };
 
-typedef struct { proven_quic_cid_t cid; h3d_t *d; } h3key_t;   /* free: no `d` and length 0; deleted: no `d` and length 255 */
+typedef struct { proven_quic_cid_t cid; h3d_t *d; } proven_h3key_t;   /* free: no `d` and length 0; deleted: no `d` and length 255 */
 
 struct ev_h3 {
     proven_http_event_server_t *server;
@@ -89,7 +89,7 @@ struct ev_h3 {
     h3e_t *ends[H3_ENDS];
     h3d_t *conns;
     h3d_t *dirty, *work;               /* connections owed a round: asked for, and being given one */
-    h3key_t *keys;
+    proven_h3key_t *keys;
     proven_size_t key_cap, key_used;   /* slots, and slots not free (deleted ones too) */
     proven_byte_t *dg;
     proven_byte_t *batch;              /* a connection's datagrams gathered for one send: H3_BATCH bytes */
@@ -109,7 +109,7 @@ struct h3d {
     proven_net_addr_t peer;
     proven_quic_cid_t keys[H3_KEYS];
     proven_size_t nkeys;
-    h3s_t *streams;
+    proven_h3s_t *streams;
     proven_size_t stream_count;
     proven_loop_timer_t timer;
     proven_u32 depth, calls;
@@ -176,7 +176,7 @@ static bool key_same(const proven_quic_cid_t *a, const proven_quic_cid_t *b) {
 static h3d_t *key_find(const struct ev_h3 *x, const proven_quic_cid_t *cid) {
     if (x->key_cap == 0 || cid->len == 0) return (void *)0;
     for (proven_size_t i = key_hash(cid) & (x->key_cap - 1), n = 0; n < x->key_cap; ++n, i = (i + 1) & (x->key_cap - 1)) {
-        const h3key_t *k = &x->keys[i];
+        const proven_h3key_t *k = &x->keys[i];
         if (!k->d && k->cid.len == 0) return (void *)0;
         if (k->d && key_same(&k->cid, cid)) return k->d;
     }
@@ -192,7 +192,7 @@ static bool key_grow(struct ev_h3 *x) {
     proven_size_t cap = 64;
     while (cap < (live + 1) * 2) cap *= 2;
     proven_allocator_t a = x->server->alloc;
-    h3key_t *keys = h3_alloc(a, cap * sizeof *keys), *old = x->keys;
+    proven_h3key_t *keys = h3_alloc(a, cap * sizeof *keys), *old = x->keys;
     if (!keys) return false;
     const proven_size_t old_cap = x->key_cap;
     x->keys = keys; x->key_cap = cap; x->key_used = 0;
@@ -206,21 +206,21 @@ static bool key_put(struct ev_h3 *x, const proven_quic_cid_t *cid, h3d_t *d) {
     if ((x->key_used + 1) * 4 > x->key_cap * 3 && !key_grow(x)) return false;
     proven_size_t at = (proven_size_t)-1;
     for (proven_size_t i = key_hash(cid) & (x->key_cap - 1), n = 0; n < x->key_cap; ++n, i = (i + 1) & (x->key_cap - 1)) {
-        h3key_t *k = &x->keys[i];
+        proven_h3key_t *k = &x->keys[i];
         if (k->d && key_same(&k->cid, cid)) { k->d = d; return true; }
         if (!k->d && at == (proven_size_t)-1) at = i;
         if (!k->d && k->cid.len == 0) break;
     }
     if (at == (proven_size_t)-1) return false;
     if (x->keys[at].cid.len == 0) x->key_used++;
-    x->keys[at] = (h3key_t){ .cid = *cid, .d = d };
+    x->keys[at] = (proven_h3key_t){ .cid = *cid, .d = d };
     return true;
 }
 
 static void key_del(struct ev_h3 *x, const proven_quic_cid_t *cid, const h3d_t *d) {
     if (x->key_cap == 0 || cid->len == 0) return;
     for (proven_size_t i = key_hash(cid) & (x->key_cap - 1), n = 0; n < x->key_cap; ++n, i = (i + 1) & (x->key_cap - 1)) {
-        h3key_t *k = &x->keys[i];
+        proven_h3key_t *k = &x->keys[i];
         if (!k->d && k->cid.len == 0) return;
         if (k->d == d && key_same(&k->cid, cid)) { k->d = (void *)0; k->cid.len = 255; return; }
     }
@@ -314,9 +314,9 @@ static void d_leave(h3d_t *d) {
     a.free_fn(a.ctx, d);
 }
 
-static void s_enter(h3s_t *s) { s->h.depth++; }
+static void s_enter(proven_h3s_t *s) { s->h.depth++; }
 
-static void s_leave(h3s_t *s) {
+static void s_leave(proven_h3s_t *s) {
     if (--s->h.depth > 0 || !s->dead) return;
     proven_allocator_t a = s->h.server->alloc;
     a.free_fn(a.ctx, s);
@@ -346,7 +346,7 @@ static void d_mark(h3d_t *d) {
 }
 
 /* The exchange is over: the handler is told, once. */
-static void s_finish(h3s_t *s, proven_err_t why) {
+static void s_finish(proven_h3s_t *s, proven_err_t why) {
     if (s->dead) return;
     proven_http_event_server_t *sv = s->h.server;
     proven_allocator_t a = sv->alloc;
@@ -367,7 +367,7 @@ static void s_finish(h3s_t *s, proven_err_t why) {
 }
 
 /* Give up on a stream from this side: the peer is told (`code`), the handler why. */
-static void s_reset(h3s_t *s, proven_u64 code, proven_err_t why) {
+static void s_reset(proven_h3s_t *s, proven_u64 code, proven_err_t why) {
     if (s->dead) return;
     h3d_t *d = s->d;
     if (!d->dead && !d->closed && !s->engine_done) (void)proven_h3_stream_reset(d->h3, s->id, code);
@@ -464,10 +464,10 @@ static void d_close(h3d_t *d, proven_err_t why) {
 // A stream's output
 // -----------------------------------------------------------------------------
 
-static proven_size_t s_out_pending(const h3s_t *s) { return s->out_len - s->out_off; }
+static proven_size_t s_out_pending(const proven_h3s_t *s) { return s->out_len - s->out_off; }
 
 /* What a stream has made, towards the engine; its end when all of it has gone. */
-static void s_push(h3s_t *s) {
+static void s_push(proven_h3s_t *s) {
     if (s->dead || !s->response_begun) return;
     h3d_t *d = s->d;
     proven_http_event_server_t *sv = s->h.server;
@@ -500,7 +500,7 @@ static void d_tell_writable(h3d_t *d) {
     proven_http_event_server_t *sv = d->server;
     for (bool again = true; again && !d->dead;) {
         again = false;
-        for (h3s_t *s = d->streams; s; s = s->next) {
+        for (proven_h3s_t *s = d->streams; s; s = s->next) {
             if (s->dead || !s->want_writable || s->blocked || s_out_pending(s) > 0 || !s->response_begun || s->response_ended) continue;
             s->want_writable = false;
             if (!sv->cfg.on.on_writable) continue;
@@ -517,8 +517,8 @@ static void d_tell_writable(h3d_t *d) {
 // Requests
 // -----------------------------------------------------------------------------
 
-static h3s_t *d_stream(const h3d_t *d, proven_u64 id) {
-    for (h3s_t *s = d->streams; s; s = s->next) if (s->id == id) return s;
+static proven_h3s_t *d_stream(const h3d_t *d, proven_u64 id) {
+    for (proven_h3s_t *s = d->streams; s; s = s->next) if (s->id == id) return s;
     return (void *)0;
 }
 
@@ -528,7 +528,7 @@ static void d_refuse(h3d_t *d, proven_u64 id, const char status[4]) {
     if (proven_h3_submit_response(d->h3, id, h, 1, true) != PROVEN_OK) (void)proven_h3_stream_reset(d->h3, id, PROVEN_H3_REQUEST_REJECTED);
 }
 
-static void s_expect_body(h3s_t *s) {
+static void s_expect_body(proven_h3s_t *s) {
     s->body_due = s->in_done || s->paused ? 0 : proven_time_monotonic_now() + (proven_time_t)s->h.server->cfg.body_timeout_ms * 1000000;
 }
 
@@ -568,7 +568,7 @@ static void d_request(h3d_t *d, const proven_h3_event_t *ev) {
     if (rq->field_count + add_host + add_chunked > sv->cfg.max_headers) { d_refuse(d, ev->stream_id, "431"); return; }
     if (length > sv->cfg.max_body_bytes) { d_refuse(d, ev->stream_id, "413"); return; }
 
-    h3s_t *s = h3_alloc(sv->alloc, sizeof *s);
+    proven_h3s_t *s = h3_alloc(sv->alloc, sizeof *s);
     if (!s) { d_refuse(d, ev->stream_id, "503"); return; }
     proven_size_t n = 0;
     if (add_host) sv->headers[n++] = (proven_http_header_t){ .name = h3_lit("host"), .value = rq->authority };
@@ -580,7 +580,7 @@ static void d_request(h3d_t *d, const proven_h3_event_t *ev) {
         .version_minor = 1,
         .headers = sv->headers, .header_count = n,
     };
-    s->h = (ev_head_t){ .server = sv, .version_minor = 1, .kind = EV_KIND_H3 };
+    s->h = (proven_ev_head_t){ .server = sv, .version_minor = 1, .kind = EV_KIND_H3 };
     s->d = d;
     s->id = ev->stream_id;
     s->method = req.method;
@@ -607,7 +607,7 @@ static void d_request(h3d_t *d, const proven_h3_event_t *ev) {
     s_leave(s);
 }
 
-static void d_body(h3d_t *d, h3s_t *s, proven_mem_view_t piece, bool last) {
+static void d_body(h3d_t *d, proven_h3s_t *s, proven_mem_view_t piece, bool last) {
     proven_http_event_server_t *sv = d->server;
     s->body_seen += piece.size;
     if (s->body_seen > sv->cfg.max_body_bytes) {
@@ -630,7 +630,7 @@ static void d_body(h3d_t *d, h3s_t *s, proven_mem_view_t piece, bool last) {
 }
 
 static void d_event(h3d_t *d, const proven_h3_event_t *ev) {
-    h3s_t *s = ev->kind == PROVEN_H3_EV_HEADERS || ev->kind == PROVEN_H3_EV_QUIC || ev->kind == PROVEN_H3_EV_CLOSED || ev->kind == PROVEN_H3_EV_GOAWAY
+    proven_h3s_t *s = ev->kind == PROVEN_H3_EV_HEADERS || ev->kind == PROVEN_H3_EV_QUIC || ev->kind == PROVEN_H3_EV_CLOSED || ev->kind == PROVEN_H3_EV_GOAWAY
              ? (void *)0 : d_stream(d, ev->stream_id);
     switch (ev->kind) {
         case PROVEN_H3_EV_HEADERS: d_request(d, ev); break;
@@ -715,7 +715,7 @@ static void d_arm(h3d_t *d) {
             d->idle_since = 0;
         }
         bool waiting = false;
-        for (const h3s_t *s = d->streams; s; s = s->next) {
+        for (const proven_h3s_t *s = d->streams; s; s = s->next) {
             if (s->blocked || s_out_pending(s) > 0) waiting = true;
             if (s->body_due != 0) due = t_min(due, s->body_due);
         }
@@ -762,7 +762,7 @@ static void d_check_time(h3d_t *d) {
     const proven_time_t now = proven_time_monotonic_now();
     for (bool again = true; again && !d->dead;) {
         again = false;
-        for (h3s_t *s = d->streams; s; s = s->next) {
+        for (proven_h3s_t *s = d->streams; s; s = s->next) {
             if (s->body_due == 0 || s->body_due > now) continue;
             s_reset(s, PROVEN_H3_REQUEST_CANCELLED, PROVEN_ERR_TIMEOUT);
             again = true;
@@ -1030,13 +1030,13 @@ proven_size_t proven_http_event_alt_svc_(const proven_http_event_server_t *sv, p
 // What a handler calls, for a stream of an HTTP/3 connection
 // -----------------------------------------------------------------------------
 
-static h3s_t *h3s_of(proven_http_stream_t *stream) { return (h3s_t *)(void *)stream; }
-static const h3s_t *h3s_of_const(const proven_http_stream_t *stream) { return (const h3s_t *)(const void *)stream; }
+static proven_h3s_t *h3s_of(proven_http_stream_t *stream) { return (proven_h3s_t *)(void *)stream; }
+static const proven_h3s_t *h3s_of_const(const proven_http_stream_t *stream) { return (const proven_h3s_t *)(const void *)stream; }
 
 /* A call of a handler's on a stream: counted, so that nothing of the round runs inside it, and
  * what it made sent when it is done. */
-static void call_begin(h3s_t *s) { s_enter(s); d_enter(s->d); s->d->calls++; }
-static void call_end(h3s_t *s) {
+static void call_begin(proven_h3s_t *s) { s_enter(s); d_enter(s->d); s->d->calls++; }
+static void call_end(proven_h3s_t *s) {
     h3d_t *d = s->d;
     d->calls--;
     d_after_call(d);
@@ -1045,7 +1045,7 @@ static void call_end(h3s_t *s) {
 }
 
 void proven_http_event_h3_compress_(proven_http_stream_t *stream) {
-    h3s_t *s = h3s_of(stream);
+    proven_h3s_t *s = h3s_of(stream);
     if (!s->dead && s->active && !s->response_begun) s->compress_asked = true;
 }
 
@@ -1060,7 +1060,7 @@ static bool h3_is_hop_header(proven_u8str_view_t name) {
     return proven_u8str_view_eq_ascii_ci(name, h3_lit("keep-alive")) || proven_u8str_view_eq_ascii_ci(name, h3_lit("proxy-connection")) || proven_u8str_view_eq_ascii_ci(name, h3_lit("upgrade"));
 }
 
-static proven_err_t s_head(h3s_t *s, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
+static proven_err_t s_head(proven_h3s_t *s, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
                            proven_u64 length, bool vary, proven_http_coding_t coding, bool end_stream) {
     proven_http_event_server_t *sv = s->h.server;
     h3d_t *d = s->d;
@@ -1108,7 +1108,7 @@ static proven_err_t s_head(h3s_t *s, proven_u16 status, const proven_http_header
     return PROVEN_OK;
 }
 
-static void s_compress_plan(const h3s_t *s, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count, bool *vary,
+static void s_compress_plan(const proven_h3s_t *s, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count, bool *vary,
                             proven_http_coding_t *coding) {
     *vary = false;
     *coding = PROVEN_HTTP_CODING_IDENTITY;
@@ -1119,7 +1119,7 @@ static void s_compress_plan(const h3s_t *s, proven_u16 status, const proven_http
 
 proven_err_t proven_http_event_h3_begin_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
                                          proven_u64 content_length) {
-    h3s_t *s = h3s_of(stream);
+    proven_h3s_t *s = h3s_of(stream);
     if (s->dead || !s->active || s->response_begun) return PROVEN_ERR_INVALID_STATE;
     proven_http_event_server_t *sv = s->h.server;
     bool vary = false;
@@ -1145,7 +1145,7 @@ proven_err_t proven_http_event_h3_begin_(proven_http_stream_t *stream, proven_u1
 }
 
 /* Body bytes through the compressor into the stream's own queue. False when there is no memory. */
-static bool s_zip(h3s_t *s, const proven_byte_t *p, proven_size_t n, proven_deflate_flush_t flush) {
+static bool s_zip(proven_h3s_t *s, const proven_byte_t *p, proven_size_t n, proven_deflate_flush_t flush) {
     proven_http_event_server_t *sv = s->h.server;
     for (;;) {
         proven_size_t used = 0, made = 0;
@@ -1162,7 +1162,7 @@ static bool s_zip(h3s_t *s, const proven_byte_t *p, proven_size_t n, proven_defl
 }
 
 proven_result_size_t proven_http_event_h3_write_(proven_http_stream_t *stream, proven_mem_view_t data) {
-    h3s_t *s = h3s_of(stream);
+    proven_h3s_t *s = h3s_of(stream);
     if (s->dead || !s->active || !s->response_begun || s->response_ended) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
     if (s->bodiless) return (proven_result_size_t){ .err = PROVEN_OK, .value = data.size };     /* counted, not sent */
     if (s->response_left != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN && data.size > s->response_left) return (proven_result_size_t){ .err = PROVEN_ERR_OUT_OF_BOUNDS, .value = 0 };
@@ -1193,7 +1193,7 @@ proven_result_size_t proven_http_event_h3_write_(proven_http_stream_t *stream, p
 }
 
 proven_err_t proven_http_event_h3_flush_(proven_http_stream_t *stream) {
-    h3s_t *s = h3s_of(stream);
+    proven_h3s_t *s = h3s_of(stream);
     if (s->dead || !s->active || !s->response_begun || s->response_ended) return PROVEN_ERR_INVALID_STATE;
     if (!s->zip) return PROVEN_OK;
     call_begin(s);
@@ -1205,7 +1205,7 @@ proven_err_t proven_http_event_h3_flush_(proven_http_stream_t *stream) {
 }
 
 proven_err_t proven_http_event_h3_end_(proven_http_stream_t *stream) {
-    h3s_t *s = h3s_of(stream);
+    proven_h3s_t *s = h3s_of(stream);
     if (s->dead || !s->active || !s->response_begun || s->response_ended) return PROVEN_ERR_INVALID_STATE;
     proven_err_t result = PROVEN_OK;
     call_begin(s);
@@ -1230,7 +1230,7 @@ proven_err_t proven_http_event_h3_end_(proven_http_stream_t *stream) {
 
 proven_err_t proven_http_event_h3_respond_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
                                            proven_mem_view_t body) {
-    h3s_t *s = h3s_of(stream);
+    proven_h3s_t *s = h3s_of(stream);
     if (s->dead || !s->active || s->response_begun) return PROVEN_ERR_INVALID_STATE;
     proven_http_event_server_t *sv = s->h.server;
     h3d_t *d = s->d;
@@ -1266,7 +1266,7 @@ proven_err_t proven_http_event_h3_respond_(proven_http_stream_t *stream, proven_
 }
 
 void proven_http_event_h3_abort_(proven_http_stream_t *stream) {
-    h3s_t *s = h3s_of(stream);
+    proven_h3s_t *s = h3s_of(stream);
     if (s->dead) return;
     call_begin(s);
     s_reset(s, PROVEN_H3_INTERNAL_ERROR, PROVEN_ERR_RESET);
@@ -1274,7 +1274,7 @@ void proven_http_event_h3_abort_(proven_http_stream_t *stream) {
 }
 
 void proven_http_event_h3_pause_(proven_http_stream_t *stream) {
-    h3s_t *s = h3s_of(stream);
+    proven_h3s_t *s = h3s_of(stream);
     if (s->dead || !s->active || s->paused) return;
     s->paused = true;
     /* The engine stops reading it, and QUIC's flow control stops the client when the window is full. */
@@ -1284,7 +1284,7 @@ void proven_http_event_h3_pause_(proven_http_stream_t *stream) {
 }
 
 void proven_http_event_h3_resume_(proven_http_stream_t *stream) {
-    h3s_t *s = h3s_of(stream);
+    proven_h3s_t *s = h3s_of(stream);
     if (s->dead || !s->paused) return;
     s->paused = false;
     s_expect_body(s);
@@ -1297,14 +1297,14 @@ void proven_http_event_h3_set_user_(proven_http_stream_t *stream, void *user) { 
 void *proven_http_event_h3_user_(const proven_http_stream_t *stream) { return h3s_of_const(stream)->user; }
 
 proven_net_addr_t proven_http_event_h3_peer_(const proven_http_stream_t *stream) {
-    const h3s_t *s = h3s_of_const(stream);
+    const proven_h3s_t *s = h3s_of_const(stream);
     return s->dead || s->d->dead ? (proven_net_addr_t){ 0 } : s->d->peer;
 }
 
 bool proven_http_event_h3_early_(const proven_http_stream_t *stream) { return h3s_of_const(stream)->early; }
 
 proven_size_t proven_http_event_h3_buffered_(const proven_http_stream_t *stream) {
-    const h3s_t *s = h3s_of_const(stream);
+    const proven_h3s_t *s = h3s_of_const(stream);
     return s->dead ? 0 : s_out_pending(s);
 }
 

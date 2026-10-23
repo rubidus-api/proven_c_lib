@@ -39,14 +39,14 @@ typedef struct {
     proven_byte_t *start, *p, *end;
     proven_u64 c;
     unsigned n;
-} bw_t;
+} proven_bw_t;
 
 ZSTD_HOT void st64(proven_byte_t *p, proven_u64 v) {
     p[0] = (proven_byte_t)v; p[1] = (proven_byte_t)(v >> 8); p[2] = (proven_byte_t)(v >> 16); p[3] = (proven_byte_t)(v >> 24);
     p[4] = (proven_byte_t)(v >> 32); p[5] = (proven_byte_t)(v >> 40); p[6] = (proven_byte_t)(v >> 48); p[7] = (proven_byte_t)(v >> 56);
 }
 
-static bool bw_init(bw_t *b, proven_byte_t *dst, proven_size_t cap) {
+static bool bw_init(proven_bw_t *b, proven_byte_t *dst, proven_size_t cap) {
     if (cap < 9) return false;
     b->start = b->p = dst;
     b->end = dst + cap - 8;
@@ -56,13 +56,13 @@ static bool bw_init(bw_t *b, proven_byte_t *dst, proven_size_t cap) {
 }
 
 /* `v` is below 2^nb. */
-ZSTD_HOT void bw_add(bw_t *b, proven_u64 v, unsigned nb) {
+ZSTD_HOT void bw_add(proven_bw_t *b, proven_u64 v, unsigned nb) {
     b->c |= v << b->n;
     b->n += nb;
 }
 
 /* `v` has other bits above the `nb` that go. */
-ZSTD_HOT void bw_add_low(bw_t *b, proven_u64 v, unsigned nb) {
+ZSTD_HOT void bw_add_low(proven_bw_t *b, proven_u64 v, unsigned nb) {
     static const proven_u32 MASK[33] = { 0, 1, 3, 7, 0xF, 0x1F, 0x3F, 0x7F, 0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF, 0xFFFF,
                                          0x1FFFF, 0x3FFFF, 0x7FFFF, 0xFFFFF, 0x1FFFFF, 0x3FFFFF, 0x7FFFFF, 0xFFFFFF, 0x1FFFFFF, 0x3FFFFFF,
                                          0x7FFFFFF, 0xFFFFFFF, 0x1FFFFFFF, 0x3FFFFFFF, 0x7FFFFFFF, 0xFFFFFFFF };
@@ -70,7 +70,7 @@ ZSTD_HOT void bw_add_low(bw_t *b, proven_u64 v, unsigned nb) {
     b->n += nb;
 }
 
-ZSTD_HOT void bw_flush(bw_t *b) {
+ZSTD_HOT void bw_flush(proven_bw_t *b) {
     st64(b->p, b->c);
     const unsigned k = b->n >> 3;
     b->p += k;
@@ -80,7 +80,7 @@ ZSTD_HOT void bw_flush(bw_t *b) {
 }
 
 /* The end marker, and the length; 0 when the stream did not fit. */
-static proven_size_t bw_close(bw_t *b) {
+static proven_size_t bw_close(proven_bw_t *b) {
     bw_add(b, 1, 1);
     bw_flush(b);
     if (b->p >= b->end) return 0;
@@ -97,10 +97,10 @@ typedef struct {
     struct { proven_u32 delta; proven_i32 find; } tt[64];
     proven_i16 norm[64];
     unsigned nsym, log;
-} fse_tab_t;
+} proven_fse_tab_t;
 
 /* The same spread of symbols over states as a decoder makes (zstd.c, fse_build). */
-static void fse_tab_build(fse_tab_t *t, const proven_i16 *norm, unsigned nsym, unsigned log) {
+static void fse_tab_build(proven_fse_tab_t *t, const proven_i16 *norm, unsigned nsym, unsigned log) {
     const proven_u32 size = 1u << log, mask = size - 1;
     proven_u32 high = size - 1, cumul[65];
     proven_byte_t spread[1u << LL_LOG_MAX];
@@ -140,7 +140,7 @@ static void fse_tab_build(fse_tab_t *t, const proven_i16 *norm, unsigned nsym, u
 }
 
 /* One symbol only, in every state: no bits at all. */
-static void fse_tab_rle(fse_tab_t *t, unsigned sym) {
+static void fse_tab_rle(proven_fse_tab_t *t, unsigned sym) {
     t->state[0] = 0;
     t->state[1] = 0;
     t->tt[sym].delta = 0;
@@ -151,13 +151,13 @@ static void fse_tab_rle(fse_tab_t *t, unsigned sym) {
     t->log = 0;
 }
 
-ZSTD_HOT proven_u32 fse_first(const fse_tab_t *t, unsigned s) {
+ZSTD_HOT proven_u32 fse_first(const proven_fse_tab_t *t, unsigned s) {
     const proven_u32 nb = (t->tt[s].delta + (1u << 15)) >> 16;
     const proven_u32 v = (nb << 16) - t->tt[s].delta;
     return t->state[(proven_i32)(v >> nb) + t->tt[s].find];
 }
 
-ZSTD_HOT void fse_put(bw_t *b, proven_u32 *v, const fse_tab_t *t, unsigned s) {
+ZSTD_HOT void fse_put(proven_bw_t *b, proven_u32 *v, const proven_fse_tab_t *t, unsigned s) {
     const proven_u32 nb = (*v + t->tt[s].delta) >> 16;
     bw_add_low(b, *v, nb);
     *v = t->state[(proven_i32)(*v >> nb) + t->tt[s].find];
@@ -282,13 +282,13 @@ typedef struct {
     proven_u8 bits[256];               /* 0: the symbol has no code */
     proven_u32 both[256];              /* bits << 16 | code: what the stream writer takes in one load */
     unsigned maxsym;
-} huf_tab_t;
+} proven_huf_tab_t;
 
-typedef struct { proven_u32 key; proven_u16 sym; } symfreq_t;
+typedef struct { proven_u32 key; proven_u16 sym; } proven_symfreq_t;
 
 /* Code lengths of minimum redundancy for frequencies sorted in rising order (Moffat and
  * Katajainen, in place): on return each key is that symbol's code length. */
-static void minimum_redundancy(symfreq_t *a, int n) {
+static void minimum_redundancy(proven_symfreq_t *a, int n) {
     if (n == 1) { a[0].key = 1; return; }
     int root = 0, leaf = 2, next;
     a[0].key += a[1].key;
@@ -311,8 +311,8 @@ static void minimum_redundancy(symfreq_t *a, int n) {
 
 /* A code of at most HUF_MAX_BITS bits for at least two symbols, and its codes as a decoder
  * builds them from the weights: by weight, then by symbol (zstd.c, huf_read). */
-static void huf_build(huf_tab_t *t, const proven_u32 *count, unsigned maxsym) {
-    symfreq_t a[256];
+static void huf_build(proven_huf_tab_t *t, const proven_u32 *count, unsigned maxsym) {
+    proven_symfreq_t a[256];
     int used = 0, counts[HUF_MAX_BITS + 2] = { 0 };
     for (unsigned s = 0; s <= maxsym; ++s) {
         t->bits[s] = 0;
@@ -320,7 +320,7 @@ static void huf_build(huf_tab_t *t, const proven_u32 *count, unsigned maxsym) {
         proven_u32 k = count[s];
         int j = used++;
         while (j > 0 && a[j - 1].key > k) { a[j] = a[j - 1]; --j; }
-        a[j] = (symfreq_t){ k, (proven_u16)s };
+        a[j] = (proven_symfreq_t){ k, (proven_u16)s };
     }
     minimum_redundancy(a, used);
     for (int i = 0; i < used; ++i) counts[a[i].key > HUF_MAX_BITS ? HUF_MAX_BITS : a[i].key]++;
@@ -352,7 +352,7 @@ static void huf_build(huf_tab_t *t, const proven_u32 *count, unsigned maxsym) {
     t->maxsym = maxsym;
 }
 
-static unsigned huf_log(const huf_tab_t *t) {
+static unsigned huf_log(const proven_huf_tab_t *t) {
     unsigned log = 0;
     for (unsigned s = 0; s <= t->maxsym; ++s) if (t->bits[s] > log) log = t->bits[s];
     return log;
@@ -370,9 +370,9 @@ static proven_size_t huf_weights_fse(proven_byte_t *d, proven_size_t cap, const 
     if (!fse_normalize(norm, log, count, n, maxw)) return 0;
     proven_size_t o = fse_describe(d, cap, norm, maxw, log);
     if (o == 0) return 0;
-    fse_tab_t t;
+    proven_fse_tab_t t;
     fse_tab_build(&t, norm, maxw + 1, log);
-    bw_t b;
+    proven_bw_t b;
     if (!bw_init(&b, d + o, cap - o)) return 0;
     const proven_byte_t *ip = w + n;
     proven_u32 s1, s2;
@@ -397,7 +397,7 @@ static proven_size_t huf_weights_fse(proven_byte_t *d, proven_size_t cap, const 
 }
 
 /* The table's description: weights FSE-coded when that is shorter, else four bits each. */
-static proven_size_t huf_describe(proven_byte_t *d, proven_size_t cap, const huf_tab_t *t) {
+static proven_size_t huf_describe(proven_byte_t *d, proven_size_t cap, const proven_huf_tab_t *t) {
     const unsigned log = huf_log(t), n = t->maxsym;   /* the last symbol's weight is implied */
     proven_byte_t w[256];
     for (unsigned s = 0; s < n; ++s) w[s] = t->bits[s] ? (proven_byte_t)(log + 1 - t->bits[s]) : 0;
@@ -416,8 +416,8 @@ static proven_size_t huf_describe(proven_byte_t *d, proven_size_t cap, const huf
 
 /* One Huffman stream: the last symbol first, so that a decoder reading backwards meets the
  * first one first. */
-static proven_size_t huf_stream(proven_byte_t *d, proven_size_t cap, const proven_byte_t *src, proven_size_t n, const huf_tab_t *t) {
-    bw_t b;
+static proven_size_t huf_stream(proven_byte_t *d, proven_size_t cap, const proven_byte_t *src, proven_size_t n, const proven_huf_tab_t *t) {
+    proven_bw_t b;
     if (!bw_init(&b, d, cap)) return 0;
     const proven_u32 *const e = t->both;
     proven_size_t i = n;
@@ -443,18 +443,18 @@ static proven_size_t huf_stream(proven_byte_t *d, proven_size_t cap, const prove
 typedef struct {
     proven_u32 ofv;                    /* offset value as a decoder reads it: 1 to 3 a repeat, else offset + 3 */
     proven_u32 ll, ml;
-} seq_t;
+} proven_seq_t;
 
 /* What a decoder carries from block to block, besides the repeat offsets: the Huffman code
  * and a table for each kind of sequence code. `cur` names the slot in force (-1: none yet;
  * for the sequence tables 2: the predefined one); a block builds its new tables in the other
  * slot and, if it goes out compressed, makes that slot the one in force. */
 typedef struct {
-    huf_tab_t huf[2];
+    proven_huf_tab_t huf[2];
     int huf_cur;
-    fse_tab_t tab[3][2];
+    proven_fse_tab_t tab[3][2];
     int cur[3];
-} entropy_t;
+} proven_entropy_t;
 
 enum { K_LL, K_OF, K_ML };
 
@@ -462,21 +462,21 @@ typedef struct {
     unsigned strategy;                 /* 0: one hash table; 1: two; 2: a hash table and a chain */
     unsigned hlog, clog, mls;          /* clog: the second table's, or the chain's, size */
     unsigned tries, depth;             /* chain: candidates looked at; 0 greedy, 1 lazy, 2 lazy2 */
-} params_t;
+} proven_params_t;
 
 struct proven_zstd_encoder {
     proven_allocator_t alloc;
     proven_zstd_encoder_options_t opt;
-    params_t p;
+    proven_params_t p;
     unsigned wlog;
     proven_size_t window, block_size;
     /* the frame */
     bool header_done, finished, failed;
     proven_u64 total;
-    xxh64_t xxh;
+    proven_xxh64_t xxh;
     proven_u32 rep[3];
-    entropy_t ent;
-    fse_tab_t def[3];                  /* the predefined tables, built when a block first uses one */
+    proven_entropy_t ent;
+    proven_fse_tab_t def[3];                  /* the predefined tables, built when a block first uses one */
     bool def_built[3];
     proven_size_t seq_max, lit_max;    /* the most sequences and literals one block can have */
     /* matching */
@@ -484,7 +484,7 @@ struct proven_zstd_encoder {
     proven_size_t hash_size, hash2_size;
     bool fresh;                        /* the hash tables hold nothing of the current frame */
     proven_u32 next_update;            /* chain: the first position not yet in the tables */
-    seq_t *seqs;
+    proven_seq_t *seqs;
     proven_byte_t *codes;              /* each sequence's literal-length, offset and match-length codes */
     proven_size_t nseq;
     proven_byte_t *lits;
@@ -497,7 +497,7 @@ struct proven_zstd_encoder {
     proven_size_t pend_cap, pend_len, pend_at;
 };
 
-static const params_t LEVELS[LEVEL_MAX + 1] = {
+static const proven_params_t LEVELS[LEVEL_MAX + 1] = {
     { 0, 0, 0, 0, 0, 0 },
     { 0, 14, 0, 6, 0, 0 },
     { 1, 14, 13, 6, 0, 0 },
@@ -601,7 +601,7 @@ void proven_zstd_encoder_reset(proven_zstd_encoder_t *z) {
 /* Room for one block's sequences and literals. */
 static proven_err_t block_room(proven_zstd_encoder_t *z) {
     proven_size_t cap = z->seqs ? z->seq_max : 0, ccap = z->codes ? 3 * z->seq_max : 0, lcap = z->lits ? z->lit_max + SLACK : 0;
-    proven_err_t e = grow(z, (void **)&z->seqs, &cap, z->seq_max, sizeof(seq_t));
+    proven_err_t e = grow(z, (void **)&z->seqs, &cap, z->seq_max, sizeof(proven_seq_t));
     if (e == PROVEN_OK) e = grow(z, (void **)&z->codes, &ccap, 3 * z->seq_max, 1);
     if (e == PROVEN_OK) e = grow(z, (void **)&z->lits, &lcap, z->lit_max + SLACK, 1);
     return e;
@@ -648,14 +648,14 @@ ZSTD_HOT void copy16(proven_byte_t *d, const proven_byte_t *s) {
 /* Where a matcher puts its sequences, held in locals while it runs: what it would otherwise
  * reach through the encoder the compiler must reload after every hash-table store. */
 typedef struct {
-    seq_t *seq, *seq_end;
+    proven_seq_t *seq, *seq_end;
     proven_byte_t *lit;
     proven_u32 rep[3];
-} sink_t;
+} proven_sink_t;
 
 /* A sequence: `ll` literals from `lit`, then `ml` bytes from `off` back. The offset becomes a
  * repeat code where the decoder's repeat offsets allow one, and they change as they will. */
-ZSTD_HOT void store(sink_t *k, const proven_byte_t *lit, const proven_byte_t *lit_end, proven_size_t ll, proven_u32 off, proven_size_t ml) {
+ZSTD_HOT void store(proven_sink_t *k, const proven_byte_t *lit, const proven_byte_t *lit_end, proven_size_t ll, proven_u32 off, proven_size_t ml) {
     if (lit + ll + 16 <= lit_end) {
         /* Sixteen at a time, past the end of the run: `lits` has the slack, the input the bytes. */
         proven_byte_t *d = k->lit;
@@ -679,14 +679,14 @@ ZSTD_HOT void store(sink_t *k, const proven_byte_t *lit, const proven_byte_t *li
         else if (off == r[0] - 1) { v = 3; r[2] = r[1]; r[1] = r[0]; r[0] = off; }
         else { v = off + 3; r[2] = r[1]; r[1] = r[0]; r[0] = off; }
     }
-    *k->seq++ = (seq_t){ v, (proven_u32)ll, (proven_u32)ml };
+    *k->seq++ = (proven_seq_t){ v, (proven_u32)ll, (proven_u32)ml };
 }
 
-static sink_t sink_open(proven_zstd_encoder_t *z) {
-    return (sink_t){ z->seqs + z->nseq, z->seqs + z->seq_max, z->lits + z->nlit, { z->rep[0], z->rep[1], z->rep[2] } };
+static proven_sink_t sink_open(proven_zstd_encoder_t *z) {
+    return (proven_sink_t){ z->seqs + z->nseq, z->seqs + z->seq_max, z->lits + z->nlit, { z->rep[0], z->rep[1], z->rep[2] } };
 }
 
-static void sink_close(proven_zstd_encoder_t *z, const sink_t *k) {
+static void sink_close(proven_zstd_encoder_t *z, const proven_sink_t *k) {
     z->nseq = (proven_size_t)(k->seq - z->seqs);
     z->nlit = (proven_size_t)(k->lit - z->lits);
     z->rep[0] = k->rep[0]; z->rep[1] = k->rep[1]; z->rep[2] = k->rep[2];
@@ -705,7 +705,7 @@ ZSTD_HOT proven_size_t match_fast_mls(proven_zstd_encoder_t *z, const proven_byt
     proven_u32 *const ht = z->hash;
     const proven_byte_t *const iend = base + end, *const lowp = base + low;
     const proven_byte_t *const ilimit = end - start > 8 ? iend - 8 : base + start;
-    sink_t k = sink_open(z);
+    proven_sink_t k = sink_open(z);
     const proven_byte_t *ip0 = base + start, *anchor = ip0;
     if (ip0 == base) ip0++;
     while (k.seq_end - k.seq >= 2) {
@@ -787,7 +787,7 @@ ZSTD_HOT proven_size_t match_double_mls(proven_zstd_encoder_t *z, const proven_b
     proven_u32 *const hl = z->hash, *const hs = z->hash2;
     const proven_byte_t *const iend = base + end, *const lowp = base + low;
     const proven_byte_t *const ilimit = end - start > 8 ? iend - 8 : base + start;
-    sink_t k = sink_open(z);
+    proven_sink_t k = sink_open(z);
     const proven_byte_t *ip = base + start, *anchor = ip;
     if (ip == base) ip++;
     while (ip < ilimit) {
@@ -907,7 +907,7 @@ ZSTD_HOT proven_size_t match_lazy_mls(proven_zstd_encoder_t *z, const proven_byt
                                       proven_size_t low, proven_size_t *last_from, const unsigned mls, const unsigned depth) {
     const proven_byte_t *const iend = base + end, *const lowp = base + low;
     const proven_byte_t *const ilimit = end - start > 8 ? iend - 8 : base + start;
-    sink_t k = sink_open(z);
+    proven_sink_t k = sink_open(z);
     const proven_byte_t *ip = base + start, *anchor = ip;
     if (ip == base) ip++;
     while (ip < ilimit && k.seq_end - k.seq >= 2) {
@@ -1015,7 +1015,7 @@ static proven_size_t lits_raw(proven_byte_t *d, proven_size_t cap, const proven_
 static proven_size_t write_literals(proven_zstd_encoder_t *z, proven_byte_t *d, proven_size_t cap, int *huf_next) {
     const proven_byte_t *lit = z->lits;
     const proven_size_t n = z->nlit;
-    entropy_t *e = &z->ent;
+    proven_entropy_t *e = &z->ent;
     *huf_next = e->huf_cur;
     const bool can_repeat = e->huf_cur >= 0;
     if (n <= (can_repeat ? 6u : 63u)) return lits_raw(d, cap, lit, n);
@@ -1035,14 +1035,14 @@ static proven_size_t write_literals(proven_zstd_encoder_t *z, proven_byte_t *d, 
     }
     /* A new code, or the one in force if it serves these symbols for fewer bytes. */
     const int slot = e->huf_cur == 0 ? 1 : 0;
-    huf_tab_t *nt = &e->huf[slot];
+    proven_huf_tab_t *nt = &e->huf[slot];
     huf_build(nt, count, maxsym);
     proven_u64 bits_new = 0, bits_old = ~(proven_u64)0;
     for (unsigned s = 0; s <= maxsym; ++s) bits_new += (proven_u64)count[s] * nt->bits[s];
     proven_byte_t desc[160];
     const proven_size_t dlen = huf_describe(desc, sizeof desc, nt);
     if (can_repeat) {
-        const huf_tab_t *ot = &e->huf[e->huf_cur];
+        const proven_huf_tab_t *ot = &e->huf[e->huf_cur];
         bits_old = 0;
         for (unsigned s = 0; s <= maxsym && bits_old != ~(proven_u64)0; ++s) {
             if (count[s] == 0) continue;
@@ -1052,7 +1052,7 @@ static proven_size_t write_literals(proven_zstd_encoder_t *z, proven_byte_t *d, 
     }
     const bool repeat = bits_old != ~(proven_u64)0 && (dlen == 0 || bits_old / 8 <= bits_new / 8 + dlen);
     if (!repeat && dlen == 0) return lits_raw(d, cap, lit, n);
-    const huf_tab_t *t = repeat ? &e->huf[e->huf_cur] : nt;
+    const proven_huf_tab_t *t = repeat ? &e->huf[e->huf_cur] : nt;
     const bool four = n >= 256;
     const proven_size_t hs = !four ? 3 : n < 1024 ? 3 : n < 16384 ? 4 : 5;
     if (cap < hs + 1 + SLACK) return 0;
@@ -1101,8 +1101,8 @@ static proven_size_t write_literals(proven_zstd_encoder_t *z, proven_byte_t *d, 
  * written here (2) or the one in force (3), by what each would cost. Its description, if
  * any, goes to `d`. */
 static int choose_table(proven_zstd_encoder_t *z, int kind, const proven_u32 *count, unsigned maxsym, proven_size_t nseq, unsigned maxlog,
-                        proven_byte_t *d, proven_size_t cap, proven_size_t *dlen, const fse_tab_t **use, int *next) {
-    entropy_t *e = &z->ent;
+                        proven_byte_t *d, proven_size_t cap, proven_size_t *dlen, const proven_fse_tab_t **use, int *next) {
+    proven_entropy_t *e = &z->ent;
     const int cur = e->cur[kind];
     const int slot = cur == 0 ? 1 : 0;
     *dlen = 0;
@@ -1111,7 +1111,7 @@ static int choose_table(proven_zstd_encoder_t *z, int kind, const proven_u32 *co
     for (unsigned s = 0; s <= maxsym; ++s) if (count[s] > most) most = count[s];
     static const proven_i16 *const DEF_NORM[3] = { LL_DEFAULT, OF_DEFAULT, ML_DEFAULT };
     static const unsigned DEF_NSYM[3] = { 36, 29, 53 }, DEF_LOG[3] = { 6, 5, 6 };
-    fse_tab_t *const def = &z->def[kind];
+    proven_fse_tab_t *const def = &z->def[kind];
     const proven_u64 c_def = fse_cost(count, maxsym, DEF_NORM[kind], DEF_NSYM[kind], DEF_LOG[kind]);
     if (!z->def_built[kind]) {
         fse_tab_build(def, DEF_NORM[kind], DEF_NSYM[kind], DEF_LOG[kind]);
@@ -1128,7 +1128,7 @@ static int choose_table(proven_zstd_encoder_t *z, int kind, const proven_u32 *co
         return 1;
     }
     proven_u64 c_old = ~(proven_u64)0;
-    const fse_tab_t *old = cur == 2 ? def : cur >= 0 ? &e->tab[kind][cur] : NULL;
+    const proven_fse_tab_t *old = cur == 2 ? def : cur >= 0 ? &e->tab[kind][cur] : NULL;
     if (old && cur != 2) c_old = fse_cost(count, maxsym, old->norm, old->nsym, old->log);
     proven_i16 norm[64];
     const unsigned log = fse_log(nseq, maxsym, maxlog);
@@ -1158,7 +1158,7 @@ static proven_size_t write_sequences(proven_zstd_encoder_t *z, proven_byte_t *d,
     else if (nseq < 0x7F00) { d[0] = (proven_byte_t)((nseq >> 8) + 0x80); d[1] = (proven_byte_t)nseq; o = 2; }
     else { d[0] = 0xFF; d[1] = (proven_byte_t)(nseq - 0x7F00); d[2] = (proven_byte_t)((nseq - 0x7F00) >> 8); o = 3; }
     if (nseq == 0) return o;
-    const seq_t *sq = z->seqs;
+    const proven_seq_t *sq = z->seqs;
     proven_u32 cll[64] = { 0 }, cof[64] = { 0 }, cml[64] = { 0 };
     unsigned mll = 0, mof = 0, mml = 0;
     proven_byte_t *const code = z->codes;
@@ -1171,7 +1171,7 @@ static proven_size_t write_sequences(proven_zstd_encoder_t *z, proven_byte_t *d,
         if (c > mml) mml = c;
     }
     proven_byte_t *modes = d + o++;
-    const fse_tab_t *tl, *tf, *tm;
+    const proven_fse_tab_t *tl, *tf, *tm;
     proven_size_t k;
     const int ml_ = choose_table(z, K_LL, cll, mll, nseq, LL_LOG_MAX, d + o, cap - o, &k, &tl, &next[K_LL]);
     if (ml_ < 0) return 0;
@@ -1183,7 +1183,7 @@ static proven_size_t write_sequences(proven_zstd_encoder_t *z, proven_byte_t *d,
     if (mm_ < 0) return 0;
     o += k;
     *modes = (proven_byte_t)((ml_ << 6) | (mo_ << 4) | (mm_ << 2));
-    bw_t b;
+    proven_bw_t b;
     if (!bw_init(&b, d + o, cap - o)) return 0;
     /* The last sequence first; its codes give the first states. */
     proven_size_t i = nseq - 1;

@@ -7,7 +7,7 @@
 #include "proven/types.h"
 #include "proven/memory.h"
 
-typedef struct { const proven_byte_t *p; proven_size_t n; } der_t;
+typedef struct { const proven_byte_t *p; proven_size_t n; } proven_der_t;
 
 #define DER_BOOLEAN 0x01
 #define DER_INTEGER 0x02
@@ -21,7 +21,7 @@ typedef struct { const proven_byte_t *p; proven_size_t n; } der_t;
 
 /* Take one element off the front of `in`. Definite, minimal lengths only; single-byte tags
  * only (no certificate field uses a tag number above 30). */
-static inline bool der_read(der_t *in, proven_byte_t *tag, der_t *body, proven_mem_view_t *whole) {
+static inline bool der_read(proven_der_t *in, proven_byte_t *tag, proven_der_t *body, proven_mem_view_t *whole) {
     if (in->n < 2) return false;
     const proven_byte_t *start = in->p;
     proven_byte_t t = in->p[0];
@@ -45,14 +45,14 @@ static inline bool der_read(der_t *in, proven_byte_t *tag, der_t *body, proven_m
     return true;
 }
 
-static inline bool der_expect(der_t *in, proven_byte_t want, der_t *body, proven_mem_view_t *whole) {
+static inline bool der_expect(proven_der_t *in, proven_byte_t want, proven_der_t *body, proven_mem_view_t *whole) {
     proven_byte_t tag;
-    der_t save = *in;
+    proven_der_t save = *in;
     if (!der_read(in, &tag, body, whole) || tag != want) { *in = save; return false; }
     return true;
 }
 
-static inline bool der_is(const der_t *v, const proven_byte_t *bytes, proven_size_t n) {
+static inline bool der_is(const proven_der_t *v, const proven_byte_t *bytes, proven_size_t n) {
     if (v->n != n) return false;
     for (proven_size_t i = 0; i < n; ++i) if (v->p[i] != bytes[i]) return false;
     return true;
@@ -61,8 +61,8 @@ static inline bool der_is(const der_t *v, const proven_byte_t *bytes, proven_siz
 #define DER_IS(v, lit) der_is((v), (const proven_byte_t *)(lit), sizeof(lit) - 1)
 
 /* A non-negative INTEGER's magnitude, minimal encoding required. */
-static inline bool der_uint(der_t *in, proven_mem_view_t *out) {
-    der_t b;
+static inline bool der_uint(proven_der_t *in, proven_mem_view_t *out) {
+    proven_der_t b;
     if (!der_expect(in, DER_INTEGER, &b, NULL) || b.n == 0) return false;
     if (b.p[0] & 0x80) return false;                             /* negative */
     if (b.n > 1 && b.p[0] == 0 && (b.p[1] & 0x80) == 0) return false;     /* a needless zero */
@@ -71,7 +71,7 @@ static inline bool der_uint(der_t *in, proven_mem_view_t *out) {
     return true;
 }
 
-static inline bool der_small_uint(der_t *in, proven_u32 *out) {
+static inline bool der_small_uint(proven_der_t *in, proven_u32 *out) {
     proven_mem_view_t v;
     if (!der_uint(in, &v) || v.size > 4) return false;
     proven_u32 x = 0;

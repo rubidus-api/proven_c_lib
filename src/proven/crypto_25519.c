@@ -339,12 +339,12 @@ void proven_crypto_x25519_public(proven_byte_t out[32], const proven_byte_t scal
 
 /* Extended coordinates on -x^2 + y^2 = 1 + d x^2 y^2: x = X/Z, y = Y/Z, T = XY/Z. The addition
  * below is complete on this curve: it is right for every pair of points. */
-typedef struct { fe_t x, y, z, t; } ge_t;
+typedef struct { fe_t x, y, z, t; } proven_ge_t;
 #define GE_LIMBS (4 * FE_LIMBS)
 
-static void ge_identity(ge_t *p) { fe_zero(p->x); fe_one(p->y); fe_one(p->z); fe_zero(p->t); }
+static void ge_identity(proven_ge_t *p) { fe_zero(p->x); fe_one(p->y); fe_one(p->z); fe_zero(p->t); }
 
-static void ge_add(ge_t *r, const ge_t *p, const ge_t *q) {
+static void ge_add(proven_ge_t *r, const proven_ge_t *p, const proven_ge_t *q) {
     fe_t a, b, c, d, e, f, g, h, t;
     fe_sub(a, p->y, p->x); fe_sub(t, q->y, q->x); fe_mul(a, a, t);
     fe_add(b, p->y, p->x); fe_add(t, q->y, q->x); fe_mul(b, b, t);
@@ -354,7 +354,7 @@ static void ge_add(ge_t *r, const ge_t *p, const ge_t *q) {
     fe_mul(r->x, e, f); fe_mul(r->y, g, h); fe_mul(r->t, e, h); fe_mul(r->z, f, g);
 }
 
-static void ge_double(ge_t *r, const ge_t *p) {
+static void ge_double(proven_ge_t *r, const proven_ge_t *p) {
     fe_t a, b, c, e, f, g, h, t;
     fe_sq(a, p->x); fe_sq(b, p->y);
     fe_sq(c, p->z); fe_add(c, c, c);
@@ -367,8 +367,8 @@ static void ge_double(ge_t *r, const ge_t *p) {
 
 /* r = k * p for a 256-bit little-endian scalar (SECRET): a fixed window of four bits, every
  * table entry read on every lookup. */
-static void ge_mul(ge_t *r, const proven_byte_t k[32], const ge_t *p) {
-    ge_t table[16], acc, pick;
+static void ge_mul(proven_ge_t *r, const proven_byte_t k[32], const proven_ge_t *p) {
+    proven_ge_t table[16], acc, pick;
     ge_identity(&table[0]);
     table[1] = *p;
     for (int i = 2; i < 16; ++i) ge_add(&table[i], &table[i - 1], p);
@@ -390,7 +390,7 @@ static void ge_mul(ge_t *r, const proven_byte_t k[32], const ge_t *p) {
     wipe(table, sizeof table); wipe(&acc, sizeof acc); wipe(&pick, sizeof pick);
 }
 
-static void ge_encode(proven_byte_t s[32], const ge_t *p) {
+static void ge_encode(proven_byte_t s[32], const proven_ge_t *p) {
     fe_t zi, x, y;
     proven_byte_t xb[32];
     fe_invert(zi, p->z);
@@ -403,7 +403,7 @@ static void ge_encode(proven_byte_t s[32], const ge_t *p) {
 
 /* A point from its encoding. Public data only. Refuses a y that is not below p, a y with no
  * x on the curve, and x = 0 with the sign bit set. */
-static bool ge_decode(ge_t *p, const proven_byte_t s[32]) {
+static bool ge_decode(proven_ge_t *p, const proven_byte_t s[32]) {
     proven_byte_t yb[32], back[32];
     for (int i = 0; i < 32; ++i) yb[i] = s[i];
     proven_u32 sign = yb[31] >> 7;
@@ -438,7 +438,7 @@ static bool ge_decode(ge_t *p, const proven_byte_t s[32]) {
     return true;
 }
 
-static void ed_base(ge_t *b) {
+static void ed_base(proven_ge_t *b) {
     fe_copy(b->x, ED_BX); fe_copy(b->y, ED_BY); fe_one(b->z); fe_mul(b->t, ED_BX, ED_BY);
 }
 
@@ -550,11 +550,11 @@ static const proven_byte_t ED_GTAB[16][64] = {
 };
 
 /* An affine point as (y + x, y - x, 2 d x y): what a mixed addition reads. */
-typedef struct { fe_t ypx, ymx, xy2d; } ge_niels_t;
+typedef struct { fe_t ypx, ymx, xy2d; } proven_ge_niels_t;
 /* A projective point as (Y + X, Y - X, Z, 2 d T): what a full addition reads. */
-typedef struct { fe_t ypx, ymx, z, t2d; } ge_cached_t;
+typedef struct { fe_t ypx, ymx, z, t2d; } proven_ge_cached_t;
 
-static void ge_niels_load(ge_niels_t *n, const proven_byte_t e[64]) {
+static void ge_niels_load(proven_ge_niels_t *n, const proven_byte_t e[64]) {
     fe_t x, y;
     fe_frombytes(x, e); fe_frombytes(y, e + 32);
     fe_add(n->ypx, y, x); fe_sub(n->ymx, y, x);
@@ -562,7 +562,7 @@ static void ge_niels_load(ge_niels_t *n, const proven_byte_t e[64]) {
 }
 
 /* p + q for q affine, seven multiplications; complete, like ge_add. `r` may be `p`. */
-static void ge_madd(ge_t *r, const ge_t *p, const ge_niels_t *q) {
+static void ge_madd(proven_ge_t *r, const proven_ge_t *p, const proven_ge_niels_t *q) {
     fe_t a, b, c, d, e, f, g, h;
     fe_sub(a, p->y, p->x); fe_mul(a, a, q->ymx);
     fe_add(b, p->y, p->x); fe_mul(b, b, q->ypx);
@@ -574,7 +574,7 @@ static void ge_madd(ge_t *r, const ge_t *p, const ge_niels_t *q) {
 
 /* A doubling that leaves T alone: for a doubling another doubling follows, which does not
  * read it. */
-static void ge_double_xyz(ge_t *r, const ge_t *p) {
+static void ge_double_xyz(proven_ge_t *r, const proven_ge_t *p) {
     fe_t a, b, c, e, f, g, h, t;
     fe_sq(a, p->x); fe_sq(b, p->y);
     fe_sq(c, p->z); fe_add(c, c, c);
@@ -606,11 +606,11 @@ static proven_u32 sc_bit(const proven_crypto_limb_t *t, proven_size_t pos) {
  * low digits name (or the negative of their complement's, when its top digit is -1), every
  * entry read on every lookup and one kept by mask. An even k is replaced by L - k, which is
  * odd, and the result negated. */
-static void ge_mul_base(ge_t *r, const proven_crypto_limb_t k[SC_LIMBS], const proven_crypto_limb_t *l) {
-    ge_niels_t table[ED_GTAB_POINTS], pick;
+static void ge_mul_base(proven_ge_t *r, const proven_crypto_limb_t k[SC_LIMBS], const proven_crypto_limb_t *l) {
+    proven_ge_niels_t table[ED_GTAB_POINTS], pick;
     proven_crypto_limb_t t[SC_LIMBS];
     fe_t zero, neg;
-    ge_t acc;
+    proven_ge_t acc;
     for (proven_size_t j = 0; j < ED_GTAB_POINTS; ++j) ge_niels_load(&table[j], ED_GTAB[j]);
     const proven_crypto_limb_t even = (proven_crypto_limb_t)0 - ((k[0] & 1u) ^ 1u);
     sc_comb_digits(t, k, l, even);
@@ -649,13 +649,13 @@ static void ge_mul_base(ge_t *r, const proven_crypto_limb_t k[SC_LIMBS], const p
  * and index on what they are given. proven_crypto_ed25519_verify and the suite's hooks are
  * their only callers; scripts/check-vartime.py fails the build otherwise. */
 
-static void ge_to_cached(ge_cached_t *c, const ge_t *p) {
+static void ge_to_cached(proven_ge_cached_t *c, const proven_ge_t *p) {
     fe_add(c->ypx, p->y, p->x); fe_sub(c->ymx, p->y, p->x);
     fe_copy(c->z, p->z); fe_mul(c->t2d, p->t, FE_D2);
 }
 
 /* p + q, or p - q when `minus`. `r` may be `p`. */
-static void ge_add_cached_vartime(ge_t *r, const ge_t *p, const ge_cached_t *q, bool minus) {
+static void ge_add_cached_vartime(proven_ge_t *r, const proven_ge_t *p, const proven_ge_cached_t *q, bool minus) {
     fe_t a, b, c, d, e, f, g, h;
     fe_sub(a, p->y, p->x); fe_mul(a, a, minus ? q->ypx : q->ymx);
     fe_add(b, p->y, p->x); fe_mul(b, b, minus ? q->ymx : q->ypx);
@@ -668,7 +668,7 @@ static void ge_add_cached_vartime(ge_t *r, const ge_t *p, const ge_cached_t *q, 
 }
 
 /* p + q for q affine, or p - q when `minus`. */
-static void ge_madd_vartime(ge_t *r, const ge_t *p, const ge_niels_t *q, bool minus) {
+static void ge_madd_vartime(proven_ge_t *r, const proven_ge_t *p, const proven_ge_niels_t *q, bool minus) {
     fe_t a, b, c, d, e, f, g, h;
     fe_sub(a, p->y, p->x); fe_mul(a, a, minus ? q->ypx : q->ymx);
     fe_add(b, p->y, p->x); fe_mul(b, b, minus ? q->ymx : q->ypx);
@@ -705,13 +705,13 @@ static proven_size_t sc_wnaf_vartime(signed char digits[254], const proven_byte_
 /* s B + k Q for public s (plain limbs, below L), k (bytes, below L) and Q: one walk of the
  * doublings for both. Q's part reads its width-5 NAF against eight odd multiples of Q; B's
  * part is the signed comb of ge_mul_base, column j added when the walk is at j. */
-static void ge_mul2_vartime(ge_t *r, const proven_crypto_limb_t s[SC_LIMBS], const proven_byte_t k[32], const ge_t *q, const proven_crypto_limb_t *l) {
-    ge_cached_t table[8];
-    ge_niels_t base[ED_GTAB_POINTS];
+static void ge_mul2_vartime(proven_ge_t *r, const proven_crypto_limb_t s[SC_LIMBS], const proven_byte_t k[32], const proven_ge_t *q, const proven_crypto_limb_t *l) {
+    proven_ge_cached_t table[8];
+    proven_ge_niels_t base[ED_GTAB_POINTS];
     signed char naf[254];
     proven_crypto_limb_t t[SC_LIMBS];
-    ge_t acc, q2;
-    ge_cached_t c2;
+    proven_ge_t acc, q2;
+    proven_ge_cached_t c2;
     const proven_size_t ktop = sc_wnaf_vartime(naf, k);
     if (ktop > 0) {
         ge_to_cached(&table[0], q);
@@ -768,7 +768,7 @@ void proven_crypto_ed25519_public(proven_byte_t pub[32], const proven_byte_t see
     proven_crypto_mp_mod_t l;
     proven_byte_t h[64];
     proven_crypto_limb_t a[SC_LIMBS];
-    ge_t p;
+    proven_ge_t p;
     (void)proven_crypto_mp_mod_init(&l, ED_L, sizeof ED_L);      /* a fixed odd modulus: cannot fail */
     ed_expand(h, seed);
     sc_reduce(&l, a, h, 32);                     /* the same point: B has order L */
@@ -784,7 +784,7 @@ void proven_crypto_ed25519_sign(proven_byte_t sig[64], const proven_byte_t seed[
     proven_byte_t h[64], digest[64];
     proven_crypto_limb_t r[SC_LIMBS], k[SC_LIMBS], a[SC_LIMBS], s[SC_LIMBS];
     proven_sha512_t ctx;
-    ge_t rp;
+    proven_ge_t rp;
     (void)proven_crypto_mp_mod_init(&l, ED_L, sizeof ED_L);      /* a fixed odd modulus: cannot fail */
     ed_expand(h, seed);
     /* r = H(prefix | M) mod L */
@@ -818,7 +818,7 @@ bool proven_crypto_ed25519_verify(const proven_byte_t pub[32], proven_mem_view_t
     proven_byte_t digest[64], sbe[32], kb[32], check[32];
     proven_crypto_limb_t s[SC_LIMBS], k[SC_LIMBS];
     proven_sha512_t ctx;
-    ge_t a, p;
+    proven_ge_t a, p;
     fe_t zero;
     if (!proven_crypto_mp_mod_init(&l, ED_L, sizeof ED_L)) return false;
     for (int i = 0; i < 32; ++i) sbe[i] = sig[63 - i];
@@ -847,7 +847,7 @@ bool proven_crypto_ed25519_verify(const proven_byte_t pub[32], proven_mem_view_t
 /* Every entry of the base point's table against the general multiplication: entry i must be
  * m B for m = 2^(4d) + the sum over b < 4 of (+1 or -1, by bit b of i) 2^(b d). */
 bool proven_crypto_ed25519_test_table(void) {
-    ge_t b, p;
+    proven_ge_t b, p;
     proven_byte_t m[32], got[32], want[32];
     ed_base(&b);
     for (proven_size_t i = 0; i < ED_GTAB_POINTS; ++i) {
@@ -876,7 +876,7 @@ bool proven_crypto_ed25519_test_base_mul(const proven_byte_t k_le[32]) {
     proven_crypto_mp_mod_t l;
     proven_byte_t be[32], x[32], y[32];
     proven_crypto_limb_t k[SC_LIMBS];
-    ge_t b, p, q;
+    proven_ge_t b, p, q;
     if (!proven_crypto_mp_mod_init(&l, ED_L, sizeof ED_L)) return false;
     for (int i = 0; i < 32; ++i) be[i] = k_le[31 - i];
     if (!proven_crypto_mp_load_be(k, SC_LIMBS, be, 32) || !proven_crypto_mp_lt(k, l.n, SC_LIMBS)) return false;
@@ -894,7 +894,7 @@ bool proven_crypto_ed25519_test_mul2(const proven_byte_t s_le[32], const proven_
     proven_crypto_mp_mod_t l;
     proven_byte_t be[32], x[32], y[32];
     proven_crypto_limb_t s[SC_LIMBS], k[SC_LIMBS];
-    ge_t b, q, p1, p2, v;
+    proven_ge_t b, q, p1, p2, v;
     if (!proven_crypto_mp_mod_init(&l, ED_L, sizeof ED_L) || !ge_decode(&q, q_enc)) return false;
     for (int i = 0; i < 32; ++i) be[i] = s_le[31 - i];
     if (!proven_crypto_mp_load_be(s, SC_LIMBS, be, 32) || !proven_crypto_mp_lt(s, l.n, SC_LIMBS)) return false;

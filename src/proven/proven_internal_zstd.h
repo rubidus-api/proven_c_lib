@@ -53,7 +53,7 @@ typedef struct {
     proven_u64 total;
     proven_byte_t buf[32];
     unsigned held;
-} xxh64_t;
+} proven_xxh64_t;
 
 // -----------------------------------------------------------------------------
 // XXH64, for the frame checksum
@@ -69,11 +69,11 @@ static inline proven_u64 rotl64(proven_u64 x, unsigned r) { return (x << r) | (x
 
 static inline proven_u64 xxh_round(proven_u64 acc, proven_u64 in) { return rotl64(acc + in * P2, 31) * P1; }
 
-static inline void xxh_init(xxh64_t *x) {
-    *x = (xxh64_t){ .v = { P1 + P2, P2, 0, (proven_u64)0 - P1 } };
+static inline void xxh_init(proven_xxh64_t *x) {
+    *x = (proven_xxh64_t){ .v = { P1 + P2, P2, 0, (proven_u64)0 - P1 } };
 }
 
-static inline void xxh_update(xxh64_t *x, const proven_byte_t *p, proven_size_t n) {
+static inline void xxh_update(proven_xxh64_t *x, const proven_byte_t *p, proven_size_t n) {
     x->total += n;
     if (x->held > 0) {
         while (x->held < 32 && n > 0) { x->buf[x->held++] = *p++; n--; }
@@ -90,7 +90,7 @@ static inline void xxh_update(xxh64_t *x, const proven_byte_t *p, proven_size_t 
     while (n > 0) { x->buf[x->held++] = *p++; n--; }
 }
 
-static inline proven_u64 xxh_digest(const xxh64_t *x) {
+static inline proven_u64 xxh_digest(const proven_xxh64_t *x) {
     proven_u64 h;
     if (x->total >= 32) {
         h = rotl64(x->v[0], 1) + rotl64(x->v[1], 7) + rotl64(x->v[2], 12) + rotl64(x->v[3], 18);

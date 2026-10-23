@@ -57,7 +57,7 @@ typedef struct {
     bool known;                             /* the application has heard of it */
     bool dead;                              /* ended by an error of its own: let go after the step that found it */
     bool ev_rejected;                       /* a client: STREAM_RESET with H3_REQUEST_REJECTED owed (GOAWAY) */
-} h3s_t;
+} proven_h3s_t;
 
 struct proven_h3_conn {
     proven_allocator_t alloc;
@@ -65,7 +65,7 @@ struct proven_h3_conn {
     proven_quic_conn_t *q;
     bool server;
     proven_u32 cfg_list, cfg_debt;
-    h3s_t **st;
+    proven_h3s_t **st;
     proven_size_t nst, cap_st, cursor;
     /* This side's control stream */
     bool ctl_open;
@@ -147,28 +147,28 @@ static void h3_fail(proven_h3_conn_t *h, proven_u64 code) {
 // Streams
 // -----------------------------------------------------------------------------
 
-static h3s_t *st_find(const proven_h3_conn_t *h, proven_u64 id) {
+static proven_h3s_t *st_find(const proven_h3_conn_t *h, proven_u64 id) {
     for (proven_size_t i = 0; i < h->nst; ++i) if (h->st[i]->id == id) return h->st[i];
     return NULL;
 }
 
-static h3s_t *st_add(proven_h3_conn_t *h, proven_u64 id, int kind) {
+static proven_h3s_t *st_add(proven_h3_conn_t *h, proven_u64 id, int kind) {
     if (h->nst == h->cap_st) {
         const proven_size_t want = h->cap_st ? h->cap_st * 2 : 8;
-        h3s_t **n = (h3s_t **)h3_alloc(h, want * sizeof *n, alignof(h3s_t *));
+        proven_h3s_t **n = (proven_h3s_t **)h3_alloc(h, want * sizeof *n, alignof(proven_h3s_t *));
         if (!n) return NULL;
         for (proven_size_t i = 0; i < h->nst; ++i) n[i] = h->st[i];
         h3_free(h, h->st, h->cap_st * sizeof *n);
         h->st = n; h->cap_st = want;
     }
-    h3s_t *s = (h3s_t *)h3_alloc(h, sizeof *s, alignof(h3s_t));
+    proven_h3s_t *s = (proven_h3s_t *)h3_alloc(h, sizeof *s, alignof(proven_h3s_t));
     if (!s) return NULL;
-    *s = (h3s_t){ .id = id, .kind = kind, .length = H3_NO_LENGTH };
+    *s = (proven_h3s_t){ .id = id, .kind = kind, .length = H3_NO_LENGTH };
     h->st[h->nst++] = s;
     return s;
 }
 
-static void st_free(proven_h3_conn_t *h, h3s_t *s) {
+static void st_free(proven_h3_conn_t *h, proven_h3s_t *s) {
     for (proven_size_t i = 0; i < h->nst; ++i) {
         if (h->st[i] != s) continue;
         h->st[i] = h->st[--h->nst];
@@ -188,7 +188,7 @@ static void h3_debt(proven_h3_conn_t *h) {
 }
 
 /* A stream that has ended both ways is let go. */
-static void st_maybe_free(proven_h3_conn_t *h, h3s_t *s) {
+static void st_maybe_free(proven_h3_conn_t *h, proven_h3s_t *s) {
     if (s->dead) { st_free(h, s); return; }
     if (s->kind != K_REQ || !s->rx_done || !s->tx_done || s->ev_rejected) return;
     if (s->rq == RQ_DONE && h->debt > 0) h->debt--;
@@ -196,7 +196,7 @@ static void st_maybe_free(proven_h3_conn_t *h, h3s_t *s) {
 }
 
 /* Write what is held for a stream, then its end when that is owed. */
-static void st_flush(proven_h3_conn_t *h, h3s_t *s) {
+static void st_flush(proven_h3_conn_t *h, proven_h3s_t *s) {
     if (s->tx_done) return;
     while (s->out_off < s->out_n) {
         proven_size_t taken = 0;
@@ -217,7 +217,7 @@ static void st_flush(proven_h3_conn_t *h, h3s_t *s) {
 
 /* This side's half has been ended. A server whose response is complete wants no more of the
  * request (RFC 9114 section 4.1). */
-static void st_tx_ended(proven_h3_conn_t *h, h3s_t *s) {
+static void st_tx_ended(proven_h3_conn_t *h, proven_h3s_t *s) {
     if (h->server && !s->rx_done && s->ws == WS_END) {
         (void)proven_quic_stream_stop(h->q, s->id, PROVEN_H3_NO_ERROR);
         s->rx_done = true;
@@ -227,7 +227,7 @@ static void st_tx_ended(proven_h3_conn_t *h, h3s_t *s) {
 
 /* An error of one request stream: both halves end with `code`, and the application is told if
  * it knew the stream. The stream is let go by the caller of the step (st_maybe_free). */
-static bool st_fault(proven_h3_conn_t *h, h3s_t *s, proven_u64 code, proven_h3_event_t *ev) {
+static bool st_fault(proven_h3_conn_t *h, proven_h3s_t *s, proven_u64 code, proven_h3_event_t *ev) {
     if (!s->rx_done) (void)proven_quic_stream_stop(h->q, s->id, code);
     if (!s->tx_done) (void)proven_quic_stream_reset(h->q, s->id, code);
     s->rx_done = s->tx_done = true;
@@ -242,7 +242,7 @@ static bool st_fault(proven_h3_conn_t *h, h3s_t *s, proven_u64 code, proven_h3_e
 // -----------------------------------------------------------------------------
 
 /* Read into `p` at most `n` bytes of a stream. */
-static proven_size_t st_read(proven_h3_conn_t *h, h3s_t *s, proven_byte_t *p, proven_size_t n) {
+static proven_size_t st_read(proven_h3_conn_t *h, proven_h3s_t *s, proven_byte_t *p, proven_size_t n) {
     proven_size_t got = 0;
     bool fin = false;
     if (n == 0 && s->fin) return 0;
@@ -253,7 +253,7 @@ static proven_size_t st_read(proven_h3_conn_t *h, h3s_t *s, proven_byte_t *p, pr
 }
 
 /* A varint, gathered across reads: 1 complete, 0 not yet. */
-static int st_varint(proven_h3_conn_t *h, h3s_t *s, proven_u64 *v) {
+static int st_varint(proven_h3_conn_t *h, proven_h3s_t *s, proven_u64 *v) {
     for (;;) {
         const proven_size_t need = s->vn == 0 ? 1 : (proven_size_t)1 << (s->vb[0] >> 6);
         if (s->vn == need) {
@@ -313,7 +313,7 @@ static int h3_decode(proven_h3_conn_t *h, proven_mem_view_t section, proven_size
 }
 
 /* The stream's buffered payload is now the event's: kept until the next poll. */
-static proven_mem_view_t st_take_payload(proven_h3_conn_t *h, h3s_t *s) {
+static proven_mem_view_t st_take_payload(proven_h3_conn_t *h, proven_h3s_t *s) {
     h3_free(h, h->stale, h->stale_cap);
     h->stale = s->fbuf; h->stale_cap = s->fbuf_cap;
     const proven_mem_view_t v = { .ptr = s->fbuf, .size = s->fbuf_n };
@@ -322,7 +322,7 @@ static proven_mem_view_t st_take_payload(proven_h3_conn_t *h, h3s_t *s) {
 }
 
 /* The peer's side of a request stream ended at a frame boundary. */
-static bool req_end(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev) {
+static bool req_end(proven_h3_conn_t *h, proven_h3s_t *s, proven_h3_event_t *ev) {
     if (s->rq == RQ_HEAD) {
         /* Ended before a request, or before a final response (RFC 9114 section 4.1). */
         return st_fault(h, s, PROVEN_H3_REQUEST_INCOMPLETE, ev);
@@ -359,7 +359,7 @@ static bool has_authority(const proven_h2_request_head_t *head) {
     return false;
 }
 
-static bool req_headers(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev) {
+static bool req_headers(proven_h3_conn_t *h, proven_h3s_t *s, proven_h3_event_t *ev) {
     if (s->rq == RQ_BODY) {
         /* Trailers: checked and given out when the stream ends, as nothing may follow them. */
         if (!s->no_body && s->length != H3_NO_LENGTH && s->received != s->length) return st_fault(h, s, PROVEN_H3_MESSAGE_ERROR, ev);
@@ -407,7 +407,7 @@ static bool req_headers(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev) {
 }
 
 /* A frame's header was read on a request stream: is the frame allowed, and how is it read? */
-static int req_frame_start(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev, bool *told) {
+static int req_frame_start(proven_h3_conn_t *h, proven_h3s_t *s, proven_h3_event_t *ev, bool *told) {
     switch (s->ftype) {
     case PROVEN_H3_FRAME_DATA:
         if (s->rq != RQ_BODY) { h3_fail(h, PROVEN_H3_FRAME_UNEXPECTED); return -1; }
@@ -433,7 +433,7 @@ static int req_frame_start(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev,
 }
 
 /* Read a payload that is buffered whole: true when it is complete. */
-static bool st_fill(proven_h3_conn_t *h, h3s_t *s) {
+static bool st_fill(proven_h3_conn_t *h, proven_h3s_t *s) {
     if (!s->fbuf && s->fleft > 0) {
         s->fbuf = (proven_byte_t *)h3_alloc(h, (proven_size_t)s->fleft, 1);
         if (!s->fbuf) return false;
@@ -450,7 +450,7 @@ static bool st_fill(proven_h3_conn_t *h, h3s_t *s) {
 }
 
 /* Advance a request stream: true with an event. */
-static bool req_step(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev) {
+static bool req_step(proven_h3_conn_t *h, proven_h3s_t *s, proven_h3_event_t *ev) {
     for (;;) {
         if (h->failed || h->oom) return false;
         if (s->rd == RD_TYPE || s->rd == RD_LEN) {
@@ -537,7 +537,7 @@ static bool h3_settings(proven_h3_conn_t *h, proven_mem_view_t p) {
 /* Every request stream at or above a server's GOAWAY was not acted on. */
 static void h3_rejected_from(proven_h3_conn_t *h, proven_u64 id) {
     for (proven_size_t i = 0; i < h->nst; ++i) {
-        h3s_t *s = h->st[i];
+        proven_h3s_t *s = h->st[i];
         if (s->kind != K_REQ || s->id < id || s->ev_rejected) continue;
         if (!s->rx_done) (void)proven_quic_stream_stop(h->q, s->id, PROVEN_H3_REQUEST_CANCELLED);
         if (!s->tx_done) (void)proven_quic_stream_reset(h->q, s->id, PROVEN_H3_REQUEST_CANCELLED);
@@ -547,7 +547,7 @@ static void h3_rejected_from(proven_h3_conn_t *h, proven_u64 id) {
 }
 
 /* A complete control frame. */
-static bool ctl_frame(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev) {
+static bool ctl_frame(proven_h3_conn_t *h, proven_h3s_t *s, proven_h3_event_t *ev) {
     const proven_mem_view_t p = { .ptr = s->fbuf, .size = s->fbuf_n };
     proven_u64 v = 0;
     if (s->ftype != PROVEN_H3_FRAME_SETTINGS) {
@@ -582,7 +582,7 @@ static bool ctl_frame(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev) {
 }
 
 /* Advance the peer's control stream: true with an event. */
-static bool ctl_step(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev) {
+static bool ctl_step(proven_h3_conn_t *h, proven_h3s_t *s, proven_h3_event_t *ev) {
     for (;;) {
         if (h->failed || h->oom) return false;
         if (s->rd == RD_TYPE || s->rd == RD_LEN) {
@@ -648,7 +648,7 @@ static bool ctl_step(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev) {
 }
 
 /* Advance one of the peer's QPACK streams. */
-static void qpack_step(proven_h3_conn_t *h, h3s_t *s) {
+static void qpack_step(proven_h3_conn_t *h, proven_h3s_t *s) {
     for (;;) {
         const proven_size_t got = st_read(h, s, h->rbuf, H3_READ_BUF);
         if (got == 0) {
@@ -663,7 +663,7 @@ static void qpack_step(proven_h3_conn_t *h, h3s_t *s) {
 }
 
 /* A unidirectional stream of the peer's, its type not yet known. */
-static void uni_step(proven_h3_conn_t *h, h3s_t *s) {
+static void uni_step(proven_h3_conn_t *h, proven_h3s_t *s) {
     proven_u64 type = 0;
     if (!st_varint(h, s, &type)) {
         /* Ended before its type: tolerated (RFC 9114 section 6.2). */
@@ -699,7 +699,7 @@ static void uni_step(proven_h3_conn_t *h, h3s_t *s) {
 }
 
 /* Advance a stream that may be read: true with an event. */
-static bool st_step(proven_h3_conn_t *h, h3s_t *s, proven_h3_event_t *ev) {
+static bool st_step(proven_h3_conn_t *h, proven_h3s_t *s, proven_h3_event_t *ev) {
     for (;;) {
         const int kind = s->kind;
         switch (kind) {
@@ -762,7 +762,7 @@ static void h3_open_control(proven_h3_conn_t *h) {
 // -----------------------------------------------------------------------------
 
 static bool h3_quic_event(proven_h3_conn_t *h, const proven_quic_event_t *q, proven_h3_event_t *ev) {
-    h3s_t *s = NULL;
+    proven_h3s_t *s = NULL;
     switch (q->kind) {
     case PROVEN_QUIC_EV_ESTABLISHED:
     case PROVEN_QUIC_EV_EARLY:          /* 0-RTT (RFC-0021): streams may be used before the handshake ends */
@@ -861,7 +861,7 @@ bool proven_h3_conn_poll(proven_h3_conn_t *h, proven_h3_event_t *ev) {
         if (h->oom) h3_fail(h, PROVEN_H3_INTERNAL_ERROR);
         if (!h->failed) {
             for (proven_size_t i = 0; i < h->nst; ++i) {
-                h3s_t *s = h->st[i];
+                proven_h3s_t *s = h->st[i];
                 if (!s->ev_rejected) continue;
                 s->ev_rejected = false;
                 *ev = (proven_h3_event_t){ .kind = PROVEN_H3_EV_STREAM_RESET, .stream_id = s->id, .code = PROVEN_H3_REQUEST_REJECTED };
@@ -873,11 +873,11 @@ bool proven_h3_conn_poll(proven_h3_conn_t *h, proven_h3_event_t *ev) {
             /* Streams with something to read, in turn. */
             for (proven_size_t k = 0; k < h->nst && !h->failed; ++k) {
                 const proven_size_t i = (h->cursor + k) % h->nst;
-                h3s_t *s = h->st[i];
+                proven_h3s_t *s = h->st[i];
                 if (!s->readable || s->paused) continue;
                 const proven_u64 id = s->id;
                 const bool got = st_step(h, s, ev);
-                h3s_t *still = st_find(h, id);
+                proven_h3s_t *still = st_find(h, id);
                 if (still && !got) still->readable = false;
                 if (still) st_maybe_free(h, still);
                 if (got) {
@@ -902,7 +902,7 @@ bool proven_h3_conn_poll(proven_h3_conn_t *h, proven_h3_event_t *ev) {
 // -----------------------------------------------------------------------------
 
 /* A HEADERS frame for `headers` into the stream's held bytes. */
-static proven_err_t h3_put_headers(proven_h3_conn_t *h, h3s_t *s, const proven_http_header_t *headers, proven_size_t count) {
+static proven_err_t h3_put_headers(proven_h3_conn_t *h, proven_h3s_t *s, const proven_http_header_t *headers, proven_size_t count) {
     const bool *sensitive = h->sensitive;
     h->sensitive = NULL;
     proven_u64 list = 0;
@@ -932,13 +932,13 @@ proven_err_t proven_h3_submit_request(proven_h3_conn_t *h, const proven_http_hea
     proven_h2_request_head_t head;
     if (proven_h2_request_head(headers, count, &head) != PROVEN_OK || head.protocol.size > 0) { h->sensitive = NULL; return PROVEN_ERR_INVALID_ARG; }
     if (h->failed || h->closed || h->goaway_recv || h->goaway_sent || !h->ctl_open) { h->sensitive = NULL; return PROVEN_ERR_INVALID_STATE; }
-    h3s_t probe = { 0 };
+    proven_h3s_t probe = { 0 };
     proven_err_t e = h3_put_headers(h, &probe, headers, count);
     if (e != PROVEN_OK) { h3_free(h, probe.out, probe.out_cap); return e; }
     proven_u64 id = 0;
     e = proven_quic_stream_open(h->q, true, &id);
     if (e != PROVEN_OK) { h3_free(h, probe.out, probe.out_cap); return e; }
-    h3s_t *s = st_add(h, id, K_REQ);
+    proven_h3s_t *s = st_add(h, id, K_REQ);
     if (!s) {
         h->oom = false;
         h3_free(h, probe.out, probe.out_cap);
@@ -955,8 +955,8 @@ proven_err_t proven_h3_submit_request(proven_h3_conn_t *h, const proven_http_hea
     return PROVEN_OK;
 }
 
-static h3s_t *h3_sendable(proven_h3_conn_t *h, proven_u64 id, proven_err_t *e) {
-    h3s_t *s = st_find(h, id);
+static proven_h3s_t *h3_sendable(proven_h3_conn_t *h, proven_u64 id, proven_err_t *e) {
+    proven_h3s_t *s = st_find(h, id);
     if (!s || s->kind != K_REQ || s->ev_rejected) { *e = PROVEN_ERR_NOT_FOUND; return NULL; }
     if (h->failed || h->closed || s->tx_done || s->out_fin) { *e = PROVEN_ERR_INVALID_STATE; return NULL; }
     return s;
@@ -973,7 +973,7 @@ proven_err_t proven_h3_submit_response(proven_h3_conn_t *h, proven_u64 stream_id
         return PROVEN_ERR_INVALID_ARG;
     }
     proven_err_t e = PROVEN_OK;
-    h3s_t *s = h3_sendable(h, stream_id, &e);
+    proven_h3s_t *s = h3_sendable(h, stream_id, &e);
     if (!s) { h->sensitive = NULL; return e; }
     if (s->ws != WS_NONE || !s->known) { h->sensitive = NULL; return PROVEN_ERR_INVALID_STATE; }
     e = h3_put_headers(h, s, headers, count);
@@ -992,7 +992,7 @@ proven_err_t proven_h3_send_data(proven_h3_conn_t *h, proven_u64 stream_id, prov
     if (!h || !taken || (data.size > 0 && !data.ptr)) return PROVEN_ERR_INVALID_ARG;
     *taken = 0;
     proven_err_t e = PROVEN_OK;
-    h3s_t *s = h3_sendable(h, stream_id, &e);
+    proven_h3s_t *s = h3_sendable(h, stream_id, &e);
     if (!s) return e;
     if (s->ws != WS_HEAD) return PROVEN_ERR_INVALID_STATE;
     st_flush(h, s);
@@ -1038,7 +1038,7 @@ proven_err_t proven_h3_send_trailers(proven_h3_conn_t *h, proven_u64 stream_id, 
     if (!h || (count > 0 && !headers)) return PROVEN_ERR_INVALID_ARG;
     if (proven_h2_trailers_check(headers, count) != PROVEN_OK) { h->sensitive = NULL; return PROVEN_ERR_INVALID_ARG; }
     proven_err_t e = PROVEN_OK;
-    h3s_t *s = h3_sendable(h, stream_id, &e);
+    proven_h3s_t *s = h3_sendable(h, stream_id, &e);
     if (!s) { h->sensitive = NULL; return e; }
     if (s->ws != WS_HEAD) { h->sensitive = NULL; return PROVEN_ERR_INVALID_STATE; }
     e = h3_put_headers(h, s, headers, count);
@@ -1057,7 +1057,7 @@ void proven_h3_next_sensitive(proven_h3_conn_t *h, const bool *sensitive) {
 
 proven_err_t proven_h3_stream_reset(proven_h3_conn_t *h, proven_u64 stream_id, proven_u64 code) {
     if (!h || code > PROVEN_QUIC_VARINT_MAX) return PROVEN_ERR_INVALID_ARG;
-    h3s_t *s = st_find(h, stream_id);
+    proven_h3s_t *s = st_find(h, stream_id);
     if (!s || s->kind != K_REQ) return PROVEN_ERR_NOT_FOUND;
     if (code == 0) code = PROVEN_H3_REQUEST_CANCELLED;
     if (!s->rx_done) (void)proven_quic_stream_stop(h->q, s->id, code);
@@ -1067,7 +1067,7 @@ proven_err_t proven_h3_stream_reset(proven_h3_conn_t *h, proven_u64 stream_id, p
 }
 
 void proven_h3_stream_pause(proven_h3_conn_t *h, proven_u64 stream_id, bool paused) {
-    h3s_t *s = h ? st_find(h, stream_id) : NULL;
+    proven_h3s_t *s = h ? st_find(h, stream_id) : NULL;
     if (s) { s->paused = paused; if (!paused) s->readable = true; }
 }
 
@@ -1117,7 +1117,7 @@ proven_err_t proven_h3_conn_create(const proven_h3_config_t *config, proven_quic
 void proven_h3_conn_destroy(proven_h3_conn_t *h) {
     if (!h) return;
     while (h->nst > 0) st_free(h, h->st[h->nst - 1]);
-    h3_free(h, h->st, h->cap_st * sizeof(h3s_t *));
+    h3_free(h, h->st, h->cap_st * sizeof(proven_h3s_t *));
     h3_free(h, h->ctl_out, h->ctl_cap);
     h3_free(h, h->rbuf, H3_READ_BUF);
     h3_free(h, h->hbuf, h->hbuf_size);

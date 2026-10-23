@@ -93,7 +93,7 @@ proven_size_t proven_http_event_raw_held_(const proven_http_stream_t *stream);
 #define EV_LINGER 3        /* closing: input is thrown away until the client goes */
 #define EV_RAW 4           /* taken over by another protocol (proven_internal_http_event.h) */
 
-typedef struct { proven_byte_t *ptr; proven_size_t len, cap, off; bool borrowed; } ev_buf_t;
+typedef struct { proven_byte_t *ptr; proven_size_t len, cap, off; bool borrowed; } proven_ev_buf_t;
 
 /* What every object a handler may hold as a `proven_http_stream_t *` begins with: this
  * connection-and-exchange of HTTP/1.1, and one stream of an HTTP/2 connection, which is another
@@ -106,22 +106,22 @@ typedef struct {
     proven_u8 state;
     proven_u8 version_minor;
     proven_u8 kind;                    /* EV_KIND_* */
-} ev_head_t;
+} proven_ev_head_t;
 
 #define EV_KIND_H1 0       /* a connection of the server's, speaking HTTP/1.1 or taken over */
 #define EV_KIND_H2 1       /* one stream of an HTTP/2 connection */
 #define EV_KIND_H3 2       /* one stream of an HTTP/3 connection */
 
 struct proven_http_stream {
-    ev_head_t h;
+    proven_ev_head_t h;
     struct proven_http_stream *prev, *next;
     proven_net_conn_t sock;
     proven_net_addr_t peer;
     proven_loop_io_t io;
     proven_loop_timer_t timer;
     proven_tls_conn_t *tls;
-    ev_buf_t stash;                    /* input not consumed yet */
-    ev_buf_t out;                      /* output the transport has not taken yet */
+    proven_ev_buf_t stash;                    /* input not consumed yet */
+    proven_ev_buf_t out;                      /* output the transport has not taken yet */
     proven_http_body_t body;
     proven_u64 response_left;          /* body bytes still promised; LENGTH_UNKNOWN when chunked or not counted */
     void *user;
@@ -145,13 +145,13 @@ struct proven_http_stream {
     proven_u16 local_port;             /* the port the connection came in on: the one `Alt-Svc` names */
 };
 
-typedef struct { proven_http_event_server_t *server; proven_net_listener_t listener; proven_loop_io_t io; } ev_listener_t;
+typedef struct { proven_http_event_server_t *server; proven_net_listener_t listener; proven_loop_io_t io; } proven_ev_listener_t;
 
 struct proven_http_event_server {
     proven_loop_t *loop;
     proven_allocator_t alloc;
     proven_http_event_server_config_t cfg;
-    ev_listener_t listeners[EV_MAX_LISTENERS];
+    proven_ev_listener_t listeners[EV_MAX_LISTENERS];
     proven_size_t listener_count;
     bool accepting;                    /* the listeners are being watched */
     bool closed_to_new;                /* stop_listening was called: nothing is adopted either */
@@ -231,8 +231,8 @@ proven_net_addr_t proven_http_event_h2_peer_(const proven_http_stream_t *stream)
 [[nodiscard]]
 proven_size_t proven_http_event_h2_buffered_(const proven_http_stream_t *stream);
 
-#define PROVEN_HTTP_EVENT_IS_H2_(stream) (((const ev_head_t *)(const void *)(stream))->kind == EV_KIND_H2)
-#define PROVEN_HTTP_EVENT_IS_H3_(stream) (((const ev_head_t *)(const void *)(stream))->kind == EV_KIND_H3)
+#define PROVEN_HTTP_EVENT_IS_H2_(stream) (((const proven_ev_head_t *)(const void *)(stream))->kind == EV_KIND_H2)
+#define PROVEN_HTTP_EVENT_IS_H3_(stream) (((const proven_ev_head_t *)(const void *)(stream))->kind == EV_KIND_H3)
 
 /* The count of connections has changed (one came or went, outside http_event.c): the listeners
  * may take connections again, or must stop at `max_connections`, and a shutdown may be over. */

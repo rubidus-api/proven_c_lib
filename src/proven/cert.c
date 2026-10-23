@@ -18,9 +18,9 @@ static bool two_digits(const proven_byte_t *p, int *out) {
 }
 
 /* UTCTime YYMMDDHHMMSSZ or GeneralizedTime YYYYMMDDHHMMSSZ, as RFC 5280 restricts them. */
-static bool der_time(der_t *in, proven_i64 *out) {
+static bool der_time(proven_der_t *in, proven_i64 *out) {
     proven_byte_t tag;
-    der_t b;
+    proven_der_t b;
     int cc = 0, yy, mo, dd, hh, mi, ss;
     if (!der_read(in, &tag, &b, NULL)) return false;
     const proven_byte_t *p = b.p;
@@ -81,7 +81,7 @@ static bool der_time(der_t *in, proven_i64 *out) {
 #define OID_EKU_CLIENT "\x2b\x06\x01\x05\x05\x07\x03\x02"
 #define OID_EKU_ANY "\x55\x1d\x25\x00"
 
-static bool hash_from_oid(const der_t *oid, int *hash) {
+static bool hash_from_oid(const proven_der_t *oid, int *hash) {
     if (DER_IS(oid, OID_SHA256)) *hash = PROVEN_HMAC_SHA256;
     else if (DER_IS(oid, OID_SHA384)) *hash = PROVEN_HMAC_SHA384;
     else if (DER_IS(oid, OID_SHA512)) *hash = PROVEN_HMAC_SHA512;
@@ -90,16 +90,16 @@ static bool hash_from_oid(const der_t *oid, int *hash) {
 }
 
 /* An AlgorithmIdentifier whose parameters are absent or NULL. */
-static bool params_absent_or_null(der_t rest) {
+static bool params_absent_or_null(proven_der_t rest) {
     if (rest.n == 0) return true;
-    der_t b;
+    proven_der_t b;
     return der_expect(&rest, DER_NULL, &b, NULL) && b.n == 0 && rest.n == 0;
 }
 
 /* RSASSA-PSS-params. The defaults are SHA-1, which is not accepted, so every field that
  * matters has to be present. */
-static bool parse_pss_params(der_t rest, int *hash, proven_size_t *salt_len) {
-    der_t seq, f, alg, oid, mgf_alg, mgf_oid, mgf_hash, mgf_hash_oid;
+static bool parse_pss_params(proven_der_t rest, int *hash, proven_size_t *salt_len) {
+    proven_der_t seq, f, alg, oid, mgf_alg, mgf_oid, mgf_hash, mgf_hash_oid;
     int mgf = -1;
     proven_u32 salt = 0, trailer = 1;
     if (!der_expect(&rest, DER_SEQUENCE, &seq, NULL) || rest.n != 0) return false;
@@ -120,8 +120,8 @@ static bool parse_pss_params(der_t rest, int *hash, proven_size_t *salt_len) {
     return true;
 }
 
-static void parse_sig_alg(der_t alg, proven_cert_t *c) {
-    der_t oid;
+static void parse_sig_alg(proven_der_t alg, proven_cert_t *c) {
+    proven_der_t oid;
     c->sig_kind = PROVEN_CERT_SIG_UNKNOWN;
     c->sig_hash = 0;
     c->sig_salt_len = 0;
@@ -144,20 +144,20 @@ static void parse_sig_alg(der_t alg, proven_cert_t *c) {
 
 /* SubjectPublicKeyInfo. A key this library cannot use leaves key_kind UNKNOWN; a malformed
  * structure is an error. */
-static bool parse_spki(der_t spki, proven_cert_t *c) {
-    der_t alg, oid, bits;
+static bool parse_spki(proven_der_t spki, proven_cert_t *c) {
+    proven_der_t alg, oid, bits;
     c->key_kind = PROVEN_CERT_KEY_UNKNOWN;
     if (!der_expect(&spki, DER_SEQUENCE, &alg, NULL) || !der_expect(&alg, DER_OID, &oid, NULL)) return false;
     if (!der_expect(&spki, DER_BITSTRING, &bits, NULL) || spki.n != 0 || bits.n < 1 || bits.p[0] != 0) return false;
     bits.p++; bits.n--;
     if (DER_IS(&oid, OID_RSA) || DER_IS(&oid, OID_RSA_PSS)) {
-        der_t seq;
+        proven_der_t seq;
         if (DER_IS(&oid, OID_RSA) && !params_absent_or_null(alg)) return false;
         if (!der_expect(&bits, DER_SEQUENCE, &seq, NULL) || bits.n != 0) return false;
         if (!der_uint(&seq, &c->rsa_n) || !der_uint(&seq, &c->rsa_e) || seq.n != 0) return false;
         c->key_kind = PROVEN_CERT_KEY_RSA;
     } else if (DER_IS(&oid, OID_EC_KEY)) {
-        der_t curve;
+        proven_der_t curve;
         if (!der_expect(&alg, DER_OID, &curve, NULL) || alg.n != 0) return true;       /* explicit parameters: not used */
         if (DER_IS(&curve, OID_P256) && bits.n == 65 && bits.p[0] == 0x04) c->key_kind = PROVEN_CERT_KEY_EC_P256;
         else if (DER_IS(&curve, OID_P384) && bits.n == 97 && bits.p[0] == 0x04) c->key_kind = PROVEN_CERT_KEY_EC_P384;
@@ -171,12 +171,12 @@ static bool parse_spki(der_t spki, proven_cert_t *c) {
     return true;
 }
 
-static bool parse_extensions(der_t exts, proven_cert_t *c) {
-    der_t list;
+static bool parse_extensions(proven_der_t exts, proven_cert_t *c) {
+    proven_der_t list;
     unsigned seen = 0;
     if (!der_expect(&exts, DER_SEQUENCE, &list, NULL) || exts.n != 0 || list.n == 0) return false;
     while (list.n > 0) {
-        der_t ext, oid, value, flag;
+        proven_der_t ext, oid, value, flag;
         bool critical = false;
         if (!der_expect(&list, DER_SEQUENCE, &ext, NULL) || !der_expect(&ext, DER_OID, &oid, NULL)) return false;
         if (der_expect(&ext, DER_BOOLEAN, &flag, NULL)) {
@@ -186,7 +186,7 @@ static bool parse_extensions(der_t exts, proven_cert_t *c) {
         if (!der_expect(&ext, DER_OCTETS, &value, NULL) || ext.n != 0) return false;
         unsigned bit = 0;
         if (DER_IS(&oid, OID_EXT_BASIC)) {
-            der_t seq, b;
+            proven_der_t seq, b;
             bit = 1;
             if (!der_expect(&value, DER_SEQUENCE, &seq, NULL) || value.n != 0) return false;
             if (der_expect(&seq, DER_BOOLEAN, &b, NULL)) {
@@ -198,7 +198,7 @@ static bool parse_extensions(der_t exts, proven_cert_t *c) {
                 c->has_path_len = true;
             }
         } else if (DER_IS(&oid, OID_EXT_KEY_USAGE)) {
-            der_t bits;
+            proven_der_t bits;
             bit = 2;
             if (!der_expect(&value, DER_BITSTRING, &bits, NULL) || value.n != 0 || bits.n < 1 || bits.p[0] > 7) return false;
             c->has_key_usage = true;
@@ -206,12 +206,12 @@ static bool parse_extensions(der_t exts, proven_cert_t *c) {
                 if (bits.p[1 + i / 8] & (0x80u >> (i % 8))) c->key_usage |= (proven_u32)1 << i;
             }
         } else if (DER_IS(&oid, OID_EXT_EKU)) {
-            der_t seq;
+            proven_der_t seq;
             bit = 4;
             if (!der_expect(&value, DER_SEQUENCE, &seq, NULL) || value.n != 0 || seq.n == 0) return false;
             c->has_ext_key_usage = true;
             while (seq.n > 0) {
-                der_t purpose;
+                proven_der_t purpose;
                 if (!der_expect(&seq, DER_OID, &purpose, NULL)) return false;
                 if (DER_IS(&purpose, OID_EKU_SERVER)) c->ext_key_usage |= PROVEN_CERT_EKU_SERVER_AUTH;
                 else if (DER_IS(&purpose, OID_EKU_CLIENT)) c->ext_key_usage |= PROVEN_CERT_EKU_CLIENT_AUTH;
@@ -219,12 +219,12 @@ static bool parse_extensions(der_t exts, proven_cert_t *c) {
                 else c->ext_key_usage |= PROVEN_CERT_EKU_OTHER;
             }
         } else if (DER_IS(&oid, OID_EXT_ALT_NAME)) {
-            der_t seq;
+            proven_der_t seq;
             bit = 8;
             if (!der_expect(&value, DER_SEQUENCE, &seq, NULL) || value.n != 0 || seq.n == 0) return false;
             c->alt_names.ptr = seq.p; c->alt_names.size = seq.n;
         } else if (DER_IS(&oid, OID_EXT_NAME_CONSTRAINTS)) {
-            der_t seq;
+            proven_der_t seq;
             bit = 16;
             if (!der_expect(&value, DER_SEQUENCE, &seq, NULL) || value.n != 0 || seq.n == 0) return false;
             c->name_constraints.ptr = seq.p; c->name_constraints.size = seq.n;
@@ -245,7 +245,7 @@ static bool parse_extensions(der_t exts, proven_cert_t *c) {
 proven_err_t proven_cert_parse(proven_mem_view_t der, proven_cert_t *out) {
     if (!out || !der.ptr) return PROVEN_ERR_INVALID_ARG;
     proven_cert_t c = { 0 };
-    der_t in = { der.ptr, der.size }, cert, tbs, f, sig_alg, tbs_alg, validity, sig;
+    proven_der_t in = { der.ptr, der.size }, cert, tbs, f, sig_alg, tbs_alg, validity, sig;
     proven_mem_view_t sig_alg_whole, tbs_alg_whole, spki_whole;
     c.der = der;
     c.version = 1;
@@ -289,9 +289,9 @@ proven_err_t proven_cert_parse(proven_mem_view_t der, proven_cert_t *out) {
 bool proven_cert_alt_name_next(const proven_cert_t *cert, proven_size_t *pos,
                                proven_cert_name_kind_t *kind, proven_mem_view_t *value) {
     if (!cert || !pos || !kind || !value || *pos >= cert->alt_names.size) return false;
-    der_t in = { cert->alt_names.ptr + *pos, cert->alt_names.size - *pos };
+    proven_der_t in = { cert->alt_names.ptr + *pos, cert->alt_names.size - *pos };
     proven_byte_t tag;
-    der_t body;
+    proven_der_t body;
     if (!der_read(&in, &tag, &body, NULL)) return false;
     *kind = tag == 0x82 ? PROVEN_CERT_NAME_DNS : tag == 0x87 ? PROVEN_CERT_NAME_IP : PROVEN_CERT_NAME_OTHER;
     value->ptr = body.p; value->size = body.n;
@@ -494,11 +494,11 @@ proven_err_t proven_pem_next(proven_mem_view_t pem, proven_size_t *pos, proven_u
 typedef struct {
     proven_byte_t *der;
     proven_cert_t cert;
-} store_entry_t;
+} proven_store_entry_t;
 
 struct proven_cert_store {
     proven_allocator_t alloc;
-    store_entry_t *items;
+    proven_store_entry_t *items;
     proven_size_t count;
     proven_size_t cap;
 };
@@ -535,12 +535,12 @@ proven_err_t proven_cert_store_add_der(proven_cert_store_t *store, proven_mem_vi
     proven_allocator_t a = store->alloc;
     if (store->count == store->cap) {
         proven_size_t cap = store->cap ? store->cap * 2 : 16;
-        if (cap > (proven_size_t)-1 / sizeof(store_entry_t)) return PROVEN_ERR_NOMEM;
+        if (cap > (proven_size_t)-1 / sizeof(proven_store_entry_t)) return PROVEN_ERR_NOMEM;
         proven_result_mem_mut_t m = store->items
-            ? a.realloc_fn(a.ctx, store->items, store->cap * sizeof(store_entry_t), cap * sizeof(store_entry_t), 16)
-            : a.alloc_fn(a.ctx, cap * sizeof(store_entry_t), 16);
+            ? a.realloc_fn(a.ctx, store->items, store->cap * sizeof(proven_store_entry_t), cap * sizeof(proven_store_entry_t), 16)
+            : a.alloc_fn(a.ctx, cap * sizeof(proven_store_entry_t), 16);
         if (m.err != PROVEN_OK) return m.err;
-        store->items = (store_entry_t *)m.value.ptr;
+        store->items = (proven_store_entry_t *)m.value.ptr;
         store->cap = cap;
         /* The entries moved; their views point into the DER copies, which did not. */
     }
@@ -548,7 +548,7 @@ proven_err_t proven_cert_store_add_der(proven_cert_store_t *store, proven_mem_vi
     if (m.err != PROVEN_OK) return m.err;
     proven_byte_t *copy = m.value.ptr;
     for (proven_size_t i = 0; i < der.size; ++i) copy[i] = der.ptr[i];
-    store_entry_t *it = &store->items[store->count];
+    proven_store_entry_t *it = &store->items[store->count];
     it->der = copy;
     e = proven_cert_parse((proven_mem_view_t){ .ptr = copy, .size = der.size }, &it->cert);
     if (e != PROVEN_OK) { a.free_fn(a.ctx, copy); return e; }
@@ -646,9 +646,9 @@ static bool ip_under(proven_mem_view_t ip, proven_mem_view_t c) {
 
 /* One name against one list of subtrees. Sets *typed when the list has an entry of the
  * name's kind, *hit when one matches. False when the list is malformed. */
-static bool subtrees_scan(der_t list, proven_cert_name_kind_t kind, proven_mem_view_t name, bool excluded, bool *typed, bool *hit) {
+static bool subtrees_scan(proven_der_t list, proven_cert_name_kind_t kind, proven_mem_view_t name, bool excluded, bool *typed, bool *hit) {
     while (list.n > 0) {
-        der_t tree, base;
+        proven_der_t tree, base;
         proven_byte_t tag;
         if (!der_expect(&list, DER_SEQUENCE, &tree, NULL) || !der_read(&tree, &tag, &base, NULL)) return false;
         if (tree.n != 0) return false;                               /* minimum and maximum must be absent */
@@ -672,7 +672,7 @@ static bool subtrees_scan(der_t list, proven_cert_name_kind_t kind, proven_mem_v
 /* The names of `below` against the nameConstraints of `ca`. Only DNS and IP names are
  * constrained here, because those are the only names this library asserts. */
 static bool name_constraints_ok(const proven_cert_t *ca, const proven_cert_t *below) {
-    der_t in = { ca->name_constraints.ptr, ca->name_constraints.size }, permitted = { 0 }, excluded = { 0 };
+    proven_der_t in = { ca->name_constraints.ptr, ca->name_constraints.size }, permitted = { 0 }, excluded = { 0 };
     bool has_permitted = der_expect(&in, 0xa0, &permitted, NULL);
     bool has_excluded = der_expect(&in, 0xa1, &excluded, NULL);
     if (in.n != 0 || (!has_permitted && !has_excluded)) return false;
@@ -711,7 +711,7 @@ typedef struct {
     int rank;
     proven_size_t depth;
     proven_size_t budget;                 /* signature checks left: the search is bounded */
-} cv_t;
+} proven_cv_t;
 
 static int fault_rank(proven_cert_fault_t f) {
     switch (f) {
@@ -725,12 +725,12 @@ static int fault_rank(proven_cert_fault_t f) {
     }
 }
 
-static void cv_note(cv_t *cv, proven_cert_fault_t f) {
+static void cv_note(proven_cv_t *cv, proven_cert_fault_t f) {
     if (fault_rank(f) > cv->rank) { cv->rank = fault_rank(f); cv->fault = f; }
 }
 
 /* A complete path: path[0] the leaf ... path[n-1] the anchor. Everything but signatures. */
-static proven_cert_fault_t cv_check_path(const cv_t *cv, proven_size_t n) {
+static proven_cert_fault_t cv_check_path(const proven_cv_t *cv, proven_size_t n) {
     const proven_u32 want = cv->opt->use == PROVEN_CERT_USE_CLIENT ? PROVEN_CERT_EKU_CLIENT_AUTH : PROVEN_CERT_EKU_SERVER_AUTH;
     for (proven_size_t i = 0; i + 1 < n; ++i) if (cv->path[i]->unknown_critical) return PROVEN_CERT_FAULT_CRITICAL_EXTENSION;
     for (proven_size_t i = 1; i < n; ++i) {
@@ -756,14 +756,14 @@ static proven_cert_fault_t cv_check_path(const cv_t *cv, proven_size_t n) {
     return PROVEN_CERT_FAULT_NONE;
 }
 
-static bool cv_finish(cv_t *cv, proven_size_t n) {
+static bool cv_finish(proven_cv_t *cv, proven_size_t n) {
     proven_cert_fault_t f = cv_check_path(cv, n);
     cv_note(cv, f);
     if (f == PROVEN_CERT_FAULT_NONE) { cv->depth = n; return true; }
     return false;
 }
 
-static bool cv_search(cv_t *cv, proven_size_t n) {
+static bool cv_search(proven_cv_t *cv, proven_size_t n) {
     const proven_cert_t *cur = cv->path[n - 1];
     const proven_cert_store_t *store = cv->opt->anchors;
     /* The certificate is itself an anchor. */
@@ -804,7 +804,7 @@ proven_err_t proven_cert_verify(const proven_mem_view_t *chain, proven_size_t co
     if (result) { result->fault = PROVEN_CERT_FAULT_NONE; result->depth = 0; }
     if (!chain || count == 0 || !options || !options->anchors || (options->host.size > 0 && !options->host.ptr)) return PROVEN_ERR_INVALID_ARG;
     proven_cert_t leaf, extra[CV_MAX_EXTRA];
-    cv_t cv = { 0 };
+    proven_cv_t cv = { 0 };
     if (proven_cert_parse(chain[0], &leaf) != PROVEN_OK) {
         if (result) result->fault = PROVEN_CERT_FAULT_MALFORMED;
         return PROVEN_ERR_INVALID_FORMAT;

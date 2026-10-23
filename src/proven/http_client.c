@@ -33,7 +33,7 @@ typedef struct cl_conn {
     proven_u64 last_used;
     proven_size_t key_len;
     proven_byte_t key[300];            /* "scheme://host:port" */
-} cl_conn_t;
+} proven_cl_conn_t;
 
 struct proven_http_client {
     proven_http_client_config_t cfg;   /* string views point into `strings` */
@@ -41,7 +41,7 @@ struct proven_http_client {
     proven_url_t proxy;
     bool has_proxy;
     bool proxy_socks;
-    cl_conn_t **idle;
+    proven_cl_conn_t **idle;
     proven_size_t idle_count;
     proven_u64 tick;
 };
@@ -49,7 +49,7 @@ struct proven_http_client {
 /* Everything one send needs, in one allocation. */
 typedef struct {
     proven_http_client_t *client;
-    cl_conn_t *conn;
+    proven_cl_conn_t *conn;
     proven_byte_t *buf;                /* response head, then the body read window */
     proven_size_t buf_cap;
     proven_size_t buf_len;
@@ -68,7 +68,7 @@ typedef struct {
     bool decoding;                     /* the body is decoded on its way to the caller */
     proven_mem_view_t pending;         /* decoding: encoded bytes of the window not decoded yet */
     proven_http_decoder_t_ dec;
-} cl_call_t;
+} proven_cl_call_t;
 
 static proven_u8str_view_t cl_lit(const char *s) {
     proven_size_t n = 0;
@@ -144,8 +144,8 @@ proven_err_t proven_http_client_create(const proven_http_client_config_t *config
         c->proxy_socks = socks;
     }
     if (c->cfg.max_idle_connections > 0) {
-        if (c->cfg.max_idle_connections > PROVEN_SIZE_MAX / sizeof(cl_conn_t *)) c->cfg.max_idle_connections = 64;
-        c->idle = cl_alloc(config->alloc, c->cfg.max_idle_connections * sizeof(cl_conn_t *));
+        if (c->cfg.max_idle_connections > PROVEN_SIZE_MAX / sizeof(proven_cl_conn_t *)) c->cfg.max_idle_connections = 64;
+        c->idle = cl_alloc(config->alloc, c->cfg.max_idle_connections * sizeof(proven_cl_conn_t *));
         if (!c->idle) {
             cl_free(config->alloc, c->strings);
             cl_free(config->alloc, c);
@@ -156,7 +156,7 @@ proven_err_t proven_http_client_create(const proven_http_client_config_t *config
     return PROVEN_OK;
 }
 
-static void cl_conn_close(proven_http_client_t *c, cl_conn_t *conn) {
+static void cl_conn_close(proven_http_client_t *c, proven_cl_conn_t *conn) {
     if (!conn) return;
     if (conn->wrapped) (void)proven_transport_close(conn->transport);
     (void)proven_net_close(&conn->sock);
@@ -176,9 +176,9 @@ void proven_http_client_destroy(proven_http_client_t *client) {
 // Connections
 // -----------------------------------------------------------------------------
 
-static cl_conn_t *cl_pool_take(proven_http_client_t *c, proven_u8str_view_t key) {
+static proven_cl_conn_t *cl_pool_take(proven_http_client_t *c, proven_u8str_view_t key) {
     for (proven_size_t i = 0; i < c->idle_count; ++i) {
-        cl_conn_t *k = c->idle[i];
+        proven_cl_conn_t *k = c->idle[i];
         if (k->key_len == key.size && proven_memcmp(k->key, key.ptr, key.size) == 0) {
             c->idle[i] = c->idle[--c->idle_count];
             return k;
@@ -187,7 +187,7 @@ static cl_conn_t *cl_pool_take(proven_http_client_t *c, proven_u8str_view_t key)
     return (void *)0;
 }
 
-static void cl_pool_put(proven_http_client_t *c, cl_conn_t *conn) {
+static void cl_pool_put(proven_http_client_t *c, proven_cl_conn_t *conn) {
     if (c->cfg.max_idle_connections == 0) { cl_conn_close(c, conn); return; }
     if (c->idle_count == c->cfg.max_idle_connections) {
         proven_size_t oldest = 0;
@@ -389,7 +389,7 @@ static bool cl_no_proxy(const proven_http_client_t *c, proven_u8str_view_t host)
     return false;
 }
 
-static proven_err_t cl_connect(proven_http_client_t *c, const proven_url_t *u, bool allow_reuse, cl_conn_t **out, bool *reused) {
+static proven_err_t cl_connect(proven_http_client_t *c, const proven_url_t *u, bool allow_reuse, proven_cl_conn_t **out, bool *reused) {
     *out = (void *)0;
     *reused = false;
     bool https = proven_url_scheme_is(u, cl_lit("https"));
@@ -408,13 +408,13 @@ static proven_err_t cl_connect(proven_http_client_t *c, const proven_url_t *u, b
     key[kl++] = (proven_byte_t)('0' + port % 10);
 
     if (allow_reuse) {
-        cl_conn_t *k = cl_pool_take(c, (proven_u8str_view_t){ .ptr = key, .size = kl });
+        proven_cl_conn_t *k = cl_pool_take(c, (proven_u8str_view_t){ .ptr = key, .size = kl });
         if (k) { *out = k; *reused = true; return PROVEN_OK; }
     }
 
-    cl_conn_t *conn = cl_alloc(c->cfg.alloc, sizeof *conn);
+    proven_cl_conn_t *conn = cl_alloc(c->cfg.alloc, sizeof *conn);
     if (!conn) return PROVEN_ERR_NOMEM;
-    *conn = (cl_conn_t){0};
+    *conn = (proven_cl_conn_t){0};
     for (proven_size_t i = 0; i < kl; ++i) conn->key[i] = key[i];
     conn->key_len = kl;
 
@@ -472,16 +472,16 @@ static proven_err_t cl_connect(proven_http_client_t *c, const proven_url_t *u, b
 
 /* A connection that owns itself: what an upgrade hands out. */
 static proven_result_size_t cl_owned_read(void *ctx, proven_mem_mut_t dest, proven_net_deadline_t until) {
-    return proven_transport_read(((cl_conn_t *)ctx)->transport, dest, until);
+    return proven_transport_read(((proven_cl_conn_t *)ctx)->transport, dest, until);
 }
 static proven_result_size_t cl_owned_write(void *ctx, proven_mem_view_t src, proven_net_deadline_t until) {
-    return proven_transport_write(((cl_conn_t *)ctx)->transport, src, until);
+    return proven_transport_write(((proven_cl_conn_t *)ctx)->transport, src, until);
 }
 static proven_err_t cl_owned_shutdown(void *ctx) {
-    return proven_transport_shutdown(((cl_conn_t *)ctx)->transport);
+    return proven_transport_shutdown(((proven_cl_conn_t *)ctx)->transport);
 }
 static proven_err_t cl_owned_close(void *ctx) {
-    cl_conn_t *conn = ctx;
+    proven_cl_conn_t *conn = ctx;
     proven_allocator_t a = conn->alloc;
     proven_err_t e = PROVEN_OK;
     if (conn->wrapped) e = proven_transport_close(conn->transport);
@@ -506,12 +506,12 @@ typedef struct {
     bool send_body;
     bool cross_origin;                 /* a redirect left the original host: drop the caller's credentials */
     proven_u8str_view_t authorization; /* the answer to a challenge, when there is one */
-} cl_attempt_t;
+} proven_cl_attempt_t;
 
 /* Write the request and read the response head into `call`. */
-static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_request_t *req, const proven_url_t *u, const cl_attempt_t *at) {
+static proven_err_t cl_exchange(proven_cl_call_t *call, const proven_http_client_request_t *req, const proven_url_t *u, const proven_cl_attempt_t *at) {
     proven_http_client_t *c = call->client;
-    cl_conn_t *conn = call->conn;
+    proven_cl_conn_t *conn = call->conn;
     proven_mem_mut_t out = { .ptr = call->out, .size = call->out_cap };
     proven_size_t len = 0;
     bool https = proven_url_scheme_is(u, cl_lit("https"));
@@ -747,7 +747,7 @@ static proven_err_t cl_exchange(cl_call_t *call, const proven_http_client_reques
 /* The next piece of the body, as a view into the read window of at most `max` bytes. The
  * window is refilled from the transport when it runs dry - so a view is good only until the
  * next call. PROVEN_ERR_EOF at the end of the body. */
-static proven_err_t cl_next_payload(cl_call_t *call, proven_size_t max, proven_mem_view_t *payload) {
+static proven_err_t cl_next_payload(proven_cl_call_t *call, proven_size_t max, proven_mem_view_t *payload) {
     if (call->body_done) return PROVEN_ERR_EOF;
     for (;;) {
         if (call->buf_pos < call->buf_len) {
@@ -781,7 +781,7 @@ static proven_err_t cl_next_payload(cl_call_t *call, proven_size_t max, proven_m
 
 /* Body bytes into `dest`, as they came. The decoder of the framing is fed no more than `dest`
  * can take, so a payload always fits. */
-static proven_result_size_t cl_read_body(cl_call_t *call, proven_mem_mut_t dest) {
+static proven_result_size_t cl_read_body(proven_cl_call_t *call, proven_mem_mut_t dest) {
     proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
     if (call->body_done) { res.err = PROVEN_ERR_EOF; return res; }
     if (dest.size == 0) return res;
@@ -795,7 +795,7 @@ static proven_result_size_t cl_read_body(cl_call_t *call, proven_mem_mut_t dest)
 
 /* Body bytes into `dest`, decoded. The end is the end of the HTTP body, not of the compressed
  * stream inside it: the connection is reusable exactly when it would have been. */
-static proven_result_size_t cl_read_decoded(cl_call_t *call, proven_mem_mut_t dest) {
+static proven_result_size_t cl_read_decoded(proven_cl_call_t *call, proven_mem_mut_t dest) {
     proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
     if (dest.size == 0) return res;
     for (;;) {
@@ -824,7 +824,7 @@ static proven_result_size_t cl_read_decoded(cl_call_t *call, proven_mem_mut_t de
 
 /* Read away what is left of a body so the connection can carry the next request - up to a
  * limit: past it, closing is cheaper than reading. */
-static void cl_drain(cl_call_t *call) {
+static void cl_drain(proven_cl_call_t *call) {
     proven_byte_t sink[2048];
     proven_size_t total = 0;
     while (!call->body_done && total <= CL_DRAIN_LIMIT) {
@@ -836,7 +836,7 @@ static void cl_drain(cl_call_t *call) {
 }
 
 /* Give the connection back, or close it. */
-static void cl_release_conn(cl_call_t *call) {
+static void cl_release_conn(proven_cl_call_t *call) {
     if (!call->conn) return;
     if (call->body_done && call->keep_alive && call->buf_pos == call->buf_len) cl_pool_put(call->client, call->conn);
     else cl_conn_close(call->client, call->conn);
@@ -871,9 +871,9 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
     proven_size_t cap = client->cfg.max_head_bytes;
     if (cap < 1024) cap = 1024;
     if (cap > PROVEN_SIZE_MAX / 4) return PROVEN_ERR_OVERFLOW;
-    cl_call_t *call = cl_alloc(a, sizeof *call + 2 * cap);
+    proven_cl_call_t *call = cl_alloc(a, sizeof *call + 2 * cap);
     if (!call) return PROVEN_ERR_NOMEM;
-    *call = (cl_call_t){0};
+    *call = (proven_cl_call_t){0};
     call->client = client;
     call->buf = (proven_byte_t *)(call + 1);
     call->buf_cap = cap;
@@ -882,7 +882,7 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
     for (proven_size_t i = 0; i < request->url.size; ++i) call->url[i] = request->url.ptr[i];
     call->url_len = request->url.size;
 
-    cl_attempt_t at = { .method = request->method.size ? request->method : cl_lit("GET"), .send_body = true, .cross_origin = false };
+    proven_cl_attempt_t at = { .method = request->method.size ? request->method : cl_lit("GET"), .send_body = true, .cross_origin = false };
     proven_byte_t auth_value[1024];
     proven_byte_t origin_host[256];
     proven_size_t origin_host_len = 0;
@@ -1039,7 +1039,7 @@ proven_result_size_t proven_http_client_read(proven_http_client_response_t *resp
     proven_result_size_t res = { .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
     if (!response || (dest.size > 0 && !dest.ptr)) return res;
     if (!response->internal) { res.err = PROVEN_ERR_INVALID_STATE; return res; }
-    cl_call_t *call = response->internal;
+    proven_cl_call_t *call = response->internal;
     return call->decoding ? cl_read_decoded(call, dest) : cl_read_body(call, dest);
 }
 
@@ -1047,9 +1047,9 @@ proven_err_t proven_http_client_upgrade(proven_http_client_response_t *response,
     if (out) *out = (proven_transport_t){0};
     if (early) *early = (proven_mem_view_t){0};
     if (!response || !out || !early) return PROVEN_ERR_INVALID_ARG;
-    cl_call_t *call = response->internal;
+    proven_cl_call_t *call = response->internal;
     if (!call || !call->conn || call->res.status != 101) return PROVEN_ERR_INVALID_STATE;
-    cl_conn_t *conn = call->conn;
+    proven_cl_conn_t *conn = call->conn;
     conn->alloc = call->client->cfg.alloc;
     call->conn = (void *)0;                     /* finish no longer has a connection to close */
     out->ctx = conn;
@@ -1087,7 +1087,7 @@ proven_err_t proven_http_client_read_all(proven_http_client_response_t *response
 
 void proven_http_client_finish(proven_http_client_response_t *response) {
     if (!response) return;
-    cl_call_t *call = response->internal;
+    proven_cl_call_t *call = response->internal;
     if (call) {
         proven_allocator_t a = call->client->cfg.alloc;
         cl_release_conn(call);

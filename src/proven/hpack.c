@@ -16,34 +16,34 @@
 
 #define HPACK_INT_MAX_CONTINUATION 5u      /* bytes after the prefix: values to 2^32 and no further */
 
-typedef struct { proven_u32 at, name_len, value_len; } hp_entry_t;
+typedef struct { proven_u32 at, name_len, value_len; } proven_hp_entry_t;
 
 typedef struct {
     proven_allocator_t alloc;
-    hp_entry_t *entries;               /* a ring of `slots` */
+    proven_hp_entry_t *entries;               /* a ring of `slots` */
     proven_byte_t *bytes;              /* `cap` bytes; live strings lie in [lo, hi) */
     proven_size_t slots, cap;
     proven_size_t head, count;         /* the oldest entry, and how many */
     proven_size_t lo, hi;
     proven_size_t size;                /* by the RFC's measure */
     proven_size_t max;                 /* the size in force now */
-} hp_table_t;
+} proven_hp_table_t;
 
-static void hp_table_free(hp_table_t *t) {
+static void hp_table_free(proven_hp_table_t *t) {
     if (t->entries) t->alloc.free_fn(t->alloc.ctx, t->entries);
     t->entries = (void *)0;
     t->bytes = (void *)0;
     t->slots = t->cap = t->head = t->count = t->lo = t->hi = t->size = 0;
 }
 
-static hp_entry_t *hp_at(const hp_table_t *t, proven_size_t newest_first) {
+static proven_hp_entry_t *hp_at(const proven_hp_table_t *t, proven_size_t newest_first) {
     /* Index 0 is the newest: the last one added. */
     proven_size_t at = t->head + t->count - 1 - newest_first;          /* under twice `slots`: no division */
     return &t->entries[at >= t->slots ? at - t->slots : at];
 }
 
-static void hp_evict_one(hp_table_t *t) {
-    hp_entry_t *e = &t->entries[t->head];
+static void hp_evict_one(proven_hp_table_t *t) {
+    proven_hp_entry_t *e = &t->entries[t->head];
     t->size -= (proven_size_t)e->name_len + e->value_len + PROVEN_HPACK_ENTRY_OVERHEAD;
     t->lo = (proven_size_t)e->at + e->name_len + e->value_len;
     t->head = (t->head + 1) % t->slots;
@@ -51,7 +51,7 @@ static void hp_evict_one(hp_table_t *t) {
     if (t->count == 0) { t->lo = 0; t->hi = 0; t->head = 0; }
 }
 
-static void hp_table_shrink_to(hp_table_t *t, proven_size_t max) {
+static void hp_table_shrink_to(proven_hp_table_t *t, proven_size_t max) {
     while (t->count > 0 && t->size > max) hp_evict_one(t);
     if (t->count == 0 && t->max == 0) hp_table_free(t);       /* a table that may hold nothing holds no memory */
 }
@@ -60,7 +60,7 @@ static void hp_table_shrink_to(hp_table_t *t, proven_size_t max) {
  * is in the table is kept. The table grows as it is used - a connection whose peer sends a
  * few short fields keeps a few hundred bytes, not the 4,096 the protocol allows it - and never
  * past what `max` can hold. */
-static proven_err_t hp_table_room(hp_table_t *t, proven_size_t add_slots, proven_size_t add_bytes) {
+static proven_err_t hp_table_room(proven_hp_table_t *t, proven_size_t add_slots, proven_size_t add_bytes) {
     const proven_size_t live = t->hi - t->lo;
     const proven_size_t top_slots = t->max / PROVEN_HPACK_ENTRY_OVERHEAD + 1;
     proven_size_t slots = t->slots, cap = t->cap;
@@ -79,17 +79,17 @@ static proven_err_t hp_table_room(hp_table_t *t, proven_size_t add_slots, proven
     }
     if (t->entries && slots == t->slots && cap == t->cap) return PROVEN_OK;
     if (t->max > (proven_size_t)1 << 30) return PROVEN_ERR_NOMEM;
-    proven_size_t head_bytes = slots * sizeof(hp_entry_t);
-    proven_result_mem_mut_t m = t->alloc.alloc_fn(t->alloc.ctx, head_bytes + cap, alignof(hp_entry_t));
+    proven_size_t head_bytes = slots * sizeof(proven_hp_entry_t);
+    proven_result_mem_mut_t m = t->alloc.alloc_fn(t->alloc.ctx, head_bytes + cap, alignof(proven_hp_entry_t));
     if (m.err != PROVEN_OK) return PROVEN_ERR_NOMEM;
-    hp_entry_t *entries = (hp_entry_t *)(void *)m.value.ptr;
+    proven_hp_entry_t *entries = (proven_hp_entry_t *)(void *)m.value.ptr;
     proven_byte_t *bytes = m.value.ptr + head_bytes;
     proven_size_t at = 0;
     for (proven_size_t i = 0; i < t->count; ++i) {
-        hp_entry_t e = t->entries[(t->head + i) % t->slots];
+        proven_hp_entry_t e = t->entries[(t->head + i) % t->slots];
         proven_size_t n = (proven_size_t)e.name_len + e.value_len;
         for (proven_size_t k = 0; k < n; ++k) bytes[at + k] = t->bytes[e.at + k];
-        entries[i] = (hp_entry_t){ .at = (proven_u32)at, .name_len = e.name_len, .value_len = e.value_len };
+        entries[i] = (proven_hp_entry_t){ .at = (proven_u32)at, .name_len = e.name_len, .value_len = e.value_len };
         at += n;
     }
     if (t->entries) t->alloc.free_fn(t->alloc.ctx, t->entries);
@@ -104,7 +104,7 @@ static proven_err_t hp_table_room(hp_table_t *t, proven_size_t add_slots, proven
 }
 
 /* Add an entry (RFC 7541, section 4.4). `name` and `value` must not point into the table. */
-static proven_err_t hp_table_add(hp_table_t *t, proven_u8str_view_t name, proven_u8str_view_t value) {
+static proven_err_t hp_table_add(proven_hp_table_t *t, proven_u8str_view_t name, proven_u8str_view_t value) {
     proven_size_t need = name.size + value.size + PROVEN_HPACK_ENTRY_OVERHEAD;
     if (need > t->max) {
         /* Larger than the table: it empties the table and is not added. Not an error. */
@@ -123,8 +123,8 @@ static proven_err_t hp_table_add(hp_table_t *t, proven_u8str_view_t name, proven
         t->lo = 0;
         t->hi = live;
     }
-    hp_entry_t *slot = &t->entries[(t->head + t->count) % t->slots];
-    *slot = (hp_entry_t){ .at = (proven_u32)t->hi, .name_len = (proven_u32)name.size, .value_len = (proven_u32)value.size };
+    proven_hp_entry_t *slot = &t->entries[(t->head + t->count) % t->slots];
+    *slot = (proven_hp_entry_t){ .at = (proven_u32)t->hi, .name_len = (proven_u32)name.size, .value_len = (proven_u32)value.size };
     for (proven_size_t i = 0; i < name.size; ++i) t->bytes[t->hi + i] = name.ptr[i];
     for (proven_size_t i = 0; i < value.size; ++i) t->bytes[t->hi + name.size + i] = value.ptr[i];
     t->hi += n;
@@ -133,10 +133,10 @@ static proven_err_t hp_table_add(hp_table_t *t, proven_u8str_view_t name, proven
     return PROVEN_OK;
 }
 
-static proven_u8str_view_t hp_name(const hp_table_t *t, const hp_entry_t *e) {
+static proven_u8str_view_t hp_name(const proven_hp_table_t *t, const proven_hp_entry_t *e) {
     return (proven_u8str_view_t){ .ptr = t->bytes + e->at, .size = e->name_len };
 }
-static proven_u8str_view_t hp_value(const hp_table_t *t, const hp_entry_t *e) {
+static proven_u8str_view_t hp_value(const proven_hp_table_t *t, const proven_hp_entry_t *e) {
     return (proven_u8str_view_t){ .ptr = t->bytes + e->at + e->name_len, .size = e->value_len };
 }
 
@@ -281,7 +281,7 @@ static void hp_put_int(proven_byte_t *out, proven_size_t *at, unsigned prefix, p
 // -----------------------------------------------------------------------------
 
 struct proven_hpack_decoder {
-    hp_table_t table;
+    proven_hp_table_t table;
     proven_size_t limit;               /* the largest size the peer may set: what this side announced */
     bool update_owed;                  /* the limit went below the table's size: the next block must open with an update */
     bool failed;
@@ -317,7 +317,7 @@ proven_size_t proven_hpack_decoder_table_bytes(const proven_hpack_decoder_t *d) 
 
 bool proven_hpack_decoder_table_entry(const proven_hpack_decoder_t *d, proven_size_t index, proven_u8str_view_t *name, proven_u8str_view_t *value) {
     if (!d || !name || !value || index >= d->table.count) return false;
-    const hp_entry_t *e = hp_at(&d->table, index);
+    const proven_hp_entry_t *e = hp_at(&d->table, index);
     *name = hp_name(&d->table, e);
     *value = hp_value(&d->table, e);
     return true;
@@ -330,10 +330,10 @@ typedef struct {
     proven_mem_mut_t scratch;
     proven_size_t used;                /* of scratch */
     bool over;                         /* the list passed a limit: nothing more is given out, but the block is read on */
-} hp_run_t;
+} proven_hp_run_t;
 
 /* Copy `s` into the scratch and return the copy. False when there is no room. */
-static bool hp_keep(hp_run_t *r, proven_u8str_view_t s, proven_u8str_view_t *out) {
+static bool hp_keep(proven_hp_run_t *r, proven_u8str_view_t s, proven_u8str_view_t *out) {
     if (s.size > r->scratch.size - r->used) return false;
     for (proven_size_t i = 0; i < s.size; ++i) r->scratch.ptr[r->used + i] = s.ptr[i];
     *out = (proven_u8str_view_t){ .ptr = r->scratch.ptr + r->used, .size = s.size };
@@ -343,7 +343,7 @@ static bool hp_keep(hp_run_t *r, proven_u8str_view_t s, proven_u8str_view_t *out
 
 /* A string literal (section 5.2). PROVEN_ERR_INVALID_FORMAT, or PROVEN_ERR_OUT_OF_BOUNDS when
  * it is Huffman-coded and the scratch has no room for it. */
-static proven_err_t hp_string(hp_run_t *r, proven_u8str_view_t *out) {
+static proven_err_t hp_string(proven_hp_run_t *r, proven_u8str_view_t *out) {
     if (r->pos >= r->in.size) return PROVEN_ERR_INVALID_FORMAT;
     bool huffman = (r->in.ptr[r->pos] & 0x80) != 0;
     proven_u64 n = 0;
@@ -374,8 +374,8 @@ proven_err_t proven_hpack_decode_marked(proven_hpack_decoder_t *d, proven_mem_vi
     if (count) *count = 0;
     if (!d || !count || (block.size > 0 && !block.ptr) || (header_cap > 0 && !headers) || (scratch.size > 0 && !scratch.ptr)) return PROVEN_ERR_INVALID_ARG;
     if (d->failed) return PROVEN_ERR_INVALID_FORMAT;
-    hp_table_t *t = &d->table;
-    hp_run_t r = { .in = block, .scratch = scratch };
+    proven_hp_table_t *t = &d->table;
+    proven_hp_run_t r = { .in = block, .scratch = scratch };
     proven_size_t n = 0;
     proven_u64 list = 0;
     bool fields_begun = false;
@@ -413,7 +413,7 @@ proven_err_t proven_hpack_decode_marked(proven_hpack_decoder_t *d, proven_mem_vi
                 value = hp_static_value((proven_size_t)index - 1);
             } else {
                 if (index - HPACK_STATIC_COUNT > t->count) goto fail;
-                const hp_entry_t *en = hp_at(t, (proven_size_t)(index - HPACK_STATIC_COUNT - 1));
+                const proven_hp_entry_t *en = hp_at(t, (proven_size_t)(index - HPACK_STATIC_COUNT - 1));
                 /* Copied: a later field of this block may evict it. */
                 if (!hp_keep(&r, hp_name(t, en), &name) || !hp_keep(&r, hp_value(t, en), &value)) goto no_room;
             }
@@ -432,7 +432,7 @@ proven_err_t proven_hpack_decode_marked(proven_hpack_decoder_t *d, proven_mem_vi
                 name = hp_static_name((proven_size_t)index - 1);
             } else {
                 if (index - HPACK_STATIC_COUNT > t->count) goto fail;
-                const hp_entry_t *en = hp_at(t, (proven_size_t)(index - HPACK_STATIC_COUNT - 1));
+                const proven_hp_entry_t *en = hp_at(t, (proven_size_t)(index - HPACK_STATIC_COUNT - 1));
                 if (!hp_keep(&r, hp_name(t, en), &name)) goto no_room;
             }
             e = hp_string(&r, &value);
@@ -475,7 +475,7 @@ fail:
 // -----------------------------------------------------------------------------
 
 struct proven_hpack_encoder {
-    hp_table_t table;
+    proven_hp_table_t table;
     proven_size_t own_max;             /* the most this encoder will use */
     proven_size_t peer_max;            /* the most the peer allows */
     proven_size_t announce_low;        /* a size to announce first: the smallest in force since the last block */
@@ -572,7 +572,7 @@ proven_err_t proven_hpack_encode(proven_hpack_encoder_t *c, const proven_http_he
         if ((headers[i].name.size > 0 && !headers[i].name.ptr) || (headers[i].value.size > 0 && !headers[i].value.ptr)) return PROVEN_ERR_INVALID_ARG;
     }
     if (out.size - *len < proven_hpack_encode_bound(headers, count)) return PROVEN_ERR_OUT_OF_BOUNDS;
-    hp_table_t *t = &c->table;
+    proven_hp_table_t *t = &c->table;
     /* The one thing that can fail later is the table's allocation: make it now, so that a
      * block is either written whole or not begun. */
     if (t->max > 0 && count > 0) {
@@ -608,7 +608,7 @@ proven_err_t proven_hpack_encode(proven_hpack_encoder_t *c, const proven_http_he
         }
         /* (A field this encoder never puts in the table, its name found: nothing to look for.) */
         for (proven_size_t k = 0; k < t->count && whole == 0 && (reserve == 0 || by_name == 0); ++k) {
-            const hp_entry_t *en = hp_at(t, k);
+            const proven_hp_entry_t *en = hp_at(t, k);
             if (!hp_eq(hp_name(t, en), name)) continue;
             if (by_name == 0) by_name = HPACK_STATIC_COUNT + k + 1;
             if (hp_eq(hp_value(t, en), value)) whole = HPACK_STATIC_COUNT + k + 1;

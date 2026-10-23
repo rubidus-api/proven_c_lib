@@ -29,7 +29,7 @@
 #define CL_T_BODY 4
 #define CL_T_DELAY 5        /* not a limit: the wait before a try of retry_unsent, the request with no connection */
 
-typedef struct { proven_byte_t *ptr; proven_size_t len, cap, off; bool borrowed; } cl_buf_t;
+typedef struct { proven_byte_t *ptr; proven_size_t len, cap, off; bool borrowed; } proven_cl_buf_t;
 
 /* A response body being decoded: made when such a response arrives, freed with the request. */
 typedef struct {
@@ -41,7 +41,7 @@ typedef struct {
     bool have;                         /* there is such a payload */
     bool pay_last;                     /* it ends the body */
     proven_byte_t piece[PROVEN_HTTP_CODING_PIECE];
-} cl_dec_t;
+} proven_cl_dec_t;
 
 /* What every object a caller may hold as a `proven_http_event_request_t *` begins with: this
  * request-and-connection of HTTP/1.1, and a request on an HTTP/2 connection, which is another
@@ -50,7 +50,7 @@ typedef struct {
     proven_http_event_client_t *client;
     proven_u32 depth;
     proven_u8 kind;                    /* CL_KIND_* */
-} cl_head_t;
+} proven_cl_head_t;
 
 #define CL_KIND_H1 0
 #define CL_KIND_H2 1
@@ -80,27 +80,27 @@ typedef struct cl_conn {
     proven_tls_session_t session;      /* this connection's copy of the origin's session (RFC-0020) */
     proven_u64 session_mark;           /* what it was given: proven_http_event_client_session_start_'s mark */
     proven_u64 session_stored;         /* what it last stored, or was given: a store is news only after a change */
-} cl_conn_t;
+} proven_cl_conn_t;
 
 struct proven_http_event_request {
-    cl_head_t h;
+    proven_cl_head_t h;
     struct proven_http_event_request *prev, *next;
     /* What the caller knows this request as: itself, but for a request that was started
      * while its origin's protocol was not yet known and has turned out to be HTTP/1.1 -
      * the caller holds the object it was given then, and the callbacks name that one. */
     proven_http_event_request_t *face;
-    cl_conn_t *k;                      /* its connection; null while it waits for one */
+    proven_cl_conn_t *k;                      /* its connection; null while it waits for one */
     struct proven_http_event_request *wnext;      /* the next request waiting, of any origin, in the order of starting */
     proven_loop_timer_t timer;
-    proven_net_addr_t to;              /* the origin, as in cl_conn_t; the host's bytes lie behind this struct */
-    cl_buf_t out;                      /* request bytes the transport has not taken yet */
-    cl_buf_t stash;                    /* response bytes not used yet */
+    proven_net_addr_t to;              /* the origin, as in proven_cl_conn_t; the host's bytes lie behind this struct */
+    proven_cl_buf_t out;                      /* request bytes the transport has not taken yet */
+    proven_cl_buf_t stash;                    /* response bytes not used yet */
     proven_http_body_t body;
     proven_http_event_client_callbacks_t on;
     void *ctx;
     void *user;
     proven_u64 send_left;              /* request-body bytes still promised; LENGTH_UNKNOWN when chunked */
-    cl_dec_t *dec;                     /* the response body is decoded on its way to on_body */
+    proven_cl_dec_t *dec;                     /* the response body is decoded on its way to on_body */
     proven_u32 interim;
     proven_u32 tries;                  /* times it was begun again on a new connection, none of it having been sent (retry_unsent) */
     proven_http_method_t method;
@@ -123,7 +123,7 @@ struct proven_http_event_client {
     proven_http_event_client_config_t cfg;
     proven_http_event_request_t *requests;
     proven_size_t request_count;
-    cl_conn_t *conns;                  /* HTTP/1.1 connections, busy and idle */
+    proven_cl_conn_t *conns;                  /* HTTP/1.1 connections, busy and idle */
     proven_size_t idle_count;
     proven_size_t conn_count;          /* HTTP/1.1 connections there are */
     proven_http_event_request_t *wait_head, *wait_tail;       /* requests waiting for a connection to their origin */
@@ -232,8 +232,8 @@ void proven_http_event_client_h2_test_next_id_(proven_http_event_client_t *clien
 /* For tests: what the receive window of a request's stream may grow to (RFC-0019 section 10); 0 when it has none. */
 proven_u32 proven_http_event_client_h2_test_window_(proven_http_event_request_t *request);
 
-#define PROVEN_HTTP_EVENT_REQUEST_IS_H2_(request) (((const cl_head_t *)(const void *)(request))->kind == CL_KIND_H2)
-#define PROVEN_HTTP_EVENT_REQUEST_IS_H3_(request) (((const cl_head_t *)(const void *)(request))->kind == CL_KIND_H3)
+#define PROVEN_HTTP_EVENT_REQUEST_IS_H2_(request) (((const proven_cl_head_t *)(const void *)(request))->kind == CL_KIND_H2)
+#define PROVEN_HTTP_EVENT_REQUEST_IS_H3_(request) (((const proven_cl_head_t *)(const void *)(request))->kind == CL_KIND_H3)
 
 #if !defined(PROVEN_NO_HTTP3)
 /* HTTP/3 (http_event_client_h3.c): the twins of the HTTP/2 calls above, for requests that asked

@@ -7,18 +7,18 @@
 /* Writing certificates: DER out, the mirror of cert.c's reader. Enough of X.509 for a
  * self-signed identity and for the chains the tests need - not a certificate authority. */
 
-typedef struct { proven_byte_t *p; proven_size_t len, cap; bool ok; } dw_t;
+typedef struct { proven_byte_t *p; proven_size_t len, cap; bool ok; } proven_dw_t;
 
-static void dw_bytes(dw_t *w, const proven_byte_t *b, proven_size_t n) {
+static void dw_bytes(proven_dw_t *w, const proven_byte_t *b, proven_size_t n) {
     if (!w->ok || n > w->cap - w->len) { w->ok = false; return; }
     for (proven_size_t i = 0; i < n; ++i) w->p[w->len + i] = b[i];
     w->len += n;
 }
-static void dw_byte(dw_t *w, proven_byte_t b) { dw_bytes(w, &b, 1); }
+static void dw_byte(proven_dw_t *w, proven_byte_t b) { dw_bytes(w, &b, 1); }
 
 /* Open an element: the tag, and room for the longest length used here. dw_close writes the
  * real length and closes the gap. */
-static proven_size_t dw_open(dw_t *w, proven_byte_t tag) {
+static proven_size_t dw_open(proven_dw_t *w, proven_byte_t tag) {
     static const proven_byte_t room[3] = { 0, 0, 0 };
     dw_byte(w, tag);
     proven_size_t at = w->len;
@@ -26,7 +26,7 @@ static proven_size_t dw_open(dw_t *w, proven_byte_t tag) {
     return at;
 }
 
-static void dw_close(dw_t *w, proven_size_t at) {
+static void dw_close(proven_dw_t *w, proven_size_t at) {
     if (!w->ok) return;
     proven_size_t n = w->len - at - 3;
     proven_size_t need = n < 128 ? 1 : n < 256 ? 2 : 3;
@@ -38,7 +38,7 @@ static void dw_close(dw_t *w, proven_size_t at) {
     w->len -= 3 - need;
 }
 
-static void dw_tlv(dw_t *w, proven_byte_t tag, const proven_byte_t *b, proven_size_t n) {
+static void dw_tlv(proven_dw_t *w, proven_byte_t tag, const proven_byte_t *b, proven_size_t n) {
     proven_size_t at = dw_open(w, tag);
     dw_bytes(w, b, n);
     dw_close(w, at);
@@ -48,7 +48,7 @@ static void dw_tlv(dw_t *w, proven_byte_t tag, const proven_byte_t *b, proven_si
 
 /* A non-negative INTEGER from big-endian bytes: no needless zeros, and a zero byte in front
  * when the top bit would otherwise read as a sign. */
-static void dw_uint(dw_t *w, const proven_byte_t *b, proven_size_t n) {
+static void dw_uint(proven_dw_t *w, const proven_byte_t *b, proven_size_t n) {
     while (n > 1 && b[0] == 0) { b++; n--; }
     proven_size_t at = dw_open(w, 0x02);
     if (b[0] & 0x80) dw_byte(w, 0);
@@ -56,10 +56,10 @@ static void dw_uint(dw_t *w, const proven_byte_t *b, proven_size_t n) {
     dw_close(w, at);
 }
 
-static void dw_two(dw_t *w, int v) { dw_byte(w, (proven_byte_t)('0' + v / 10)); dw_byte(w, (proven_byte_t)('0' + v % 10)); }
+static void dw_two(proven_dw_t *w, int v) { dw_byte(w, (proven_byte_t)('0' + v / 10)); dw_byte(w, (proven_byte_t)('0' + v % 10)); }
 
 /* UTCTime through 2049, GeneralizedTime from 2050, as RFC 5280 requires. */
-static void dw_time(dw_t *w, proven_i64 t) {
+static void dw_time(proven_dw_t *w, proven_i64 t) {
     proven_i64 days = t / 86400, rem = t % 86400;
     if (rem < 0) { rem += 86400; days--; }
     /* Civil date from a day count. */
@@ -84,7 +84,7 @@ static void dw_time(dw_t *w, proven_i64 t) {
 static proven_size_t cstr_len(const char *s) { proven_size_t n = 0; while (s[n]) ++n; return n; }
 
 /* Name ::= one RDN with one commonName. */
-static void dw_name(dw_t *w, const char *cn) {
+static void dw_name(proven_dw_t *w, const char *cn) {
     proven_size_t name = dw_open(w, 0x30), set = dw_open(w, 0x31), atv = dw_open(w, 0x30);
     DW_LIT(w, 0x06, "\x55\x04\x03");
     dw_tlv(w, 0x0c, (const proven_byte_t *)cn, cstr_len(cn));
@@ -98,7 +98,7 @@ static void dw_name(dw_t *w, const char *cn) {
 #define OID_RSA "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01"
 #define OID_RSA_SHA256 "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x0b"
 
-static void dw_sig_alg(dw_t *w, proven_tls_key_kind_t issuer) {
+static void dw_sig_alg(proven_dw_t *w, proven_tls_key_kind_t issuer) {
     proven_size_t at = dw_open(w, 0x30);
     if (issuer == PROVEN_TLS_KEY_ED25519) DW_LIT(w, 0x06, OID_ED25519);
     else if (issuer == PROVEN_TLS_KEY_RSA) { DW_LIT(w, 0x06, OID_RSA_SHA256); dw_tlv(w, 0x05, (const proven_byte_t *)"", 0); }
@@ -108,7 +108,7 @@ static void dw_sig_alg(dw_t *w, proven_tls_key_kind_t issuer) {
 
 /* SubjectPublicKeyInfo for an RSA key: rsaEncryption with NULL parameters, and
  * RSAPublicKey ::= SEQUENCE { modulus, publicExponent } inside the bit string. */
-static void dw_spki_rsa(dw_t *w, const proven_crypto_rsa_key_t *k) {
+static void dw_spki_rsa(proven_dw_t *w, const proven_crypto_rsa_key_t *k) {
     proven_size_t spki = dw_open(w, 0x30), alg = dw_open(w, 0x30);
     DW_LIT(w, 0x06, OID_RSA);
     dw_tlv(w, 0x05, (const proven_byte_t *)"", 0);
@@ -121,7 +121,7 @@ static void dw_spki_rsa(dw_t *w, const proven_crypto_rsa_key_t *k) {
     dw_close(w, seq); dw_close(w, bits); dw_close(w, spki);
 }
 
-static bool dw_spki(dw_t *w, proven_tls_key_kind_t kind, const proven_byte_t key[32]) {
+static bool dw_spki(proven_dw_t *w, proven_tls_key_kind_t kind, const proven_byte_t key[32]) {
     proven_byte_t pub[66];
     proven_size_t pub_len;
     pub[0] = 0;                                   /* no unused bits */
@@ -143,7 +143,7 @@ static bool dw_spki(dw_t *w, proven_tls_key_kind_t kind, const proven_byte_t key
 }
 
 /* One extension: the identifier, the critical flag when set, and the value's wrapper opened. */
-static proven_size_t dw_ext_open(dw_t *w, const char *oid, proven_size_t oid_len, bool critical, proven_size_t *ext) {
+static proven_size_t dw_ext_open(proven_dw_t *w, const char *oid, proven_size_t oid_len, bool critical, proven_size_t *ext) {
     static const proven_byte_t yes = 0xff;
     *ext = dw_open(w, 0x30);
     dw_tlv(w, 0x06, (const proven_byte_t *)oid, oid_len);
@@ -157,7 +157,7 @@ proven_err_t proven_tls_issue_(const proven_tls_issue_t *q, proven_mem_mut_t out
     if (q->issuer_kind == PROVEN_TLS_KEY_RSA ? !q->issuer_rsa : !q->issuer_key) return PROVEN_ERR_INVALID_ARG;
     if (q->not_after <= q->not_before) return PROVEN_ERR_INVALID_ARG;
     proven_byte_t tbs_buf[1400];
-    dw_t t = { tbs_buf, 0, sizeof tbs_buf, true };
+    proven_dw_t t = { tbs_buf, 0, sizeof tbs_buf, true };
     static const proven_byte_t v3 = 2, yes = 0xff;
     proven_size_t tbs = dw_open(&t, 0x30);
     proven_size_t ver = dw_open(&t, 0xa0);
@@ -225,13 +225,13 @@ proven_err_t proven_tls_issue_(const proven_tls_issue_t *q, proven_mem_mut_t out
         proven_byte_t digest[32], raw[64];
         proven_sha256(signed_part, digest);
         if (!proven_crypto_ecdsa_sign(PROVEN_CRYPTO_EC_P256, PROVEN_HMAC_SHA256, q->issuer_key, (proven_mem_view_t){ .ptr = digest, .size = 32 }, raw)) return PROVEN_ERR_INVALID_ARG;
-        dw_t s = { sig, 0, 80, true };
+        proven_dw_t s = { sig, 0, 80, true };
         proven_size_t at = dw_open(&s, 0x30);
         dw_uint(&s, raw, 32); dw_uint(&s, raw + 32, 32);
         dw_close(&s, at);
         sig_len = s.len;
     }
-    dw_t c = { out.ptr, 0, out.size, true };
+    proven_dw_t c = { out.ptr, 0, out.size, true };
     proven_size_t cert = dw_open(&c, 0x30);
     dw_bytes(&c, tbs_buf, t.len);
     dw_sig_alg(&c, q->issuer_kind);
@@ -247,7 +247,7 @@ proven_err_t proven_tls_issue_(const proven_tls_issue_t *q, proven_mem_mut_t out
 
 proven_size_t proven_tls_rsa_key_der_(const proven_crypto_rsa_key_t *k, const proven_byte_t *d, bool pkcs8, proven_mem_mut_t out) {
     static const proven_byte_t zero = 0;
-    dw_t w = { out.ptr, 0, out.size, true };
+    proven_dw_t w = { out.ptr, 0, out.size, true };
     proven_size_t info = 0, octets = 0;
     if (pkcs8) {
         info = dw_open(&w, 0x30);
@@ -270,7 +270,7 @@ proven_size_t proven_tls_rsa_key_der_(const proven_crypto_rsa_key_t *k, const pr
 
 proven_size_t proven_tls_key_der_(proven_tls_key_kind_t kind, const proven_byte_t key[32], bool sec1, proven_byte_t out[80]) {
     static const proven_byte_t zero = 0, one = 1;
-    dw_t w = { out, 0, 80, true };
+    proven_dw_t w = { out, 0, 80, true };
     if (kind == PROVEN_TLS_KEY_P256 && sec1) {
         /* ECPrivateKey ::= SEQUENCE { 1, privateKey, [0] curve } */
         proven_size_t seq = dw_open(&w, 0x30);

@@ -17,7 +17,7 @@
  * A request that asks for HTTP/3 goes to the QUIC connection the client keeps for its origin
  * (c3conn_t), made the first time: a UDP socket of its own, the transport (quic_conn.c) and
  * HTTP/3 over it (h3_conn.c), neither of which does any I/O. A request is a small object on it
- * (c3req_t), whose first member is the head http_event_client.c reads.
+ * (proven_c3req_t), whose first member is the head http_event_client.c reads.
  *
  * There is no fallback: HTTP/3 is what the caller asked for, and a server that does not answer
  * over UDP, or refuses `h3`, ends the request with that reason. Nothing is tried over TCP.
@@ -39,7 +39,7 @@
 typedef struct c3conn c3conn_t;
 
 typedef struct c3req {
-    cl_head_t h;                       /* first: what http_event_client.c reads */
+    proven_cl_head_t h;                       /* first: what http_event_client.c reads */
     c3conn_t *conn;                    /* null while it waits for a connection or a try */
     struct c3req *prev, *next;
     struct c3req *wnext;               /* in the client's list of those that wait for room */
@@ -67,7 +67,7 @@ typedef struct c3req {
     bool sent_early;                   /* submitted before the handshake was complete: early data (RFC-0021) */
     bool early_again;                  /* sent again once after a 425 or a refusal: never early, never a third time */
     proven_byte_t host[256];
-} c3req_t;
+} proven_c3req_t;
 
 struct c3conn {
     proven_http_event_client_t *client;
@@ -81,7 +81,7 @@ struct c3conn {
     proven_tls_session_t session;
     proven_u64 session_mark;           /* what it was given (RFC-0020) */
     proven_u64 session_stored;         /* what it last stored, or was given */
-    c3req_t *reqs;
+    proven_c3req_t *reqs;
     proven_size_t count;
     proven_net_addr_t to;
     proven_time_t born, idle_since, write_since;
@@ -112,9 +112,9 @@ static void *c3_alloc(proven_allocator_t a, proven_size_t n) {
 
 static proven_u64 c3_now_us(void) { return (proven_u64)proven_time_monotonic_now() / 1000u; }
 
-static proven_http_event_request_t *c3_handle(c3req_t *r) { return (proven_http_event_request_t *)(void *)r; }
-static c3req_t *c3_of(proven_http_event_request_t *request) { return (c3req_t *)(void *)request; }
-static const c3req_t *c3_of_const(const proven_http_event_request_t *request) { return (const c3req_t *)(const void *)request; }
+static proven_http_event_request_t *c3_handle(proven_c3req_t *r) { return (proven_http_event_request_t *)(void *)r; }
+static proven_c3req_t *c3_of(proven_http_event_request_t *request) { return (proven_c3req_t *)(void *)request; }
+static const proven_c3req_t *c3_of_const(const proven_http_event_request_t *request) { return (const proven_c3req_t *)(const void *)request; }
 
 static bool c3_same_addr(const proven_net_addr_t *a, const proven_net_addr_t *b) {
     if (a->family != b->family || a->port != b->port) return false;
@@ -128,7 +128,7 @@ static bool c3_same_addr(const proven_net_addr_t *a, const proven_net_addr_t *b)
 
 static void c_round(c3conn_t *c);
 static void c_arm(c3conn_t *c);
-static void r_place(c3req_t *r);
+static void r_place(proven_c3req_t *r);
 
 static void c_enter(c3conn_t *c) { c->depth++; }
 
@@ -138,22 +138,22 @@ static void c_leave(c3conn_t *c) {
     a.free_fn(a.ctx, c);
 }
 
-static void r_enter(c3req_t *r) { r->h.depth++; }
+static void r_enter(proven_c3req_t *r) { r->h.depth++; }
 
-static void r_leave(c3req_t *r) {
+static void r_leave(proven_c3req_t *r) {
     if (--r->h.depth > 0 || !r->dead) return;
     proven_allocator_t a = r->h.client->alloc;
     a.free_fn(a.ctx, r);
 }
 
-static void r_free_parts(c3req_t *r) {
+static void r_free_parts(proven_c3req_t *r) {
     proven_allocator_t a = r->h.client->alloc;
     if (r->copy) { a.free_fn(a.ctx, r->copy); r->copy = (void *)0; }
     if (r->out) { a.free_fn(a.ctx, r->out); r->out = (void *)0; r->out_len = r->out_off = 0; }
     if (r->dec) { proven_http_decoder_free_(r->dec); a.free_fn(a.ctx, r->dec); r->dec = (void *)0; }
 }
 
-static void r_unlink(c3req_t *r) {
+static void r_unlink(proven_c3req_t *r) {
     c3conn_t *c = r->conn;
     if (!c) return;
     if (r->prev) r->prev->next = r->next;
@@ -164,8 +164,8 @@ static void r_unlink(c3req_t *r) {
     r->conn = (void *)0;
 }
 
-static void r_attach(c3req_t *r, c3conn_t *c) {
-    c3req_t *last = c->reqs;
+static void r_attach(proven_c3req_t *r, c3conn_t *c) {
+    proven_c3req_t *last = c->reqs;
     while (last && last->next) last = last->next;
     r->conn = c;
     r->prev = last;
@@ -175,22 +175,22 @@ static void r_attach(c3req_t *r, c3conn_t *c) {
     c->count++;
 }
 
-static void r_undelay(c3req_t *r) {
+static void r_undelay(proven_c3req_t *r) {
     if (!r->delayed) return;
     proven_http_event_client_t *cl = r->h.client;
-    c3req_t *before = (void *)0;
-    for (c3req_t *i = cl->h3_delayed; i && i != r; i = i->wnext) before = i;
+    proven_c3req_t *before = (void *)0;
+    for (proven_c3req_t *i = cl->h3_delayed; i && i != r; i = i->wnext) before = i;
     if (before) before->wnext = r->wnext;
     else cl->h3_delayed = r->wnext;
     r->wnext = (void *)0;
     r->delayed = false;
 }
 
-static void r_unroom(c3req_t *r) {
+static void r_unroom(proven_c3req_t *r) {
     if (!r->waiting_room) return;
     proven_http_event_client_t *cl = r->h.client;
-    c3req_t *before = (void *)0;
-    for (c3req_t *i = cl->h3_roomless; i && i != r; i = i->wnext) before = i;
+    proven_c3req_t *before = (void *)0;
+    for (proven_c3req_t *i = cl->h3_roomless; i && i != r; i = i->wnext) before = i;
     if (before) before->wnext = r->wnext;
     else cl->h3_roomless = r->wnext;
     if (cl->h3_roomless_last == r) cl->h3_roomless_last = before;
@@ -200,7 +200,7 @@ static void r_unroom(c3req_t *r) {
 }
 
 /* The end of a request, good or bad: once. */
-static void r_finish(c3req_t *r, proven_err_t why) {
+static void r_finish(proven_c3req_t *r, proven_err_t why) {
     if (r->dead) return;
     c3conn_t *c = r->conn;
     proven_http_event_client_t *cl = r->h.client;
@@ -230,7 +230,7 @@ static void c_call_back(c3conn_t *c);
  * the origin again: at once, or after retry_delay_ms; on another connection, made if need be. */
 static void r_wait_fire(void *ctx);
 
-static void r_unsent(c3req_t *r) {
+static void r_unsent(proven_c3req_t *r) {
     if (r->dead) return;
     proven_http_event_client_t *cl = r->h.client;
     if (cl->closing || r->streamed || r->got_head || r->tries >= cl->cfg.retry_unsent) { r_finish(r, PROVEN_ERR_AGAIN); return; }
@@ -249,7 +249,7 @@ static void r_unsent(c3req_t *r) {
 
 /* A request sent as early data and not answered as such: once more, never early. On this
  * connection when it is up, else on another. Not counted against retry_unsent. */
-static void r_again(c3req_t *r) {
+static void r_again(proven_c3req_t *r) {
     if (r->dead) return;
     proven_http_event_client_t *cl = r->h.client;
     if (cl->closing) { r_finish(r, PROVEN_ERR_AGAIN); return; }
@@ -274,7 +274,7 @@ static void c_end_requests(c3conn_t *c) {
         proven_http_event_client_session_keep_(c->client, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, c->port, true, &c->session, c->session_mark, &c->session_stored, false, false);
     }
     while (c->reqs) {
-        c3req_t *r = c->reqs;
+        proven_c3req_t *r = c->reqs;
         if (refused && r->sent_early && !r->got_head && !r->early_again) { r_again(r); continue; }
         /* One the server never saw may go again elsewhere - but not when the connection never
          * came up: that is the answer for every request to this origin, and is theirs. */
@@ -390,7 +390,7 @@ static bool c_over(const c3conn_t *c) {
 // Requests out
 // -----------------------------------------------------------------------------
 
-static void r_expect(c3req_t *r) {
+static void r_expect(proven_c3req_t *r) {
     const proven_http_event_client_config_t *cfg = &r->h.client->cfg;
     proven_u32 ms = 0;
     if (!r->has_id || r->paused) ms = 0;
@@ -400,7 +400,7 @@ static void r_expect(c3req_t *r) {
 }
 
 /* What a request holds of its body, towards the engine; its end when all of it has gone. */
-static void r_push(c3req_t *r) {
+static void r_push(proven_c3req_t *r) {
     if (r->dead || !r->has_id || r->engine_done) return;
     c3conn_t *c = r->conn;
     proven_http_event_client_t *cl = r->h.client;
@@ -424,7 +424,7 @@ static void r_push(c3req_t *r) {
 }
 
 /* Onto a stream. PROVEN_ERR_BUSY: the server's limit, or not up yet - it waits. */
-static proven_err_t r_submit(c3req_t *r) {
+static proven_err_t r_submit(proven_c3req_t *r) {
     c3conn_t *c = r->conn;
     proven_http_event_client_t *cl = c->client;
     if (r->query_alone) return PROVEN_ERR_INVALID_ARG;
@@ -509,7 +509,7 @@ static bool g_c3_early_any;
 void proven_http_event_client_h3_test_early_any_(bool on) { g_c3_early_any = on; }
 
 /* What may go as early data (RFC-0021 D-3): GET, HEAD or OPTIONS with no body, never twice. */
-static bool r_early_ok(const c3req_t *r) {
+static bool r_early_ok(const proven_c3req_t *r) {
     if (g_c3_early_any && !r->early_again && !r->streamed) return true;
     if (r->early_again || r->streamed || r->body.size != 0 || r->body_length != 0) return false;
     const proven_http_method_t m = proven_http_method_from_text(r->method);
@@ -520,7 +520,7 @@ static void c_submit_waiting(c3conn_t *c) {
     if (c->dead || c->closed || (!c->up && !c->early) || c->over) return;
     for (bool again = true; again && !c->dead;) {
         again = false;
-        for (c3req_t *r = c->reqs; r; r = r->next) {
+        for (proven_c3req_t *r = c->reqs; r; r = r->next) {
             if (r->has_id || r->dead) continue;
             if (!c->up && !r_early_ok(r)) continue;          /* the rest wait for the handshake */
             r->sent_early = !c->up;
@@ -537,7 +537,7 @@ static void c_submit_waiting(c3conn_t *c) {
 // Responses
 // -----------------------------------------------------------------------------
 
-static bool r_deliver(c3req_t *r, proven_mem_view_t piece, bool last) {
+static bool r_deliver(proven_c3req_t *r, proven_mem_view_t piece, bool last) {
     proven_http_event_client_t *cl = r->h.client;
     if (!r->dec) {
         r->got += piece.size;
@@ -579,7 +579,7 @@ static bool r_deliver(c3req_t *r, proven_mem_view_t piece, bool last) {
     return !r->dead;
 }
 
-static void c_response(c3conn_t *c, c3req_t *r, const proven_h3_event_t *ev) {
+static void c_response(c3conn_t *c, proven_c3req_t *r, const proven_h3_event_t *ev) {
     proven_http_event_client_t *cl = c->client;
     if (ev->status < 200 || r->got_head) return;          /* an interim response: not the answer, and not passed on */
     if (ev->status == 425 && r->sent_early && !r->early_again) {
@@ -610,8 +610,8 @@ static void c_response(c3conn_t *c, c3req_t *r, const proven_h3_event_t *ev) {
     r_leave(r);
 }
 
-static c3req_t *c_find_req(const c3conn_t *c, proven_u64 id) {
-    for (c3req_t *r = c->reqs; r; r = r->next) if (r->has_id && r->id == id) return r;
+static proven_c3req_t *c_find_req(const c3conn_t *c, proven_u64 id) {
+    for (proven_c3req_t *r = c->reqs; r; r = r->next) if (r->has_id && r->id == id) return r;
     return (void *)0;
 }
 
@@ -627,7 +627,7 @@ static proven_err_t c_close_reason(const proven_h3_event_t *ev) {
 }
 
 static void c_event(c3conn_t *c, const proven_h3_event_t *ev) {
-    c3req_t *r = ev->kind == PROVEN_H3_EV_HEADERS || ev->kind == PROVEN_H3_EV_DATA || ev->kind == PROVEN_H3_EV_TRAILERS || ev->kind == PROVEN_H3_EV_STREAM_RESET ||
+    proven_c3req_t *r = ev->kind == PROVEN_H3_EV_HEADERS || ev->kind == PROVEN_H3_EV_DATA || ev->kind == PROVEN_H3_EV_TRAILERS || ev->kind == PROVEN_H3_EV_STREAM_RESET ||
                  ev->kind == PROVEN_H3_EV_STOP_SENDING || ev->kind == PROVEN_H3_EV_STREAM_WRITABLE ? c_find_req(c, ev->stream_id) : (void *)0;
     switch (ev->kind) {
         case PROVEN_H3_EV_HEADERS: if (r) c_response(c, r, ev); break;
@@ -670,7 +670,7 @@ static void c_event(c3conn_t *c, const proven_h3_event_t *ev) {
             c->over = true;
             for (bool again = true; again && !c->dead;) {
                 again = false;
-                for (c3req_t *w = c->reqs; w; w = w->next) if (!w->has_id) { r_unsent(w); again = true; break; }
+                for (proven_c3req_t *w = c->reqs; w; w = w->next) if (!w->has_id) { r_unsent(w); again = true; break; }
             }
             break;
         case PROVEN_H3_EV_QUIC:
@@ -698,7 +698,7 @@ static void c_check_time(c3conn_t *c) {
     const proven_time_t now = proven_time_monotonic_now();
     for (bool again = true; again && !c->dead;) {
         again = false;
-        for (c3req_t *r = c->reqs; r; r = r->next) {
+        for (proven_c3req_t *r = c->reqs; r; r = r->next) {
             if (r->due == 0 || r->due > now) continue;
             r_finish(r, PROVEN_ERR_TIMEOUT);
             again = true;
@@ -734,7 +734,7 @@ static void c_arm(c3conn_t *c) {
     if (!c->closed) {
         if (!c->up) due = c->born + (proven_time_t)cfg->connect_timeout_ms * 1000000;
         bool waiting = false;
-        for (const c3req_t *r = c->reqs; r; r = r->next) {
+        for (const proven_c3req_t *r = c->reqs; r; r = r->next) {
             if (r->due != 0) due = t_min(due, r->due);
             if (r->blocked) waiting = true;
         }
@@ -771,7 +771,7 @@ static void c_round(c3conn_t *c) {
              * any request: the walk starts again after each. */
             for (bool again = true; again && !c->dead;) {
                 again = false;
-                for (c3req_t *r = c->reqs; r; r = r->next) {
+                for (proven_c3req_t *r = c->reqs; r; r = r->next) {
                     if (r->dead || !r->has_id || !r->streamed || !r->want_writable || r->blocked || r->end_asked || r->engine_done) continue;
                     r->want_writable = false;
                     if (r->on.on_writable) { r_enter(r); r->on.on_writable(r->ctx, c3_handle(r)); r_leave(r); again = true; break; }
@@ -780,7 +780,7 @@ static void c_round(c3conn_t *c) {
             /* Bodies that wait for nothing but a turn. r_push may end a request: the walk starts again. */
             for (bool again = true; again && !c->dead;) {
                 again = false;
-                for (c3req_t *r = c->reqs; r; r = r->next) {
+                for (proven_c3req_t *r = c->reqs; r; r = r->next) {
                     if (!r->has_id || r->blocked || r->engine_done || !(r->out_len > 0 || r->end_asked)) continue;
                     r_push(r);
                     again = true;
@@ -902,13 +902,13 @@ static proven_err_t c_open(proven_http_event_client_t *cl, proven_u8str_view_t h
 }
 
 static void r_room_fire(void *ctx) {
-    c3req_t *r = ctx;
+    proven_c3req_t *r = ctx;
     if (r->dead) return;
     r_finish(r, PROVEN_ERR_TIMEOUT);               /* no room for a connection within connect_timeout_ms */
 }
 
 /* Onto the connection for its origin, made if need be; or, with no room for one, into the wait. */
-static void r_place(c3req_t *r) {
+static void r_place(proven_c3req_t *r) {
     proven_http_event_client_t *cl = r->h.client;
     const proven_u8str_view_t host = { .ptr = r->host, .size = r->host_len };
     c3conn_t *c = c_find(cl, host, r->port, &r->to);
@@ -917,7 +917,7 @@ static void r_place(c3req_t *r) {
     if (e == PROVEN_ERR_BUSY && cl->cfg.max_connections != 0) {
         if (cl->h3_roomless_count >= cl->cfg.max_waiting_requests) { r_finish(r, PROVEN_ERR_BUSY); return; }
         r->waiting_room = true;
-        if (cl->h3_roomless_last) ((c3req_t *)cl->h3_roomless_last)->wnext = r;
+        if (cl->h3_roomless_last) ((proven_c3req_t *)cl->h3_roomless_last)->wnext = r;
         else cl->h3_roomless = r;
         cl->h3_roomless_last = r;
         cl->h3_roomless_count++;
@@ -930,7 +930,7 @@ static void r_place(c3req_t *r) {
 }
 
 static void r_wait_fire(void *ctx) {
-    c3req_t *r = ctx;
+    proven_c3req_t *r = ctx;
     if (r->dead) return;
     r_undelay(r);
     r_place(r);
@@ -951,19 +951,19 @@ proven_err_t proven_http_event_client_h3_start_(proven_http_event_client_t *cl, 
     c3conn_t *c = c_find(cl, host, port, &to);
     if (c) {
         proven_size_t waiting = 0;
-        for (const c3req_t *w = c->reqs; w; w = w->next) if (!w->has_id) waiting++;
+        for (const proven_c3req_t *w = c->reqs; w; w = w->next) if (!w->has_id) waiting++;
         if (waiting >= cl->cfg.max_waiting_requests) return PROVEN_ERR_BUSY;
     }
     proven_size_t bytes = o->url.size + method.size + o->header_count * sizeof(proven_http_header_t) + o->body.size;
     for (proven_size_t i = 0; i < o->header_count; ++i) bytes += o->headers[i].name.size + o->headers[i].value.size;
     const bool behind = bytes <= C3_COPY_BEHIND;
-    c3req_t *r = c3_alloc(cl->alloc, sizeof *r + (behind ? bytes : 0));
+    proven_c3req_t *r = c3_alloc(cl->alloc, sizeof *r + (behind ? bytes : 0));
     proven_byte_t *copy = !r ? (void *)0 : behind ? (proven_byte_t *)(r + 1) : c3_alloc(cl->alloc, bytes ? bytes : 1);
     if (!r || !copy) {
         if (r) cl->alloc.free_fn(cl->alloc.ctx, r);
         return PROVEN_ERR_NOMEM;
     }
-    r->h = (cl_head_t){ .client = cl, .kind = CL_KIND_H3 };
+    r->h = (proven_cl_head_t){ .client = cl, .kind = CL_KIND_H3 };
     r->on = o->on;
     r->ctx = o->ctx;
     r->copy = behind ? (void *)0 : copy;
@@ -1002,7 +1002,7 @@ proven_err_t proven_http_event_client_h3_start_(proven_http_event_client_t *cl, 
                 cl->request_count++;
                 if (out) *out = c3_handle(r);
                 r->waiting_room = true;
-                if (cl->h3_roomless_last) ((c3req_t *)cl->h3_roomless_last)->wnext = r;
+                if (cl->h3_roomless_last) ((proven_c3req_t *)cl->h3_roomless_last)->wnext = r;
                 else cl->h3_roomless = r;
                 cl->h3_roomless_last = r;
                 cl->h3_roomless_count++;
@@ -1046,7 +1046,7 @@ void proven_http_event_client_h3_freed_(proven_http_event_client_t *cl) {
     if (cl->closing || cl->h3_room_busy) return;
     cl->h3_room_busy = true;
     while (cl->h3_roomless) {
-        c3req_t *r = cl->h3_roomless;
+        proven_c3req_t *r = cl->h3_roomless;
         const proven_u8str_view_t host = { .ptr = r->host, .size = r->host_len };
         c3conn_t *c = c_find(cl, host, r->port, &r->to);
         if (!c) {
@@ -1076,8 +1076,8 @@ void proven_http_event_client_h3_destroy_(proven_http_event_client_t *cl) {
     if (cl->h3_batch) { cl->alloc.free_fn(cl->alloc.ctx, cl->h3_batch); cl->h3_batch = (void *)0; }
 }
 
-static void call_begin(c3req_t *r) { r_enter(r); if (r->conn) { c_enter(r->conn); r->conn->calls++; } }
-static void call_end(c3req_t *r, c3conn_t *c) {
+static void call_begin(proven_c3req_t *r) { r_enter(r); if (r->conn) { c_enter(r->conn); r->conn->calls++; } }
+static void call_end(proven_c3req_t *r, c3conn_t *c) {
     if (c) { c->calls--; if (!c->dead) { c_send(c); c_call_back(c); } c_leave(c); }
     r_leave(r);
 }
@@ -1087,7 +1087,7 @@ void proven_http_event_client_h3_test_retire_(proven_http_event_client_t *client
 }
 
 int proven_http_event_client_h3_early_(proven_http_event_request_t *request) {
-    c3req_t *r = c3_of(request);
+    proven_c3req_t *r = c3_of(request);
     if (r->early_again) return 3;
     if (!r->sent_early || !r->conn || !r->conn->q) return 0;
     proven_quic_stats_t st;
@@ -1096,12 +1096,12 @@ int proven_http_event_client_h3_early_(proven_http_event_request_t *request) {
 }
 
 bool proven_http_event_client_h3_resumed_(proven_http_event_request_t *request) {
-    c3req_t *r = c3_of(request);
+    proven_c3req_t *r = c3_of(request);
     return r->conn && r->conn->q && proven_quic_conn_resumed(r->conn->q);
 }
 
 proven_result_size_t proven_http_event_client_h3_write_(proven_http_event_request_t *request, proven_mem_view_t data) {
-    c3req_t *r = c3_of(request);
+    proven_c3req_t *r = c3_of(request);
     if (r->dead || !r->streamed || r->end_asked) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
     if (r->body_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN && data.size > (r->has_id ? r->send_left : r->body_length)) return (proven_result_size_t){ .err = PROVEN_ERR_OUT_OF_BOUNDS, .value = 0 };
     if (!r->has_id || r->blocked || r->engine_done) { r->want_writable = true; return (proven_result_size_t){ .err = PROVEN_OK, .value = 0 }; }
@@ -1121,7 +1121,7 @@ proven_result_size_t proven_http_event_client_h3_write_(proven_http_event_reques
 }
 
 proven_err_t proven_http_event_client_h3_end_(proven_http_event_request_t *request) {
-    c3req_t *r = c3_of(request);
+    proven_c3req_t *r = c3_of(request);
     if (r->dead || !r->streamed || r->end_asked) return PROVEN_ERR_INVALID_STATE;
     if (r->body_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN && (r->has_id ? r->send_left : r->body_length) != 0) {
         r_finish(r, PROVEN_ERR_INVALID_FORMAT);
@@ -1143,7 +1143,7 @@ proven_err_t proven_http_event_client_h3_end_(proven_http_event_request_t *reque
 }
 
 void proven_http_event_client_h3_abort_(proven_http_event_request_t *request) {
-    c3req_t *r = c3_of(request);
+    proven_c3req_t *r = c3_of(request);
     if (r->dead) return;
     c3conn_t *c = r->conn;
     call_begin(r);
@@ -1152,7 +1152,7 @@ void proven_http_event_client_h3_abort_(proven_http_event_request_t *request) {
 }
 
 void proven_http_event_client_h3_pause_(proven_http_event_request_t *request) {
-    c3req_t *r = c3_of(request);
+    proven_c3req_t *r = c3_of(request);
     if (r->dead || r->paused) return;
     r->paused = true;
     r->due = 0;
@@ -1160,7 +1160,7 @@ void proven_http_event_client_h3_pause_(proven_http_event_request_t *request) {
 }
 
 void proven_http_event_client_h3_resume_(proven_http_event_request_t *request) {
-    c3req_t *r = c3_of(request);
+    proven_c3req_t *r = c3_of(request);
     if (r->dead || !r->paused) return;
     r->paused = false;
     r_expect(r);

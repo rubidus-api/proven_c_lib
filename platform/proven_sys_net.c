@@ -29,9 +29,9 @@
 #include <afunix.h>
 #include <windows.h>
 
-typedef SOCKET native_socket_t;
-typedef int native_len_t;
-typedef WSAPOLLFD native_pollfd_t;
+typedef SOCKET proven_native_socket_t;
+typedef int proven_native_len_t;
+typedef WSAPOLLFD proven_native_pollfd_t;
 #define NATIVE_INVALID INVALID_SOCKET
 #define native_close closesocket
 
@@ -102,8 +102,8 @@ static proven_sys_net_result_t net_reason(int e) {
 
 static bool net_interrupted(int e) { return e == WSAEINTR; }
 
-static native_socket_t native_open(int af, int type) {
-    native_socket_t s = WSASocketW(af, type, 0, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+static proven_native_socket_t native_open(int af, int type) {
+    proven_native_socket_t s = WSASocketW(af, type, 0, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
     if (s == INVALID_SOCKET) return s;
     u_long on = 1;
     if (ioctlsocket(s, FIONBIO, &on) != 0) { closesocket(s); return INVALID_SOCKET; }
@@ -111,21 +111,21 @@ static native_socket_t native_open(int af, int type) {
 }
 
 /* An accepted socket does not reliably inherit either property. */
-static bool native_prepare_accepted(native_socket_t s) {
+static bool native_prepare_accepted(proven_native_socket_t s) {
     u_long on = 1;
     if (ioctlsocket(s, FIONBIO, &on) != 0) return false;
     SetHandleInformation((HANDLE)s, HANDLE_FLAG_INHERIT, 0);
     return true;
 }
 
-static void native_listener_options(native_socket_t s) {
+static void native_listener_options(proven_native_socket_t s) {
     /* Not SO_REUSEADDR: on Windows that lets another process bind the same port and take the
      * connections. Exclusive use is the option that means what SO_REUSEADDR means elsewhere. */
     BOOL on = TRUE;
     (void)setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&on, sizeof on);
 }
 
-static void native_datagram_options(native_socket_t s) {
+static void native_datagram_options(proven_native_socket_t s) {
     /* Without this, a datagram sent to a port nobody listens on makes a LATER receive on this
      * socket fail with a connection reset - an error about some other packet. */
     BOOL off = FALSE;
@@ -156,9 +156,9 @@ static void native_datagram_options(native_socket_t s) {
 #include <netinet/udp.h>
 #endif
 
-typedef int native_socket_t;
-typedef socklen_t native_len_t;
-typedef struct pollfd native_pollfd_t;
+typedef int proven_native_socket_t;
+typedef socklen_t proven_native_len_t;
+typedef struct pollfd proven_native_pollfd_t;
 #define NATIVE_INVALID (-1)
 #define native_close close
 
@@ -212,7 +212,7 @@ static bool net_interrupted(int e) { return e == EINTR; }
 /* Linux makes a socket non-blocking and close-on-exec in the call that creates it; elsewhere
  * the two flags are set right after. */
 #if !defined(__linux__)
-static bool native_set_flags(native_socket_t s) {
+static bool native_set_flags(proven_native_socket_t s) {
     int fl = fcntl(s, F_GETFL, 0);
     if (fl < 0 || fcntl(s, F_SETFL, fl | O_NONBLOCK) != 0) return false;
     int fd_flags = fcntl(s, F_GETFD, 0);
@@ -225,9 +225,9 @@ static bool native_set_flags(native_socket_t s) {
 }
 #endif
 
-static native_socket_t native_open(int af, int type) {
+static proven_native_socket_t native_open(int af, int type) {
 #if defined(__linux__)
-    native_socket_t s = socket(af, type | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    proven_native_socket_t s = socket(af, type | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (s < 0) return s;
 #ifdef SO_NOSIGPIPE
     int on = 1;
@@ -235,14 +235,14 @@ static native_socket_t native_open(int af, int type) {
 #endif
     return s;
 #else
-    native_socket_t s = socket(af, type, 0);
+    proven_native_socket_t s = socket(af, type, 0);
     if (s < 0) return s;
     if (!native_set_flags(s)) { close(s); return -1; }
     return s;
 #endif
 }
 
-static bool native_prepare_accepted(native_socket_t s) {
+static bool native_prepare_accepted(proven_native_socket_t s) {
 #if defined(__linux__)
     (void)s;
     return true;            /* accept4 already set both flags */
@@ -251,13 +251,13 @@ static bool native_prepare_accepted(native_socket_t s) {
 #endif
 }
 
-static void native_listener_options(native_socket_t s) {
+static void native_listener_options(proven_native_socket_t s) {
     /* A restarted server may bind while connections of the previous run are still in TIME_WAIT. */
     int on = 1;
     (void)setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
 }
 
-static void native_datagram_options(native_socket_t s) { (void)s; }
+static void native_datagram_options(proven_native_socket_t s) { (void)s; }
 
 #ifdef MSG_NOSIGNAL
 #define NATIVE_SEND_FLAGS MSG_NOSIGNAL
@@ -288,14 +288,14 @@ static int native_family(proven_sys_net_family_t family) {
 }
 
 /* Build the native address. Returns its length, or 0 when the address cannot be expressed. */
-static native_len_t to_native(const proven_sys_net_addr_t *a, struct sockaddr_storage *out) {
+static proven_native_len_t to_native(const proven_sys_net_addr_t *a, struct sockaddr_storage *out) {
     memset(out, 0, sizeof *out);
     if (a->family == PROVEN_SYS_NET_FAMILY_IPV4) {
         struct sockaddr_in *in = (struct sockaddr_in *)out;
         in->sin_family = AF_INET;
         in->sin_port = htons(a->port);
         memcpy(&in->sin_addr, a->ip, 4);
-        return (native_len_t)sizeof *in;
+        return (proven_native_len_t)sizeof *in;
     }
     if (a->family == PROVEN_SYS_NET_FAMILY_IPV6) {
         struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)out;
@@ -303,7 +303,7 @@ static native_len_t to_native(const proven_sys_net_addr_t *a, struct sockaddr_st
         in6->sin6_port = htons(a->port);
         memcpy(&in6->sin6_addr, a->ip, 16);
         in6->sin6_scope_id = a->scope_id;
-        return (native_len_t)sizeof *in6;
+        return (proven_native_len_t)sizeof *in6;
     }
     if (a->family == PROVEN_SYS_NET_FAMILY_UNIX) {
         struct sockaddr_un *un = (struct sockaddr_un *)out;
@@ -311,12 +311,12 @@ static native_len_t to_native(const proven_sys_net_addr_t *a, struct sockaddr_st
         un->sun_family = AF_UNIX;
         memcpy(un->sun_path, a->path, a->path_len);
         un->sun_path[a->path_len] = '\0';
-        return (native_len_t)sizeof *un;
+        return (proven_native_len_t)sizeof *un;
     }
     return 0;
 }
 
-static void from_native(const struct sockaddr_storage *in, native_len_t len, proven_sys_net_addr_t *out) {
+static void from_native(const struct sockaddr_storage *in, proven_native_len_t len, proven_sys_net_addr_t *out) {
     memset(out, 0, sizeof *out);
     if (in->ss_family == AF_INET) {
         const struct sockaddr_in *v4 = (const struct sockaddr_in *)in;
@@ -345,14 +345,14 @@ static void from_native(const struct sockaddr_storage *in, native_len_t len, pro
     }
 }
 
-static proven_sys_net_result_t open_bound(const proven_sys_net_addr_t *addr, int type, native_socket_t *out) {
+static proven_sys_net_result_t open_bound(const proven_sys_net_addr_t *addr, int type, proven_native_socket_t *out) {
     if (!net_ready()) return PROVEN_SYS_NET_ERROR;
     int af = native_family(addr->family);
     struct sockaddr_storage ss;
-    native_len_t len = to_native(addr, &ss);
+    proven_native_len_t len = to_native(addr, &ss);
     if (af < 0 || len == 0) return PROVEN_SYS_NET_ADDR_INVALID;
 
-    native_socket_t s = native_open(af, type);
+    proven_native_socket_t s = native_open(af, type);
     if (s == NATIVE_INVALID) return net_fail();
     if (af == AF_INET6) {
         int on = 1;
@@ -377,7 +377,7 @@ static proven_sys_net_result_t open_bound(const proven_sys_net_addr_t *addr, int
 
 proven_sys_net_result_t proven_sys_net_open_listener(const proven_sys_net_addr_t *addr, int backlog,
                                                      proven_sys_socket_t *out) {
-    native_socket_t s = NATIVE_INVALID;
+    proven_native_socket_t s = NATIVE_INVALID;
     proven_sys_net_result_t r = open_bound(addr, SOCK_STREAM, &s);
     if (r != PROVEN_SYS_NET_OK) return r;
     if (listen(s, backlog > 0 ? backlog : SOMAXCONN) != 0) {
@@ -393,7 +393,7 @@ proven_sys_net_result_t proven_sys_net_open_datagram(const proven_sys_net_addr_t
     if (addr->family != PROVEN_SYS_NET_FAMILY_IPV4 && addr->family != PROVEN_SYS_NET_FAMILY_IPV6) {
         return PROVEN_SYS_NET_UNSUPPORTED;
     }
-    native_socket_t s = NATIVE_INVALID;
+    proven_native_socket_t s = NATIVE_INVALID;
     proven_sys_net_result_t r = open_bound(addr, SOCK_DGRAM, &s);
     if (r != PROVEN_SYS_NET_OK) return r;
     *out = (proven_sys_socket_t)s;
@@ -404,10 +404,10 @@ proven_sys_net_result_t proven_sys_net_connect_start(const proven_sys_net_addr_t
     if (!net_ready()) return PROVEN_SYS_NET_ERROR;
     int af = native_family(addr->family);
     struct sockaddr_storage ss;
-    native_len_t len = to_native(addr, &ss);
+    proven_native_len_t len = to_native(addr, &ss);
     if (af < 0 || len == 0) return PROVEN_SYS_NET_ADDR_INVALID;
 
-    native_socket_t s = native_open(af, SOCK_STREAM);
+    proven_native_socket_t s = native_open(af, SOCK_STREAM);
     if (s == NATIVE_INVALID) return net_fail();
 
     for (;;) {
@@ -453,14 +453,14 @@ proven_sys_net_result_t proven_sys_net_pair(proven_sys_socket_t *a, proven_sys_s
      * accept. The listener exists for a moment; the accepted socket is checked to be the one
      * that connected, so that another local process racing for that port cannot end up as one
      * end of the pair. */
-    native_socket_t listener = native_open(AF_INET, SOCK_STREAM);
+    proven_native_socket_t listener = native_open(AF_INET, SOCK_STREAM);
     if (listener == NATIVE_INVALID) return net_fail();
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof addr);
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    native_len_t len = (native_len_t)sizeof addr;
-    native_socket_t client = NATIVE_INVALID, server = NATIVE_INVALID;
+    proven_native_len_t len = (proven_native_len_t)sizeof addr;
+    proven_native_socket_t client = NATIVE_INVALID, server = NATIVE_INVALID;
     proven_sys_net_result_t r = PROVEN_SYS_NET_ERROR;
     if (bind(listener, (const struct sockaddr *)&addr, len) != 0 || listen(listener, 1) != 0 ||
         getsockname(listener, (struct sockaddr *)&addr, &len) != 0) { r = net_fail(); goto done; }
@@ -472,15 +472,15 @@ proven_sys_net_result_t proven_sys_net_pair(proven_sys_socket_t *a, proven_sys_s
     }
     for (int tries = 0; tries < 200 && server == NATIVE_INVALID; ++tries) {
         struct sockaddr_in from;
-        native_len_t fl = (native_len_t)sizeof from;
-        native_socket_t s = accept(listener, (struct sockaddr *)&from, &fl);
+        proven_native_len_t fl = (proven_native_len_t)sizeof from;
+        proven_native_socket_t s = accept(listener, (struct sockaddr *)&from, &fl);
         if (s == NATIVE_INVALID) {
             if (net_reason(net_last_error()) != PROVEN_SYS_NET_WOULD_BLOCK) { r = net_fail(); goto done; }
             Sleep(5);
             continue;
         }
         struct sockaddr_in mine;
-        native_len_t ml = (native_len_t)sizeof mine;
+        proven_native_len_t ml = (proven_native_len_t)sizeof mine;
         if (getsockname(client, (struct sockaddr *)&mine, &ml) == 0 && mine.sin_port == from.sin_port &&
             from.sin_addr.s_addr == htonl(INADDR_LOOPBACK)) {
             server = s;
@@ -515,14 +515,14 @@ done:
 
 proven_sys_net_result_t proven_sys_net_connect_result(proven_sys_socket_t sock) {
     int err = 0;
-    native_len_t len = (native_len_t)sizeof err;
-    if (getsockopt((native_socket_t)sock, SOL_SOCKET, SO_ERROR, (char *)&err, &len) != 0) return net_fail();
+    proven_native_len_t len = (proven_native_len_t)sizeof err;
+    if (getsockopt((proven_native_socket_t)sock, SOL_SOCKET, SO_ERROR, (char *)&err, &len) != 0) return net_fail();
     if (err != 0) return net_reason(err);
     /* No error recorded and yet not connected happens when the wait woke for another reason:
      * the peer address is the test that cannot be fooled. */
     struct sockaddr_storage ss;
-    native_len_t sl = (native_len_t)sizeof ss;
-    if (getpeername((native_socket_t)sock, (struct sockaddr *)&ss, &sl) != 0) return PROVEN_SYS_NET_IN_PROGRESS;
+    proven_native_len_t sl = (proven_native_len_t)sizeof ss;
+    if (getpeername((proven_native_socket_t)sock, (struct sockaddr *)&ss, &sl) != 0) return PROVEN_SYS_NET_IN_PROGRESS;
     return PROVEN_SYS_NET_OK;
 }
 
@@ -530,12 +530,12 @@ proven_sys_net_result_t proven_sys_net_accept(proven_sys_socket_t listener, prov
                                               proven_sys_net_addr_t *peer) {
     for (;;) {
         struct sockaddr_storage ss;
-        native_len_t len = (native_len_t)sizeof ss;
+        proven_native_len_t len = (proven_native_len_t)sizeof ss;
 #if defined(__linux__)
-        native_socket_t s = accept4((native_socket_t)listener, (struct sockaddr *)&ss, &len,
+        proven_native_socket_t s = accept4((proven_native_socket_t)listener, (struct sockaddr *)&ss, &len,
                                     SOCK_NONBLOCK | SOCK_CLOEXEC);
 #else
-        native_socket_t s = accept((native_socket_t)listener, (struct sockaddr *)&ss, &len);
+        proven_native_socket_t s = accept((proven_native_socket_t)listener, (struct sockaddr *)&ss, &len);
 #endif
         if (s == NATIVE_INVALID) {
             int e = net_last_error();
@@ -579,9 +579,9 @@ proven_sys_net_result_t proven_sys_net_recv(proven_sys_socket_t sock, void *buf,
     if (cap == 0) return PROVEN_SYS_NET_OK;
     for (;;) {
 #if defined(_WIN32) || defined(_WIN64)
-        int n = recv((native_socket_t)sock, (char *)buf, clamp_len(cap), 0);
+        int n = recv((proven_native_socket_t)sock, (char *)buf, clamp_len(cap), 0);
 #else
-        ssize_t n = recv((native_socket_t)sock, buf, (size_t)clamp_len(cap), 0);
+        ssize_t n = recv((proven_native_socket_t)sock, buf, (size_t)clamp_len(cap), 0);
 #endif
         if (n > 0) { *received = (proven_size_t)n; return PROVEN_SYS_NET_OK; }
         if (n == 0) return PROVEN_SYS_NET_EOF;
@@ -597,9 +597,9 @@ proven_sys_net_result_t proven_sys_net_send(proven_sys_socket_t sock, const void
     if (len == 0) return PROVEN_SYS_NET_OK;
     for (;;) {
 #if defined(_WIN32) || defined(_WIN64)
-        int n = send((native_socket_t)sock, (const char *)buf, clamp_send(len), NATIVE_SEND_FLAGS);
+        int n = send((proven_native_socket_t)sock, (const char *)buf, clamp_send(len), NATIVE_SEND_FLAGS);
 #else
-        ssize_t n = send((native_socket_t)sock, buf, (size_t)clamp_send(len), NATIVE_SEND_FLAGS);
+        ssize_t n = send((proven_native_socket_t)sock, buf, (size_t)clamp_send(len), NATIVE_SEND_FLAGS);
 #endif
         if (n >= 0) { *sent = (proven_size_t)n; return PROVEN_SYS_NET_OK; }
         int e = net_last_error();
@@ -615,8 +615,8 @@ proven_sys_net_result_t proven_sys_net_recv_from(proven_sys_socket_t sock, void 
         struct sockaddr_storage ss;
         memset(&ss, 0, sizeof ss);
 #if defined(_WIN32) || defined(_WIN64)
-        native_len_t sl = (native_len_t)sizeof ss;
-        int n = recvfrom((native_socket_t)sock, (char *)buf, clamp_len(cap), 0, (struct sockaddr *)&ss, &sl);
+        proven_native_len_t sl = (proven_native_len_t)sizeof ss;
+        int n = recvfrom((proven_native_socket_t)sock, (char *)buf, clamp_len(cap), 0, (struct sockaddr *)&ss, &sl);
         if (n >= 0) {
             *received = (proven_size_t)n;
             if (from) from_native(&ss, sl, from);
@@ -638,7 +638,7 @@ proven_sys_net_result_t proven_sys_net_recv_from(proven_sys_socket_t sock, void 
         msg.msg_namelen = (socklen_t)sizeof ss;
         msg.msg_iov = &iov;
         msg.msg_iovlen = 1;
-        ssize_t n = recvmsg((native_socket_t)sock, &msg, 0);
+        ssize_t n = recvmsg((proven_native_socket_t)sock, &msg, 0);
         if (n >= 0) {
             *received = (proven_size_t)n;
             if (from) from_native(&ss, msg.msg_namelen, from);
@@ -654,15 +654,15 @@ proven_sys_net_result_t proven_sys_net_recv_from(proven_sys_socket_t sock, void 
 proven_sys_net_result_t proven_sys_net_send_to(proven_sys_socket_t sock, const void *buf, proven_size_t len,
                                                const proven_sys_net_addr_t *to) {
     struct sockaddr_storage ss;
-    native_len_t sl = to_native(to, &ss);
+    proven_native_len_t sl = to_native(to, &ss);
     if (sl == 0) return PROVEN_SYS_NET_ADDR_INVALID;
     if (len > 0x40000000u) return PROVEN_SYS_NET_TOO_BIG;
     for (;;) {
 #if defined(_WIN32) || defined(_WIN64)
-        int n = sendto((native_socket_t)sock, (const char *)buf, (int)len, NATIVE_SEND_FLAGS,
+        int n = sendto((proven_native_socket_t)sock, (const char *)buf, (int)len, NATIVE_SEND_FLAGS,
                        (const struct sockaddr *)&ss, sl);
 #else
-        ssize_t n = sendto((native_socket_t)sock, buf, len, NATIVE_SEND_FLAGS,
+        ssize_t n = sendto((proven_native_socket_t)sock, buf, len, NATIVE_SEND_FLAGS,
                            (const struct sockaddr *)&ss, sl);
 #endif
         if (n >= 0) return (proven_size_t)n == len ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_ERROR;
@@ -686,7 +686,7 @@ static atomic_bool g_gso_worked;        /* a GSO send has succeeded in this proc
 static void gso_probe(proven_sys_socket_t sock) {
     if (atomic_load_explicit(&g_gso_probed, memory_order_relaxed)) return;
     const int zero = 0;
-    if (setsockopt((native_socket_t)sock, IPPROTO_UDP, UDP_SEGMENT, &zero, (socklen_t)sizeof zero) != 0 && errno == ENOPROTOOPT)
+    if (setsockopt((proven_native_socket_t)sock, IPPROTO_UDP, UDP_SEGMENT, &zero, (socklen_t)sizeof zero) != 0 && errno == ENOPROTOOPT)
         atomic_store_explicit(&g_gso_refused, true, memory_order_relaxed);
     atomic_store_explicit(&g_gso_probed, true, memory_order_relaxed);
 }
@@ -703,7 +703,7 @@ static atomic_bool g_gso_worked;
 static void gso_probe(proven_sys_socket_t sock) {
     if (atomic_load_explicit(&g_gso_probed, memory_order_relaxed)) return;
     const DWORD zero = 0;
-    if (setsockopt((native_socket_t)sock, IPPROTO_UDP, UDP_SEND_MSG_SIZE, (const char *)&zero, (int)sizeof zero) != 0)
+    if (setsockopt((proven_native_socket_t)sock, IPPROTO_UDP, UDP_SEND_MSG_SIZE, (const char *)&zero, (int)sizeof zero) != 0)
         atomic_store_explicit(&g_gso_refused, true, memory_order_relaxed);
     atomic_store_explicit(&g_gso_probed, true, memory_order_relaxed);
 }
@@ -717,7 +717,7 @@ static BOOL CALLBACK recvmsg_find(PINIT_ONCE once, PVOID param, PVOID *context) 
     (void)once; (void)context;
     GUID id = WSAID_WSARECVMSG;
     DWORD n = 0;
-    if (WSAIoctl(*(const native_socket_t *)param, SIO_GET_EXTENSION_FUNCTION_POINTER, &id, (DWORD)sizeof id, &g_recvmsg, (DWORD)sizeof g_recvmsg, &n, NULL, NULL) != 0)
+    if (WSAIoctl(*(const proven_native_socket_t *)param, SIO_GET_EXTENSION_FUNCTION_POINTER, &id, (DWORD)sizeof id, &g_recvmsg, (DWORD)sizeof g_recvmsg, &n, NULL, NULL) != 0)
         g_recvmsg = NULL;
     return TRUE;
 }
@@ -735,7 +735,7 @@ proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, c
     if (total > seg && !atomic_load_explicit(&g_segments_off, memory_order_relaxed)) gso_probe(sock);
     if (total > seg && !atomic_load_explicit(&g_segments_off, memory_order_relaxed) && !atomic_load_explicit(&g_gso_refused, memory_order_relaxed)) {
         struct sockaddr_storage ss;
-        const native_len_t sl = to_native(to, &ss);
+        const proven_native_len_t sl = to_native(to, &ss);
         if (sl == 0) return PROVEN_SYS_NET_ADDR_INVALID;
         struct iovec iov = { .iov_base = (void *)(proven_uintptr_t)p, .iov_len = (size_t)total };
         union { char b[CMSG_SPACE(sizeof(proven_u16))]; struct cmsghdr align; } ctl;
@@ -755,7 +755,7 @@ proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, c
         const proven_u16 size = (proven_u16)seg;
         memcpy(CMSG_DATA(c), &size, sizeof size);
         for (;;) {
-            const ssize_t n = sendmsg((native_socket_t)sock, &msg, NATIVE_SEND_FLAGS);
+            const ssize_t n = sendmsg((proven_native_socket_t)sock, &msg, NATIVE_SEND_FLAGS);
             if (n >= 0) {
                 atomic_store_explicit(&g_gso_worked, true, memory_order_relaxed);
                 *sent = (proven_size_t)n;
@@ -782,7 +782,7 @@ proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, c
     if (total > seg && !atomic_load_explicit(&g_segments_off, memory_order_relaxed)) gso_probe(sock);
     if (total > seg && !atomic_load_explicit(&g_segments_off, memory_order_relaxed) && !atomic_load_explicit(&g_gso_refused, memory_order_relaxed)) {
         struct sockaddr_storage ss;
-        const native_len_t sl = to_native(to, &ss);
+        const proven_native_len_t sl = to_native(to, &ss);
         if (sl == 0) return PROVEN_SYS_NET_ADDR_INVALID;
         WSABUF b = { .len = (ULONG)total, .buf = (CHAR *)(proven_uintptr_t)p };
         union { char b[WSA_CMSG_SPACE(sizeof(DWORD))]; WSACMSGHDR align; } ctl;
@@ -802,7 +802,7 @@ proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, c
         const DWORD size = (DWORD)seg;
         memcpy(WSA_CMSG_DATA(c), &size, sizeof size);
         DWORD n = 0;
-        if (WSASendMsg((native_socket_t)sock, &msg, 0, &n, NULL, NULL) == 0) {
+        if (WSASendMsg((proven_native_socket_t)sock, &msg, 0, &n, NULL, NULL) == 0) {
             atomic_store_explicit(&g_gso_worked, true, memory_order_relaxed);
             *sent = (proven_size_t)n;
             return (proven_size_t)n == total ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_ERROR;
@@ -827,16 +827,16 @@ proven_sys_net_result_t proven_sys_net_udp_gro(proven_sys_socket_t sock) {
 #if defined(__linux__) && defined(UDP_GRO)
     if (atomic_load_explicit(&g_segments_off, memory_order_relaxed)) return PROVEN_SYS_NET_UNSUPPORTED;
     const int on = 1;
-    return setsockopt((native_socket_t)sock, IPPROTO_UDP, UDP_GRO, &on, (socklen_t)sizeof on) == 0 ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_UNSUPPORTED;
+    return setsockopt((proven_native_socket_t)sock, IPPROTO_UDP, UDP_GRO, &on, (socklen_t)sizeof on) == 0 ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_UNSUPPORTED;
 #elif defined(_WIN32) || defined(_WIN64)
     /* URO, coalescing no more than a batch, so that a receive always fits the drivers' buffer. */
     if (atomic_load_explicit(&g_segments_off, memory_order_relaxed)) return PROVEN_SYS_NET_UNSUPPORTED;
     /* Only with WSARecvMsg at hand: without it the size of a coalesced receive could not be read. */
-    native_socket_t ns = (native_socket_t)sock;
+    proven_native_socket_t ns = (proven_native_socket_t)sock;
     InitOnceExecuteOnce(&g_recvmsg_once, recvmsg_find, &ns, NULL);
     if (!g_recvmsg) return PROVEN_SYS_NET_UNSUPPORTED;
     const DWORD most = (DWORD)PROVEN_SYS_NET_SEGMENTS_MAX_BYTES;
-    return setsockopt((native_socket_t)sock, IPPROTO_UDP, UDP_RECV_MAX_COALESCED_SIZE, (const char *)&most, (int)sizeof most) == 0 ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_UNSUPPORTED;
+    return setsockopt((proven_native_socket_t)sock, IPPROTO_UDP, UDP_RECV_MAX_COALESCED_SIZE, (const char *)&most, (int)sizeof most) == 0 ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_UNSUPPORTED;
 #else
     (void)sock;
     return PROVEN_SYS_NET_UNSUPPORTED;
@@ -865,7 +865,7 @@ proven_sys_net_result_t proven_sys_net_udp_dontfrag(proven_sys_socket_t sock, pr
 #endif
     }
     if (level < 0) return PROVEN_SYS_NET_UNSUPPORTED;
-    return setsockopt((native_socket_t)sock, level, name, (const char *)&value, (native_len_t)sizeof value) == 0 ? PROVEN_SYS_NET_OK : net_fail();
+    return setsockopt((proven_native_socket_t)sock, level, name, (const char *)&value, (proven_native_len_t)sizeof value) == 0 ? PROVEN_SYS_NET_OK : net_fail();
 }
 
 proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, void *buf, proven_size_t cap,
@@ -886,7 +886,7 @@ proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, v
         msg.msg_iovlen = 1;
         msg.msg_control = ctl.b;
         msg.msg_controllen = sizeof ctl.b;
-        const ssize_t n = recvmsg((native_socket_t)sock, &msg, 0);
+        const ssize_t n = recvmsg((proven_native_socket_t)sock, &msg, 0);
         if (n >= 0) {
             *received = (proven_size_t)n;
             if (from) from_native(&ss, msg.msg_namelen, from);
@@ -904,7 +904,7 @@ proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, v
     }
 #elif defined(_WIN32) || defined(_WIN64)
     /* URO: WSARecvMsg, for the segment size in UDP_COALESCED_INFO. */
-    native_socket_t ns = (native_socket_t)sock;
+    proven_native_socket_t ns = (proven_native_socket_t)sock;
     InitOnceExecuteOnce(&g_recvmsg_once, recvmsg_find, &ns, NULL);
     if (!g_recvmsg || atomic_load_explicit(&g_segments_off, memory_order_relaxed)) return proven_sys_net_recv_from(sock, buf, cap, received, from);
     *received = 0;
@@ -944,14 +944,14 @@ proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, v
 }
 
 proven_sys_net_result_t proven_sys_net_shutdown_write(proven_sys_socket_t sock) {
-    if (shutdown((native_socket_t)sock, NATIVE_SHUT_WR) != 0) return net_fail();
+    if (shutdown((proven_native_socket_t)sock, NATIVE_SHUT_WR) != 0) return net_fail();
     return PROVEN_SYS_NET_OK;
 }
 
 proven_sys_net_result_t proven_sys_net_close(proven_sys_socket_t sock) {
     /* Not retried on EINTR: on Linux the descriptor is already gone, and closing it again could
      * close one that another thread has just been given. */
-    if (native_close((native_socket_t)sock) != 0) {
+    if (native_close((proven_native_socket_t)sock) != 0) {
         int e = net_last_error();
         return net_interrupted(e) ? PROVEN_SYS_NET_OK : net_reason(e);
     }
@@ -961,8 +961,8 @@ proven_sys_net_result_t proven_sys_net_close(proven_sys_socket_t sock) {
 proven_sys_net_result_t proven_sys_net_local_addr(proven_sys_socket_t sock, proven_sys_net_addr_t *out) {
     struct sockaddr_storage ss;
     memset(&ss, 0, sizeof ss);
-    native_len_t len = (native_len_t)sizeof ss;
-    if (getsockname((native_socket_t)sock, (struct sockaddr *)&ss, &len) != 0) return net_fail();
+    proven_native_len_t len = (proven_native_len_t)sizeof ss;
+    if (getsockname((proven_native_socket_t)sock, (struct sockaddr *)&ss, &len) != 0) return net_fail();
     from_native(&ss, len, out);
     return PROVEN_SYS_NET_OK;
 }
@@ -970,38 +970,38 @@ proven_sys_net_result_t proven_sys_net_local_addr(proven_sys_socket_t sock, prov
 proven_sys_net_result_t proven_sys_net_peer_addr(proven_sys_socket_t sock, proven_sys_net_addr_t *out) {
     struct sockaddr_storage ss;
     memset(&ss, 0, sizeof ss);
-    native_len_t len = (native_len_t)sizeof ss;
-    if (getpeername((native_socket_t)sock, (struct sockaddr *)&ss, &len) != 0) return net_fail();
+    proven_native_len_t len = (proven_native_len_t)sizeof ss;
+    if (getpeername((proven_native_socket_t)sock, (struct sockaddr *)&ss, &len) != 0) return net_fail();
     from_native(&ss, len, out);
     return PROVEN_SYS_NET_OK;
 }
 
 proven_sys_net_result_t proven_sys_net_set_nodelay(proven_sys_socket_t sock, bool on) {
     int v = on ? 1 : 0;
-    if (setsockopt((native_socket_t)sock, IPPROTO_TCP, TCP_NODELAY, (const char *)&v, sizeof v) != 0) return net_fail();
+    if (setsockopt((proven_native_socket_t)sock, IPPROTO_TCP, TCP_NODELAY, (const char *)&v, sizeof v) != 0) return net_fail();
     return PROVEN_SYS_NET_OK;
 }
 
 proven_size_t proven_sys_net_wait_scratch_size(proven_size_t count) {
-    if (count > PROVEN_SIZE_MAX / sizeof(native_pollfd_t)) return PROVEN_SIZE_MAX;
-    return count * sizeof(native_pollfd_t);
+    if (count > PROVEN_SIZE_MAX / sizeof(proven_native_pollfd_t)) return PROVEN_SIZE_MAX;
+    return count * sizeof(proven_native_pollfd_t);
 }
 
 proven_sys_net_result_t proven_sys_net_wait(proven_sys_net_wait_t *items, proven_size_t count,
                                             void *scratch, int timeout_ms, proven_size_t *ready) {
     *ready = 0;
     if (!net_ready()) return PROVEN_SYS_NET_ERROR;
-    native_pollfd_t *fds = scratch;
+    proven_native_pollfd_t *fds = scratch;
     proven_size_t active = 0;
     for (proven_size_t i = 0; i < count; ++i) {
-        fds[i].fd = (native_socket_t)items[i].sock;
+        fds[i].fd = (proven_native_socket_t)items[i].sock;
         fds[i].events = 0;
         fds[i].revents = 0;
         if (items[i].want & PROVEN_SYS_NET_READABLE) fds[i].events |= NATIVE_POLL_IN;
         if (items[i].want & PROVEN_SYS_NET_WRITABLE) fds[i].events |= NATIVE_POLL_OUT;
         /* A descriptor that is negative is passed over, by poll and by WSAPoll alike: the
          * way to keep an item in the list and out of the wait. */
-        if (items[i].want & PROVEN_SYS_NET_IGNORE) { fds[i].fd = (native_socket_t)-1; fds[i].events = 0; }
+        if (items[i].want & PROVEN_SYS_NET_IGNORE) { fds[i].fd = (proven_native_socket_t)-1; fds[i].events = 0; }
         else active++;
         items[i].got = 0;
     }
@@ -1070,7 +1070,7 @@ proven_sys_net_result_t proven_sys_net_resolve(const char *host, proven_u16 port
         memset(&ss, 0, sizeof ss);
         proven_size_t n = (proven_size_t)ai->ai_addrlen < sizeof ss ? (proven_size_t)ai->ai_addrlen : sizeof ss;
         memcpy(&ss, ai->ai_addr, n);
-        from_native(&ss, (native_len_t)n, &out[*count]);
+        from_native(&ss, (proven_native_len_t)n, &out[*count]);
         out[*count].port = port;
         (*count)++;
     }

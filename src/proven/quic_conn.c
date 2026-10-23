@@ -61,9 +61,9 @@ static proven_u64 qmax(proven_u64 a, proven_u64 b) { return a > b ? a : b; }
 
 /* ---- Allocation ---- */
 
-typedef struct { proven_allocator_t alloc; proven_size_t held; bool oom; } qmem_t;
+typedef struct { proven_allocator_t alloc; proven_size_t held; bool oom; } proven_qmem_t;
 
-static void *qalloc(qmem_t *m, proven_size_t n, proven_size_t align) {
+static void *qalloc(proven_qmem_t *m, proven_size_t n, proven_size_t align) {
     if (n == 0) n = 1;
     proven_result_mem_mut_t r = m->alloc.alloc_fn(m->alloc.ctx, n, align);
     if (r.err != PROVEN_OK) { m->oom = true; return NULL; }
@@ -71,7 +71,7 @@ static void *qalloc(qmem_t *m, proven_size_t n, proven_size_t align) {
     return r.value.ptr;
 }
 
-static void *qrealloc(qmem_t *m, void *p, proven_size_t old, proven_size_t n, proven_size_t align) {
+static void *qrealloc(proven_qmem_t *m, void *p, proven_size_t old, proven_size_t n, proven_size_t align) {
     if (!p) return qalloc(m, n, align);
     proven_result_mem_mut_t r = m->alloc.realloc_fn(m->alloc.ctx, p, old, n, align);
     if (r.err != PROVEN_OK) { m->oom = true; return NULL; }
@@ -79,7 +79,7 @@ static void *qrealloc(qmem_t *m, void *p, proven_size_t old, proven_size_t n, pr
     return r.value.ptr;
 }
 
-static void qfree(qmem_t *m, void *p, proven_size_t n) {
+static void qfree(proven_qmem_t *m, void *p, proven_size_t n) {
     if (!p) return;
     m->alloc.free_fn(m->alloc.ctx, p);
     m->held -= n < 1 ? 1 : n;
@@ -100,10 +100,10 @@ static proven_size_t qcap_for(proven_size_t n) {
  * at each fill after, so one large fill is not kept for the stream's life, and fills that cross a
  * doubling now and then do not regrow every time. */
 
-typedef struct { proven_byte_t *p; proven_size_t cap, head, len, peak, last; } qbuf_t;
+typedef struct { proven_byte_t *p; proven_size_t cap, head, len, peak, last; } proven_qbuf_t;
 
 /* Room for `n` bytes from the head. */
-static bool qbuf_reserve(qmem_t *m, qbuf_t *b, proven_size_t n) {
+static bool qbuf_reserve(proven_qmem_t *m, proven_qbuf_t *b, proven_size_t n) {
     if (n > b->peak) b->peak = n;
     if (b->cap - b->head >= n) return true;
     if (b->head > 0) {
@@ -121,7 +121,7 @@ static bool qbuf_reserve(qmem_t *m, qbuf_t *b, proven_size_t n) {
 
 /* Bytes taken from the front. An empty buffer is given back: a hundred quiet streams hold
  * nothing, and what is allocated stays within twice what is held. */
-static void qbuf_drop(qmem_t *m, qbuf_t *b, proven_size_t n) {
+static void qbuf_drop(proven_qmem_t *m, proven_qbuf_t *b, proven_size_t n) {
     b->head += n; b->len -= n;
     if (b->len == 0) {
         b->head = 0;
@@ -130,27 +130,27 @@ static void qbuf_drop(qmem_t *m, qbuf_t *b, proven_size_t n) {
     }
 }
 
-static void qbuf_free(qmem_t *m, qbuf_t *b) {
+static void qbuf_free(proven_qmem_t *m, proven_qbuf_t *b) {
     qfree(m, b->p, b->cap);
-    *b = (qbuf_t){ 0 };
+    *b = (proven_qbuf_t){ 0 };
 }
 
 /* ---- A ring: bytes [head, head + len) of `p`, wrapping at `cap` ----
  *
  * A send queue's bytes from the acknowledged base to the end: written at the end, dropped from
  * the front, never moved while they wait (RFC-0018 S-1: the linear buffer moved its whole
- * unacknowledged window down whenever the end ran out of room). `peak` and `last` as in qbuf_t. */
+ * unacknowledged window down whenever the end ran out of room). `peak` and `last` as in proven_qbuf_t. */
 
-typedef struct { proven_byte_t *p; proven_size_t cap, head, len, peak, last; } qring_t;
+typedef struct { proven_byte_t *p; proven_size_t cap, head, len, peak, last; } proven_qring_t;
 
 /* The position of the byte `i` after the head. */
-static proven_size_t ring_pos(const qring_t *r, proven_size_t i) {
+static proven_size_t ring_pos(const proven_qring_t *r, proven_size_t i) {
     const proven_size_t at = r->head + i;
     return at >= r->cap ? at - r->cap : at;
 }
 
 /* Room for `n` bytes in all. Growing copies the bytes out unwrapped, once per doubling. */
-static bool ring_reserve(qmem_t *m, qring_t *r, proven_size_t n) {
+static bool ring_reserve(proven_qmem_t *m, proven_qring_t *r, proven_size_t n) {
     if (n > r->peak) r->peak = n;
     if (r->cap >= n) return true;
     proven_size_t cap = r->cap ? r->cap * 2 : r->last ? r->last : 1024;
@@ -168,7 +168,7 @@ static bool ring_reserve(qmem_t *m, qring_t *r, proven_size_t n) {
 }
 
 /* `n` bytes added at the end, in at most two parts. */
-static void ring_put(qring_t *r, const proven_byte_t *src, proven_size_t n) {
+static void ring_put(proven_qring_t *r, const proven_byte_t *src, proven_size_t n) {
     if (n == 0) return;
     const proven_size_t at = ring_pos(r, r->len);
     const proven_size_t first = r->cap - at < n ? r->cap - at : n;
@@ -178,7 +178,7 @@ static void ring_put(qring_t *r, const proven_byte_t *src, proven_size_t n) {
 }
 
 /* Bytes taken from the front; an empty ring is given back as qbuf_drop gives back a buffer. */
-static void ring_drop(qmem_t *m, qring_t *r, proven_size_t n) {
+static void ring_drop(proven_qmem_t *m, proven_qring_t *r, proven_size_t n) {
     r->head = ring_pos(r, n);
     r->len -= n;
     if (r->len == 0) {
@@ -188,49 +188,49 @@ static void ring_drop(qmem_t *m, qring_t *r, proven_size_t n) {
     }
 }
 
-static void ring_free(qmem_t *m, qring_t *r) {
+static void ring_free(proven_qmem_t *m, proven_qring_t *r) {
     qfree(m, r->p, r->cap);
-    *r = (qring_t){ 0 };
+    *r = (proven_qring_t){ 0 };
 }
 
 /* ---- A set of ranges [lo, hi), ascending, apart ---- */
 
-typedef struct { proven_u64 lo, hi; } qrange_t;
-typedef struct { qrange_t *r; proven_size_t n, cap; } qrset_t;
+typedef struct { proven_u64 lo, hi; } proven_qrange_t;
+typedef struct { proven_qrange_t *r; proven_size_t n, cap; } proven_qrset_t;
 
-static bool rset_insert_at(qmem_t *m, qrset_t *s, proven_size_t at, proven_u64 lo, proven_u64 hi) {
+static bool rset_insert_at(proven_qmem_t *m, proven_qrset_t *s, proven_size_t at, proven_u64 lo, proven_u64 hi) {
     if (s->n == s->cap) {
         proven_size_t cap = s->cap ? s->cap * 2 : 8;
-        qrange_t *r = qrealloc(m, s->r, s->cap * sizeof *r, cap * sizeof *r, alignof(qrange_t));
+        proven_qrange_t *r = qrealloc(m, s->r, s->cap * sizeof *r, cap * sizeof *r, alignof(proven_qrange_t));
         if (!r) return false;
         s->r = r; s->cap = cap;
     }
     for (proven_size_t i = s->n; i > at; --i) s->r[i] = s->r[i - 1];
-    s->r[at] = (qrange_t){ lo, hi };
+    s->r[at] = (proven_qrange_t){ lo, hi };
     ++s->n;
     return true;
 }
 
-static void rset_erase(qrset_t *s, proven_size_t at, proven_size_t count) {
+static void rset_erase(proven_qrset_t *s, proven_size_t at, proven_size_t count) {
     for (proven_size_t i = at; i + count < s->n; ++i) s->r[i] = s->r[i + count];
     s->n -= count;
 }
 
 /* Add [lo, hi), merging what it touches. */
-static bool rset_add(qmem_t *m, qrset_t *s, proven_u64 lo, proven_u64 hi) {
+static bool rset_add(proven_qmem_t *m, proven_qrset_t *s, proven_u64 lo, proven_u64 hi) {
     if (lo >= hi) return true;
     proven_size_t i = 0;
     while (i < s->n && s->r[i].hi < lo) ++i;
     proven_size_t j = i;
     while (j < s->n && s->r[j].lo <= hi) { lo = qmin(lo, s->r[j].lo); hi = qmax(hi, s->r[j].hi); ++j; }
-    if (j > i) { s->r[i] = (qrange_t){ lo, hi }; rset_erase(s, i + 1, j - i - 1); return true; }
+    if (j > i) { s->r[i] = (proven_qrange_t){ lo, hi }; rset_erase(s, i + 1, j - i - 1); return true; }
     return rset_insert_at(m, s, i, lo, hi);
 }
 
 /* Remove [lo, hi). */
-static bool rset_remove(qmem_t *m, qrset_t *s, proven_u64 lo, proven_u64 hi) {
+static bool rset_remove(proven_qmem_t *m, proven_qrset_t *s, proven_u64 lo, proven_u64 hi) {
     for (proven_size_t i = 0; i < s->n && lo < hi;) {
-        qrange_t r = s->r[i];
+        proven_qrange_t r = s->r[i];
         if (r.hi <= lo) { ++i; continue; }
         if (r.lo >= hi) break;
         if (r.lo < lo && r.hi > hi) {                          /* split */
@@ -245,7 +245,7 @@ static bool rset_remove(qmem_t *m, qrset_t *s, proven_u64 lo, proven_u64 hi) {
 }
 
 /* The first part of [lo, hi) not in `s`: false when all of it is. */
-static bool rset_first_gap(const qrset_t *s, proven_u64 lo, proven_u64 hi, proven_u64 *a, proven_u64 *b) {
+static bool rset_first_gap(const proven_qrset_t *s, proven_u64 lo, proven_u64 hi, proven_u64 *a, proven_u64 *b) {
     for (proven_size_t i = 0; i < s->n && lo < hi; ++i) {
         if (s->r[i].hi <= lo) continue;
         if (s->r[i].lo > lo) { *a = lo; *b = qmin(hi, s->r[i].lo); return true; }
@@ -256,9 +256,9 @@ static bool rset_first_gap(const qrset_t *s, proven_u64 lo, proven_u64 hi, prove
     return true;
 }
 
-static void rset_free(qmem_t *m, qrset_t *s) {
+static void rset_free(proven_qmem_t *m, proven_qrset_t *s) {
     qfree(m, s->r, s->cap * sizeof *s->r);
-    *s = (qrset_t){ 0 };
+    *s = (proven_qrset_t){ 0 };
 }
 
 /* ---- Sending a byte stream (a stream's or a level's CRYPTO data) ----
@@ -268,20 +268,20 @@ static void rset_free(qmem_t *m, qrset_t *s) {
  * acknowledged above `base` in `acked`. */
 
 typedef struct {
-    qring_t buf;
+    proven_qring_t buf;
     proven_u64 base, end, next;
-    qrset_t lost, acked;
+    proven_qrset_t lost, acked;
     bool fin, fin_sent, fin_lost, fin_acked;
-} qsendq_t;
+} proven_qsendq_t;
 
-static bool sendq_write(qmem_t *m, qsendq_t *q, const proven_byte_t *p, proven_size_t n) {
+static bool sendq_write(proven_qmem_t *m, proven_qsendq_t *q, const proven_byte_t *p, proven_size_t n) {
     if (!ring_reserve(m, &q->buf, q->buf.len + n)) return false;
     ring_put(&q->buf, p, n);
     q->end += n;
     return true;
 }
 
-static void sendq_acked(qmem_t *m, qsendq_t *q, proven_u64 off, proven_u64 len, bool fin) {
+static void sendq_acked(proven_qmem_t *m, proven_qsendq_t *q, proven_u64 off, proven_u64 len, bool fin) {
     if (fin) q->fin_acked = true;
     if (off + len <= q->base) return;
     if (off < q->base) { len -= q->base - off; off = q->base; }
@@ -295,7 +295,7 @@ static void sendq_acked(qmem_t *m, qsendq_t *q, proven_u64 off, proven_u64 len, 
     }
 }
 
-static void sendq_lost(qmem_t *m, qsendq_t *q, proven_u64 off, proven_u64 len, bool fin) {
+static void sendq_lost(proven_qmem_t *m, proven_qsendq_t *q, proven_u64 off, proven_u64 len, bool fin) {
     if (fin && !q->fin_acked) q->fin_lost = true;
     if (off + len <= q->base) return;
     if (off < q->base) { len -= q->base - off; off = q->base; }
@@ -303,7 +303,7 @@ static void sendq_lost(qmem_t *m, qsendq_t *q, proven_u64 off, proven_u64 len, b
 }
 
 /* All of it: sent again from the start (a Retry, a probe). */
-static void sendq_resend_all(qmem_t *m, qsendq_t *q) {
+static void sendq_resend_all(proven_qmem_t *m, proven_qsendq_t *q) {
     if (q->next > q->base) (void)rset_add(m, &q->lost, q->base, q->next);
     for (proven_size_t i = 0; i < q->acked.n; ++i) (void)rset_remove(m, &q->lost, q->acked.r[i].lo, q->acked.r[i].hi);
     if (q->fin_sent && !q->fin_acked) q->fin_lost = true;
@@ -311,14 +311,14 @@ static void sendq_resend_all(qmem_t *m, qsendq_t *q) {
 
 /* The bytes from `off` (held, below `end`) to the ring's wrap: a piece ends there, so a frame's
  * data is always one view. */
-static proven_u64 sendq_contig(const qsendq_t *q, proven_u64 off) {
+static proven_u64 sendq_contig(const proven_qsendq_t *q, proven_u64 off) {
     return q->buf.cap - ring_pos(&q->buf, (proven_size_t)(off - q->base));
 }
 
 /* The next piece to send, at most `room` bytes and never across the ring's wrap: lost bytes
  * first, then new ones up to `limit` (flow control). False when there is nothing. `*fin` when
  * the piece ends the stream. */
-static bool sendq_next(const qsendq_t *q, proven_u64 room, proven_u64 limit, proven_u64 *off, proven_u64 *len, bool *fin, bool *fresh) {
+static bool sendq_next(const proven_qsendq_t *q, proven_u64 room, proven_u64 limit, proven_u64 *off, proven_u64 *len, bool *fin, bool *fresh) {
     *fin = false; *fresh = false;
     for (proven_size_t i = 0; i < q->lost.n; ++i) {
         proven_u64 a, b;
@@ -342,21 +342,21 @@ static bool sendq_next(const qsendq_t *q, proven_u64 room, proven_u64 limit, pro
 }
 
 /* What sendq_next gave was put in a packet. */
-static void sendq_sent(qmem_t *m, qsendq_t *q, proven_u64 off, proven_u64 len, bool fin) {
+static void sendq_sent(proven_qmem_t *m, proven_qsendq_t *q, proven_u64 off, proven_u64 len, bool fin) {
     (void)rset_remove(m, &q->lost, off, off + len);
     if (off + len > q->next) q->next = off + len;
     if (fin) { q->fin_sent = true; q->fin_lost = false; }
 }
 
-static const proven_byte_t *sendq_at(const qsendq_t *q, proven_u64 off) {
+static const proven_byte_t *sendq_at(const proven_qsendq_t *q, proven_u64 off) {
     return q->buf.p + ring_pos(&q->buf, (proven_size_t)(off - q->base));
 }
 
-static bool sendq_done(const qsendq_t *q) {
+static bool sendq_done(const proven_qsendq_t *q) {
     return q->fin && q->fin_acked && q->base == q->end;
 }
 
-static void sendq_free(qmem_t *m, qsendq_t *q) {
+static void sendq_free(proven_qmem_t *m, proven_qsendq_t *q) {
     ring_free(m, &q->buf);
     rset_free(m, &q->lost);
     rset_free(m, &q->acked);
@@ -368,14 +368,14 @@ static void sendq_free(qmem_t *m, qsendq_t *q) {
  * with holes where nothing came yet; `got` says which ranges are there. */
 
 typedef struct {
-    qbuf_t buf;
+    proven_qbuf_t buf;
     proven_u64 read, highest, final;
     bool has_final;
-    qrset_t got;
-} qrecvq_t;
+    proven_qrset_t got;
+} proven_qrecvq_t;
 
 /* Take [off, off + n). Returns false on NOMEM only. */
-static bool recvq_insert(qmem_t *m, qrecvq_t *q, proven_u64 off, const proven_byte_t *p, proven_size_t n) {
+static bool recvq_insert(proven_qmem_t *m, proven_qrecvq_t *q, proven_u64 off, const proven_byte_t *p, proven_size_t n) {
     if (off + n <= q->read) return true;
     if (off < q->read) { const proven_size_t skip = (proven_size_t)(q->read - off); p += skip; n -= skip; off = q->read; }
     const proven_size_t at = (proven_size_t)(off - q->read), need = at + n;
@@ -393,11 +393,11 @@ static bool recvq_insert(qmem_t *m, qrecvq_t *q, proven_u64 off, const proven_by
 }
 
 /* Bytes ready at `read`. */
-static proven_size_t recvq_ready(const qrecvq_t *q) {
+static proven_size_t recvq_ready(const proven_qrecvq_t *q) {
     return q->got.n > 0 && q->got.r[0].lo == q->read ? (proven_size_t)(q->got.r[0].hi - q->read) : 0;
 }
 
-static proven_size_t recvq_take(qmem_t *m, qrecvq_t *q, proven_byte_t *out, proven_size_t cap) {
+static proven_size_t recvq_take(proven_qmem_t *m, proven_qrecvq_t *q, proven_byte_t *out, proven_size_t cap) {
     proven_size_t n = recvq_ready(q);
     if (n > cap) n = cap;
     if (n == 0) return 0;
@@ -408,7 +408,7 @@ static proven_size_t recvq_take(qmem_t *m, qrecvq_t *q, proven_byte_t *out, prov
     return n;
 }
 
-static void recvq_free(qmem_t *m, qrecvq_t *q) {
+static void recvq_free(proven_qmem_t *m, proven_qrecvq_t *q) {
     qbuf_free(m, &q->buf);
     rset_free(m, &q->got);
 }
@@ -419,8 +419,8 @@ typedef struct {
     proven_u64 id;
     bool local;                         /* opened by this side */
     bool has_tx, has_rx;                /* the directions it has */
-    qsendq_t tx;
-    qrecvq_t rx;
+    proven_qsendq_t tx;
+    proven_qrecvq_t rx;
     proven_u64 tx_max;                  /* the peer's MAX_STREAM_DATA */
     proven_u64 rx_max;                  /* ours, as last sent */
     proven_u64 rx_window, rx_moved_at;  /* the window as it has grown, and when it last moved (RFC-0019 section 9) */
@@ -436,14 +436,14 @@ typedef struct {
     bool tx_blocked;                    /* a write took less than offered: told when there is room again */
     proven_u64 ev_stop_code;
     bool rx_reset_reported;
-} qstream_t;
+} proven_qstream_t;
 
 /* ---- A packet number space ---- */
 
 enum { FR_STREAM = 1, FR_CRYPTO, FR_RESET, FR_STOP, FR_MAX_DATA, FR_MAX_STREAM_DATA, FR_MAX_STREAMS_BIDI, FR_MAX_STREAMS_UNI,
        FR_NEW_CID, FR_RETIRE_CID, FR_HANDSHAKE_DONE, FR_PING, FR_PATH_CHALLENGE, FR_NEW_TOKEN };
 
-typedef struct { proven_u8 kind; bool fin; proven_u16 len; proven_u64 id, off; } qfrec_t;
+typedef struct { proven_u8 kind; bool fin; proven_u16 len; proven_u64 id, off; } proven_qfrec_t;
 
 typedef struct {
     proven_u64 pn, time;
@@ -451,43 +451,43 @@ typedef struct {
     bool ack_eliciting, in_flight;
     bool zero_rtt;                      /* sent under the 0-RTT key: lost as a whole if early data is refused */
     proven_u8 nfr;
-    qfrec_t fr[QC_MAX_FRAMES];
-} qsent_t;
+    proven_qfrec_t fr[QC_MAX_FRAMES];
+} proven_qsent_t;
 
 typedef struct {
     proven_quic_keys_t rx, tx;
     bool rx_ok, tx_ok, discarded;
     proven_u64 next_pn;
     proven_u64 rx_largest_plus_one, rx_largest_time;
-    qrset_t rcvd;                       /* packet numbers received (and processed) */
+    proven_qrset_t rcvd;                       /* packet numbers received (and processed) */
     proven_u64 rx_floor;                /* below it: treated as already seen (ranges dropped for the cap) */
     bool ack_owed;                      /* an ack-eliciting packet not acknowledged yet */
     bool ack_any;                       /* any packet not acknowledged yet */
     unsigned ack_count;
     proven_u64 ack_deadline;
-    qsent_t *sent;
+    proven_qsent_t *sent;
     proven_size_t sent_n, sent_cap;
     proven_u64 largest_acked_plus_one;
     proven_u64 loss_time;
     proven_u64 last_ack_eliciting_time;
     proven_size_t ack_eliciting_in_flight;
     unsigned probes;                    /* PTO probe packets owed */
-    qsendq_t crypto_tx;
-    qrecvq_t crypto_rx;
+    proven_qsendq_t crypto_tx;
+    proven_qrecvq_t crypto_rx;
     proven_byte_t *pending[QC_PENDING];
     proven_size_t pending_len[QC_PENDING];
     proven_quic_addr_t pending_from[QC_PENDING];
     unsigned pending_n;
     proven_u64 lost_pn[32], lost_gap[32];   /* recently declared lost, and how far below the largest acknowledged (QC_INF: by time) */
     unsigned lost_at;
-} qspace_t;
+} proven_qspace_t;
 
 typedef struct {
     proven_u64 seq;
     proven_quic_cid_t cid;
     proven_byte_t token[PROVEN_QUIC_RESET_TOKEN];
     bool active, owed, retire_owed, has_token;
-} qcid_t;
+} proven_qcid_t;
 
 enum { QS_HANDSHAKE, QS_OPEN, QS_CLOSING, QS_DRAINING, QS_CLOSED };
 
@@ -496,12 +496,12 @@ enum { QS_HANDSHAKE, QS_OPEN, QS_CLOSING, QS_DRAINING, QS_CLOSED };
 #define QC_ZRTT 3
 
 struct proven_quic_conn {
-    qmem_t mem;
+    proven_qmem_t mem;
     proven_quic_config_t cfg;
     bool server;
     proven_tls_conn_t *tls;
     const proven_tls_suite_t *suite;
-    qspace_t sp[PROVEN_QUIC_LEVELS];
+    proven_qspace_t sp[PROVEN_QUIC_LEVELS];
 
     /* 0-RTT (RFC-0021): its key, in the application space - a client's to write, a server's to
      * read - and where early data stands (PROVEN_TLS_EARLY_*, as TLS last said). SECRET: zr */
@@ -529,10 +529,10 @@ struct proven_quic_conn {
     proven_size_t token_len;
     proven_tls_session_t *session;      /* a client's: where a NEW_TOKEN token is kept for the next connection */
     bool token_owed;                    /* a server's NEW_TOKEN, sent with HANDSHAKE_DONE (RFC-0021 P-7) */
-    qcid_t local[QC_LOCAL_CIDS];
+    proven_qcid_t local[QC_LOCAL_CIDS];
     proven_u64 local_next_seq;
     proven_u64 peer_cid_limit;          /* the peer's active_connection_id_limit */
-    qcid_t peer[QC_PEER_CIDS];
+    proven_qcid_t peer[QC_PEER_CIDS];
     unsigned peer_cur;
     proven_u64 peer_retire_prior_to;
     proven_quic_cid_t peer_initial_scid;
@@ -557,7 +557,7 @@ struct proven_quic_conn {
     bool send_room_freed;               /* send_buffered went down: every blocked stream is told */
 
     /* Streams. */
-    qstream_t **streams;
+    proven_qstream_t **streams;
     proven_size_t nstreams, streams_cap, cursor, ev_cursor;
     proven_u64 local_opened[2], peer_max_streams[2];    /* [0] bidi, [1] uni */
     proven_u64 peer_opened[2], peer_closed[2], our_max_streams[2];
@@ -652,8 +652,8 @@ static void reset_token_for(const proven_byte_t key[32], const proven_quic_cid_t
     qcopy(token, mac, PROVEN_QUIC_RESET_TOKEN);
 }
 
-static void new_local_cid(proven_quic_conn_t *c, qcid_t *e) {
-    *e = (qcid_t){ .seq = c->local_next_seq++, .active = true, .has_token = true };
+static void new_local_cid(proven_quic_conn_t *c, proven_qcid_t *e) {
+    *e = (proven_qcid_t){ .seq = c->local_next_seq++, .active = true, .has_token = true };
     e->cid.len = QC_CID_LEN;
     random_bytes(c, e->cid.id, QC_CID_LEN);
     reset_token_for(c->static_key, &e->cid, e->token);
@@ -665,7 +665,7 @@ static bool is_local_cid(const proven_quic_conn_t *c, const proven_quic_cid_t *c
     return false;
 }
 
-static const qcid_t *peer_cid(const proven_quic_conn_t *c) { return &c->peer[c->peer_cur]; }
+static const proven_qcid_t *peer_cid(const proven_quic_conn_t *c) { return &c->peer[c->peer_cur]; }
 
 /* ---- Configuration ---- */
 
@@ -754,7 +754,7 @@ static void check_mem(proven_quic_conn_t *c) {
 
 /* ---- Streams ---- */
 
-static qstream_t *stream_find(const proven_quic_conn_t *c, proven_u64 id) {
+static proven_qstream_t *stream_find(const proven_quic_conn_t *c, proven_u64 id) {
     for (proven_size_t i = 0; i < c->nstreams; ++i) if (c->streams[i]->id == id) return c->streams[i];
     return NULL;
 }
@@ -762,14 +762,14 @@ static qstream_t *stream_find(const proven_quic_conn_t *c, proven_u64 id) {
 static bool id_local(const proven_quic_conn_t *c, proven_u64 id) { return (id & 1) == (c->server ? 1u : 0u); }
 static unsigned id_kind(proven_u64 id) { return (id & 2) ? 1u : 0u; }
 
-static qstream_t *stream_new(proven_quic_conn_t *c, proven_u64 id) {
+static proven_qstream_t *stream_new(proven_quic_conn_t *c, proven_u64 id) {
     if (c->nstreams == c->streams_cap) {
         proven_size_t cap = c->streams_cap ? c->streams_cap * 2 : 16;
-        qstream_t **a = qrealloc(&c->mem, c->streams, c->streams_cap * sizeof *a, cap * sizeof *a, alignof(qstream_t *));
+        proven_qstream_t **a = qrealloc(&c->mem, c->streams, c->streams_cap * sizeof *a, cap * sizeof *a, alignof(proven_qstream_t *));
         if (!a) return NULL;
         c->streams = a; c->streams_cap = cap;
     }
-    qstream_t *s = qalloc(&c->mem, sizeof *s, alignof(qstream_t));
+    proven_qstream_t *s = qalloc(&c->mem, sizeof *s, alignof(proven_qstream_t));
     if (!s) return NULL;
     qzero(s, sizeof *s);
     s->id = id;
@@ -787,7 +787,7 @@ static qstream_t *stream_new(proven_quic_conn_t *c, proven_u64 id) {
 }
 
 /* Free a stream both of whose sides are over and whose news has been told. */
-static void stream_maybe_free(proven_quic_conn_t *c, qstream_t *s) {
+static void stream_maybe_free(proven_quic_conn_t *c, proven_qstream_t *s) {
     const bool tx_over = !s->has_tx || s->tx_reset_acked || sendq_done(&s->tx);
     const bool rx_over = !s->has_rx || s->rx_fin_read || s->rx_reset_reported;
     if (!tx_over || !rx_over || s->ev_opened || s->ev_readable || s->ev_reset || s->ev_stop || s->rx_max_owed || s->tx_reset_owed || s->rx_stop_owed) return;
@@ -815,9 +815,9 @@ static void stream_maybe_free(proven_quic_conn_t *c, qstream_t *s) {
 
 /* The stream a peer's frame names: opened by it if it may (and those below it of its kind),
  * NULL with *err 0 when it is already over, or NULL with the error to close with. */
-static qstream_t *stream_for_peer(proven_quic_conn_t *c, proven_u64 id, proven_u64 *err) {
+static proven_qstream_t *stream_for_peer(proven_quic_conn_t *c, proven_u64 id, proven_u64 *err) {
     *err = 0;
-    qstream_t *s = stream_find(c, id);
+    proven_qstream_t *s = stream_find(c, id);
     if (s) return s;
     const unsigned k = id_kind(id);
     const proven_u64 idx = id >> 2;
@@ -828,7 +828,7 @@ static qstream_t *stream_for_peer(proven_quic_conn_t *c, proven_u64 id, proven_u
     if (idx >= c->our_max_streams[k]) { *err = PROVEN_QUIC_STREAM_LIMIT_ERROR; return NULL; }
     if (idx < c->peer_opened[k]) return NULL;
     for (proven_u64 i = c->peer_opened[k]; i <= idx; ++i) {
-        qstream_t *n = stream_new(c, (i << 2) | (id & 3));
+        proven_qstream_t *n = stream_new(c, (i << 2) | (id & 3));
         if (!n) { *err = PROVEN_QUIC_INTERNAL_ERROR; return NULL; }
         n->ev_opened = true;
         c->peer_opened[k] = i + 1;
@@ -847,7 +847,7 @@ static proven_u64 rx_grow(const proven_quic_conn_t *c, proven_u64 window, proven
 }
 
 /* Bytes read: the window moves, and MAX_STREAM_DATA / MAX_DATA are owed at half a window. */
-static void rx_credit(proven_quic_conn_t *c, qstream_t *s, proven_u64 n) {
+static void rx_credit(proven_quic_conn_t *c, proven_qstream_t *s, proven_u64 n) {
     c->rx_read += n;
     if (s && !s->rx.has_final && s->rx_max - s->rx.read < s->rx_window / 2) {
         s->rx_window = rx_grow(c, s->rx_window, s->rx_moved_at, c->cfg.stream_window_max);
@@ -877,7 +877,7 @@ static void rx_credit(proven_quic_conn_t *c, qstream_t *s, proven_u64 n) {
  * within what the peer has granted beyond what it acknowledged, up to the caps. The congestion
  * window bounds it because a grant alone is the peer's word: one that grants 24 MiB and
  * acknowledges nothing keeps the window, and so the buffer, at the configured floor. */
-static proven_u64 tx_room(const proven_quic_conn_t *c, const qstream_t *s) {
+static proven_u64 tx_room(const proven_quic_conn_t *c, const proven_qstream_t *s) {
     proven_u64 stream_cap = c->cfg.stream_send_buffer, conn_cap = c->cfg.conn_send_buffer;
     const proven_u64 path = 2 * c->cwnd;
     if (c->cfg.stream_window_max) {
@@ -895,7 +895,7 @@ static proven_u64 tx_room(const proven_quic_conn_t *c, const qstream_t *s) {
 }
 
 /* This side's sending half ends early (a reset of its own, or the peer's STOP_SENDING). */
-static void stream_tx_reset(proven_quic_conn_t *c, qstream_t *s, proven_u64 code) {
+static void stream_tx_reset(proven_quic_conn_t *c, proven_qstream_t *s, proven_u64 code) {
     if (!s->has_tx || s->tx_reset || sendq_done(&s->tx)) return;
     s->tx_reset = true; s->tx_reset_owed = true;
     s->tx_reset_code = code;
@@ -933,7 +933,7 @@ static void apply_peer_params(proven_quic_conn_t *c, const proven_quic_tp_t *tp)
     if (c->early_limits) {
         c->early_limits = false;
         for (proven_size_t i = 0; i < c->nstreams; ++i) {
-            qstream_t *s = c->streams[i];
+            proven_qstream_t *s = c->streams[i];
             if (!s->local) continue;
             const proven_u64 v = id_kind(s->id) ? tp->initial_max_stream_data_uni : tp->initial_max_stream_data_bidi_remote;
             if (v > s->tx_max) { s->tx_max = v; s->ev_writable = true; }
@@ -956,8 +956,8 @@ static void next_keys(proven_quic_conn_t *c, const proven_byte_t *secret, const 
 
 /* ---- 0-RTT (RFC-0021) ---- */
 
-static void frame_lost(proven_quic_conn_t *c, int lvl, const qfrec_t *f);
-static void sent_gone(proven_quic_conn_t *c, qspace_t *sp, const qsent_t *p);
+static void frame_lost(proven_quic_conn_t *c, int lvl, const proven_qfrec_t *f);
+static void sent_gone(proven_quic_conn_t *c, proven_qspace_t *sp, const proven_qsent_t *p);
 static bool static_key_set(const proven_quic_config_t *cfg);
 
 static void zr_drop(proven_quic_conn_t *c) {
@@ -1003,10 +1003,10 @@ static void zr_install(proven_quic_conn_t *c) {
  * server's own limits now apply exactly, and what was sent must fit them, or the connection
  * cannot go on (RFC 9000 section 7.4.1). */
 static void early_refused(proven_quic_conn_t *c) {
-    qspace_t *sp = &c->sp[2];
+    proven_qspace_t *sp = &c->sp[2];
     proven_size_t keep = 0;
     for (proven_size_t i = 0; i < sp->sent_n; ++i) {
-        qsent_t *p = &sp->sent[i];
+        proven_qsent_t *p = &sp->sent[i];
         if (!p->zero_rtt) { sp->sent[keep++] = *p; continue; }
         sent_gone(c, sp, p);
         for (unsigned k = 0; k < p->nfr; ++k) frame_lost(c, 2, &p->fr[k]);
@@ -1019,7 +1019,7 @@ static void early_refused(proven_quic_conn_t *c) {
     c->peer_max_streams[1] = tp->initial_max_streams_uni;
     bool fits = c->local_opened[0] <= tp->initial_max_streams_bidi && c->local_opened[1] <= tp->initial_max_streams_uni && c->tx_data <= tp->initial_max_data;
     for (proven_size_t i = 0; i < c->nstreams; ++i) {
-        qstream_t *s = c->streams[i];
+        proven_qstream_t *s = c->streams[i];
         if (!s->local) continue;
         s->tx_max = id_kind(s->id) ? tp->initial_max_stream_data_uni : tp->initial_max_stream_data_bidi_remote;
         if (s->tx.next > s->tx_max) fits = false;
@@ -1057,7 +1057,7 @@ static void tls_after(proven_quic_conn_t *c) {
     if (err) { conn_fail(c, err, PROVEN_QUIC_FT_CRYPTO); return; }
     if (!c->suite) c->suite = proven_tls_quic_suite_(c->tls);
     for (int lvl = 1; lvl < PROVEN_QUIC_LEVELS && c->suite; ++lvl) {
-        qspace_t *sp = &c->sp[lvl];
+        proven_qspace_t *sp = &c->sp[lvl];
         proven_byte_t secret[PROVEN_HMAC_MAX_SIZE];
         bool got = false;
         if (!sp->tx_ok) {
@@ -1168,7 +1168,7 @@ static void cc_congestion_event(proven_quic_conn_t *c, proven_u64 sent_time) {
     c->cwnd = qmax(c->ssthresh, cc_min_window(c));
 }
 
-static void cc_acked(proven_quic_conn_t *c, const qsent_t *p, proven_u64 bif_before) {
+static void cc_acked(proven_quic_conn_t *c, const proven_qsent_t *p, proven_u64 bif_before) {
     if (!p->in_flight) return;
     if (in_recovery(c, p->time)) return;
     if (bif_before + c->datagram < c->cwnd / 2) return;      /* application limited: the window was not in use */
@@ -1217,7 +1217,7 @@ static proven_u64 pto_time(const proven_quic_conn_t *c, int *space) {
     proven_u64 best = QC_INF;
     *space = -1;
     for (int i = 0; i < PROVEN_QUIC_LEVELS; ++i) {
-        const qspace_t *sp = &c->sp[i];
+        const proven_qspace_t *sp = &c->sp[i];
         if (!sp->ack_eliciting_in_flight || sp->discarded) continue;
         proven_u64 d = duration;
         if (i == PROVEN_QUIC_LEVEL_APPLICATION) {
@@ -1240,14 +1240,14 @@ static void set_loss_timer(proven_quic_conn_t *c) {
 }
 
 /* A frame's packet was acknowledged. */
-static void frame_acked(proven_quic_conn_t *c, int lvl, const qfrec_t *f) {
+static void frame_acked(proven_quic_conn_t *c, int lvl, const proven_qfrec_t *f) {
     switch (f->kind) {
     case FR_CRYPTO:
         sendq_acked(&c->mem, &c->sp[lvl].crypto_tx, f->off, f->len, false);
         if (!c->server && lvl == PROVEN_QUIC_LEVEL_HANDSHAKE) c->hs_acked = true;
         break;
     case FR_STREAM: {
-        qstream_t *s = stream_find(c, f->id);
+        proven_qstream_t *s = stream_find(c, f->id);
         if (!s || s->tx_reset) break;
         const proven_u64 before = s->tx.base;
         sendq_acked(&c->mem, &s->tx, f->off, f->len, f->fin);
@@ -1257,7 +1257,7 @@ static void frame_acked(proven_quic_conn_t *c, int lvl, const qfrec_t *f) {
         break;
     }
     case FR_RESET: {
-        qstream_t *s = stream_find(c, f->id);
+        proven_qstream_t *s = stream_find(c, f->id);
         if (s) { s->tx_reset_acked = true; stream_maybe_free(c, s); }
         break;
     }
@@ -1267,8 +1267,8 @@ static void frame_acked(proven_quic_conn_t *c, int lvl, const qfrec_t *f) {
 }
 
 /* A frame's packet was lost: what it carried is owed again, as it is now. */
-static void frame_lost(proven_quic_conn_t *c, int lvl, const qfrec_t *f) {
-    qstream_t *s;
+static void frame_lost(proven_quic_conn_t *c, int lvl, const proven_qfrec_t *f) {
+    proven_qstream_t *s;
     switch (f->kind) {
     case FR_CRYPTO: sendq_lost(&c->mem, &c->sp[lvl].crypto_tx, f->off, f->len, false); break;
     case FR_STREAM: if ((s = stream_find(c, f->id)) && !s->tx_reset) sendq_lost(&c->mem, &s->tx, f->off, f->len, f->fin); break;
@@ -1288,14 +1288,14 @@ static void frame_lost(proven_quic_conn_t *c, int lvl, const qfrec_t *f) {
     check_mem(c);
 }
 
-static void sent_gone(proven_quic_conn_t *c, qspace_t *sp, const qsent_t *p) {
+static void sent_gone(proven_quic_conn_t *c, proven_qspace_t *sp, const proven_qsent_t *p) {
     if (p->in_flight) c->bif -= qmin(c->bif, p->size);
     if (p->ack_eliciting && sp->ack_eliciting_in_flight) --sp->ack_eliciting_in_flight;
 }
 
 /* RFC 9002 appendix A.10. */
 static void detect_lost(proven_quic_conn_t *c, int lvl) {
-    qspace_t *sp = &c->sp[lvl];
+    proven_qspace_t *sp = &c->sp[lvl];
     sp->loss_time = 0;
     if (sp->largest_acked_plus_one == 0) return;
     const proven_u64 largest = sp->largest_acked_plus_one - 1;
@@ -1304,7 +1304,7 @@ static void detect_lost(proven_quic_conn_t *c, int lvl) {
     proven_u64 lost_n = 0, first_time = 0, last_time = 0, first_pn = 0, last_pn = 0;
     proven_size_t keep = 0, i = 0;
     for (; i < sp->sent_n; ++i) {
-        qsent_t *p = &sp->sent[i];
+        proven_qsent_t *p = &sp->sent[i];
         if (p->pn > largest) break;
         if (p->time <= lost_before || largest >= p->pn + c->pkt_threshold) {
             for (unsigned j = 0; j < p->nfr; ++j) frame_lost(c, lvl, &p->fr[j]);
@@ -1346,7 +1346,7 @@ static void detect_lost(proven_quic_conn_t *c, int lvl) {
 
 /* An ACK frame in space `lvl`. Returns the code to close with, or 0. */
 static proven_u64 on_ack(proven_quic_conn_t *c, int lvl, const proven_quic_frame_t *f) {
-    qspace_t *sp = &c->sp[lvl];
+    proven_qspace_t *sp = &c->sp[lvl];
     if (f->largest >= sp->next_pn) return PROVEN_QUIC_PROTOCOL_VIOLATION;
     if (f->largest + 1 > sp->largest_acked_plus_one) sp->largest_acked_plus_one = f->largest + 1;
     if (lvl == PROVEN_QUIC_LEVEL_APPLICATION && f->largest >= c->phase_first_sent) c->phase_acked = true;
@@ -1363,7 +1363,7 @@ static proven_u64 on_ack(proven_quic_conn_t *c, int lvl, const proven_quic_frame
         while (a < b) { proven_size_t m = (a + b) / 2; if (sp->sent[m].pn < lo) a = m + 1; else b = m; }
         proven_size_t i = a;
         for (; i < sp->sent_n && sp->sent[i].pn <= hi; ++i) {
-            const qsent_t *p = &sp->sent[i];
+            const proven_qsent_t *p = &sp->sent[i];
             newly = true;
             if (p->ack_eliciting) eliciting = true;
             if (p->pn == f->largest) { largest_new = true; largest_time = p->time; }
@@ -1413,7 +1413,7 @@ static proven_u64 on_ack(proven_quic_conn_t *c, int lvl, const proven_quic_frame
 
 /* A space's keys go: what was in flight there no longer counts (RFC 9002 section 6.4). */
 static void space_discard(proven_quic_conn_t *c, int lvl) {
-    qspace_t *sp = &c->sp[lvl];
+    proven_qspace_t *sp = &c->sp[lvl];
     if (sp->discarded) return;
     for (proven_size_t i = 0; i < sp->sent_n; ++i) sent_gone(c, sp, &sp->sent[i]);
     sp->sent_n = 0;
@@ -1449,7 +1449,7 @@ static void on_loss_timeout(proven_quic_conn_t *c) {
         space = c->sp[1].tx_ok && !c->sp[1].discarded ? 1 : 0;
     }
     if (space >= 0 && !c->sp[space].discarded) {
-        qspace_t *sp = &c->sp[space];
+        proven_qspace_t *sp = &c->sp[space];
         sp->probes = 2;
         /* What the oldest packet in flight carried goes out again in the probes. */
         if (sp->sent_n > 0) for (unsigned j = 0; j < sp->sent[0].nfr; ++j) frame_lost(c, space, &sp->sent[0].fr[j]);
@@ -1467,7 +1467,7 @@ static void on_loss_timeout(proven_quic_conn_t *c) {
 /* ---- Frames received ---- */
 
 static proven_u64 on_crypto(proven_quic_conn_t *c, int lvl, const proven_quic_frame_t *f) {
-    qspace_t *sp = &c->sp[lvl];
+    proven_qspace_t *sp = &c->sp[lvl];
     if (f->offset + f->data.size > sp->crypto_rx.read + QC_CRYPTO_WINDOW) return PROVEN_QUIC_CRYPTO_BUFFER_EXCEEDED;
     if (!recvq_insert(&c->mem, &sp->crypto_rx, f->offset, f->data.ptr, f->data.size)) return PROVEN_QUIC_INTERNAL_ERROR;
     proven_size_t n;
@@ -1483,9 +1483,9 @@ static proven_u64 on_crypto(proven_quic_conn_t *c, int lvl, const proven_quic_fr
 static proven_u64 on_stream(proven_quic_conn_t *c, const proven_quic_frame_t *f) {
     if (id_local(c, f->id) && id_kind(f->id) == 1) return PROVEN_QUIC_STREAM_STATE_ERROR;
     proven_u64 err;
-    qstream_t *s = stream_for_peer(c, f->id, &err);
+    proven_qstream_t *s = stream_for_peer(c, f->id, &err);
     if (!s) return err;
-    qrecvq_t *q = &s->rx;
+    proven_qrecvq_t *q = &s->rx;
     const proven_u64 end = f->offset + f->data.size;
     if (q->has_final && (end > q->final || (f->fin && end != q->final))) return PROVEN_QUIC_FINAL_SIZE_ERROR;
     if (f->fin && end < q->highest) return PROVEN_QUIC_FINAL_SIZE_ERROR;
@@ -1512,9 +1512,9 @@ static proven_u64 on_stream(proven_quic_conn_t *c, const proven_quic_frame_t *f)
 static proven_u64 on_reset_stream(proven_quic_conn_t *c, const proven_quic_frame_t *f) {
     if (id_local(c, f->id) && id_kind(f->id) == 1) return PROVEN_QUIC_STREAM_STATE_ERROR;
     proven_u64 err;
-    qstream_t *s = stream_for_peer(c, f->id, &err);
+    proven_qstream_t *s = stream_for_peer(c, f->id, &err);
     if (!s) return err;
-    qrecvq_t *q = &s->rx;
+    proven_qrecvq_t *q = &s->rx;
     if ((q->has_final && f->final_size != q->final) || f->final_size < q->highest) return PROVEN_QUIC_FINAL_SIZE_ERROR;
     if (f->final_size > s->rx_max) return PROVEN_QUIC_FLOW_CONTROL_ERROR;
     c->rx_data += f->final_size - q->highest;
@@ -1539,7 +1539,7 @@ static proven_u64 on_reset_stream(proven_quic_conn_t *c, const proven_quic_frame
 static proven_u64 on_stop_sending(proven_quic_conn_t *c, const proven_quic_frame_t *f) {
     if (!id_local(c, f->id) && id_kind(f->id) == 1) return PROVEN_QUIC_STREAM_STATE_ERROR;
     proven_u64 err;
-    qstream_t *s = stream_for_peer(c, f->id, &err);
+    proven_qstream_t *s = stream_for_peer(c, f->id, &err);
     if (!s) return err;
     if (!s->tx_reset && !sendq_done(&s->tx)) {
         stream_tx_reset(c, s, f->value);
@@ -1551,7 +1551,7 @@ static proven_u64 on_stop_sending(proven_quic_conn_t *c, const proven_quic_frame
 static proven_u64 on_new_cid(proven_quic_conn_t *c, const proven_quic_frame_t *f) {
     if (c->peer[c->peer_cur].cid.len == 0) return PROVEN_QUIC_PROTOCOL_VIOLATION;
     for (int i = 0; i < QC_PEER_CIDS; ++i) {
-        const qcid_t *e = &c->peer[i];
+        const proven_qcid_t *e = &c->peer[i];
         if (!e->active) continue;
         if (e->seq == f->id) return cid_eq(&e->cid, &f->cid) ? 0 : PROVEN_QUIC_PROTOCOL_VIOLATION;
         if (cid_eq(&e->cid, &f->cid)) return PROVEN_QUIC_PROTOCOL_VIOLATION;
@@ -1559,7 +1559,7 @@ static proven_u64 on_new_cid(proven_quic_conn_t *c, const proven_quic_frame_t *f
     if (f->value > c->peer_retire_prior_to) {
         c->peer_retire_prior_to = f->value;
         for (int i = 0; i < QC_PEER_CIDS; ++i) {
-            qcid_t *e = &c->peer[i];
+            proven_qcid_t *e = &c->peer[i];
             if (!e->active || e->seq >= f->value) continue;
             e->active = false;
             if (c->retire_n == 16) return PROVEN_QUIC_CONNECTION_ID_LIMIT_ERROR;
@@ -1573,7 +1573,7 @@ static proven_u64 on_new_cid(proven_quic_conn_t *c, const proven_quic_frame_t *f
         int slot = -1;
         for (int i = 0; i < QC_PEER_CIDS; ++i) if (!c->peer[i].active) { slot = i; break; }
         if (slot < 0) return PROVEN_QUIC_CONNECTION_ID_LIMIT_ERROR;
-        c->peer[slot] = (qcid_t){ .seq = f->id, .cid = f->cid, .active = true, .has_token = true };
+        c->peer[slot] = (proven_qcid_t){ .seq = f->id, .cid = f->cid, .active = true, .has_token = true };
         qcopy(c->peer[slot].token, f->reset_token, PROVEN_QUIC_RESET_TOKEN);
     }
     if (!c->peer[c->peer_cur].active) {
@@ -1585,7 +1585,7 @@ static proven_u64 on_new_cid(proven_quic_conn_t *c, const proven_quic_frame_t *f
 static proven_u64 on_retire_cid(proven_quic_conn_t *c, const proven_quic_frame_t *f, const proven_quic_cid_t *dcid) {
     if (f->id >= c->local_next_seq) return PROVEN_QUIC_PROTOCOL_VIOLATION;
     for (int i = 0; i < QC_LOCAL_CIDS; ++i) {
-        qcid_t *e = &c->local[i];
+        proven_qcid_t *e = &c->local[i];
         if (!e->active || e->seq != f->id) continue;
         if (cid_eq(&e->cid, dcid)) return PROVEN_QUIC_PROTOCOL_VIOLATION;
         e->active = false;
@@ -1599,7 +1599,7 @@ static proven_u64 on_retire_cid(proven_quic_conn_t *c, const proven_quic_frame_t
 /* One frame of a packet that opened in space `lvl`. */
 static proven_u64 on_frame(proven_quic_conn_t *c, int lvl, const proven_quic_frame_t *f, const proven_quic_cid_t *dcid, const proven_quic_addr_t *from) {
     if (lvl < 2 && !proven_quic_frame_in_handshake(f->type)) return PROVEN_QUIC_PROTOCOL_VIOLATION;
-    qstream_t *s;
+    proven_qstream_t *s;
     proven_u64 err;
     switch (f->type) {
     case PROVEN_QUIC_FT_PADDING: case PROVEN_QUIC_FT_PING: return 0;
@@ -1666,7 +1666,7 @@ static proven_u64 on_frame_at(proven_quic_conn_t *c, int lvl, const proven_quic_
 
 /* This side's 1-RTT write key moves to the next phase (its own update, or following the peer's). */
 static void tx_key_next(proven_quic_conn_t *c) {
-    qspace_t *sp = &c->sp[2];
+    proven_qspace_t *sp = &c->sp[2];
     const proven_quic_keys_t tx = sp->tx;
     proven_quic_secret_update(c->suite, c->tx_secret);
     proven_quic_keys_set(&sp->tx, c->suite, c->tx_secret);
@@ -1680,7 +1680,7 @@ static void tx_key_next(proven_quic_conn_t *c) {
 
 /* This side starts a key update: the read key moves too, the old one kept for late packets. */
 static void key_update_start(proven_quic_conn_t *c) {
-    qspace_t *sp = &c->sp[2];
+    proven_qspace_t *sp = &c->sp[2];
     c->rx_prev = sp->rx; c->rx_prev_ok = true;
     c->rx_prev_until = c->now + 3 * pto_base(c);
     sp->rx = c->rx_next;
@@ -1692,7 +1692,7 @@ static void key_update_start(proven_quic_conn_t *c) {
 
 /* The 1-RTT packet at `pkt` under the right key phase (RFC 9001 section 6). */
 static bool open_short(proven_quic_conn_t *c, proven_byte_t *pkt, proven_size_t pn_offset, proven_size_t len, proven_u64 *pn, proven_size_t *hlen, proven_mem_mut_t *payload) {
-    qspace_t *sp = &c->sp[2];
+    proven_qspace_t *sp = &c->sp[2];
     if (len < pn_offset + 4 + 16) return false;
     proven_byte_t mask[5];
     proven_quic_hp_mask(&sp->rx, pkt + pn_offset + 4, mask);
@@ -1726,7 +1726,7 @@ static bool open_short(proven_quic_conn_t *c, proven_byte_t *pkt, proven_size_t 
 
 /* Hold the rest of a datagram for a space whose read keys have not arrived. */
 static void hold(proven_quic_conn_t *c, int lvl, const proven_byte_t *p, proven_size_t n, const proven_quic_addr_t *from) {
-    qspace_t *sp = &c->sp[lvl];
+    proven_qspace_t *sp = &c->sp[lvl];
     if (sp->pending_n == QC_PENDING || sp->discarded) { ++c->st.packets_dropped; return; }
     proven_byte_t *copy = qalloc(&c->mem, n, 1);
     if (!copy) { c->mem.oom = false; ++c->st.packets_dropped; return; }   /* not fatal: it is dropped */
@@ -1738,7 +1738,7 @@ static void hold(proven_quic_conn_t *c, int lvl, const proven_byte_t *p, proven_
 }
 
 static void ack_note(proven_quic_conn_t *c, int lvl, proven_u64 pn, bool eliciting) {
-    qspace_t *sp = &c->sp[lvl];
+    proven_qspace_t *sp = &c->sp[lvl];
     const bool in_order = sp->rcvd.n == 0 || pn == sp->rcvd.r[sp->rcvd.n - 1].hi;
     (void)rset_add(&c->mem, &sp->rcvd, pn, pn + 1);
     while (sp->rcvd.n > c->cfg.max_ack_ranges) { sp->rx_floor = sp->rcvd.r[0].hi; rset_erase(&sp->rcvd, 0, 1); }
@@ -1752,7 +1752,7 @@ static void ack_note(proven_quic_conn_t *c, int lvl, proven_u64 pn, bool eliciti
     if (lvl < 2 || sp->ack_count >= 2 || !in_order) sp->ack_deadline = c->now;
 }
 
-static bool seen(const qspace_t *sp, proven_u64 pn) {
+static bool seen(const proven_qspace_t *sp, proven_u64 pn) {
     if (pn < sp->rx_floor) return true;
     for (proven_size_t i = 0; i < sp->rcvd.n; ++i) if (pn >= sp->rcvd.r[i].lo && pn < sp->rcvd.r[i].hi) return true;
     return false;
@@ -1778,7 +1778,7 @@ static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_q
         }
         if (c->server && !cid_eq(&h->scid, &c->peer[0].cid) && !c->complete) return 0;
     }
-    qspace_t *sp = &c->sp[lvl];
+    proven_qspace_t *sp = &c->sp[lvl];
     if (sp->discarded) return 0;
     if (zrtt && !c->zr_ok) {
         /* Before the ClientHello has been read the key may yet come: held. After, it will not. */
@@ -1896,7 +1896,7 @@ static void read_datagram(proven_quic_conn_t *c, proven_byte_t *d, proven_size_t
             proven_quic_keys_set(&c->sp[0].rx, proven_quic_initial_suite(), ss);
             proven_mem_wipe((proven_mem_mut_t){ .ptr = cs, .size = 32 });
             proven_mem_wipe((proven_mem_mut_t){ .ptr = ss, .size = 32 });
-            qspace_t *sp = &c->sp[0];
+            proven_qspace_t *sp = &c->sp[0];
             for (proven_size_t i = 0; i < sp->sent_n; ++i) sent_gone(c, sp, &sp->sent[i]);
             sp->sent_n = 0;
             sendq_resend_all(&c->mem, &sp->crypto_tx);
@@ -1936,7 +1936,7 @@ static void read_datagram(proven_quic_conn_t *c, proven_byte_t *d, proven_size_t
     /* Nothing opened: a stateless reset from the peer ends the connection (RFC 9000 section 10.3.1). */
     if (short_first && n >= 21 && c->state < QS_DRAINING) {
         for (int i = 0; i < QC_PEER_CIDS; ++i) {
-            const qcid_t *e = &c->peer[i];
+            const proven_qcid_t *e = &c->peer[i];
             if (!e->has_token) continue;
             if (proven_mem_equal_ct((proven_mem_view_t){ .ptr = d + n - 16, .size = 16 }, (proven_mem_view_t){ .ptr = e->token, .size = 16 })) {
                 c->close_code = 0;
@@ -2033,9 +2033,9 @@ static proven_u64 pace_next(const proven_quic_conn_t *c) {
     return c->pace_time + qmax((need * srtt * 4 + den - 1) / den, 1);
 }
 
-static bool rec_add(qsent_t *p, proven_u8 kind, proven_u64 id, proven_u64 off, proven_u64 len, bool fin) {
+static bool rec_add(proven_qsent_t *p, proven_u8 kind, proven_u64 id, proven_u64 off, proven_u64 len, bool fin) {
     if (p->nfr == QC_MAX_FRAMES) return false;
-    p->fr[p->nfr++] = (qfrec_t){ .kind = kind, .fin = fin, .len = (proven_u16)len, .id = id, .off = off };
+    p->fr[p->nfr++] = (proven_qfrec_t){ .kind = kind, .fin = fin, .len = (proven_u16)len, .id = id, .off = off };
     return true;
 }
 
@@ -2044,11 +2044,11 @@ typedef struct {
     int lvl;
     proven_u64 pn;
     bool eliciting, padded;
-    qsent_t rec;
-} qpkt_t;
+    proven_qsent_t rec;
+} proven_qpkt_t;
 
 /* Put a frame if the packet has room for one more record (when it needs one). */
-static bool put_rec(proven_quic_wr_t *w, qsent_t *rec, const proven_quic_frame_t *f, proven_u8 kind, proven_u64 id) {
+static bool put_rec(proven_quic_wr_t *w, proven_qsent_t *rec, const proven_quic_frame_t *f, proven_u8 kind, proven_u64 id) {
     if (kind && rec->nfr == QC_MAX_FRAMES) return false;
     if (!proven_quic_frame_put(w, f)) return false;
     if (kind) (void)rec_add(rec, kind, id, 0, 0, false);
@@ -2056,7 +2056,7 @@ static bool put_rec(proven_quic_wr_t *w, qsent_t *rec, const proven_quic_frame_t
 }
 
 static void put_ack(proven_quic_conn_t *c, int lvl, proven_quic_wr_t *w) {
-    qspace_t *sp = &c->sp[lvl];
+    proven_qspace_t *sp = &c->sp[lvl];
     if (!sp->ack_any || sp->rcvd.n == 0) return;
     proven_u64 ranges[64][2];
     proven_size_t n = 0;
@@ -2067,8 +2067,8 @@ static void put_ack(proven_quic_conn_t *c, int lvl, proven_quic_wr_t *w) {
     sp->ack_count = 0;
 }
 
-static void put_crypto(proven_quic_conn_t *c, int lvl, proven_quic_wr_t *w, qsent_t *rec) {
-    qsendq_t *q = &c->sp[lvl].crypto_tx;
+static void put_crypto(proven_quic_conn_t *c, int lvl, proven_quic_wr_t *w, proven_qsent_t *rec) {
+    proven_qsendq_t *q = &c->sp[lvl].crypto_tx;
     while (rec->nfr < QC_MAX_FRAMES && w->cap - w->n > 8) {
         proven_u64 off, len; bool fin, fresh;
         const proven_size_t over = 1 + 8 + 2;
@@ -2081,11 +2081,11 @@ static void put_crypto(proven_quic_conn_t *c, int lvl, proven_quic_wr_t *w, qsen
     }
 }
 
-static void put_streams(proven_quic_conn_t *c, proven_quic_wr_t *w, qsent_t *rec) {
+static void put_streams(proven_quic_conn_t *c, proven_quic_wr_t *w, proven_qsent_t *rec) {
     const proven_size_t n = c->nstreams;
     for (proven_size_t k = 0; k < n && rec->nfr < QC_MAX_FRAMES; ++k) {
         if (w->cap - w->n < 24) break;
-        qstream_t *s = c->streams[(c->cursor + k) % n];
+        proven_qstream_t *s = c->streams[(c->cursor + k) % n];
         if (!s->has_tx || s->tx_reset) continue;
         const proven_u64 conn_left = c->tx_max_data - c->tx_data;
         const proven_u64 limit = qmin(s->tx_max, s->tx.next + conn_left);
@@ -2107,7 +2107,7 @@ static void put_streams(proven_quic_conn_t *c, proven_quic_wr_t *w, qsent_t *rec
 }
 
 /* Control frames of the 1-RTT space, each with its latest value. */
-static void put_control(proven_quic_conn_t *c, proven_quic_wr_t *w, qsent_t *rec) {
+static void put_control(proven_quic_conn_t *c, proven_quic_wr_t *w, proven_qsent_t *rec) {
     if (c->done_owed) {
         proven_quic_frame_t f = { .type = PROVEN_QUIC_FT_HANDSHAKE_DONE };
         if (put_rec(w, rec, &f, FR_HANDSHAKE_DONE, 0)) c->done_owed = false;
@@ -2132,7 +2132,7 @@ static void put_control(proven_quic_conn_t *c, proven_quic_wr_t *w, qsent_t *rec
         --c->retire_n;
     }
     for (int i = 0; i < QC_LOCAL_CIDS; ++i) {
-        qcid_t *e = &c->local[i];
+        proven_qcid_t *e = &c->local[i];
         if (!e->active || !e->owed) continue;
         proven_quic_frame_t f = { .type = PROVEN_QUIC_FT_NEW_CONNECTION_ID, .id = e->seq, .value = 0, .cid = e->cid };
         qcopy(f.reset_token, e->token, PROVEN_QUIC_RESET_TOKEN);
@@ -2147,7 +2147,7 @@ static void put_control(proven_quic_conn_t *c, proven_quic_wr_t *w, qsent_t *rec
         if (put_rec(w, rec, &f, 0, 0)) c->resp[i].owed = false;
     }
     for (proven_size_t i = 0; i < c->nstreams; ++i) {
-        qstream_t *s = c->streams[i];
+        proven_qstream_t *s = c->streams[i];
         if (s->tx_reset_owed) {
             proven_quic_frame_t f = { .type = PROVEN_QUIC_FT_RESET_STREAM, .id = s->id, .value = s->tx_reset_code, .final_size = s->tx_reset_final };
             if (put_rec(w, rec, &f, FR_RESET, s->id)) s->tx_reset_owed = false;
@@ -2164,7 +2164,7 @@ static void put_control(proven_quic_conn_t *c, proven_quic_wr_t *w, qsent_t *rec
 }
 
 static bool space_has_eliciting(const proven_quic_conn_t *c, int lvl) {
-    const qspace_t *sp = &c->sp[lvl == QC_ZRTT ? 2 : lvl];
+    const proven_qspace_t *sp = &c->sp[lvl == QC_ZRTT ? 2 : lvl];
     proven_u64 off, len; bool fin, fresh;
     if (sp->probes) return true;
     if (sendq_next(&sp->crypto_tx, 1000, QC_INF, &off, &len, &fin, &fresh) && len) return true;
@@ -2173,7 +2173,7 @@ static bool space_has_eliciting(const proven_quic_conn_t *c, int lvl) {
     for (int i = 0; i < QC_LOCAL_CIDS; ++i) if (c->local[i].active && c->local[i].owed) return true;
     for (int i = 0; i < 2; ++i) if (c->resp[i].owed && addr_eq(&c->resp[i].to, &c->peer_addr)) return true;
     for (proven_size_t i = 0; i < c->nstreams; ++i) {
-        const qstream_t *s = c->streams[i];
+        const proven_qstream_t *s = c->streams[i];
         if (s->tx_reset_owed || s->rx_stop_owed || s->rx_max_owed) return true;
         if (s->has_tx && !s->tx_reset && sendq_next(&s->tx, 1000, qmin(s->tx_max, s->tx.next + (c->tx_max_data - c->tx_data)), &off, &len, &fin, &fresh)) return true;
     }
@@ -2181,9 +2181,9 @@ static bool space_has_eliciting(const proven_quic_conn_t *c, int lvl) {
 }
 
 /* One packet of space `lvl` at buf[0..room): its plaintext, header in place. */
-static bool build_packet(proven_quic_conn_t *c, int lvl, proven_byte_t *buf, proven_size_t room, bool eliciting_ok, bool close, qpkt_t *pk) {
-    qspace_t *sp = &c->sp[lvl == QC_ZRTT ? 2 : lvl];
-    *pk = (qpkt_t){ .lvl = lvl, .pn = sp->next_pn };
+static bool build_packet(proven_quic_conn_t *c, int lvl, proven_byte_t *buf, proven_size_t room, bool eliciting_ok, bool close, proven_qpkt_t *pk) {
+    proven_qspace_t *sp = &c->sp[lvl == QC_ZRTT ? 2 : lvl];
+    *pk = (proven_qpkt_t){ .lvl = lvl, .pn = sp->next_pn };
     pk->pn_len = proven_quic_pn_len(sp->next_pn, sp->largest_acked_plus_one);
     const proven_quic_cid_t *dcid = &peer_cid(c)->cid;
     proven_mem_mut_t out = { buf, room };
@@ -2223,11 +2223,11 @@ static bool build_packet(proven_quic_conn_t *c, int lvl, proven_byte_t *buf, pro
 }
 
 /* Header protection and the AEAD over every packet of the datagram; the records kept. */
-static proven_size_t seal(proven_quic_conn_t *c, proven_byte_t *buf, qpkt_t *pk, int n) {
+static proven_size_t seal(proven_quic_conn_t *c, proven_byte_t *buf, proven_qpkt_t *pk, int n) {
     proven_size_t total = 0;
     for (int i = 0; i < n; ++i) {
-        qpkt_t *p = &pk[i];
-        qspace_t *sp = &c->sp[p->lvl == QC_ZRTT ? 2 : p->lvl];
+        proven_qpkt_t *p = &pk[i];
+        proven_qspace_t *sp = &c->sp[p->lvl == QC_ZRTT ? 2 : p->lvl];
         proven_byte_t *at = buf + p->at;
         if (p->lvl != 2) {
             /* The Length field, now that the payload's size is known. */
@@ -2244,11 +2244,11 @@ static proven_size_t seal(proven_quic_conn_t *c, proven_byte_t *buf, qpkt_t *pk,
         if (in_flight && sp->sent_n < QC_MAX_SENT) {
             if (sp->sent_n == sp->sent_cap) {
                 const proven_size_t cap = sp->sent_cap ? sp->sent_cap * 2 : 64;
-                qsent_t *a = qrealloc(&c->mem, sp->sent, sp->sent_cap * sizeof *a, cap * sizeof *a, alignof(qsent_t));
+                proven_qsent_t *a = qrealloc(&c->mem, sp->sent, sp->sent_cap * sizeof *a, cap * sizeof *a, alignof(proven_qsent_t));
                 if (!a) { check_mem(c); continue; }
                 sp->sent = a; sp->sent_cap = cap;
             }
-            qsent_t *r = &sp->sent[sp->sent_n++];
+            proven_qsent_t *r = &sp->sent[sp->sent_n++];
             *r = p->rec;
             r->pn = p->pn; r->time = c->now; r->size = (proven_u32)len;
             r->ack_eliciting = p->eliciting; r->in_flight = true;
@@ -2266,7 +2266,7 @@ static proven_size_t seal(proven_quic_conn_t *c, proven_byte_t *buf, qpkt_t *pk,
 }
 
 static proven_size_t send_close(proven_quic_conn_t *c, proven_byte_t *buf, proven_size_t room) {
-    qpkt_t pk[3];
+    proven_qpkt_t pk[3];
     int n = 0;
     proven_size_t at = 0;
     for (int lvl = 0; lvl < PROVEN_QUIC_LEVELS; ++lvl) {
@@ -2279,7 +2279,7 @@ static proven_size_t send_close(proven_quic_conn_t *c, proven_byte_t *buf, prove
     }
     if (n == 0) return 0;
     if (!c->server && pk[0].lvl == 0 && at < PROVEN_QUIC_MIN_INITIAL && room >= PROVEN_QUIC_MIN_INITIAL) {
-        qpkt_t *last = &pk[n - 1];
+        proven_qpkt_t *last = &pk[n - 1];
         const proven_size_t add = PROVEN_QUIC_MIN_INITIAL - at;
         for (proven_size_t i = 0; i < add; ++i) buf[last->at + last->hlen + last->payload + i] = 0;
         last->payload += add;
@@ -2313,10 +2313,10 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
     /* A PATH_RESPONSE owed on another path goes there, alone and padded (RFC 9000 section 8.2.2). */
     for (int i = 0; i < 2; ++i) {
         if (!c->resp[i].owed || addr_eq(&c->resp[i].to, &c->peer_addr) || !c->sp[2].tx_ok) continue;
-        qpkt_t pk;
+        proven_qpkt_t pk;
         if (!build_packet(c, 2, out.ptr, c->datagram, false, false, &pk)) {
             /* no ACK to carry: a packet of its own */
-            pk = (qpkt_t){ .lvl = 2, .pn = c->sp[2].next_pn, .pn_len = proven_quic_pn_len(c->sp[2].next_pn, c->sp[2].largest_acked_plus_one) };
+            pk = (proven_qpkt_t){ .lvl = 2, .pn = c->sp[2].next_pn, .pn_len = proven_quic_pn_len(c->sp[2].next_pn, c->sp[2].largest_acked_plus_one) };
             pk.hlen = proven_quic_short_header_put(&peer_cid(c)->cid, c->key_phase, pk.pn, pk.pn_len, (proven_mem_mut_t){ out.ptr, out.size });
         }
         proven_quic_wr_t w = { out.ptr + pk.hlen, pk.payload, c->datagram - pk.hlen - 16, true };
@@ -2335,9 +2335,9 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
     if (c->confirmed && c->state == QS_OPEN && c->validated && c->sp[2].tx_ok && !c->challenge_wait) {
         if (c->pm_state == 0) pm_begin(c);
         if (c->pm_state == 1 && !c->pm_out && c->pm_size <= out.size) {
-            qpkt_t pk;
+            proven_qpkt_t pk;
             if (!build_packet(c, 2, out.ptr, c->pm_size, false, false, &pk)) {
-                pk = (qpkt_t){ .lvl = 2, .pn = c->sp[2].next_pn, .pn_len = proven_quic_pn_len(c->sp[2].next_pn, c->sp[2].largest_acked_plus_one) };
+                pk = (proven_qpkt_t){ .lvl = 2, .pn = c->sp[2].next_pn, .pn_len = proven_quic_pn_len(c->sp[2].next_pn, c->sp[2].largest_acked_plus_one) };
                 pk.hlen = proven_quic_short_header_put(&peer_cid(c)->cid, c->key_phase, pk.pn, pk.pn_len, (proven_mem_mut_t){ out.ptr, out.size });
             }
             proven_quic_wr_t w = { out.ptr + pk.hlen, pk.payload, c->pm_size - pk.hlen - 16, true };
@@ -2365,12 +2365,12 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
     pace_refill(c);
     const bool window = c->bif + c->datagram <= c->cwnd;
     const bool paced = c->pace_tokens >= c->datagram;
-    qpkt_t pk[4];
+    proven_qpkt_t pk[4];
     int n = 0;
     proven_size_t at = 0;
     bool initial = false, initial_eliciting = false;
     for (int lvl = 0; lvl <= QC_ZRTT; ++lvl) {
-        qspace_t *sp = &c->sp[lvl == QC_ZRTT ? 2 : lvl];
+        proven_qspace_t *sp = &c->sp[lvl == QC_ZRTT ? 2 : lvl];
         if (lvl == QC_ZRTT) {
             /* 0-RTT: a client's early data, after its Initial in the same datagram (RFC 9001 section 4.6.1). */
             if (c->server || !c->zr_ok || c->complete || !app_ready(c) || sp->discarded) continue;
@@ -2399,7 +2399,7 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
      * ack-eliciting one, is at least 1,200 bytes - padding in its last packet. */
     if (((!c->server && initial) || (c->server && initial_eliciting)) && at < PROVEN_QUIC_MIN_INITIAL) {
         if (budget < PROVEN_QUIC_MIN_INITIAL) return PROVEN_OK;     /* not reached: such a packet was not built */
-        qpkt_t *last = &pk[n - 1];
+        proven_qpkt_t *last = &pk[n - 1];
         const proven_size_t add = PROVEN_QUIC_MIN_INITIAL - at;
         for (proven_size_t i = 0; i < add; ++i) out.ptr[last->at + last->hlen + last->payload + i] = 0;
         last->payload += add;
@@ -2462,7 +2462,7 @@ static void replay_held(proven_quic_conn_t *c) {
     for (int guard = 0; guard < 4 && c->keys_new; ++guard) {
         c->keys_new = false;
         for (int lvl = 1; lvl < PROVEN_QUIC_LEVELS; ++lvl) {
-            qspace_t *sp = &c->sp[lvl];
+            proven_qspace_t *sp = &c->sp[lvl];
             if ((!sp->rx_ok && !(lvl == 2 && c->zr_ok)) || sp->pending_n == 0) continue;
             const unsigned n = sp->pending_n;
             proven_byte_t *held[QC_PENDING]; proven_size_t lens[QC_PENDING]; proven_quic_addr_t from[QC_PENDING];
@@ -2510,14 +2510,14 @@ bool proven_quic_conn_poll(proven_quic_conn_t *c, proven_quic_event_t *ev) {
         /* Room for one stream is room for any that the connection's limit held back. */
         c->send_room_freed = false;
         for (proven_size_t i = 0; i < c->nstreams; ++i) {
-            qstream_t *s = c->streams[i];
+            proven_qstream_t *s = c->streams[i];
             if (s->tx_blocked && !s->tx_reset) s->ev_writable = true;
             s->tx_blocked = false;
         }
     }
     for (proven_size_t k = 0; k < c->nstreams; ++k) {
         const proven_size_t i = (c->ev_cursor + k) % c->nstreams;
-        qstream_t *s = c->streams[i];
+        proven_qstream_t *s = c->streams[i];
         *ev = (proven_quic_event_t){ .stream_id = s->id };
         if (s->ev_opened) { s->ev_opened = false; ev->kind = PROVEN_QUIC_EV_STREAM_OPENED; }
         else if (s->ev_reset) { s->ev_reset = false; s->rx_reset_reported = true; ev->kind = PROVEN_QUIC_EV_STREAM_RESET; ev->code = s->rx_reset_code; }
@@ -2540,7 +2540,7 @@ proven_err_t proven_quic_stream_open(proven_quic_conn_t *c, bool bidi, proven_u6
     const unsigned k = bidi ? 0 : 1;
     if (c->local_opened[k] >= c->peer_max_streams[k]) return PROVEN_ERR_BUSY;
     const proven_u64 sid = (c->local_opened[k] << 2) | (bidi ? 0u : 2u) | (c->server ? 1u : 0u);
-    qstream_t *s = stream_new(c, sid);
+    proven_qstream_t *s = stream_new(c, sid);
     if (!s) { c->mem.oom = false; return PROVEN_ERR_NOMEM; }
     ++c->local_opened[k];
     *id = sid;
@@ -2551,7 +2551,7 @@ proven_err_t proven_quic_stream_write(proven_quic_conn_t *c, proven_u64 id, prov
     if (!c || !taken || (data.size && !data.ptr)) return PROVEN_ERR_INVALID_ARG;
     *taken = 0;
     if (!app_ready(c)) return PROVEN_ERR_INVALID_STATE;
-    qstream_t *s = stream_find(c, id);
+    proven_qstream_t *s = stream_find(c, id);
     if (!s) return PROVEN_ERR_NOT_FOUND;
     if (!s->has_tx || s->tx_reset || s->tx.fin) return PROVEN_ERR_INVALID_STATE;
     const proven_u64 room = tx_room(c, s);
@@ -2567,7 +2567,7 @@ proven_err_t proven_quic_stream_write(proven_quic_conn_t *c, proven_u64 id, prov
 
 proven_u64 proven_quic_stream_room(proven_quic_conn_t *c, proven_u64 id) {
     if (!c || !app_ready(c)) return 0;
-    qstream_t *s = stream_find(c, id);
+    proven_qstream_t *s = stream_find(c, id);
     if (!s || !s->has_tx || s->tx_reset || s->tx.fin) return 0;
     s->tx_blocked = true;               /* asked because it may wait: told when room is freed */
     return tx_room(c, s);
@@ -2576,7 +2576,7 @@ proven_u64 proven_quic_stream_room(proven_quic_conn_t *c, proven_u64 id) {
 proven_err_t proven_quic_stream_read(proven_quic_conn_t *c, proven_u64 id, proven_mem_mut_t out, proven_size_t *got, bool *fin) {
     if (!c || !got || !fin || (out.size && !out.ptr)) return PROVEN_ERR_INVALID_ARG;
     *got = 0; *fin = false;
-    qstream_t *s = stream_find(c, id);
+    proven_qstream_t *s = stream_find(c, id);
     if (!s) return PROVEN_ERR_NOT_FOUND;
     if (!s->has_rx || s->rx_reset) return PROVEN_ERR_INVALID_STATE;
     const proven_size_t ranges = s->rx.got.n;
@@ -2593,7 +2593,7 @@ proven_err_t proven_quic_stream_read(proven_quic_conn_t *c, proven_u64 id, prove
 proven_err_t proven_quic_stream_reset(proven_quic_conn_t *c, proven_u64 id, proven_u64 code) {
     if (!c || code > PROVEN_QUIC_VARINT_MAX) return PROVEN_ERR_INVALID_ARG;
     if (!app_ready(c)) return PROVEN_ERR_INVALID_STATE;
-    qstream_t *s = stream_find(c, id);
+    proven_qstream_t *s = stream_find(c, id);
     if (!s) return PROVEN_ERR_NOT_FOUND;
     if (!s->has_tx) return PROVEN_ERR_INVALID_STATE;
     stream_tx_reset(c, s, code);
@@ -2603,7 +2603,7 @@ proven_err_t proven_quic_stream_reset(proven_quic_conn_t *c, proven_u64 id, prov
 proven_err_t proven_quic_stream_stop(proven_quic_conn_t *c, proven_u64 id, proven_u64 code) {
     if (!c || code > PROVEN_QUIC_VARINT_MAX) return PROVEN_ERR_INVALID_ARG;
     if (!app_ready(c)) return PROVEN_ERR_INVALID_STATE;
-    qstream_t *s = stream_find(c, id);
+    proven_qstream_t *s = stream_find(c, id);
     if (!s) return PROVEN_ERR_NOT_FOUND;
     if (!s->has_rx) return PROVEN_ERR_INVALID_STATE;
     if (s->rx_stopped || s->rx_reset || s->rx_fin_read) return PROVEN_OK;
@@ -2636,7 +2636,7 @@ void proven_quic_conn_close(proven_quic_conn_t *c, bool app, proven_u64 code) {
 bool proven_quic_conn_sending(const proven_quic_conn_t *c) {
     if (!c) return false;
     for (proven_size_t i = 0; i < c->nstreams; ++i) {
-        const qstream_t *s = c->streams[i];
+        const proven_qstream_t *s = c->streams[i];
         if (s->has_tx && !s->tx_reset && (s->tx.end != s->tx.base || (s->tx.fin && !s->tx.fin_acked))) return true;
     }
     return false;
@@ -2744,7 +2744,7 @@ proven_err_t proven_quic_conn_client_create(const proven_quic_config_t *cfg, pro
     c->validated = true;
     c->odcid.len = QC_CID_LEN;
     random_bytes(c, c->odcid.id, QC_CID_LEN);
-    c->peer[0] = (qcid_t){ .seq = 0, .cid = c->odcid, .active = true };
+    c->peer[0] = (proven_qcid_t){ .seq = 0, .cid = c->odcid, .active = true };
     initial_keys(c, &c->odcid);
     c->session = session;
     c->token_len = proven_tls_session_token_take_(session, c->token, sizeof c->token);   /* used once */
@@ -2773,7 +2773,7 @@ proven_err_t proven_quic_conn_server_create(const proven_quic_config_t *cfg, con
     c->retried = accept->retried;
     c->retry_scid = accept->retry_scid;
     c->validated = accept->retried || accept->validated;
-    c->peer[0] = (qcid_t){ .seq = 0, .cid = h.scid, .active = true };
+    c->peer[0] = (proven_qcid_t){ .seq = 0, .cid = h.scid, .active = true };
     c->peer_initial_scid = h.scid;
     initial_keys(c, &h.dcid);
     proven_byte_t tp[256];
@@ -2789,7 +2789,7 @@ proven_err_t proven_quic_conn_server_create(const proven_quic_config_t *cfg, con
 void proven_quic_conn_destroy(proven_quic_conn_t *c) {
     if (!c) return;
     for (int i = 0; i < PROVEN_QUIC_LEVELS; ++i) {
-        qspace_t *sp = &c->sp[i];
+        proven_qspace_t *sp = &c->sp[i];
         sendq_free(&c->mem, &sp->crypto_tx);
         recvq_free(&c->mem, &sp->crypto_rx);
         rset_free(&c->mem, &sp->rcvd);

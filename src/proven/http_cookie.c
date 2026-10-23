@@ -12,7 +12,7 @@ typedef struct {
     proven_time_t expires;      /* wall clock; 0: a session cookie */
     proven_u64 stamp;           /* when it was stored, on the jar's counter */
     bool secure;
-} cookie_t;
+} proven_cookie_t;
 
 static proven_byte_t ck_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
@@ -35,17 +35,17 @@ static proven_u8str_view_t ck_trim(proven_u8str_view_t s) {
     return s;
 }
 
-static proven_u8str_view_t ck_name(const cookie_t *c) { return (proven_u8str_view_t){ .ptr = c->text, .size = c->name_len }; }
-static proven_u8str_view_t ck_value(const cookie_t *c) { return (proven_u8str_view_t){ .ptr = c->text + c->name_len, .size = c->value_len }; }
-static proven_u8str_view_t ck_host(const cookie_t *c) { return (proven_u8str_view_t){ .ptr = c->text + c->name_len + c->value_len, .size = c->host_len }; }
-static proven_u8str_view_t ck_path(const cookie_t *c) {
+static proven_u8str_view_t ck_name(const proven_cookie_t *c) { return (proven_u8str_view_t){ .ptr = c->text, .size = c->name_len }; }
+static proven_u8str_view_t ck_value(const proven_cookie_t *c) { return (proven_u8str_view_t){ .ptr = c->text + c->name_len, .size = c->value_len }; }
+static proven_u8str_view_t ck_host(const proven_cookie_t *c) { return (proven_u8str_view_t){ .ptr = c->text + c->name_len + c->value_len, .size = c->host_len }; }
+static proven_u8str_view_t ck_path(const proven_cookie_t *c) {
     return (proven_u8str_view_t){ .ptr = c->text + c->name_len + c->value_len + c->host_len, .size = c->path_len };
 }
 
-static cookie_t *ck_entries(const proven_http_cookie_jar_t *jar) { return jar->entries; }
+static proven_cookie_t *ck_entries(const proven_http_cookie_jar_t *jar) { return jar->entries; }
 
 static void ck_remove(proven_http_cookie_jar_t *jar, proven_size_t i) {
-    cookie_t *e = ck_entries(jar);
+    proven_cookie_t *e = ck_entries(jar);
     jar->alloc.free_fn(jar->alloc.ctx, e[i].text);
     e[i] = e[jar->count - 1];
     jar->count--;
@@ -55,8 +55,8 @@ proven_err_t proven_http_cookie_jar_init(proven_http_cookie_jar_t *jar, proven_a
     if (!jar) return PROVEN_ERR_INVALID_ARG;
     *jar = (proven_http_cookie_jar_t){0};
     if (!proven_alloc_is_valid(alloc) || max_cookies == 0) return PROVEN_ERR_INVALID_ARG;
-    if (max_cookies > PROVEN_SIZE_MAX / sizeof(cookie_t)) return PROVEN_ERR_OVERFLOW;
-    proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, max_cookies * sizeof(cookie_t), _Alignof(cookie_t));
+    if (max_cookies > PROVEN_SIZE_MAX / sizeof(proven_cookie_t)) return PROVEN_ERR_OVERFLOW;
+    proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, max_cookies * sizeof(proven_cookie_t), _Alignof(proven_cookie_t));
     if (!proven_is_ok(m.err)) return m.err;
     jar->alloc = alloc;
     jar->entries = m.value.ptr;
@@ -195,7 +195,7 @@ proven_err_t proven_http_cookie_jar_store(proven_http_cookie_jar_t *jar, proven_
     if (is_secure && !secure) return PROVEN_ERR_PERMISSION;
 
     /* An existing cookie of the same name, host and path is replaced - or just removed. */
-    cookie_t *e = ck_entries(jar);
+    proven_cookie_t *e = ck_entries(jar);
     proven_size_t same = jar->count;
     for (proven_size_t i = 0; i < jar->count; ++i) {
         if (ck_eq(ck_name(&e[i]), name) && proven_u8str_view_eq_ascii_ci(ck_host(&e[i]), host) && ck_eq(ck_path(&e[i]), cookie_path)) { same = i; break; }
@@ -222,7 +222,7 @@ proven_err_t proven_http_cookie_jar_store(proven_http_cookie_jar_t *jar, proven_
         for (proven_size_t i = 1; i < jar->count; ++i) if (e[i].stamp < e[oldest].stamp) oldest = i;
         ck_remove(jar, oldest);
     }
-    cookie_t *slot = &e[jar->count++];
+    proven_cookie_t *slot = &e[jar->count++];
     slot->text = t;
     slot->name_len = (proven_u32)name.size;
     slot->value_len = (proven_u32)value.size;
@@ -239,7 +239,7 @@ proven_err_t proven_http_cookie_jar_header(proven_http_cookie_jar_t *jar, proven
                                            proven_mem_mut_t out, proven_size_t *written) {
     if (written) *written = 0;
     if (!jar || !jar->entries || !written || (out.size > 0 && !out.ptr)) return PROVEN_ERR_INVALID_ARG;
-    cookie_t *e = ck_entries(jar);
+    proven_cookie_t *e = ck_entries(jar);
 
     for (proven_size_t i = 0; i < jar->count;) {
         if (e[i].expires != 0 && e[i].expires <= now_wall) ck_remove(jar, i);

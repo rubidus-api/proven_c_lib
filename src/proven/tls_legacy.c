@@ -19,7 +19,7 @@ typedef struct {
     proven_byte_t block[64];
     proven_size_t fill;
     proven_tls_lh_t kind;
-} lh_t;
+} proven_lh_t;
 
 static proven_size_t lh_size(proven_tls_lh_t kind) { return kind == PROVEN_TLS_LH_MD5 ? 16 : kind == PROVEN_TLS_LH_SHA1 ? 20 : kind == PROVEN_TLS_LH_SHA256 ? 32 : 48; }
 
@@ -50,12 +50,12 @@ static void lh_length(proven_tls_lh_t kind, proven_u64 bytes, proven_byte_t out[
     for (int i = 0; i < 8; ++i) out[i] = (proven_byte_t)(bits >> (kind == PROVEN_TLS_LH_MD5 ? 8 * i : 8 * (7 - i)));
 }
 
-static void lh_init(lh_t *h, proven_tls_lh_t kind) {
+static void lh_init(proven_lh_t *h, proven_tls_lh_t kind) {
     h->kind = kind; h->length = 0; h->fill = 0;
     lh_start(h->state, kind);
 }
 
-static void lh_update(lh_t *h, const proven_byte_t *p, proven_size_t n) {
+static void lh_update(proven_lh_t *h, const proven_byte_t *p, proven_size_t n) {
     h->length += n;
     for (proven_size_t i = 0; i < n; ++i) {
         h->block[h->fill++] = p[i];
@@ -63,7 +63,7 @@ static void lh_update(lh_t *h, const proven_byte_t *p, proven_size_t n) {
     }
 }
 
-static void lh_final(lh_t *h, proven_byte_t *out) {
+static void lh_final(proven_lh_t *h, proven_byte_t *out) {
     proven_byte_t len[8];
     lh_length(h->kind, h->length, len);
     h->block[h->fill++] = 0x80;
@@ -77,12 +77,12 @@ static void lh_final(lh_t *h, proven_byte_t *out) {
 
 /* ---- HMAC (RFC 2104) ---- */
 
-typedef struct { lh_t inner, outer; } lhmac_t;
+typedef struct { proven_lh_t inner, outer; } proven_lhmac_t;
 
-static void lhmac_init(lhmac_t *m, proven_tls_lh_t kind, proven_mem_view_t key) {
+static void lhmac_init(proven_lhmac_t *m, proven_tls_lh_t kind, proven_mem_view_t key) {
     proven_byte_t k[64] = { 0 }, pad[64];
     if (key.size > 64) {
-        lh_t h;
+        proven_lh_t h;
         lh_init(&h, kind);
         lh_update(&h, key.ptr, key.size);
         lh_final(&h, k);
@@ -99,7 +99,7 @@ static void lhmac_init(lhmac_t *m, proven_tls_lh_t kind, proven_mem_view_t key) 
     proven_mem_wipe((proven_mem_mut_t){ .ptr = pad, .size = sizeof pad });
 }
 
-static void lhmac_final(lhmac_t *m, proven_byte_t *out) {
+static void lhmac_final(proven_lhmac_t *m, proven_byte_t *out) {
     proven_byte_t inner[PROVEN_TLS_LH_MAX_SIZE];
     const proven_size_t n = lh_size(m->inner.kind);
     lh_final(&m->inner, inner);
@@ -122,7 +122,7 @@ void proven_tls_legacy_hmac(proven_tls_lh_t hash, proven_mem_view_t key, proven_
         proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&h, .size = sizeof h });
         return;
     }
-    lhmac_t m;
+    proven_lhmac_t m;
     lhmac_init(&m, hash, key);
     lh_update(&m.inner, a.ptr, a.size);
     lh_update(&m.inner, b.ptr, b.size);
@@ -137,7 +137,7 @@ static void p_hash_xor(proven_tls_lh_t kind, proven_mem_view_t secret, const cha
     proven_size_t label_len = 0;
     while (label[label_len]) ++label_len;
     proven_byte_t a[PROVEN_TLS_LH_MAX_SIZE], block[PROVEN_TLS_LH_MAX_SIZE];
-    lhmac_t m;
+    proven_lhmac_t m;
     lhmac_init(&m, kind, secret);                                   /* A(1) = HMAC(secret, label | seed) */
     lh_update(&m.inner, (const proven_byte_t *)label, label_len);
     lh_update(&m.inner, seed.ptr, seed.size);
@@ -225,7 +225,7 @@ static void cbc_mac_ct(const proven_tls_cbc_t *cbc, const proven_byte_t h[13], c
     }
     proven_byte_t inner[PROVEN_TLS_LH_MAX_SIZE];
     lh_digest(kind, result, inner);
-    lh_t outer;
+    proven_lh_t outer;
     lh_init(&outer, kind);
     for (int i = 0; i < 64; ++i) block[i] = (proven_byte_t)((i < cbc->mac_len ? cbc->mac_key[i] : 0) ^ 0x5c);
     lh_update(&outer, block, 64);

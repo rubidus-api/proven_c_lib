@@ -281,21 +281,21 @@ typedef struct {
     proven_size_t cap;
     proven_size_t len;
     bool overflow;
-} internal_text_t;
+} proven_internal_text_t;
 
-static void internal_put(internal_text_t *t, char c) {
+static void internal_put(proven_internal_text_t *t, char c) {
     if (t->len < t->cap) t->ptr[t->len++] = (proven_byte_t)c;
     else t->overflow = true;
 }
 
-static void internal_put_dec(internal_text_t *t, proven_u32 v) {
+static void internal_put_dec(proven_internal_text_t *t, proven_u32 v) {
     char tmp[10];
     int n = 0;
     do { tmp[n++] = (char)('0' + v % 10u); v /= 10u; } while (v);
     while (n > 0) internal_put(t, tmp[--n]);
 }
 
-static void internal_put_hex16(internal_text_t *t, proven_u16 v) {
+static void internal_put_hex16(proven_internal_text_t *t, proven_u16 v) {
     static const char d[] = "0123456789abcdef";
     bool started = false;
     for (int shift = 12; shift >= 0; shift -= 4) {
@@ -304,7 +304,7 @@ static void internal_put_hex16(internal_text_t *t, proven_u16 v) {
     }
 }
 
-static void internal_put_ipv4(internal_text_t *t, const proven_byte_t ip[4]) {
+static void internal_put_ipv4(proven_internal_text_t *t, const proven_byte_t ip[4]) {
     for (int i = 0; i < 4; ++i) {
         if (i) internal_put(t, '.');
         internal_put_dec(t, ip[i]);
@@ -313,7 +313,7 @@ static void internal_put_ipv4(internal_text_t *t, const proven_byte_t ip[4]) {
 
 /* RFC 5952: lowercase, no leading zeros, and the longest run of two or more zero groups
  * written as "::" - the first such run when two are equally long. */
-static void internal_put_ipv6(internal_text_t *t, const proven_byte_t ip[16]) {
+static void internal_put_ipv6(proven_internal_text_t *t, const proven_byte_t ip[16]) {
     proven_u16 g[8];
     for (int i = 0; i < 8; ++i) g[i] = (proven_u16)(((proven_u16)ip[i * 2] << 8) | ip[i * 2 + 1]);
 
@@ -349,7 +349,7 @@ static void internal_put_ipv6(internal_text_t *t, const proven_byte_t ip[16]) {
 proven_err_t proven_net_addr_format(const proven_net_addr_t *addr, proven_mem_mut_t out, proven_size_t *written) {
     if (written) *written = 0;
     if (!addr || !written || (out.size > 0 && !out.ptr)) return PROVEN_ERR_INVALID_ARG;
-    internal_text_t t = { .ptr = out.ptr, .cap = out.size, .len = 0, .overflow = false };
+    proven_internal_text_t t = { .ptr = out.ptr, .cap = out.size, .len = 0, .overflow = false };
     switch (addr->family) {
         case PROVEN_NET_FAMILY_IPV4:
             internal_put_ipv4(&t, addr->ip);
@@ -966,7 +966,7 @@ typedef struct {
     void *tag;
     proven_u8 want;
     bool told;                         /* nothing was asked of it and it was reported all the same: not again until something is */
-} sel_item_t;
+} proven_sel_item_t;
 
 struct proven_net_selector {
     proven_allocator_t alloc;
@@ -975,7 +975,7 @@ struct proven_net_selector {
     bool native;
     /* The poll kind: the list, a hash from socket to its place in the list, and the memory
      * the wait needs. All three grow together. */
-    sel_item_t *items;
+    proven_sel_item_t *items;
     proven_u32 *slots;                  /* place + 1; 0 is empty */
     proven_byte_t *scratch;
     proven_size_t cap;                  /* items */
@@ -1010,7 +1010,7 @@ static proven_err_t sel_grow(proven_net_selector_t *s) {
     proven_size_t slot_count = cap * 2;
     proven_size_t wait_bytes = proven_net_poll_scratch_size(cap);
     if (cap > 0x7fffffffu || wait_bytes == PROVEN_SIZE_MAX) return PROVEN_ERR_OVERFLOW;
-    sel_item_t *items = sel_alloc(s->alloc, cap * sizeof *items);
+    proven_sel_item_t *items = sel_alloc(s->alloc, cap * sizeof *items);
     proven_u32 *slots = sel_alloc(s->alloc, slot_count * sizeof *slots);
     proven_byte_t *scratch = sel_alloc(s->alloc, wait_bytes);
     if (!items || !slots || !scratch) {
@@ -1103,7 +1103,7 @@ proven_err_t proven_net_selector_add(proven_net_selector_t *selector, proven_net
     bool found;
     proven_size_t at = sel_find(s, handle.raw, &found);
     if (found) return PROVEN_ERR_EXISTS;
-    s->items[s->count] = (sel_item_t){ .raw = handle.raw, .tag = tag, .want = want };
+    s->items[s->count] = (proven_sel_item_t){ .raw = handle.raw, .tag = tag, .want = want };
     s->slots[at] = (proven_u32)(s->count + 1);
     s->count++;
     return PROVEN_OK;
@@ -1118,7 +1118,7 @@ proven_err_t proven_net_selector_modify(proven_net_selector_t *selector, proven_
     bool found;
     proven_size_t at = sel_find(s, handle.raw, &found);
     if (!found) return PROVEN_ERR_NOT_FOUND;
-    sel_item_t *it = &s->items[s->slots[at] - 1];
+    proven_sel_item_t *it = &s->items[s->slots[at] - 1];
     it->want = want;
     it->tag = tag;
     it->told = false;

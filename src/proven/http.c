@@ -57,24 +57,24 @@ typedef struct {
     proven_size_t n;        /* bytes that may be looked at: min(data.size, max_head) */
     bool capped;            /* n was cut by the limit: running out means "too large" */
     proven_size_t pos;
-} http_cur_t;
+} proven_http_cur_t;
 
 /* The scan ran out of bytes. Either more will come, or the limit has been reached with no end
  * of head in sight - decided here so that an endless header costs the limit and no more. */
-static proven_err_t http_short(const http_cur_t *c) {
+static proven_err_t http_short(const proven_http_cur_t *c) {
     return c->capped ? PROVEN_ERR_OUT_OF_BOUNDS : PROVEN_ERR_NEED_MORE;
 }
 
-static http_cur_t http_cur(proven_mem_view_t data, proven_size_t max_head_bytes) {
+static proven_http_cur_t http_cur(proven_mem_view_t data, proven_size_t max_head_bytes) {
     proven_size_t limit = max_head_bytes ? max_head_bytes : PROVEN_HTTP_DEFAULT_MAX_HEAD;
-    http_cur_t c = { .p = data.ptr, .n = data.size, .capped = false, .pos = 0 };
+    proven_http_cur_t c = { .p = data.ptr, .n = data.size, .capped = false, .pos = 0 };
     if (c.n >= limit) { c.n = limit; c.capped = true; }
     return c;
 }
 
 /* Match a literal. A mismatch is an error even when the input ends first, as long as what is
  * there already disagrees; agreement followed by the end of input is "need more". */
-static proven_err_t http_expect(http_cur_t *c, const char *lit) {
+static proven_err_t http_expect(proven_http_cur_t *c, const char *lit) {
     for (proven_size_t i = 0; lit[i] != '\0'; ++i) {
         if (c->pos >= c->n) return http_short(c);
         if (c->p[c->pos] != (proven_byte_t)lit[i]) return PROVEN_ERR_INVALID_FORMAT;
@@ -85,7 +85,7 @@ static proven_err_t http_expect(http_cur_t *c, const char *lit) {
 
 /* "1.0" or "1.1" after "HTTP/". Any other version made of digits is a version this codec does
  * not speak; anything else is not a version. */
-static proven_err_t http_version(http_cur_t *c, proven_u8 *minor) {
+static proven_err_t http_version(proven_http_cur_t *c, proven_u8 *minor) {
     proven_err_t e = http_expect(c, "HTTP/");
     if (e != PROVEN_OK) return e;
     if (c->pos >= c->n) return http_short(c);
@@ -105,7 +105,7 @@ static proven_err_t http_version(http_cur_t *c, proven_u8 *minor) {
 }
 
 /* Header fields up to and including the empty line. */
-static proven_err_t http_fields(http_cur_t *c, proven_http_header_t *headers, proven_size_t cap, proven_size_t *count) {
+static proven_err_t http_fields(proven_http_cur_t *c, proven_http_header_t *headers, proven_size_t cap, proven_size_t *count) {
     *count = 0;
     for (;;) {
         if (c->pos >= c->n) return http_short(c);
@@ -149,7 +149,7 @@ static proven_err_t http_fields(http_cur_t *c, proven_http_header_t *headers, pr
 proven_err_t proven_http_parse_request(proven_mem_view_t data, proven_http_header_t *headers, proven_size_t header_cap,
                                        proven_size_t max_head_bytes, proven_http_request_t *out, proven_size_t *head_size) {
     if (!out || !head_size || (data.size > 0 && !data.ptr) || (header_cap > 0 && !headers)) return PROVEN_ERR_INVALID_ARG;
-    http_cur_t c = http_cur(data, max_head_bytes);
+    proven_http_cur_t c = http_cur(data, max_head_bytes);
     proven_http_request_t req = {0};
 
     /* Empty lines before the request line are skipped: clients have sent a stray CRLF after a
@@ -197,7 +197,7 @@ proven_err_t proven_http_parse_request(proven_mem_view_t data, proven_http_heade
 proven_err_t proven_http_parse_response(proven_mem_view_t data, proven_http_header_t *headers, proven_size_t header_cap,
                                         proven_size_t max_head_bytes, proven_http_response_t *out, proven_size_t *head_size) {
     if (!out || !head_size || (data.size > 0 && !data.ptr) || (header_cap > 0 && !headers)) return PROVEN_ERR_INVALID_ARG;
-    http_cur_t c = http_cur(data, max_head_bytes);
+    proven_http_cur_t c = http_cur(data, max_head_bytes);
     proven_http_response_t res = {0};
 
     proven_err_t e = http_version(&c, &res.version_minor);
@@ -750,17 +750,17 @@ typedef struct {
     proven_mem_mut_t out;
     proven_size_t len;
     bool full;
-} http_w_t;
+} proven_http_w_t;
 
-static void http_put(http_w_t *w, proven_u8str_view_t s) {
+static void http_put(proven_http_w_t *w, proven_u8str_view_t s) {
     if (w->full || s.size > w->out.size - w->len) { w->full = true; return; }
     for (proven_size_t i = 0; i < s.size; ++i) w->out.ptr[w->len + i] = s.ptr[i];
     w->len += s.size;
 }
 
-static void http_put_cstr(http_w_t *w, const char *s) { http_put(w, http_cstr(s)); }
+static void http_put_cstr(proven_http_w_t *w, const char *s) { http_put(w, http_cstr(s)); }
 
-static void http_put_u64(http_w_t *w, proven_u64 v, unsigned base) {
+static void http_put_u64(proven_http_w_t *w, proven_u64 v, unsigned base) {
     static const char digits[] = "0123456789abcdef";
     proven_byte_t tmp[20];
     proven_size_t n = 0;
@@ -770,7 +770,7 @@ static void http_put_u64(http_w_t *w, proven_u64 v, unsigned base) {
     http_put(w, (proven_u8str_view_t){ .ptr = rev, .size = n });
 }
 
-static bool http_w_begin(http_w_t *w, proven_mem_mut_t out, const proven_size_t *len) {
+static bool http_w_begin(proven_http_w_t *w, proven_mem_mut_t out, const proven_size_t *len) {
     if (!len || (out.size > 0 && !out.ptr) || *len > out.size) return false;
     w->out = out;
     w->len = *len;
@@ -778,7 +778,7 @@ static bool http_w_begin(http_w_t *w, proven_mem_mut_t out, const proven_size_t 
     return true;
 }
 
-static proven_err_t http_w_end(const http_w_t *w, proven_size_t *len) {
+static proven_err_t http_w_end(const proven_http_w_t *w, proven_size_t *len) {
     if (w->full) return PROVEN_ERR_OUT_OF_BOUNDS;     /* *len untouched: nothing was appended */
     *len = w->len;
     return PROVEN_OK;
@@ -786,7 +786,7 @@ static proven_err_t http_w_end(const http_w_t *w, proven_size_t *len) {
 
 proven_err_t proven_http_write_request_line(proven_mem_mut_t out, proven_size_t *len,
                                             proven_u8str_view_t method, proven_u8str_view_t target) {
-    http_w_t w;
+    proven_http_w_t w;
     if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
     if (!http_is_token(method) || target.size == 0) return PROVEN_ERR_INVALID_ARG;
     for (proven_size_t i = 0; i < target.size; ++i) {
@@ -801,7 +801,7 @@ proven_err_t proven_http_write_request_line(proven_mem_mut_t out, proven_size_t 
 
 proven_err_t proven_http_write_status_line(proven_mem_mut_t out, proven_size_t *len,
                                            proven_u16 status, proven_u8str_view_t reason) {
-    http_w_t w;
+    proven_http_w_t w;
     if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
     if (status < 100 || status > 999) return PROVEN_ERR_INVALID_ARG;
     for (proven_size_t i = 0; i < reason.size; ++i) {
@@ -817,7 +817,7 @@ proven_err_t proven_http_write_status_line(proven_mem_mut_t out, proven_size_t *
 
 proven_err_t proven_http_write_header(proven_mem_mut_t out, proven_size_t *len,
                                       proven_u8str_view_t name, proven_u8str_view_t value) {
-    http_w_t w;
+    proven_http_w_t w;
     if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
     if (!http_is_token(name) || (value.size > 0 && !value.ptr)) return PROVEN_ERR_INVALID_ARG;
     /* The value is what a caller most often takes from somewhere else - a request, a file, a
@@ -835,7 +835,7 @@ proven_err_t proven_http_write_header(proven_mem_mut_t out, proven_size_t *len,
 
 proven_err_t proven_http_write_header_u64(proven_mem_mut_t out, proven_size_t *len,
                                           proven_u8str_view_t name, proven_u64 value) {
-    http_w_t w;
+    proven_http_w_t w;
     if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
     if (!http_is_token(name)) return PROVEN_ERR_INVALID_ARG;
     http_put(&w, name);
@@ -846,14 +846,14 @@ proven_err_t proven_http_write_header_u64(proven_mem_mut_t out, proven_size_t *l
 }
 
 proven_err_t proven_http_write_head_end(proven_mem_mut_t out, proven_size_t *len) {
-    http_w_t w;
+    proven_http_w_t w;
     if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
     http_put_cstr(&w, "\r\n");
     return http_w_end(&w, len);
 }
 
 proven_err_t proven_http_write_chunk_begin(proven_mem_mut_t out, proven_size_t *len, proven_u64 size) {
-    http_w_t w;
+    proven_http_w_t w;
     if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
     if (size == 0) return PROVEN_ERR_INVALID_ARG;
     http_put_u64(&w, size, 16);
@@ -866,7 +866,7 @@ proven_err_t proven_http_write_chunk_end(proven_mem_mut_t out, proven_size_t *le
 }
 
 proven_err_t proven_http_write_last_chunk(proven_mem_mut_t out, proven_size_t *len) {
-    http_w_t w;
+    proven_http_w_t w;
     if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
     http_put_cstr(&w, "0\r\n\r\n");
     return http_w_end(&w, len);
@@ -877,7 +877,7 @@ proven_err_t proven_http_write_last_chunk(proven_mem_mut_t out, proven_size_t *l
 // -----------------------------------------------------------------------------
 
 proven_err_t proven_http_write_range(proven_mem_mut_t out, proven_size_t *len, proven_u64 first, proven_u64 last) {
-    http_w_t w;
+    proven_http_w_t w;
     if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
     if (last < first) return PROVEN_ERR_INVALID_ARG;
     http_put_cstr(&w, "Range: bytes=");
@@ -890,7 +890,7 @@ proven_err_t proven_http_write_range(proven_mem_mut_t out, proven_size_t *len, p
 
 proven_err_t proven_http_write_content_range(proven_mem_mut_t out, proven_size_t *len,
                                              proven_u64 first, proven_u64 last, proven_u64 total) {
-    http_w_t w;
+    proven_http_w_t w;
     if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
     if (first > last || last >= total) return PROVEN_ERR_INVALID_ARG;
     http_put_cstr(&w, "Content-Range: bytes ");
@@ -1007,7 +1007,7 @@ static bool http_boundary_ok(proven_u8str_view_t b) {
 }
 
 proven_err_t proven_http_multipart_write_content_type(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary) {
-    http_w_t w;
+    proven_http_w_t w;
     if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
     if (!http_boundary_ok(boundary)) return PROVEN_ERR_INVALID_ARG;
     http_put_cstr(&w, "Content-Type: multipart/form-data; boundary=");
@@ -1017,7 +1017,7 @@ proven_err_t proven_http_multipart_write_content_type(proven_mem_mut_t out, prov
 }
 
 /* A name inside a quoted string: '"', CR and LF percent-encoded, as browsers write them. */
-static void http_put_quoted_name(http_w_t *w, proven_u8str_view_t s) {
+static void http_put_quoted_name(proven_http_w_t *w, proven_u8str_view_t s) {
     for (proven_size_t i = 0; i < s.size; ++i) {
         proven_byte_t c = s.ptr[i];
         if (c == '"') http_put_cstr(w, "%22");
@@ -1030,7 +1030,7 @@ static void http_put_quoted_name(http_w_t *w, proven_u8str_view_t s) {
 proven_err_t proven_http_multipart_write_part(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary,
                                               proven_u8str_view_t name, proven_u8str_view_t filename,
                                               proven_u8str_view_t content_type) {
-    http_w_t w;
+    proven_http_w_t w;
     if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
     if (!http_boundary_ok(boundary) || name.size == 0) return PROVEN_ERR_INVALID_ARG;
     for (proven_size_t i = 0; i < name.size; ++i) if (name.ptr[i] == 0) return PROVEN_ERR_INVALID_ARG;
@@ -1063,7 +1063,7 @@ proven_err_t proven_http_multipart_write_part_end(proven_mem_mut_t out, proven_s
 }
 
 proven_err_t proven_http_multipart_write_end(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary) {
-    http_w_t w;
+    proven_http_w_t w;
     if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
     if (!http_boundary_ok(boundary)) return PROVEN_ERR_INVALID_ARG;
     http_put_cstr(&w, "--");
@@ -1147,16 +1147,16 @@ typedef struct {
     proven_size_t n;
     proven_size_t pos;
     bool bad;
-} http_dp_t;
+} proven_http_dp_t;
 
-static void http_dp_lit(http_dp_t *t, const char *lit) {
+static void http_dp_lit(proven_http_dp_t *t, const char *lit) {
     for (proven_size_t i = 0; lit[i] != '\0'; ++i) {
         if (t->pos >= t->n || t->p[t->pos] != (proven_byte_t)lit[i]) { t->bad = true; return; }
         t->pos++;
     }
 }
 
-static unsigned http_dp_num(http_dp_t *t, unsigned digits) {
+static unsigned http_dp_num(proven_http_dp_t *t, unsigned digits) {
     unsigned v = 0;
     for (unsigned i = 0; i < digits; ++i) {
         if (t->pos >= t->n || t->p[t->pos] < '0' || t->p[t->pos] > '9') { t->bad = true; return 0; }
@@ -1167,7 +1167,7 @@ static unsigned http_dp_num(http_dp_t *t, unsigned digits) {
 }
 
 /* Which of `count` names, each `len` bytes (0: NUL-terminated, of any length), starts here. */
-static int http_dp_name3(http_dp_t *t, const char names[][4], int count) {
+static int http_dp_name3(proven_http_dp_t *t, const char names[][4], int count) {
     if (t->n - t->pos < 3) { t->bad = true; return 0; }
     for (int i = 0; i < count; ++i) {
         if (t->p[t->pos] == (proven_byte_t)names[i][0] && t->p[t->pos + 1] == (proven_byte_t)names[i][1] &&
@@ -1180,7 +1180,7 @@ static int http_dp_name3(http_dp_t *t, const char names[][4], int count) {
     return 0;
 }
 
-static void http_dp_time(http_dp_t *t, unsigned *hh, unsigned *mi, unsigned *ss) {
+static void http_dp_time(proven_http_dp_t *t, unsigned *hh, unsigned *mi, unsigned *ss) {
     *hh = http_dp_num(t, 2); http_dp_lit(t, ":");
     *mi = http_dp_num(t, 2); http_dp_lit(t, ":");
     *ss = http_dp_num(t, 2);
@@ -1188,7 +1188,7 @@ static void http_dp_time(http_dp_t *t, unsigned *hh, unsigned *mi, unsigned *ss)
 
 proven_err_t proven_http_date_parse(proven_u8str_view_t text, proven_time_t now_ns, proven_time_t *out_wall_ns) {
     if (!out_wall_ns || (text.size > 0 && !text.ptr)) return PROVEN_ERR_INVALID_ARG;
-    http_dp_t t = { .p = text.ptr, .n = text.size, .pos = 0, .bad = false };
+    proven_http_dp_t t = { .p = text.ptr, .n = text.size, .pos = 0, .bad = false };
     unsigned wd = 0, d = 0, m = 0, hh = 0, mi = 0, ss = 0;
     proven_i64 y = 0;
     bool two_digit_year = false;

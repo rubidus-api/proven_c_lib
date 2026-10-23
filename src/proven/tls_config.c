@@ -47,8 +47,8 @@ proven_u8str_view_t proven_tls_config_alpn(const proven_tls_config_t *config, pr
 #define OID_RSA "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01"
 
 /* ECPrivateKey ::= SEQUENCE { version INTEGER 1, privateKey OCTET STRING, [0] parameters, [1] publicKey } */
-static proven_err_t cfg_sec1(der_t in, bool need_curve, proven_byte_t key[32]) {
-    der_t seq, d, f, curve;
+static proven_err_t cfg_sec1(proven_der_t in, bool need_curve, proven_byte_t key[32]) {
+    proven_der_t seq, d, f, curve;
     proven_u32 version = 0;
     if (!der_expect(&in, DER_SEQUENCE, &seq, NULL) || in.n != 0) return PROVEN_ERR_INVALID_FORMAT;
     if (!der_small_uint(&seq, &version) || version != 1 || !der_expect(&seq, DER_OCTETS, &d, NULL)) return PROVEN_ERR_INVALID_FORMAT;
@@ -66,7 +66,7 @@ static proven_err_t cfg_sec1(der_t in, bool need_curve, proven_byte_t key[32]) {
 
 /* An RSAPrivateKey: the key goes into a block of its own. Only its shape is checked here;
  * cfg_match_key signs with it before the config is given out. */
-static proven_err_t cfg_rsa(proven_tls_config_t *c, der_t in) {
+static proven_err_t cfg_rsa(proven_tls_config_t *c, proven_der_t in) {
     proven_allocator_t a = c->alloc;
     proven_result_mem_mut_t m = a.alloc_fn(a.ctx, sizeof(proven_tls_rsa_t), 16);
     if (m.err != PROVEN_OK) return m.err;
@@ -79,22 +79,22 @@ static proven_err_t cfg_rsa(proven_tls_config_t *c, der_t in) {
 }
 
 /* PrivateKeyInfo ::= SEQUENCE { version INTEGER, algorithm AlgorithmIdentifier, privateKey OCTET STRING, ... } */
-static proven_err_t cfg_pkcs8(proven_tls_config_t *c, der_t in, proven_tls_key_kind_t *kind, proven_byte_t key[32]) {
-    der_t seq, alg, oid, priv;
+static proven_err_t cfg_pkcs8(proven_tls_config_t *c, proven_der_t in, proven_tls_key_kind_t *kind, proven_byte_t key[32]) {
+    proven_der_t seq, alg, oid, priv;
     proven_u32 version = 9;
     if (!der_expect(&in, DER_SEQUENCE, &seq, NULL) || in.n != 0) return PROVEN_ERR_INVALID_FORMAT;
     if (!der_small_uint(&seq, &version) || version > 1) return PROVEN_ERR_INVALID_FORMAT;
     if (!der_expect(&seq, DER_SEQUENCE, &alg, NULL) || !der_expect(&alg, DER_OID, &oid, NULL)) return PROVEN_ERR_INVALID_FORMAT;
     if (!der_expect(&seq, DER_OCTETS, &priv, NULL)) return PROVEN_ERR_INVALID_FORMAT;
     if (DER_IS(&oid, OID_ED25519)) {
-        der_t seed;
+        proven_der_t seed;
         if (alg.n != 0 || !der_expect(&priv, DER_OCTETS, &seed, NULL) || priv.n != 0 || seed.n != 32) return PROVEN_ERR_INVALID_FORMAT;
         for (int i = 0; i < 32; ++i) key[i] = seed.p[i];
         *kind = PROVEN_TLS_KEY_ED25519;
         return PROVEN_OK;
     }
     if (DER_IS(&oid, OID_EC_KEY)) {
-        der_t curve;
+        proven_der_t curve;
         if (!der_expect(&alg, DER_OID, &curve, NULL) || alg.n != 0) return PROVEN_ERR_INVALID_FORMAT;
         if (!DER_IS(&curve, OID_P256)) return PROVEN_ERR_UNSUPPORTED;
         *kind = PROVEN_TLS_KEY_P256;
@@ -122,7 +122,7 @@ static proven_err_t cfg_load_key(proven_tls_config_t *c, proven_mem_view_t pem) 
         if (e == PROVEN_ERR_NOT_FOUND) break;
         if (e == PROVEN_ERR_OUT_OF_BOUNDS) { result = PROVEN_ERR_UNSUPPORTED; break; }     /* larger than any key read here */
         if (e != PROVEN_OK) break;
-        der_t in = { der, len };
+        proven_der_t in = { der, len };
         if (label_is(label, "PRIVATE KEY")) { result = cfg_pkcs8(c, in, &c->key_kind, c->key); break; }
         if (label_is(label, "EC PRIVATE KEY")) { c->key_kind = PROVEN_TLS_KEY_P256; result = cfg_sec1(in, true, c->key); break; }
         if (label_is(label, "RSA PRIVATE KEY")) { result = cfg_rsa(c, in); break; }

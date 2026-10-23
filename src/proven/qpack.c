@@ -63,12 +63,12 @@ typedef struct {
     proven_mem_mut_t scratch;
     proven_size_t used;                /* of scratch */
     bool over;                         /* the list passed a limit: nothing more is given out, but the section is read on */
-} qp_run_t;
+} proven_qp_run_t;
 
 /* A string literal whose length has an N-bit prefix and whose H bit is `hbit` of the first
  * byte. PROVEN_ERR_INVALID_FORMAT, or PROVEN_ERR_OUT_OF_BOUNDS when it is Huffman-coded and
  * the scratch has no room for it. */
-static proven_err_t qp_string(qp_run_t *r, unsigned prefix, proven_byte_t hbit, proven_u8str_view_t *out) {
+static proven_err_t qp_string(proven_qp_run_t *r, unsigned prefix, proven_byte_t hbit, proven_u8str_view_t *out) {
     if (r->pos >= r->in.size) return PROVEN_ERR_INVALID_FORMAT;
     const bool huffman = (r->in.ptr[r->pos] & hbit) != 0;
     proven_u64 n = 0;
@@ -98,7 +98,7 @@ proven_err_t proven_qpack_decode(proven_mem_view_t section, proven_http_header_t
                                  proven_mem_mut_t scratch, proven_size_t max_list_bytes, proven_size_t *count) {
     if (count) *count = 0;
     if (!count || (section.size > 0 && !section.ptr) || (header_cap > 0 && !headers) || (scratch.size > 0 && !scratch.ptr)) return PROVEN_ERR_INVALID_ARG;
-    qp_run_t r = { .in = section, .scratch = scratch };
+    proven_qp_run_t r = { .in = section, .scratch = scratch };
 
     /* The prefix: a Required Insert Count of 0 is the only one a table of capacity 0 allows
      * (section 4.5.1.1: any other could not come from a conformant encoder), and a sign bit

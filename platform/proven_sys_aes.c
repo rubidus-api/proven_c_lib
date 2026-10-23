@@ -37,9 +37,9 @@ AES_TARGET void proven_sys_aes_encrypt_block(const uint8_t *rk, int rounds, cons
 }
 
 /* The round keys, loaded once for a call that has many blocks to do. */
-typedef struct { __m128i k[15]; } aes_keys_t;
+typedef struct { __m128i k[15]; } proven_aes_keys_t;
 
-AES_TARGET static void aes_keys_load(aes_keys_t *ks, const uint8_t *rk, int rounds) {
+AES_TARGET static void aes_keys_load(proven_aes_keys_t *ks, const uint8_t *rk, int rounds) {
     for (int r = 0; r <= rounds; ++r) ks->k[r] = _mm_loadu_si128((const __m128i *)(rk + 16 * r));
 }
 
@@ -68,7 +68,7 @@ AES_TARGET void proven_sys_aes_ctr(const uint8_t *rk, int rounds, const uint8_t 
     uint8_t block[16], ks[16];
     for (int i = 0; i < 12; ++i) block[i] = iv[i];
     if (len >= 16 * AES_WIDE) {
-        aes_keys_t keys;
+        proven_aes_keys_t keys;
         aes_keys_load(&keys, rk, rounds);
         block[12] = block[13] = block[14] = block[15] = 0;
         /* The nonce, zeros where the counter goes, and the first round key already folded in:
@@ -269,7 +269,7 @@ AES_TARGET static __m128i gf_absorb(__m128i y, const __m128i *hp, const uint8_t 
 }
 
 /* Counter mode over fewer than 16 * AES_WIDE bytes, every block in flight at once. */
-AES_TARGET static void ctr_rest(const aes_keys_t *keys, int rounds, __m128i base, uint32_t counter, const uint8_t *in, uint8_t *out, size_t len) {
+AES_TARGET static void ctr_rest(const proven_aes_keys_t *keys, int rounds, __m128i base, uint32_t counter, const uint8_t *in, uint8_t *out, size_t len) {
     __m128i b[AES_WIDE];
     const int n = (int)((len + 15) / 16);
     for (int i = 0; i < n; ++i) b[i] = _mm_xor_si128(base, _mm_insert_epi32(_mm_setzero_si128(), (int)__builtin_bswap32(counter + (uint32_t)i), 3));
@@ -299,7 +299,7 @@ AES_TARGET static void ctr_rest(const aes_keys_t *keys, int rounds, __m128i base
 AES_TARGET bool proven_sys_aes_gcm(const uint8_t *rk, int rounds, const uint8_t h[16], const uint8_t hpow[112], const uint8_t nonce[12],
                                    const uint8_t *aad, size_t aad_len, const uint8_t *in, uint8_t *out, size_t len, bool decrypt, uint8_t tag[16]) {
     const __m128i rev = _mm_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-    aes_keys_t keys;
+    proven_aes_keys_t keys;
     aes_keys_load(&keys, rk, rounds);
     __m128i hp[8];
     hp[0] = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)h), rev);

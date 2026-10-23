@@ -36,9 +36,9 @@ typedef struct {
     proven_u64 expect;                     /* content-length, or H2C_NO_LENGTH */
     proven_u64 got;
     void *user;
-} h2c_stream_t;
+} proven_h2c_stream_t;
 
-typedef enum { RS_PREFACE = 0, RS_HDR, RS_FIXED, RS_DATA, RS_BLOCK, RS_SKIP, RS_TEXT } h2c_rs_t;
+typedef enum { RS_PREFACE = 0, RS_HDR, RS_FIXED, RS_DATA, RS_BLOCK, RS_SKIP, RS_TEXT } proven_h2c_rs_t;
 
 /* How much of a GOAWAY frame's debug text is kept for the event. */
 #define H2C_TEXT_KEEP 256u
@@ -55,7 +55,7 @@ struct proven_h2_conn {
     proven_hpack_decoder_t *dec;
     proven_hpack_encoder_t *enc;
 
-    h2c_stream_t *streams;
+    proven_h2c_stream_t *streams;
     proven_u32 stream_cap, stream_count;
     proven_u32 *ring;                      /* the streams that ended last, each with how (RING_*) in its low two bits */
     proven_u32 ring_cap, ring_len, ring_pos;
@@ -80,7 +80,7 @@ struct proven_h2_conn {
     proven_size_t ctl_queued;
 
     /* the reader */
-    h2c_rs_t rs;
+    proven_h2c_rs_t rs;
     proven_byte_t small[16];
     proven_u32 small_len, small_need;
     proven_h2_frame_t f;
@@ -246,7 +246,7 @@ static void h2c_conn_follow(proven_h2_conn_t *c, proven_u32 stream_window) {
     h2c_q_window(c, 0, add);
 }
 
-static void h2c_stream_credit(proven_h2_conn_t *c, h2c_stream_t *s, proven_size_t n) {
+static void h2c_stream_credit(proven_h2_conn_t *c, proven_h2c_stream_t *s, proven_size_t n) {
     if (n == 0 || c->closed) return;
     s->unacked += (proven_u32)n;
     if ((s->flags & ST_REMOTE_END) != 0) return;          /* the peer will send nothing more here */
@@ -292,7 +292,7 @@ static proven_u32 *h2c_slot(const proven_h2_conn_t *c, proven_u32 id) {
     return (proven_u32 *)(void *)(c->streams + c->stream_cap) + ((id >> 1) & c->map_mask);
 }
 
-static h2c_stream_t *h2c_peek(const proven_h2_conn_t *c, proven_u32 id) {
+static proven_h2c_stream_t *h2c_peek(const proven_h2_conn_t *c, proven_u32 id) {
     if (c->stream_count == 0) return (void *)0;
     const proven_u32 at = *h2c_slot(c, id);
     if (at != 0 && c->streams[at - 1].id == id) return &c->streams[at - 1];
@@ -302,17 +302,17 @@ static h2c_stream_t *h2c_peek(const proven_h2_conn_t *c, proven_u32 id) {
     return (void *)0;
 }
 
-static h2c_stream_t *h2c_find(proven_h2_conn_t *c, proven_u32 id) { return h2c_peek(c, id); }
+static proven_h2c_stream_t *h2c_find(proven_h2_conn_t *c, proven_u32 id) { return h2c_peek(c, id); }
 
 /* Enter the stream at place `i` in the map, or mark it as one the map has no slot for. */
 static void h2c_map(proven_h2_conn_t *c, proven_u32 i) {
-    h2c_stream_t *s = &c->streams[i];
+    proven_h2c_stream_t *s = &c->streams[i];
     proven_u32 *slot = h2c_slot(c, s->id);
     if (*slot == 0) { *slot = i + 1; s->flags &= ~(proven_u32)ST_UNMAPPED; }
     else { s->flags |= ST_UNMAPPED; c->unmapped++; }
 }
 
-static h2c_stream_t *h2c_add(proven_h2_conn_t *c, proven_u32 id) {
+static proven_h2c_stream_t *h2c_add(proven_h2_conn_t *c, proven_u32 id) {
     if (c->stream_count == c->stream_cap) {
         proven_u32 cap = c->stream_cap ? c->stream_cap * 2 : 4;
         if (cap > c->cfg_streams) cap = c->cfg_streams;
@@ -320,9 +320,9 @@ static h2c_stream_t *h2c_add(proven_h2_conn_t *c, proven_u32 id) {
         proven_u32 slots = 8;
         while (slots / 2 < cap && slots < ((proven_u32)1 << 30)) slots *= 2;
         /* One allocation for both, and a new one when it grows: the map is made again. */
-        proven_result_mem_mut_t m = c->alloc.alloc_fn(c->alloc.ctx, cap * sizeof(h2c_stream_t) + slots * sizeof(proven_u32), alignof(h2c_stream_t));
+        proven_result_mem_mut_t m = c->alloc.alloc_fn(c->alloc.ctx, cap * sizeof(proven_h2c_stream_t) + slots * sizeof(proven_u32), alignof(proven_h2c_stream_t));
         if (m.err != PROVEN_OK) return (void *)0;
-        h2c_stream_t *streams = (h2c_stream_t *)(void *)m.value.ptr;
+        proven_h2c_stream_t *streams = (proven_h2c_stream_t *)(void *)m.value.ptr;
         for (proven_u32 i = 0; i < c->stream_count; i++) streams[i] = c->streams[i];
         h2c_free(c, c->streams);
         c->streams = streams;
@@ -333,8 +333,8 @@ static h2c_stream_t *h2c_add(proven_h2_conn_t *c, proven_u32 id) {
         for (proven_u32 i = 0; i < slots; i++) map[i] = 0;
         for (proven_u32 i = 0; i < c->stream_count; i++) h2c_map(c, i);
     }
-    h2c_stream_t *s = &c->streams[c->stream_count++];
-    *s = (h2c_stream_t){ .id = id, .send_win = (proven_i32)c->peer_window, .recv_win = (proven_i32)c->local_window, .expect = H2C_NO_LENGTH,
+    proven_h2c_stream_t *s = &c->streams[c->stream_count++];
+    *s = (proven_h2c_stream_t){ .id = id, .send_win = (proven_i32)c->peer_window, .recv_win = (proven_i32)c->local_window, .expect = H2C_NO_LENGTH,
                          .moved = c->grow_now ? (proven_u32)c->grow_now() : 0 };
     h2c_map(c, c->stream_count - 1);
     return s;
@@ -377,12 +377,12 @@ static proven_u32 h2c_ring_find(const proven_h2_conn_t *c, proven_u32 id) {
 
 /* Take a stream out, remembering how it ended. What it had not consumed goes back to the
  * connection's window. */
-static void h2c_remove(proven_h2_conn_t *c, h2c_stream_t *s, bool properly, proven_u32 how) {
+static void h2c_remove(proven_h2_conn_t *c, proven_h2c_stream_t *s, bool properly, proven_u32 how) {
     const proven_u32 held = s->held;
     const proven_u32 id = s->id;
     if (s->flags & ST_UNMAPPED) c->unmapped--;
     else *h2c_slot(c, id) = 0;
-    const h2c_stream_t *last = &c->streams[--c->stream_count];
+    const proven_h2c_stream_t *last = &c->streams[--c->stream_count];
     if (s != last) {
         /* The last takes its place, and the map is told where it now is. */
         *s = *last;
@@ -399,7 +399,7 @@ static bool h2c_is_idle(const proven_h2_conn_t *c, proven_u32 id) {
     return c->server ? id > c->last_peer_id : id >= c->next_id;
 }
 
-static void h2c_event_stream(proven_h2_event_t *ev, proven_h2_event_kind_t kind, const h2c_stream_t *s) {
+static void h2c_event_stream(proven_h2_event_t *ev, proven_h2_event_kind_t kind, const proven_h2c_stream_t *s) {
     *ev = (proven_h2_event_t){ .kind = kind, .stream_id = s->id, .user = s->user };
 }
 
@@ -410,7 +410,7 @@ static void h2c_debt(proven_h2_conn_t *c) {
 
 /* A stream error: RST_STREAM, and the application is told if it knew the stream. `forgive`:
  * the peer may not have seen the reset yet, so what follows on the stream is dropped. */
-static void h2c_stream_fault(proven_h2_conn_t *c, proven_u32 id, h2c_stream_t *s, proven_u32 code, bool forgive, proven_h2_event_t *ev) {
+static void h2c_stream_fault(proven_h2_conn_t *c, proven_u32 id, proven_h2c_stream_t *s, proven_u32 code, bool forgive, proven_h2_event_t *ev) {
     h2c_q_rst(c, id, code, true);
     if (s) {
         h2c_event_stream(ev, PROVEN_H2_EVENT_STREAM_RESET, s);
@@ -423,7 +423,7 @@ static void h2c_stream_fault(proven_h2_conn_t *c, proven_u32 id, h2c_stream_t *s
 }
 
 /* This side has sent its last on a stream. */
-static void h2c_local_end(proven_h2_conn_t *c, h2c_stream_t *s) {
+static void h2c_local_end(proven_h2_conn_t *c, proven_h2c_stream_t *s) {
     s->flags |= ST_LOCAL_END;
     if ((s->flags & ST_REMOTE_END) != 0) { h2c_remove(c, s, true, RING_DONE); return; }
     if (!c->server) return;
@@ -472,7 +472,7 @@ static bool h2c_method_is_head(const proven_http_header_t *headers, proven_size_
 }
 
 /* The peer has sent its last on a stream; `ev` already describes the frame that said so. */
-static void h2c_remote_end(proven_h2_conn_t *c, h2c_stream_t *s, proven_h2_event_t *ev) {
+static void h2c_remote_end(proven_h2_conn_t *c, proven_h2c_stream_t *s, proven_h2_event_t *ev) {
     if (s->expect != H2C_NO_LENGTH && s->got != s->expect) {
         /* A body that is not the length it announced is a malformed message (section 8.1.1). */
         h2c_stream_fault(c, s->id, s, PROVEN_H2_PROTOCOL_ERROR, false, ev);
@@ -531,7 +531,7 @@ static void h2c_on_block(proven_h2_conn_t *c, proven_mem_view_t block, proven_h2
     if (de != PROVEN_OK && de != PROVEN_ERR_OUT_OF_BOUNDS) { h2c_fail(c, PROVEN_H2_COMPRESSION_ERROR); return; }
     const bool too_big = de != PROVEN_OK;
 
-    h2c_stream_t *s = h2c_find(c, id);
+    proven_h2c_stream_t *s = h2c_find(c, id);
     if (c->self_dep) {
         c->self_dep = false;
         if (s || (c->server && (id & 1u) != 0 && id > c->last_peer_id)) {
@@ -732,7 +732,7 @@ static void h2c_on_header(proven_h2_conn_t *c, proven_h2_event_t *ev) {
             c->rs = RS_DATA;
             c->content_left = f.length;
             c->pad_left = 0;
-            h2c_stream_t *s = h2c_find(c, f.stream_id);
+            proven_h2c_stream_t *s = h2c_find(c, f.stream_id);
             if (!s) {
                 if (h2c_is_idle(c, f.stream_id)) { h2c_fail(c, PROVEN_H2_PROTOCOL_ERROR); return; }
                 c->drop = true;
@@ -813,7 +813,7 @@ static void h2c_on_fixed(proven_h2_conn_t *c, proven_h2_event_t *ev) {
             c->pad_left = pad;
             c->rs = RS_DATA;
             /* Padding is nobody's to consume: it goes back to both windows here. */
-            h2c_stream_t *s = h2c_find(c, c->cur);
+            proven_h2c_stream_t *s = h2c_find(c, c->cur);
             if (s) h2c_stream_credit(c, s, (proven_size_t)pad + 1);
             h2c_conn_credit(c, (proven_size_t)pad + 1);
             return;
@@ -854,7 +854,7 @@ static void h2c_on_fixed(proven_h2_conn_t *c, proven_h2_event_t *ev) {
                 c->sweep_writable = true;
                 return;
             }
-            h2c_stream_t *s = h2c_find(c, f.stream_id);
+            proven_h2c_stream_t *s = h2c_find(c, f.stream_id);
             if (!s) {
                 if (h2c_is_idle(c, f.stream_id)) h2c_fail(c, PROVEN_H2_PROTOCOL_ERROR);
                 return;                                    /* a stream that has ended: allowed for a while, and nothing to do */
@@ -868,7 +868,7 @@ static void h2c_on_fixed(proven_h2_conn_t *c, proven_h2_event_t *ev) {
         case PROVEN_H2_RST_STREAM: {
             const proven_u32 code = h2c_u32(b);
             h2c_to_skip(c, 0);
-            h2c_stream_t *s = h2c_find(c, f.stream_id);
+            proven_h2c_stream_t *s = h2c_find(c, f.stream_id);
             if (!s) {
                 if (h2c_is_idle(c, f.stream_id)) h2c_fail(c, PROVEN_H2_PROTOCOL_ERROR);
                 return;
@@ -976,7 +976,7 @@ static proven_err_t h2c_read(proven_h2_conn_t *c, proven_mem_view_t in, proven_s
             case RS_DATA: {
                 if (c->content_left == 0) {
                     /* A frame with no content: the end of a body, or nothing at all. */
-                    h2c_stream_t *s = c->drop ? (void *)0 : h2c_find(c, c->cur);
+                    proven_h2c_stream_t *s = c->drop ? (void *)0 : h2c_find(c, c->cur);
                     h2c_to_skip(c, c->pad_left);
                     if (!s) break;
                     if (c->fin) {
@@ -995,7 +995,7 @@ static proven_err_t h2c_read(proven_h2_conn_t *c, proven_mem_view_t in, proven_s
                 const bool last = c->content_left == 0;
                 if (last) h2c_to_skip(c, c->pad_left);
                 /* The stream is looked up for every piece: it may have been reset between two. */
-                h2c_stream_t *s = c->drop ? (void *)0 : h2c_find(c, c->cur);
+                proven_h2c_stream_t *s = c->drop ? (void *)0 : h2c_find(c, c->cur);
                 if (!s) { h2c_conn_credit(c, n); break; }
                 c->empty_run = 0;
                 if (s->expect != H2C_NO_LENGTH && s->got + n > s->expect) {
@@ -1160,7 +1160,7 @@ void proven_h2_conn_destroy(proven_h2_conn_t *c) {
     a.free_fn(a.ctx, c);
 }
 
-static bool h2c_can_write(const proven_h2_conn_t *c, const h2c_stream_t *s) {
+static bool h2c_can_write(const proven_h2_conn_t *c, const proven_h2c_stream_t *s) {
     if (h2c_pending(c) >= c->cfg_out) return false;
     if ((s->flags & ST_HBLOCKED) != 0) return true;
     return (s->flags & ST_BLOCKED) != 0 && s->send_win > 0 && c->send_win > 0;
@@ -1174,7 +1174,7 @@ static bool h2c_due(proven_h2_conn_t *c, proven_h2_event_t *ev) {
     if (c->sweep_goaway) {
         /* The peer said which streams it acted on: the others can be sent again elsewhere. */
         for (proven_u32 i = 0; !c->server && i < c->stream_count; i++) {
-            h2c_stream_t *s = &c->streams[i];
+            proven_h2c_stream_t *s = &c->streams[i];
             if (s->id <= c->goaway_last) continue;
             h2c_event_stream(ev, PROVEN_H2_EVENT_STREAM_RESET, s);
             ev->code = PROVEN_H2_REFUSED_STREAM;
@@ -1190,7 +1190,7 @@ static bool h2c_due(proven_h2_conn_t *c, proven_h2_event_t *ev) {
         const proven_u32 n = c->stream_count;
         for (proven_u32 k = 0; k < n; k++) {
             const proven_u32 i = (c->sweep_at + k) % n;
-            h2c_stream_t *s = &c->streams[i];
+            proven_h2c_stream_t *s = &c->streams[i];
             if (!h2c_can_write(c, s)) continue;
             s->flags &= ~(proven_u32)(ST_BLOCKED | ST_HBLOCKED);
             c->sweep_at = i + 1;
@@ -1308,7 +1308,7 @@ proven_err_t proven_h2_conn_submit_request(proven_h2_conn_t *c, const proven_htt
     if (!c || !stream_id || c->server || (count > 0 && !headers) || proven_h2_request_head(headers, count, &head) != PROVEN_OK) return PROVEN_ERR_INVALID_ARG;
     if (c->closed || c->goaway_recv || c->goaway_sent || c->next_id > PROVEN_H2_MAX_WINDOW) return PROVEN_ERR_INVALID_STATE;
     if (c->stream_count >= c->cfg_streams || c->stream_count >= c->peer_streams || h2c_pending(c) >= c->cfg_out) return PROVEN_ERR_BUSY;
-    h2c_stream_t *s = h2c_add(c, c->next_id);
+    proven_h2c_stream_t *s = h2c_add(c, c->next_id);
     if (!s) return PROVEN_ERR_NOMEM;
     proven_err_t err = h2c_send_block(c, s->id, headers, count, end_stream, sensitive);
     if (err != PROVEN_OK) { c->stream_count--; return err; }
@@ -1327,7 +1327,7 @@ proven_err_t proven_h2_conn_submit_response(proven_h2_conn_t *c, proven_u32 stre
     if (!c || !c->server || (count > 0 && !headers) || proven_h2_response_head(headers, count, &status, &rest, &rest_count) != PROVEN_OK
         || status == 101 || (status < 200 && end_stream)) return PROVEN_ERR_INVALID_ARG;
     if (c->closed) return PROVEN_ERR_INVALID_STATE;
-    h2c_stream_t *s = h2c_find(c, stream_id);
+    proven_h2c_stream_t *s = h2c_find(c, stream_id);
     if (!s) return PROVEN_ERR_NOT_FOUND;
     if ((s->flags & ST_HEAD_SENT) != 0) return PROVEN_ERR_INVALID_STATE;
     if (!c->heads_free && h2c_pending(c) >= c->cfg_out) { s->flags |= ST_HBLOCKED; return PROVEN_ERR_BUSY; }
@@ -1343,7 +1343,7 @@ proven_err_t proven_h2_conn_submit_response(proven_h2_conn_t *c, proven_u32 stre
 proven_result_size_t proven_h2_conn_send_data(proven_h2_conn_t *c, proven_u32 stream_id, proven_mem_view_t data, bool end_stream) {
     if (!c || (data.size > 0 && !data.ptr)) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
     if (c->closed) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
-    h2c_stream_t *s = h2c_find(c, stream_id);
+    proven_h2c_stream_t *s = h2c_find(c, stream_id);
     if (!s) return (proven_result_size_t){ .err = PROVEN_ERR_NOT_FOUND, .value = 0 };
     if ((s->flags & ST_HEAD_SENT) == 0 || (s->flags & ST_LOCAL_END) != 0) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
 
@@ -1383,7 +1383,7 @@ proven_err_t proven_h2_conn_send_trailers(proven_h2_conn_t *c, proven_u32 stream
     const bool *sensitive = h2c_take_sensitive(c);
     if (!c || (count > 0 && !headers) || proven_h2_trailers_check(headers, count) != PROVEN_OK) return PROVEN_ERR_INVALID_ARG;
     if (c->closed) return PROVEN_ERR_INVALID_STATE;
-    h2c_stream_t *s = h2c_find(c, stream_id);
+    proven_h2c_stream_t *s = h2c_find(c, stream_id);
     if (!s) return PROVEN_ERR_NOT_FOUND;
     if ((s->flags & ST_HEAD_SENT) == 0 || (s->flags & ST_LOCAL_END) != 0) return PROVEN_ERR_INVALID_STATE;
     if (h2c_pending(c) >= c->cfg_out) { s->flags |= ST_HBLOCKED; return PROVEN_ERR_BUSY; }
@@ -1395,7 +1395,7 @@ proven_err_t proven_h2_conn_send_trailers(proven_h2_conn_t *c, proven_u32 stream
 
 proven_err_t proven_h2_conn_reset(proven_h2_conn_t *c, proven_u32 stream_id, proven_h2_error_t code) {
     if (!c) return PROVEN_ERR_INVALID_ARG;
-    h2c_stream_t *s = c->closed ? (void *)0 : h2c_find(c, stream_id);
+    proven_h2c_stream_t *s = c->closed ? (void *)0 : h2c_find(c, stream_id);
     if (!s) return PROVEN_ERR_NOT_FOUND;
     const bool forgive = (s->flags & ST_REMOTE_END) == 0;
     h2c_q_rst(c, stream_id, (proven_u32)code, false);
@@ -1405,7 +1405,7 @@ proven_err_t proven_h2_conn_reset(proven_h2_conn_t *c, proven_u32 stream_id, pro
 
 void proven_h2_conn_consumed(proven_h2_conn_t *c, proven_u32 stream_id, proven_size_t n) {
     if (!c || c->closed) return;
-    h2c_stream_t *s = h2c_find(c, stream_id);
+    proven_h2c_stream_t *s = h2c_find(c, stream_id);
     if (!s) return;
     if (n > s->held) n = s->held;
     s->held -= (proven_u32)n;
@@ -1446,7 +1446,7 @@ proven_size_t proven_h2_conn_stream_count(const proven_h2_conn_t *c) {
 }
 
 proven_size_t proven_h2_conn_send_room(const proven_h2_conn_t *c, proven_u32 stream_id) {
-    const h2c_stream_t *s = c && !c->closed ? h2c_peek(c, stream_id) : (void *)0;
+    const proven_h2c_stream_t *s = c && !c->closed ? h2c_peek(c, stream_id) : (void *)0;
     if (!s || (s->flags & ST_HEAD_SENT) == 0 || (s->flags & ST_LOCAL_END) != 0 || s->send_win <= 0 || c->send_win <= 0) return 0;
     proven_size_t room = (proven_size_t)s->send_win;
     if ((proven_i64)room > c->send_win) room = (proven_size_t)c->send_win;
@@ -1456,12 +1456,12 @@ proven_size_t proven_h2_conn_send_room(const proven_h2_conn_t *c, proven_u32 str
 }
 
 void proven_h2_conn_stream_set_user(proven_h2_conn_t *c, proven_u32 stream_id, void *user) {
-    h2c_stream_t *s = c ? h2c_find(c, stream_id) : (void *)0;
+    proven_h2c_stream_t *s = c ? h2c_find(c, stream_id) : (void *)0;
     if (s) s->user = user;
 }
 
 void *proven_h2_conn_stream_user(const proven_h2_conn_t *c, proven_u32 stream_id) {
-    const h2c_stream_t *s = c ? h2c_peek(c, stream_id) : (void *)0;
+    const proven_h2c_stream_t *s = c ? h2c_peek(c, stream_id) : (void *)0;
     return s ? s->user : (void *)0;
 }
 
@@ -1496,7 +1496,7 @@ proven_u32 proven_h2_conn_test_window_(const proven_h2_conn_t *c, proven_u32 id)
     if (!c) return 0;
     if (id == 0) return c->recv_target;
     if (id == 0xffffffffu) return c->grow_now ? (proven_u32)c->grow_stream_kib * 1024 : c->cfg_window;
-    const h2c_stream_t *s = h2c_peek(c, id);
+    const proven_h2c_stream_t *s = h2c_peek(c, id);
     if (!s) return 0;
     const proven_u32 base = c->local_window < c->cfg_window ? c->local_window : c->cfg_window;
     return s->win > base ? s->win : base;

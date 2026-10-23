@@ -282,21 +282,21 @@ static bool tp_int_ok(proven_u8 id, proven_u64 v) {
     }
 }
 
-typedef struct { proven_byte_t *p; proven_size_t n, at; bool ok; } tp_wr_t;
+typedef struct { proven_byte_t *p; proven_size_t n, at; bool ok; } proven_tp_wr_t;
 
-static void wr_raw(tp_wr_t *w, const proven_byte_t *p, proven_size_t n) {
+static void wr_raw(proven_tp_wr_t *w, const proven_byte_t *p, proven_size_t n) {
     if (!w->ok || w->n - w->at < n) { w->ok = false; return; }
     for (proven_size_t i = 0; i < n; ++i) w->p[w->at + i] = p[i];
     w->at += n;
 }
-static void wr_varint(tp_wr_t *w, proven_u64 v) {
+static void wr_varint(proven_tp_wr_t *w, proven_u64 v) {
     proven_byte_t b[8];
     proven_size_t n = proven_quic_varint_put(v, b);
     if (n == 0) w->ok = false;
     wr_raw(w, b, n);
 }
-static void wr_param(tp_wr_t *w, proven_u64 id, const proven_byte_t *p, proven_size_t n) { wr_varint(w, id); wr_varint(w, n); wr_raw(w, p, n); }
-static void wr_cid(tp_wr_t *w, proven_u64 id, const proven_quic_cid_t *cid) {
+static void wr_param(proven_tp_wr_t *w, proven_u64 id, const proven_byte_t *p, proven_size_t n) { wr_varint(w, id); wr_varint(w, n); wr_raw(w, p, n); }
+static void wr_cid(proven_tp_wr_t *w, proven_u64 id, const proven_quic_cid_t *cid) {
     if (cid->len > PROVEN_QUIC_MAX_CID) { w->ok = false; return; }
     wr_param(w, id, cid->id, cid->len);
 }
@@ -306,7 +306,7 @@ proven_size_t proven_quic_tp_encode(const proven_quic_tp_t *tp, bool server, pro
     /* What only a server may send, a client never does; and this library never offers a preferred address. */
     if (!server && (tp->has_original_dcid || tp->has_retry_scid || tp->has_reset_token)) return 0;
     if (tp->has_preferred_address) return 0;
-    tp_wr_t w = { out.ptr, out.size, 0, true };
+    proven_tp_wr_t w = { out.ptr, out.size, 0, true };
     if (tp->has_original_dcid) wr_cid(&w, TP_ORIGINAL_DCID, &tp->original_dcid);
     proven_quic_tp_t copy = *tp;
     for (proven_size_t i = 0; i < sizeof TP_INT_IDS; ++i) {

@@ -30,14 +30,14 @@ typedef struct {
     proven_u16 next;
     proven_u8 symbol;
     proven_u8 bits;
-} fse_t;
+} proven_fse_t;
 
 /* One entry of a Huffman table indexed by the next `log` bits: the symbol and its code's
  * length. */
 typedef struct {
     proven_u8 symbol;
     proven_u8 bits;
-} huf_t;
+} proven_huf_t;
 
 enum { Z_MAGIC, Z_SKIP_SIZE, Z_SKIP, Z_FHD, Z_HEADER, Z_BLOCK, Z_RAW, Z_RLE, Z_DATA, Z_DRAIN, Z_CHECK };
 
@@ -58,7 +58,7 @@ struct proven_zstd_decoder {
     unsigned block_type;
     proven_size_t block_size, block_have;
     proven_u64 rep[3];
-    xxh64_t xxh;
+    proven_xxh64_t xxh;
     /* buffers, grown on demand and kept */
     proven_byte_t *hist, *inbuf, *lits;
     proven_size_t hist_cap, inbuf_cap, lits_cap;
@@ -67,11 +67,11 @@ struct proven_zstd_decoder {
     /* entropy tables: what the last block left, for the next to repeat */
     bool huf_ok;
     unsigned huf_log;
-    const fse_t *llt, *oft, *mlt;
+    const proven_fse_t *llt, *oft, *mlt;
     unsigned lll, ofl, mll;
-    huf_t huf[1u << HUF_LOG_MAX];
-    fse_t ll_dyn[1u << LL_LOG], of_dyn[1u << OF_LOG], ml_dyn[1u << ML_LOG];
-    fse_t ll_def[64], of_def[32], ml_def[64];
+    proven_huf_t huf[1u << HUF_LOG_MAX];
+    proven_fse_t ll_dyn[1u << LL_LOG], of_dyn[1u << OF_LOG], ml_dyn[1u << ML_LOG];
+    proven_fse_t ll_def[64], of_def[32], ml_def[64];
 };
 
 // -----------------------------------------------------------------------------
@@ -98,9 +98,9 @@ typedef struct {
     const proven_byte_t *start, *p;
     proven_u64 c;
     unsigned used;
-} bits_t;
+} proven_bits_t;
 
-static bool bits_init(bits_t *b, const proven_byte_t *src, proven_size_t len) {
+static bool bits_init(proven_bits_t *b, const proven_byte_t *src, proven_size_t len) {
     if (len == 0 || src[len - 1] == 0) return false;
     b->start = src;
     if (len >= 8) {
@@ -118,18 +118,18 @@ static bool bits_init(bits_t *b, const proven_byte_t *src, proven_size_t len) {
 }
 
 /* The next `n` bits (at most 56) without taking them. */
-static inline proven_u64 bits_look(const bits_t *b, unsigned n) {
+static inline proven_u64 bits_look(const proven_bits_t *b, unsigned n) {
     if (b->used >= 64) return 0;
     return ((b->c << b->used) >> 1) >> (63 - n);
 }
 
-static inline proven_u64 bits_read(bits_t *b, unsigned n) {
+static inline proven_u64 bits_read(proven_bits_t *b, unsigned n) {
     const proven_u64 v = bits_look(b, n);
     b->used += n;
     return v;
 }
 
-static inline void bits_reload(bits_t *b) {
+static inline void bits_reload(proven_bits_t *b) {
     if (b->used > 64) return;
     if (b->p >= b->start + 8) {
         b->p -= b->used >> 3;
@@ -145,13 +145,13 @@ static inline void bits_reload(bits_t *b) {
 }
 
 /* Whether the stream was read to its beginning and no further. */
-static bool bits_exact(bits_t *b) {
+static bool bits_exact(proven_bits_t *b) {
     bits_reload(b);
     return b->p == b->start && b->used == 64;
 }
 
 /* Whether it was read past its beginning. */
-static bool bits_over(bits_t *b) {
+static bool bits_over(proven_bits_t *b) {
     bits_reload(b);
     return b->used > 64;
 }
@@ -161,9 +161,9 @@ static bool bits_over(bits_t *b) {
 typedef struct {
     const proven_byte_t *p;
     proven_size_t len, bit;
-} fwd_t;
+} proven_fwd_t;
 
-static proven_u32 fwd_peek(const fwd_t *f, unsigned n) {
+static proven_u32 fwd_peek(const proven_fwd_t *f, unsigned n) {
     const proven_u64 w = load_upto(f->p, f->len, f->bit >> 3) >> (f->bit & 7);
     return (proven_u32)(w & (((proven_u64)1 << n) - 1));
 }
@@ -175,7 +175,7 @@ static proven_u32 fwd_peek(const fwd_t *f, unsigned n) {
 /* Read a table description: the normalised counts of up to `max_sym + 1` symbols. */
 static bool fse_read(const proven_byte_t *p, proven_size_t len, unsigned max_sym, unsigned max_log,
                      proven_i16 *norm, unsigned *nsym, unsigned *log, proven_size_t *used) {
-    fwd_t f = { p, len, 0 };
+    proven_fwd_t f = { p, len, 0 };
     const unsigned al = fwd_peek(&f, 4) + 5;
     f.bit += 4;
     if (al > max_log) return false;
@@ -221,7 +221,7 @@ static bool fse_read(const proven_byte_t *p, proven_size_t len, unsigned max_sym
     return true;
 }
 
-static bool fse_build(fse_t *t, const proven_i16 *norm, unsigned nsym, unsigned al) {
+static bool fse_build(proven_fse_t *t, const proven_i16 *norm, unsigned nsym, unsigned al) {
     const proven_u32 size = 1u << al, mask = size - 1;
     proven_u32 high = size - 1;
     proven_u16 next[256];
@@ -352,9 +352,9 @@ static bool huf_read(proven_zstd_decoder_t *z, const proven_byte_t *p, proven_si
         unsigned nsym = 0, al = 0;
         proven_size_t hu = 0;
         if (!fse_read(q, hb, 255, 6, norm, &nsym, &al, &hu)) return false;
-        fse_t t[64];
+        proven_fse_t t[64];
         if (!fse_build(t, norm, nsym, al)) return false;
-        bits_t b;
+        proven_bits_t b;
         if (!bits_init(&b, q + hu, hb - hu)) return false;
         /* Two states take turns over one stream; when it runs out, the other state gives one
          * last symbol. */
@@ -392,7 +392,7 @@ static bool huf_read(proven_zstd_decoder_t *z, const proven_byte_t *p, proven_si
     for (unsigned s = 0; s < n; ++s) {
         if (w[s] == 0) continue;
         const proven_u32 count = 1u << (w[s] - 1);
-        const huf_t e = { .symbol = (proven_u8)s, .bits = (proven_u8)(log + 1 - w[s]) };
+        const proven_huf_t e = { .symbol = (proven_u8)s, .bits = (proven_u8)(log + 1 - w[s]) };
         for (proven_u32 u = 0; u < count; ++u) z->huf[startpos[w[s]] + u] = e;
         startpos[w[s]] += count;
     }
@@ -401,8 +401,8 @@ static bool huf_read(proven_zstd_decoder_t *z, const proven_byte_t *p, proven_si
     return true;
 }
 
-static inline proven_byte_t huf_one(const huf_t *t, unsigned log, bits_t *b) {
-    const huf_t e = t[bits_look(b, log)];
+static inline proven_byte_t huf_one(const proven_huf_t *t, unsigned log, proven_bits_t *b) {
+    const proven_huf_t e = t[bits_look(b, log)];
     b->used += e.bits;
     return e.symbol;
 }
@@ -410,10 +410,10 @@ static inline proven_byte_t huf_one(const huf_t *t, unsigned log, bits_t *b) {
 /* One Huffman stream of exactly `count` symbols, read to its beginning exactly. Four symbols
  * take at most 48 bits: one reload for every four. */
 static bool huf_stream(const proven_zstd_decoder_t *z, const proven_byte_t *p, proven_size_t len, proven_byte_t *out, proven_size_t count) {
-    bits_t b;
+    proven_bits_t b;
     if (!bits_init(&b, p, len)) return false;
     const unsigned log = z->huf_log;
-    const huf_t *t = z->huf;
+    const proven_huf_t *t = z->huf;
     proven_size_t i = 0;
     for (; i + 4 <= count; i += 4) {
         bits_reload(&b);
@@ -430,14 +430,14 @@ static bool huf_stream(const proven_zstd_decoder_t *z, const proven_byte_t *p, p
 /* Four streams, the first three `seg` symbols long and the last `last`, decoded side by side:
  * the four are independent, so the processor can work on all of them at once. */
 static bool huf_four(const proven_zstd_decoder_t *z, const proven_byte_t *q, const proven_size_t sz[4], proven_byte_t *out, proven_size_t seg, proven_size_t last) {
-    bits_t b[4];
+    proven_bits_t b[4];
     const proven_byte_t *at = q;
     for (int k = 0; k < 4; ++k) {
         if (!bits_init(&b[k], at, sz[k])) return false;
         at += sz[k];
     }
     const unsigned log = z->huf_log;
-    const huf_t *t = z->huf;
+    const proven_huf_t *t = z->huf;
     proven_byte_t *o0 = out, *o1 = out + seg, *o2 = out + 2 * seg, *o3 = out + 3 * seg;
     proven_size_t i = 0;
     for (; i + 4 <= last; i += 4) {
@@ -539,7 +539,7 @@ static proven_err_t literals(proven_zstd_decoder_t *z, const proven_byte_t *src,
 // -----------------------------------------------------------------------------
 
 static bool seq_table(proven_zstd_decoder_t *z, unsigned mode, const proven_byte_t *p, proven_size_t n, proven_size_t *at,
-                      const fse_t **cur, unsigned *curlog, fse_t *dyn, const fse_t *def, unsigned deflog,
+                      const proven_fse_t **cur, unsigned *curlog, proven_fse_t *dyn, const proven_fse_t *def, unsigned deflog,
                       unsigned max_sym, unsigned max_log) {
     (void)z;
     switch (mode) {
@@ -549,7 +549,7 @@ static bool seq_table(proven_zstd_decoder_t *z, unsigned mode, const proven_byte
             return true;
         case 1:
             if (*at >= n || p[*at] > max_sym) return false;
-            dyn[0] = (fse_t){ .next = 0, .symbol = p[*at], .bits = 0 };
+            dyn[0] = (proven_fse_t){ .next = 0, .symbol = p[*at], .bits = 0 };
             (*at)++;
             *cur = dyn;
             *curlog = 0;
@@ -624,9 +624,9 @@ static proven_err_t sequences(proven_zstd_decoder_t *z, const proven_byte_t *p, 
             !seq_table(z, (modes >> 2) & 3, p, n, &at, &z->mlt, &z->mll, z->ml_dyn, z->ml_def, 6, ML_MAX, ML_LOG)) {
             return PROVEN_ERR_INVALID_FORMAT;
         }
-        bits_t b;
+        proven_bits_t b;
         if (!bits_init(&b, p + at, n - at)) return PROVEN_ERR_INVALID_FORMAT;
-        const fse_t *llt = z->llt, *oft = z->oft, *mlt = z->mlt;
+        const proven_fse_t *llt = z->llt, *oft = z->oft, *mlt = z->mlt;
         proven_u32 ls = (proven_u32)bits_read(&b, z->lll), os = (proven_u32)bits_read(&b, z->ofl), ms = (proven_u32)bits_read(&b, z->mll);
         /* What may be written from `h` and read from `lit`, the slack included. */
         const proven_size_t wend = z->hist ? z->hist_cap + WILD : 0, lend = lit && lit == z->lits ? z->lits_cap + WILD : nlit;

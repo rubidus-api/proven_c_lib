@@ -147,7 +147,7 @@ typedef struct {
     bool server_no_takeover, client_no_takeover, server_bits_seen, client_bits_seen;
     int server_bits;
     bool whole;                        /* the element was the only thing in the value */
-} ws_deflate_params_t;
+} proven_ws_deflate_params_t;
 
 
 static bool ws_eq_nocase(proven_u8str_view_t a, const char *b) { return proven_u8str_view_eq_ascii_ci(a, proven_u8str_view_from_cstr(b)); }
@@ -164,12 +164,12 @@ static int ws_window_value(proven_u8str_view_t v) {
  * when it is another extension or not well formed: a parameter that is unknown or given
  * twice, a value where none belongs or none where one does (`client_max_window_bits` may go
  * without one in an offer only). `*rest`, when given, receives what follows the comma. */
-static bool ws_deflate_element(proven_u8str_view_t list, bool offer, ws_deflate_params_t *out, proven_u8str_view_t *rest) {
+static bool ws_deflate_element(proven_u8str_view_t list, bool offer, proven_ws_deflate_params_t *out, proven_u8str_view_t *rest) {
     proven_size_t end = 0;
     while (end < list.size && list.ptr[end] != ',') end++;
     if (rest) *rest = (proven_u8str_view_t){ .ptr = list.ptr + (end < list.size ? end + 1 : end), .size = list.size - (end < list.size ? end + 1 : end) };
     proven_u8str_view_t element = { .ptr = list.ptr, .size = end };
-    *out = (ws_deflate_params_t){ .server_bits = 15 };
+    *out = (proven_ws_deflate_params_t){ .server_bits = 15 };
     bool named = false;
     proven_size_t start = 0;
     for (proven_size_t i = 0; i <= element.size; ++i) {
@@ -208,7 +208,7 @@ static bool ws_deflate_element(proven_u8str_view_t list, bool offer, ws_deflate_
 }
 
 /* A whole header value that must be exactly one permessage-deflate element (a server's answer). */
-static bool ws_deflate_parse(proven_u8str_view_t value, bool offer, ws_deflate_params_t *out) {
+static bool ws_deflate_parse(proven_u8str_view_t value, bool offer, proven_ws_deflate_params_t *out) {
     proven_u8str_view_t rest;
     if (!ws_deflate_element(value, offer, out, &rest)) return false;
     out->whole = ws_trim(rest).size == 0 && (value.size == 0 || value.ptr[value.size - 1] != ',');
@@ -221,7 +221,7 @@ proven_err_t proven_ws_deflate_accept(const proven_http_request_t *request, prov
         if (!ws_eq_nocase(request->headers[i].name, "sec-websocket-extensions")) continue;
         proven_u8str_view_t rest = request->headers[i].value;
         while (ws_trim(rest).size > 0) {
-            ws_deflate_params_t p;
+            proven_ws_deflate_params_t p;
             proven_u8str_view_t next;
             bool ok = ws_deflate_element(rest, true, &p, &next);
             rest = next;
@@ -268,7 +268,7 @@ static proven_err_t ws_check_response(const proven_http_response_t *response, pr
          * one form that was offered. */
         proven_u8str_view_t value;
         if (!deflate || extensions != 1 || !proven_http_header_find(h, n, ws_lit("Sec-WebSocket-Extensions"), &value)) return PROVEN_ERR_INVALID_FORMAT;
-        ws_deflate_params_t params;
+        proven_ws_deflate_params_t params;
         if (!ws_deflate_parse(value, false, &params) || !params.whole || !params.server_no_takeover || params.client_bits_seen) return PROVEN_ERR_INVALID_FORMAT;
         *deflate = true;
     }

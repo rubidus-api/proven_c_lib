@@ -15,7 +15,7 @@
  *
  * An HTTP/1.1 request of this client is its own connection. HTTP/2 is the opposite bargain -
  * many requests on one connection - so the client keeps a connection for each origin it has
- * spoken HTTP/2 to (c2conn_t) and a request is a small object on it (c2req_t). The protocol is
+ * spoken HTTP/2 to (c2conn_t) and a request is a small object on it (proven_c2req_t). The protocol is
  * proven_h2_conn_t (h2.h); this file is its driver: the socket, TLS, time, and the callbacks.
  *
  * Whether an origin speaks HTTP/2 is known only when the TLS handshake has chosen (ALPN). A
@@ -40,7 +40,7 @@
 typedef struct c2conn c2conn_t;
 
 typedef struct c2req {
-    cl_head_t h;                       /* first: what http_event_client.c reads */
+    proven_cl_head_t h;                       /* first: what http_event_client.c reads */
     c2conn_t *conn;                    /* not to be followed once `dead` or forwarded */
     struct c2req *prev, *next;
     proven_http_event_request_t *fwd;  /* the HTTP/1.1 request this became */
@@ -66,7 +66,7 @@ typedef struct c2req {
     struct c2delay *delay;             /* waiting to be tried again: on no connection, and this says where it goes */
     bool got_head, head_only, held_last, any_decoded;
     bool host_is_ipv6, query_alone;    /* of the URL, read once when the request was started */
-} c2req_t;
+} proven_c2req_t;
 
 struct c2conn {
     proven_http_event_client_t *client;
@@ -80,8 +80,8 @@ struct c2conn {
     proven_u64 session_mark;           /* what it was given */
     proven_u64 session_stored;         /* what it last stored, or was given */
     proven_h2_conn_t *engine;
-    c2req_t *reqs;
-    c2req_t *turn;                     /* the request whose output was moved last in a round: the next round goes on behind it */
+    proven_c2req_t *reqs;
+    proven_c2req_t *turn;                     /* the request whose output was moved last in a round: the next round goes on behind it */
     proven_size_t share;               /* while `sharing`: how much more the request whose turn it is may move */
     bool sharing;
     proven_size_t count;               /* requests on it, waiting or under way */
@@ -127,9 +127,9 @@ static bool c2_append(proven_allocator_t a, proven_byte_t **buf, proven_size_t *
     return true;
 }
 
-static proven_http_event_request_t *c2_handle(c2req_t *r) { return (proven_http_event_request_t *)(void *)r; }
-static c2req_t *c2_of(proven_http_event_request_t *request) { return (c2req_t *)(void *)request; }
-static const c2req_t *c2_of_const(const proven_http_event_request_t *request) { return (const c2req_t *)(const void *)request; }
+static proven_http_event_request_t *c2_handle(proven_c2req_t *r) { return (proven_http_event_request_t *)(void *)r; }
+static proven_c2req_t *c2_of(proven_http_event_request_t *request) { return (proven_c2req_t *)(void *)request; }
+static const proven_c2req_t *c2_of_const(const proven_http_event_request_t *request) { return (const proven_c2req_t *)(const void *)request; }
 
 // -----------------------------------------------------------------------------
 // Lifetimes
@@ -146,9 +146,9 @@ static void c_leave(c2conn_t *c) {
     a.free_fn(a.ctx, c);
 }
 
-static void r_enter(c2req_t *r) { r->h.depth++; }
+static void r_enter(proven_c2req_t *r) { r->h.depth++; }
 
-static void r_free_parts(c2req_t *r) {
+static void r_free_parts(proven_c2req_t *r) {
     proven_allocator_t a = r->h.client->alloc;
     if (r->copy) { a.free_fn(a.ctx, r->copy); r->copy = (void *)0; }
     if (r->out) { a.free_fn(a.ctx, r->out); r->out = (void *)0; r->out_len = r->out_off = r->out_cap = 0; }
@@ -156,13 +156,13 @@ static void r_free_parts(c2req_t *r) {
     if (r->dec) { proven_http_decoder_free_(r->dec); a.free_fn(a.ctx, r->dec); r->dec = (void *)0; }
 }
 
-static void r_leave(c2req_t *r) {
+static void r_leave(proven_c2req_t *r) {
     if (--r->h.depth > 0 || !r->dead) return;
     proven_allocator_t a = r->h.client->alloc;
     a.free_fn(a.ctx, r);
 }
 
-static void r_unlink(c2req_t *r) {
+static void r_unlink(proven_c2req_t *r) {
     c2conn_t *c = r->conn;
     if (!c) return;
     if (c->turn == r) c->turn = r->prev;
@@ -175,9 +175,9 @@ static void r_unlink(c2req_t *r) {
 }
 
 /* The end of a request, good or bad: once. */
-static void r_undelay(c2req_t *r);
+static void r_undelay(proven_c2req_t *r);
 
-static void r_finish(c2req_t *r, proven_err_t why) {
+static void r_finish(proven_c2req_t *r, proven_err_t why) {
     if (r->dead) return;
     c2conn_t *c = r->conn;
     r_enter(r);
@@ -200,7 +200,7 @@ static void r_finish(c2req_t *r, proven_err_t why) {
     r_leave(r);
 }
 
-static void r_unsent(c2req_t *r, bool here);
+static void r_unsent(proven_c2req_t *r, bool here);
 
 static void c_end_requests(c2conn_t *c, proven_err_t why) {
     /* In the clear a connection is HTTP/2 because its caller said so (http2_cleartext), and the
@@ -212,7 +212,7 @@ static void c_end_requests(c2conn_t *c, proven_err_t why) {
      * and neither is one that ends because its client is being destroyed.) */
     const bool never_was = !c->https && c->engine && !c->client_going && !proven_h2_conn_has_peer_settings(c->engine);
     while (c->reqs) {
-        c2req_t *r = c->reqs;
+        proven_c2req_t *r = c->reqs;
         /* One the server never saw may be started again; one it may have acted on may not. */
         if (r->id != 0 || why != PROVEN_ERR_RESET) r_finish(r, why);
         else if (never_was) r_finish(r, PROVEN_ERR_UNSUPPORTED);
@@ -361,7 +361,7 @@ static void c_arm(c2conn_t *c) {
 }
 
 /* What a request is waiting for now, and so how long it may wait. */
-static void r_expect(c2req_t *r) {
+static void r_expect(proven_c2req_t *r) {
     const proven_http_event_client_config_t *cfg = &r->h.client->cfg;
     proven_u32 ms = 0;
     if (r->id == 0 || r->paused) ms = 0;                   /* the connection's affair, or the caller's */
@@ -375,7 +375,7 @@ static void r_expect(c2req_t *r) {
 // A request's output
 // -----------------------------------------------------------------------------
 
-static proven_size_t r_out_pending(const c2req_t *r) { return r->out_len - r->out_off; }
+static proven_size_t r_out_pending(const proven_c2req_t *r) { return r->out_len - r->out_off; }
 
 /* What one request moves towards the engine in its turn of a round. Requests that hold a
  * body take turns of this much, so that the room under the output bound - which the first to
@@ -391,7 +391,7 @@ static proven_size_t c_room(const c2conn_t *c) {
     return c->sharing && c->share < room ? c->share : room;
 }
 
-static void r_push(c2req_t *r) {
+static void r_push(proven_c2req_t *r) {
     if (r->dead || r->id == 0) return;
     c2conn_t *c = r->conn;
     proven_allocator_t a = r->h.client->alloc;
@@ -428,7 +428,7 @@ static void r_push(c2req_t *r) {
 // -----------------------------------------------------------------------------
 
 /* Put a waiting request on a stream. PROVEN_ERR_BUSY: the server's limit - it goes on waiting. */
-static proven_err_t r_submit(c2req_t *r) {
+static proven_err_t r_submit(proven_c2req_t *r) {
     c2conn_t *c = r->conn;
     proven_http_event_client_t *cl = c->client;
     /* The URL was read when the request was started; the connection is its origin. */
@@ -515,8 +515,8 @@ static void c_submit_waiting(c2conn_t *c) {
     c_enter(c);
     for (bool again = true; again && !c->dead;) {
         again = false;
-        c2req_t *oldest = (void *)0;
-        for (c2req_t *r = c->reqs; r; r = r->next) if (r->id == 0 && !r->dead) oldest = r;      /* new ones go to the list's head */
+        proven_c2req_t *oldest = (void *)0;
+        for (proven_c2req_t *r = c->reqs; r; r = r->next) if (r->id == 0 && !r->dead) oldest = r;      /* new ones go to the list's head */
         if (!oldest) break;
         proven_err_t e = r_submit(oldest);
         if (e == PROVEN_ERR_BUSY) break;
@@ -538,7 +538,7 @@ static void c_submit_waiting(c2conn_t *c) {
 // -----------------------------------------------------------------------------
 
 /* Body bytes to the caller, decoded if they are to be. False when the request ended. */
-static bool r_deliver(c2req_t *r, proven_mem_view_t piece, bool last) {
+static bool r_deliver(proven_c2req_t *r, proven_mem_view_t piece, bool last) {
     proven_http_event_client_t *cl = r->h.client;
     if (!r->dec) {
         if ((piece.size > 0 || last) && r->on.on_body) r->on.on_body(r->ctx, c2_handle(r), piece, last);
@@ -579,7 +579,7 @@ static bool r_deliver(c2req_t *r, proven_mem_view_t piece, bool last) {
     return !r->dead;
 }
 
-static void c_body(c2conn_t *c, c2req_t *r, proven_mem_view_t piece, bool last) {
+static void c_body(c2conn_t *c, proven_c2req_t *r, proven_mem_view_t piece, bool last) {
     proven_http_event_client_t *cl = c->client;
     const proven_u32 id = r->id;
     if (!r->dec) {
@@ -604,7 +604,7 @@ static void c_body(c2conn_t *c, c2req_t *r, proven_mem_view_t piece, bool last) 
     if (!c->dead) proven_h2_conn_consumed(c->engine, id, piece.size);
 }
 
-static void c_response(c2conn_t *c, c2req_t *r, const proven_h2_event_t *ev) {
+static void c_response(c2conn_t *c, proven_c2req_t *r, const proven_h2_event_t *ev) {
     proven_http_event_client_t *cl = c->client;
     if (ev->status < 200) return;                          /* an interim response: not the answer, and not passed on */
     if (r->got_head) return;
@@ -631,7 +631,7 @@ static void c_response(c2conn_t *c, c2req_t *r, const proven_h2_event_t *ev) {
 }
 
 static void c_event(c2conn_t *c, const proven_h2_event_t *ev) {
-    c2req_t *r = ev->user;
+    proven_c2req_t *r = ev->user;
     switch (ev->kind) {
         case PROVEN_H2_EVENT_HEADERS: if (r) c_response(c, r, ev); break;
         case PROVEN_H2_EVENT_DATA:
@@ -657,7 +657,7 @@ static void c_event(c2conn_t *c, const proven_h2_event_t *ev) {
             c->over = true;
             for (bool again = true; again;) {
                 again = false;
-                for (c2req_t *w = c->reqs; w; w = w->next) if (w->id == 0) { r_unsent(w, false); again = true; break; }
+                for (proven_c2req_t *w = c->reqs; w; w = w->next) if (w->id == 0) { r_unsent(w, false); again = true; break; }
             }
             break;
         case PROVEN_H2_EVENT_CLOSED:
@@ -711,9 +711,9 @@ static void c_pump(c2conn_t *c) {
         c->round++;
         for (bool again = true; again && !c->dead;) {
             again = false;
-            c2req_t *const first = c->turn && c->turn->next ? c->turn->next : c->reqs;
-            for (c2req_t *r = first; r; ) {
-                c2req_t *const after = r->next ? r->next : c->reqs;
+            proven_c2req_t *const first = c->turn && c->turn->next ? c->turn->next : c->reqs;
+            for (proven_c2req_t *r = first; r; ) {
+                proven_c2req_t *const after = r->next ? r->next : c->reqs;
                 if (!(r->mark == c->round || r->id == 0 || r->window_shut || !(r_out_pending(r) > 0 || (r->end_asked && !r->engine_done) || r->want_writable))) {
                     r->mark = c->round;
                     if (!(c_room(c) == 0 && !(r->end_asked && !r->engine_done && r_out_pending(r) == 0))) {
@@ -811,7 +811,7 @@ static void c_fall_back(c2conn_t *c) {
         }
     }
     while (c->reqs && !c->dead) {
-        c2req_t *r = c->reqs;
+        proven_c2req_t *r = c->reqs;
         /* The oldest first: new ones were put at the head. */
         while (r->next) r = r->next;
         proven_http_event_request_options_t o = {
@@ -910,7 +910,7 @@ static void c_on_timer(void *ctx) {
     const proven_time_t now = proven_time_monotonic_now();
     for (bool again = true; again && !c->dead;) {
         again = false;
-        for (c2req_t *r = c->reqs; r; r = r->next) {
+        for (proven_c2req_t *r = c->reqs; r; r = r->next) {
             if (r->due == 0 || r->due > now) continue;
             r_finish(r, PROVEN_ERR_TIMEOUT);
             again = true;
@@ -920,7 +920,7 @@ static void c_on_timer(void *ctx) {
     if (!c->dead) {
         /* The earliest hour among the requests that remain, exactly: c_arm goes by it. */
         c->req_due = 0;
-        for (const c2req_t *r = c->reqs; r; r = r->next)
+        for (const proven_c2req_t *r = c->reqs; r; r = r->next)
             if (r->due != 0 && (c->req_due == 0 || r->due < c->req_due)) c->req_due = r->due;
         if (c->quiet_due != 0 && now >= c->quiet_due) {
             if (c_connecting(c) || c_queued(c) > 0) c_kill(c, PROVEN_ERR_TIMEOUT);       /* never connected, or the server takes nothing */
@@ -1012,7 +1012,7 @@ static proven_err_t c_open(proven_http_event_client_t *cl, bool https, proven_u8
  * have room for a connection (`for_room`), in a list of its own. */
 typedef struct c2delay {
     struct c2delay *next;
-    c2req_t *r;
+    proven_c2req_t *r;
     proven_time_t due;
     proven_net_addr_t to;
     proven_u16 port;
@@ -1020,12 +1020,12 @@ typedef struct c2delay {
     bool for_room;                     /* in the other list: it waits for the client to have room for a connection, and `due` is when it gives up */
     proven_u8 host_len;
     proven_byte_t host[256];
-} c2delay_t;
+} proven_c2delay_t;
 
 static void c_on_delay(void *ctx);
 
 static void cl_delay_arm(proven_http_event_client_t *cl) {
-    const c2delay_t *first = cl->h2_delayed;
+    const proven_c2delay_t *first = cl->h2_delayed;
     if (!first) { proven_loop_timer_cancel(cl->loop, &cl->h2_delay_timer); return; }
     const proven_time_t now = proven_time_monotonic_now();
     const proven_u64 ms = first->due > now ? (proven_u64)(first->due - now + 999999) / 1000000 : 0;
@@ -1033,11 +1033,11 @@ static void cl_delay_arm(proven_http_event_client_t *cl) {
 }
 
 /* Out of its list, its record freed: it is to be placed, or it has ended. */
-static void r_undelay(c2req_t *r) {
+static void r_undelay(proven_c2req_t *r) {
     proven_http_event_client_t *cl = r->h.client;
-    c2delay_t *d = r->delay, *before = (void *)0;
+    proven_c2delay_t *d = r->delay, *before = (void *)0;
     void **head = d->for_room ? &cl->h2_roomless : &cl->h2_delayed, **last = d->for_room ? &cl->h2_roomless_last : &cl->h2_delayed_last;
-    for (c2delay_t *i = *head; i && i != d; i = i->next) before = i;
+    for (proven_c2delay_t *i = *head; i && i != d; i = i->next) before = i;
     if (before) before->next = d->next;
     else *head = d->next;
     if (*last == d) *last = before;
@@ -1051,10 +1051,10 @@ static void r_undelay(c2req_t *r) {
  * is what the wait for a connection is. In the order they came: the wait is the same for
  * all, so the first is the first to give up. */
 static void c_on_room_timer(void *ctx);
-static void r_attach(c2req_t *r, c2conn_t *to);
+static void r_attach(proven_c2req_t *r, c2conn_t *to);
 
 static void cl_room_arm(proven_http_event_client_t *cl) {
-    const c2delay_t *first = cl->h2_roomless;
+    const proven_c2delay_t *first = cl->h2_roomless;
     if (!first) { proven_loop_timer_cancel(cl->loop, &cl->h2_room_timer); return; }
     const proven_time_t now = proven_time_monotonic_now();
     const proven_u64 ms = first->due > now ? (proven_u64)(first->due - now + 999999) / 1000000 : 0;
@@ -1064,7 +1064,7 @@ static void cl_room_arm(proven_http_event_client_t *cl) {
 static void c_on_room_timer(void *ctx) {
     proven_http_event_client_t *cl = ctx;
     for (;;) {
-        c2delay_t *d = cl->h2_roomless;
+        proven_c2delay_t *d = cl->h2_roomless;
         if (!d || d->due > proven_time_monotonic_now()) break;
         r_finish(d->r, PROVEN_ERR_TIMEOUT);
     }
@@ -1073,10 +1073,10 @@ static void c_on_room_timer(void *ctx) {
 
 /* Into that list. The request is on no connection. PROVEN_ERR_BUSY when as many wait as may;
  * PROVEN_ERR_NOMEM. */
-static proven_err_t r_wait_room(c2req_t *r, bool https, proven_u8str_view_t host, proven_u16 port, const proven_net_addr_t *to) {
+static proven_err_t r_wait_room(proven_c2req_t *r, bool https, proven_u8str_view_t host, proven_u16 port, const proven_net_addr_t *to) {
     proven_http_event_client_t *cl = r->h.client;
     if (cl->h2_roomless_count >= cl->cfg.max_waiting_requests) return PROVEN_ERR_BUSY;
-    c2delay_t *d = c2_alloc(cl->alloc, sizeof *d);
+    proven_c2delay_t *d = c2_alloc(cl->alloc, sizeof *d);
     if (!d) return PROVEN_ERR_NOMEM;
     d->next = (void *)0;
     d->r = r;
@@ -1084,7 +1084,7 @@ static proven_err_t r_wait_room(c2req_t *r, bool https, proven_u8str_view_t host
     d->to = *to; d->port = port; d->https = https; d->for_room = true; d->host_len = (proven_u8)host.size;
     for (proven_size_t i = 0; i < host.size; ++i) d->host[i] = host.ptr[i];
     r->delay = d;
-    if (cl->h2_roomless_last) ((c2delay_t *)cl->h2_roomless_last)->next = d;
+    if (cl->h2_roomless_last) ((proven_c2delay_t *)cl->h2_roomless_last)->next = d;
     else cl->h2_roomless = d;
     cl->h2_roomless_last = d;
     cl->h2_roomless_count++;
@@ -1103,9 +1103,9 @@ void proven_http_event_client_h2_freed_(proven_http_event_client_t *cl) {
     if (cl->closing || cl->h2_room_busy) return;
     cl->h2_room_busy = true;                       /* (c_open closes an idle connection, which comes back here) */
     bool may_open = true;
-    for (c2delay_t *d = cl->h2_roomless, *next; d; d = next) {
+    for (proven_c2delay_t *d = cl->h2_roomless, *next; d; d = next) {
         next = d->next;
-        c2req_t *r = d->r;
+        proven_c2req_t *r = d->r;
         proven_byte_t name[256];
         for (proven_size_t i = 0; i < d->host_len; ++i) name[i] = d->host[i];
         const proven_u8str_view_t origin = { .ptr = name, .size = d->host_len };
@@ -1130,7 +1130,7 @@ void proven_http_event_client_h2_freed_(proven_http_event_client_t *cl) {
 }
 
 /* As it was when it was started: r_submit does the rest. */
-static void r_as_new(c2req_t *r) {
+static void r_as_new(proven_c2req_t *r) {
     proven_http_event_client_t *cl = r->h.client;
     if (r->out) { cl->alloc.free_fn(cl->alloc.ctx, r->out); r->out = (void *)0; r->out_len = r->out_off = r->out_cap = 0; }
     r->id = 0;
@@ -1142,8 +1142,8 @@ static void r_as_new(c2req_t *r) {
 /* Onto a connection, behind every request that waits there: the oldest waiting request is
  * the last in the list, and this one is older than any that is there - requests that move
  * together arrive newest first, and so keep their order. */
-static void r_attach(c2req_t *r, c2conn_t *to) {
-    c2req_t *last = to->reqs;
+static void r_attach(proven_c2req_t *r, c2conn_t *to) {
+    proven_c2req_t *last = to->reqs;
     while (last && last->next) last = last->next;
     r->conn = to;
     r->prev = last;
@@ -1157,9 +1157,9 @@ static void r_attach(c2req_t *r, c2conn_t *to) {
 static void c_on_delay(void *ctx) {
     proven_http_event_client_t *cl = ctx;
     for (;;) {
-        c2delay_t *d = cl->h2_delayed;
+        proven_c2delay_t *d = cl->h2_delayed;
         if (!d || d->due > proven_time_monotonic_now()) break;
-        c2req_t *r = d->r;
+        proven_c2req_t *r = d->r;
         const proven_u8str_view_t host = { .ptr = d->host, .size = d->host_len };
         const bool https = d->https;
         const proven_u16 port = d->port;
@@ -1188,10 +1188,10 @@ static void c_on_delay(void *ctx) {
 
 /* Off its connection and into the list of those that wait to be tried again. False: there
  * was no memory for the record. */
-static bool r_delay(c2req_t *r) {
+static bool r_delay(proven_c2req_t *r) {
     proven_http_event_client_t *cl = r->h.client;
     c2conn_t *c = r->conn;
-    c2delay_t *d = c2_alloc(cl->alloc, sizeof *d);
+    proven_c2delay_t *d = c2_alloc(cl->alloc, sizeof *d);
     if (!d) return false;
     d->next = (void *)0;
     d->r = r;
@@ -1206,13 +1206,13 @@ static bool r_delay(c2req_t *r) {
     /* In the order they are due: behind every one that is due no later. (With one wait for
      * all that is the end of the list; with a wait that grows, a request on its second try
      * may come before one on its third.) */
-    c2delay_t *before = cl->h2_delayed_last;
+    proven_c2delay_t *before = cl->h2_delayed_last;
     if (before && before->due > d->due) {
         /* Not behind the last, then: its place is looked for. */
         before = (void *)0;
-        for (c2delay_t *i = cl->h2_delayed; i && i->due <= d->due; i = i->next) before = i;
+        for (proven_c2delay_t *i = cl->h2_delayed; i && i->due <= d->due; i = i->next) before = i;
     }
-    d->next = before ? before->next : (c2delay_t *)cl->h2_delayed;
+    d->next = before ? before->next : (proven_c2delay_t *)cl->h2_delayed;
     if (before) before->next = d;
     else cl->h2_delayed = d;
     if (!d->next) cl->h2_delayed_last = d;
@@ -1220,7 +1220,7 @@ static bool r_delay(c2req_t *r) {
     return true;
 }
 
-static void r_unsent(c2req_t *r, bool here) {
+static void r_unsent(proven_c2req_t *r, bool here) {
     if (r->dead) return;
     c2conn_t *c = r->conn;
     proven_http_event_client_t *cl = r->h.client;
@@ -1292,7 +1292,7 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
     if (c) {
         /* Counted only when there could be that many: no more wait than there are requests. */
         proven_size_t waiting = 0;
-        if (c->count >= cl->cfg.max_waiting_requests) for (const c2req_t *w = c->reqs; w; w = w->next) if (w->id == 0) waiting++;
+        if (c->count >= cl->cfg.max_waiting_requests) for (const proven_c2req_t *w = c->reqs; w; w = w->next) if (w->id == 0) waiting++;
         if (waiting >= cl->cfg.max_waiting_requests) return PROVEN_ERR_BUSY;
     }
 
@@ -1302,14 +1302,14 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
     /* A small copy lies behind the struct, in the one allocation, and stays for the request's
      * life; a large one - a body, mostly - is its own, and goes back once it has been sent. */
     const bool behind = bytes <= C2_COPY_BEHIND;
-    c2req_t *r = c2_alloc(cl->alloc, sizeof *r + (behind ? bytes : 0));
+    proven_c2req_t *r = c2_alloc(cl->alloc, sizeof *r + (behind ? bytes : 0));
     proven_byte_t *copy = !r ? (void *)0 : behind ? (proven_byte_t *)(r + 1) : c2_alloc(cl->alloc, bytes);
     if (!r || !copy) {
         if (r) cl->alloc.free_fn(cl->alloc.ctx, r);
         return PROVEN_ERR_NOMEM;
     }
     for (proven_size_t i = 0; i < sizeof *r; ++i) ((proven_byte_t *)r)[i] = 0;
-    r->h = (cl_head_t){ .client = cl, .kind = CL_KIND_H2 };
+    r->h = (proven_cl_head_t){ .client = cl, .kind = CL_KIND_H2 };
     r->on = o->on;
     r->ctx = o->ctx;
     r->copy = behind ? (void *)0 : copy;
@@ -1402,10 +1402,10 @@ bool proven_http_event_client_h2_close_idle_(proven_http_event_client_t *cl) {
 void proven_http_event_client_h2_destroy_(proven_http_event_client_t *cl) {
     /* Those that wait to be tried again are on no connection: they may be started again. */
     proven_loop_timer_cancel(cl->loop, &cl->h2_delay_timer);
-    while (cl->h2_delayed) r_finish(((c2delay_t *)cl->h2_delayed)->r, PROVEN_ERR_AGAIN);
+    while (cl->h2_delayed) r_finish(((proven_c2delay_t *)cl->h2_delayed)->r, PROVEN_ERR_AGAIN);
     /* Nor are those that wait for a place: they were never sent, and end as every request of a client that is destroyed does. */
     proven_loop_timer_cancel(cl->loop, &cl->h2_room_timer);
-    while (cl->h2_roomless) r_finish(((c2delay_t *)cl->h2_roomless)->r, PROVEN_ERR_RESET);
+    while (cl->h2_roomless) r_finish(((proven_c2delay_t *)cl->h2_roomless)->r, PROVEN_ERR_RESET);
     while (cl->h2) {
         c2conn_t *c = cl->h2;
         if (c->state == C2_H1) {
@@ -1423,13 +1423,13 @@ void proven_http_event_client_h2_destroy_(proven_http_event_client_t *cl) {
 }
 
 bool proven_http_event_client_h2_resumed_(proven_http_event_request_t *request) {
-    c2req_t *r = c2_of(request);
+    proven_c2req_t *r = c2_of(request);
     if (r->fwd) return proven_http_event_request_resumed_(r->fwd);
     return r->conn && r->conn->tls && proven_tls_is_established(r->conn->tls) && proven_tls_resumed(r->conn->tls);
 }
 
 void proven_http_event_client_h2_forwarded_done_(proven_http_event_request_t *face) {
-    c2req_t *r = c2_of(face);
+    proven_c2req_t *r = c2_of(face);
     r->fwd = (void *)0;
     r->dead = true;
     r_enter(r);
@@ -1437,7 +1437,7 @@ void proven_http_event_client_h2_forwarded_done_(proven_http_event_request_t *fa
 }
 
 proven_result_size_t proven_http_event_client_h2_write_(proven_http_event_request_t *request, proven_mem_view_t data) {
-    c2req_t *r = c2_of(request);
+    proven_c2req_t *r = c2_of(request);
     if (r->fwd) return proven_http_event_request_write(r->fwd, data);
     if (r->dead || !r->streamed || r->end_asked) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
     if (r->body_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN && data.size > (r->id ? r->send_left : r->body_length)) return (proven_result_size_t){ .err = PROVEN_ERR_OUT_OF_BOUNDS, .value = 0 };
@@ -1469,7 +1469,7 @@ proven_result_size_t proven_http_event_client_h2_write_(proven_http_event_reques
 }
 
 proven_err_t proven_http_event_client_h2_end_(proven_http_event_request_t *request) {
-    c2req_t *r = c2_of(request);
+    proven_c2req_t *r = c2_of(request);
     if (r->fwd) return proven_http_event_request_end(r->fwd);
     if (r->dead || !r->streamed || r->end_asked) return PROVEN_ERR_INVALID_STATE;
     c2conn_t *c = r->conn;
@@ -1510,7 +1510,7 @@ proven_err_t proven_http_event_client_h2_end_(proven_http_event_request_t *reque
 }
 
 void proven_http_event_client_h2_abort_(proven_http_event_request_t *request) {
-    c2req_t *r = c2_of(request);
+    proven_c2req_t *r = c2_of(request);
     if (r->fwd) { proven_http_event_request_abort(r->fwd); return; }
     if (r->dead) return;
     c2conn_t *c = r->conn;
@@ -1534,7 +1534,7 @@ void proven_http_event_client_h2_abort_(proven_http_event_request_t *request) {
 }
 
 void proven_http_event_client_h2_pause_(proven_http_event_request_t *request) {
-    c2req_t *r = c2_of(request);
+    proven_c2req_t *r = c2_of(request);
     if (r->fwd) { proven_http_event_request_pause(r->fwd); return; }
     if (r->dead || r->paused) return;
     r->paused = true;
@@ -1543,7 +1543,7 @@ void proven_http_event_client_h2_pause_(proven_http_event_request_t *request) {
 }
 
 void proven_http_event_client_h2_resume_(proven_http_event_request_t *request) {
-    c2req_t *r = c2_of(request);
+    proven_c2req_t *r = c2_of(request);
     if (r->fwd) { proven_http_event_request_resume(r->fwd); return; }
     if (r->dead || !r->paused) return;
     proven_http_event_client_t *cl = r->h.client;
@@ -1578,7 +1578,7 @@ void proven_http_event_client_h2_set_user_(proven_http_event_request_t *request,
 void *proven_http_event_client_h2_user_(const proven_http_event_request_t *request) { return c2_of_const(request)->user; }
 
 bool proven_http_event_client_h2_is_h1_(const proven_http_event_request_t *request) {
-    const c2req_t *r = c2_of_const(request);
+    const proven_c2req_t *r = c2_of_const(request);
     return r->fwd != (void *)0 || r->id == 0;
 }
 
@@ -1589,7 +1589,7 @@ void proven_http_event_client_h2_test_next_id_(proven_http_event_client_t *cl, p
 }
 
 proven_u32 proven_http_event_client_h2_test_window_(proven_http_event_request_t *request) {
-    c2req_t *r = request ? c2_of(request) : (c2req_t *)0;
+    proven_c2req_t *r = request ? c2_of(request) : (proven_c2req_t *)0;
     if (!r || r->dead || r->id == 0 || !r->conn || !r->conn->engine) return 0;
     return proven_h2_conn_test_window_(r->conn->engine, PROVEN_H2_TEST_CAP);
 }

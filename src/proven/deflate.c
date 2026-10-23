@@ -30,11 +30,11 @@ typedef struct {
     const proven_u16 *fast;             /* 1 << fbits of them; null when fbits is 0 */
     int longest;                        /* the longest code there is: bits that match nothing by then never will */
     unsigned fbits;
-} huff_t;
+} proven_huff_t;
 
 #include "deflate_tables.h"             /* the fixed code, generated: nothing is built for it when a decompressor is made */
-static const huff_t FIXED_LEN = { deflate_fixed_lcount, deflate_fixed_lsymbol, deflate_fixed_lfast, 9, 9 };
-static const huff_t FIXED_DIST = { deflate_fixed_dcount, deflate_fixed_dsymbol, deflate_fixed_dfast, 5, 5 };
+static const proven_huff_t FIXED_LEN = { deflate_fixed_lcount, deflate_fixed_lsymbol, deflate_fixed_lfast, 9, 9 };
+static const proven_huff_t FIXED_DIST = { deflate_fixed_dcount, deflate_fixed_dsymbol, deflate_fixed_dfast, 5, 5 };
 
 enum {
     S_HEADER, S_BLOCK, S_STORED_LEN, S_STORED, S_TABLE, S_CODELENS, S_LENS, S_LENS_REPEAT,
@@ -55,11 +55,11 @@ struct proven_inflate {
     unsigned nlen, ndist, ncode, have;
     unsigned repeat_sym, repeat_len;
     proven_u16 lengths[MAXCODES];
-    huff_t lencode, distcode;           /* a dynamic block's: they point into the six arrays that follow */
+    proven_huff_t lencode, distcode;           /* a dynamic block's: they point into the six arrays that follow */
     proven_u16 lcount[MAXBITS + 1], dcount[MAXBITS + 1];
     proven_u16 lsymbol[288], dsymbol[32];
     proven_u16 lfast[1 << LFAST_BITS], dfast[1 << DFAST_BITS];
-    const huff_t *lc, *dc;
+    const proven_huff_t *lc, *dc;
     /* a match or a stored block in progress, or a literal decoded when the output was full */
     unsigned length, distance, extra;
     proven_byte_t held;
@@ -77,7 +77,7 @@ struct proven_inflate {
 /* Build a code from the lengths of `n` symbols, into the arrays given (`fast` and `fbits` may
  * be null and 0: no table). Returns 0 for a complete code, a positive number for an incomplete
  * one and a negative one for an over-subscribed one, which is then not to be used. */
-static int construct(huff_t *h, proven_u16 *count, proven_u16 *symbol, proven_u16 *fast, unsigned fbits, const proven_u16 *length, int n) {
+static int construct(proven_huff_t *h, proven_u16 *count, proven_u16 *symbol, proven_u16 *fast, unsigned fbits, const proven_u16 *length, int n) {
     proven_u16 offs[MAXBITS + 1], next[MAXBITS + 1];
     h->count = count; h->symbol = symbol; h->fast = fast; h->fbits = fbits;
     for (int len = 0; len <= MAXBITS; ++len) count[len] = 0;
@@ -119,7 +119,7 @@ static int construct(huff_t *h, proven_u16 *count, proven_u16 *symbol, proven_u1
 
 /* zlib's rule for the literal/length and distance codes: an incomplete code is accepted only
  * when it is a single code of length one. */
-static bool usable(const huff_t *h, int left) {
+static bool usable(const proven_huff_t *h, int left) {
     if (left < 0) return false;
     if (left == 0) return true;
     for (int len = 2; len <= MAXBITS; ++len) if (h->count[len] != 0) return false;
@@ -168,10 +168,10 @@ typedef struct {
     proven_byte_t *out;
     proven_size_t out_len, out_at;
     proven_size_t summed;               /* how much of `out` is already in the checksum */
-} io_t;
+} proven_io_t;
 
 /* Make at least `n` bits available. False when the input ran out first. */
-static bool need(proven_inflate_t *z, io_t *io, unsigned n) {
+static bool need(proven_inflate_t *z, proven_io_t *io, unsigned n) {
     while (z->bitcnt < n) {
         if (io->in_at == io->in_len) return false;
         z->bitbuf |= (proven_u32)io->in[io->in_at++] << z->bitcnt;
@@ -189,13 +189,13 @@ static proven_u32 take(proven_inflate_t *z, unsigned n) {
 
 /* The byte `distance` back from where the next one goes: in this call's output, or - past
  * its beginning - in the window. */
-static proven_byte_t back(const proven_inflate_t *z, const io_t *io, proven_size_t distance) {
+static proven_byte_t back(const proven_inflate_t *z, const proven_io_t *io, proven_size_t distance) {
     return distance <= io->out_at ? io->out[io->out_at - distance]
                                   : z->window[(z->wpos - (proven_u32)(distance - io->out_at)) & (WINDOW - 1)];
 }
 
 /* The call is over: what it produced becomes history. */
-static void keep(proven_inflate_t *z, const io_t *io) {
+static void keep(proven_inflate_t *z, const proven_io_t *io) {
     const proven_size_t n = io->out_at;
     if (n >= WINDOW) {
         const proven_byte_t *last = io->out + n - WINDOW;
@@ -219,7 +219,7 @@ static proven_u64 load64(const proven_byte_t *p) {
 
 /* Decode one symbol of `h`, a bit at a time, picking up where the last call stopped.
  * Returns the symbol, -1 when the input ran out, -2 when the bits are no code at all. */
-static int decode(proven_inflate_t *z, io_t *io, const huff_t *h) {
+static int decode(proven_inflate_t *z, proven_io_t *io, const proven_huff_t *h) {
     for (; z->len <= h->longest; ++z->len) {
         if (!need(z, io, 1)) return -1;
         z->code |= (int)take(z, 1);
@@ -250,7 +250,7 @@ static proven_err_t bad(proven_inflate_t *z, proven_err_t e) {
 
 /* The zlib or gzip header, a byte at a time. True when it is complete; false with z->error
  * unset when more input is needed. */
-static bool header(proven_inflate_t *z, io_t *io) {
+static bool header(proven_inflate_t *z, proven_io_t *io) {
     for (;;) {
         if (io->in_at == io->in_len) return false;
         const proven_byte_t b = io->in[io->in_at];
@@ -320,7 +320,7 @@ static proven_u32 adler32(proven_u32 adler, const proven_byte_t *p, proven_size_
 }
 
 /* Bring the checksum up to date with what this call has produced so far. */
-static void sum_output(proven_inflate_t *z, io_t *io) {
+static void sum_output(proven_inflate_t *z, proven_io_t *io) {
     const proven_byte_t *p = io->out + io->summed;
     const proven_size_t n = io->out_at - io->summed;
     if (n == 0) return;
@@ -333,7 +333,7 @@ static void sum_output(proven_inflate_t *z, io_t *io) {
  * fast() below, and the same promise about the bits it leaves: a length that is cut by the end
  * of the input, or wrong, is left for the code that works a bit at a time. Two or three hundred
  * lengths precede every dynamic block, and for a short message they were most of the work. */
-static void fast_lengths(proven_inflate_t *z, io_t *io) {
+static void fast_lengths(proven_inflate_t *z, proven_io_t *io) {
     const proven_u16 *const f = z->lencode.fast;
     const proven_byte_t *const in = io->in;
     const proven_size_t in_len = io->in_len;
@@ -385,7 +385,7 @@ static void fast_lengths(proven_inflate_t *z, io_t *io) {
  * that names errors. Called with fewer than eight bits held; leaves fewer than eight, having
  * given back every whole byte it read and did not use, so that the two agree on where the
  * input is. Sets S_BLOCK when it has taken the end of the block. */
-static void fast(proven_inflate_t *z, io_t *io) {
+static void fast(proven_inflate_t *z, proven_io_t *io) {
     const proven_u16 *const lf = z->lc->fast, *const df = z->dc->fast;
     const proven_u32 lmask = (1u << z->lc->fbits) - 1u, dmask = (1u << z->dc->fbits) - 1u;
     const proven_byte_t *const in = io->in;
@@ -481,7 +481,7 @@ proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_si
     if (done) *done = false;
     if (!z || !consumed || !produced || !done || (in.size > 0 && !in.ptr) || (out.size > 0 && !out.ptr)) return PROVEN_ERR_INVALID_ARG;
     if (z->error != PROVEN_OK) return z->error;
-    io_t io = { .in = in.ptr, .in_len = in.size, .in_at = 0, .out = out.ptr, .out_len = out.size, .out_at = 0, .summed = 0 };
+    proven_io_t io = { .in = in.ptr, .in_len = in.size, .in_at = 0, .out = out.ptr, .out_len = out.size, .out_at = 0, .summed = 0 };
     proven_err_t result = PROVEN_OK;
     bool going = true;
     while (going) {
@@ -733,7 +733,7 @@ proven_err_t proven_inflate_all(proven_allocator_t alloc, proven_deflate_format_
 #define MAX_TOKENS 16384u
 #define NIL 0xffffu                     /* no position: the largest real one is two windows less three, 65533 */
 
-typedef struct { proven_u16 key, sym; } symfreq_t;
+typedef struct { proven_u16 key, sym; } proven_symfreq_t;
 
 struct proven_deflate {
     proven_deflate_options_t opt;
@@ -757,7 +757,7 @@ struct proven_deflate {
     proven_u16 lfreq[288], dfreq[30], cfreq[19];
     proven_u16 llen[288], dlen[30], clen[19];
     proven_u16 lcode[288], dcode[30], ccode[19];
-    symfreq_t scratch[288];
+    proven_symfreq_t scratch[288];
     proven_u16 rle[288 + 30];           /* the code lengths as they are sent: symbols 0-18 and their extra bits */
     proven_u16 rle_extra[288 + 30];
 };
@@ -787,7 +787,7 @@ static proven_u16 reverse_bits(proven_u32 code, unsigned len) {
 
 /* Code lengths of minimum redundancy for frequencies sorted in rising order (Moffat and
  * Katajainen, in place): on return each key is that symbol's code length. */
-static void minimum_redundancy(symfreq_t *a, int n) {
+static void minimum_redundancy(proven_symfreq_t *a, int n) {
     if (n == 0) return;
     if (n == 1) { a[0].key = 1; return; }
     int root = 0, leaf = 2, next;
@@ -814,7 +814,7 @@ static void minimum_redundancy(symfreq_t *a, int n) {
  * special case that some decoders stumble on. Frequencies are scaled down first if their sum
  * would not fit the sixteen bits the tree is built in. */
 static void make_code(proven_deflate_t *z, const proven_u16 *freq, int n, int limit, proven_u16 *len, proven_u16 *code) {
-    symfreq_t *a = z->scratch;
+    proven_symfreq_t *a = z->scratch;
     int used = 0, counts[MAXBITS + 2] = { 0 };
     proven_u32 sum = 0;
     for (int i = 0; i < n; ++i) sum += freq[i];
@@ -823,7 +823,7 @@ static void make_code(proven_deflate_t *z, const proven_u16 *freq, int n, int li
     for (int i = 0; used < 2 && i < n; ++i) if (!freq[i]) { a[used].key = 1; a[used].sym = (proven_u16)i; used++; }
     /* Sort by frequency, rising (insertion sort: the alphabets are small). */
     for (int i = 1; i < used; ++i) {
-        const symfreq_t v = a[i];
+        const proven_symfreq_t v = a[i];
         int j = i;
         while (j > 0 && (a[j - 1].key > v.key || (a[j - 1].key == v.key && a[j - 1].sym > v.sym))) { a[j] = a[j - 1]; --j; }
         a[j] = v;

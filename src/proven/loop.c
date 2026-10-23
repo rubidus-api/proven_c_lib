@@ -33,7 +33,7 @@ typedef struct loop_task {
     struct loop_task *next;
     proven_loop_fn fn;
     void *ctx;
-} loop_task_t;
+} proven_loop_task_t;
 
 struct proven_loop {
     proven_allocator_t alloc;
@@ -41,7 +41,7 @@ struct proven_loop {
     proven_net_waker_t waker;
     bool waker_open;
     proven_loop_io_t waker_io;
-    _Atomic(loop_task_t *) tasks;
+    _Atomic(proven_loop_task_t *) tasks;
     atomic_bool stop;
     proven_loop_timer_t *wheel[LOOP_WHEEL_SLOTS];
     proven_loop_timer_t *due;                     /* timers taken off the wheel, not yet fired */
@@ -80,7 +80,7 @@ proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out) {
     proven_loop_t *l = (proven_loop_t *)m.value.ptr;
     for (proven_size_t i = 0; i < sizeof *l; ++i) ((proven_byte_t *)l)[i] = 0;
     l->alloc = alloc;
-    atomic_init(&l->tasks, (loop_task_t *)0);
+    atomic_init(&l->tasks, (proven_loop_task_t *)0);
     atomic_init(&l->stop, false);
     l->wheel_tick = (proven_u64)loop_now(l) / LOOP_TICK_NS;
     proven_err_t e = proven_net_selector_create(alloc, &l->selector);
@@ -103,8 +103,8 @@ proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out) {
 void proven_loop_destroy(proven_loop_t *l) {
     if (!l) return;
     proven_allocator_t a = l->alloc;
-    loop_task_t *t = atomic_exchange_explicit(&l->tasks, (loop_task_t *)0, memory_order_acquire);
-    while (t) { loop_task_t *next = t->next; a.free_fn(a.ctx, t); t = next; }
+    proven_loop_task_t *t = atomic_exchange_explicit(&l->tasks, (proven_loop_task_t *)0, memory_order_acquire);
+    while (t) { proven_loop_task_t *next = t->next; a.free_fn(a.ctx, t); t = next; }
     if (l->waker_open) {
         if (l->waker_io.registered) (void)proven_net_selector_remove(l->selector, l->waker_io.handle);
         proven_net_waker_close(&l->waker);
@@ -276,9 +276,9 @@ static void loop_timers_advance(proven_loop_t *l) {
 
 proven_err_t proven_loop_post(proven_loop_t *l, proven_loop_fn fn, void *ctx) {
     if (!l || !fn) return PROVEN_ERR_INVALID_ARG;
-    proven_result_mem_mut_t m = l->alloc.alloc_fn(l->alloc.ctx, sizeof(loop_task_t), 16);
+    proven_result_mem_mut_t m = l->alloc.alloc_fn(l->alloc.ctx, sizeof(proven_loop_task_t), 16);
     if (m.err != PROVEN_OK) return m.err;
-    loop_task_t *t = (loop_task_t *)m.value.ptr;
+    proven_loop_task_t *t = (proven_loop_task_t *)m.value.ptr;
     t->fn = fn; t->ctx = ctx;
     t->next = atomic_load_explicit(&l->tasks, memory_order_relaxed);
     while (!atomic_compare_exchange_weak_explicit(&l->tasks, &t->next, t, memory_order_release, memory_order_relaxed)) { }
@@ -287,13 +287,13 @@ proven_err_t proven_loop_post(proven_loop_t *l, proven_loop_fn fn, void *ctx) {
 }
 
 static bool loop_run_tasks(proven_loop_t *l) {
-    loop_task_t *t = atomic_exchange_explicit(&l->tasks, (loop_task_t *)0, memory_order_acquire);
+    proven_loop_task_t *t = atomic_exchange_explicit(&l->tasks, (proven_loop_task_t *)0, memory_order_acquire);
     if (!t) return false;
     /* The stack holds the newest first; reverse it to call in the order of posting. */
-    loop_task_t *ordered = (void *)0;
-    while (t) { loop_task_t *next = t->next; t->next = ordered; ordered = t; t = next; }
+    proven_loop_task_t *ordered = (void *)0;
+    while (t) { proven_loop_task_t *next = t->next; t->next = ordered; ordered = t; t = next; }
     while (ordered) {
-        loop_task_t *next = ordered->next;
+        proven_loop_task_t *next = ordered->next;
         proven_loop_fn fn = ordered->fn;
         void *ctx = ordered->ctx;
         l->alloc.free_fn(l->alloc.ctx, ordered);

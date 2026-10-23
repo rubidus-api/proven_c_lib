@@ -76,13 +76,13 @@ proven_err_t proven_http_basic_auth(proven_u8str_view_t user, proven_u8str_view_
 typedef struct {
     proven_u8str_view_t s;
     proven_size_t pos;
-} auth_cur_t;
+} proven_auth_cur_t;
 
-static void auth_skip_ws(auth_cur_t *c) {
+static void auth_skip_ws(proven_auth_cur_t *c) {
     while (c->pos < c->s.size && (c->s.ptr[c->pos] == ' ' || c->s.ptr[c->pos] == '\t')) c->pos++;
 }
 
-static proven_u8str_view_t auth_token(auth_cur_t *c) {
+static proven_u8str_view_t auth_token(proven_auth_cur_t *c) {
     proven_size_t start = c->pos;
     while (c->pos < c->s.size && auth_is_tchar(c->s.ptr[c->pos])) c->pos++;
     return (proven_u8str_view_t){ .ptr = c->s.ptr + start, .size = c->pos - start };
@@ -98,7 +98,7 @@ static proven_u8str_view_t auth_token(auth_cur_t *c) {
  * `*name` and `*value` for a parameter of the current one. Returns false at the end, and sets
  * `*bad` when the text cannot be read.
  */
-static bool auth_next(auth_cur_t *c, proven_u8str_view_t *scheme, proven_u8str_view_t *name,
+static bool auth_next(proven_auth_cur_t *c, proven_u8str_view_t *scheme, proven_u8str_view_t *name,
                       proven_u8str_view_t *value, bool *escaped, bool *bad) {
     *scheme = (proven_u8str_view_t){0};
     *name = (proven_u8str_view_t){0};
@@ -150,7 +150,7 @@ static bool auth_next(auth_cur_t *c, proven_u8str_view_t *scheme, proven_u8str_v
 
 bool proven_http_auth_offers(proven_u8str_view_t header_value, proven_u8str_view_t scheme) {
     if (header_value.size > 0 && !header_value.ptr) return false;
-    auth_cur_t c = { .s = header_value, .pos = 0 };
+    proven_auth_cur_t c = { .s = header_value, .pos = 0 };
     proven_u8str_view_t sch, name, value;
     bool escaped = false, bad = false;
     while (auth_next(&c, &sch, &name, &value, &escaped, &bad)) {
@@ -170,7 +170,7 @@ static int auth_algorithm_rank(proven_u8str_view_t text, proven_http_digest_algo
 
 proven_err_t proven_http_digest_challenge_parse(proven_u8str_view_t header_value, proven_http_digest_challenge_t *out) {
     if (!out || (header_value.size > 0 && !header_value.ptr)) return PROVEN_ERR_INVALID_ARG;
-    auth_cur_t c = { .s = header_value, .pos = 0 };
+    proven_auth_cur_t c = { .s = header_value, .pos = 0 };
     proven_u8str_view_t sch, name, value;
     bool escaped = false, bad = false;
 
@@ -248,26 +248,26 @@ typedef struct {
     bool sha256;
     proven_md5_t md5;
     proven_sha256_t sha;
-} auth_hash_t;
+} proven_auth_hash_t;
 
-static void auth_hash_init(auth_hash_t *h, bool sha256) {
+static void auth_hash_init(proven_auth_hash_t *h, bool sha256) {
     h->sha256 = sha256;
     if (sha256) proven_sha256_init(&h->sha);
     else proven_md5_init(&h->md5);
 }
 
-static void auth_hash_put(auth_hash_t *h, proven_u8str_view_t s) {
+static void auth_hash_put(proven_auth_hash_t *h, proven_u8str_view_t s) {
     proven_mem_view_t m = { .ptr = s.ptr, .size = s.size };
     if (h->sha256) proven_sha256_update(&h->sha, m);
     else proven_md5_update(&h->md5, m);
 }
 
-static void auth_hash_colon(auth_hash_t *h) {
+static void auth_hash_colon(proven_auth_hash_t *h) {
     static const proven_byte_t colon = ':';
     auth_hash_put(h, (proven_u8str_view_t){ .ptr = &colon, .size = 1 });
 }
 
-static proven_size_t auth_hash_hex(auth_hash_t *h, char out[65]) {
+static proven_size_t auth_hash_hex(proven_auth_hash_t *h, char out[65]) {
     if (h->sha256) {
         proven_byte_t d[PROVEN_SHA256_SIZE];
         proven_sha256_final(&h->sha, d);
@@ -286,15 +286,15 @@ typedef struct {
     proven_mem_mut_t out;
     proven_size_t len;
     bool full;
-} auth_w_t;
+} proven_auth_w_t;
 
-static void auth_put(auth_w_t *w, proven_u8str_view_t s) {
+static void auth_put(proven_auth_w_t *w, proven_u8str_view_t s) {
     if (w->full || s.size > w->out.size - w->len) { w->full = true; return; }
     for (proven_size_t i = 0; i < s.size; ++i) w->out.ptr[w->len + i] = s.ptr[i];
     w->len += s.size;
 }
 
-static void auth_put_cstr(auth_w_t *w, const char *s) {
+static void auth_put_cstr(proven_auth_w_t *w, const char *s) {
     proven_size_t n = 0;
     while (s[n] != '\0') n++;
     auth_put(w, (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n });
@@ -324,7 +324,7 @@ proven_err_t proven_http_digest_auth(const proven_http_digest_challenge_t *chall
     proven_u8str_view_t nc_view = { .ptr = (const proven_byte_t *)nc, .size = 8 };
 
     /* A1 = user:realm:password, and for the -sess variants H(that):nonce:cnonce. */
-    auth_hash_t h;
+    proven_auth_hash_t h;
     char ha1[65], ha2[65], response[65];
     auth_hash_init(&h, sha256);
     auth_hash_put(&h, user); auth_hash_colon(&h);
@@ -357,7 +357,7 @@ proven_err_t proven_http_digest_auth(const proven_http_digest_challenge_t *chall
     auth_hash_put(&h, (proven_u8str_view_t){ .ptr = (const proven_byte_t *)ha2, .size = hl });
     (void)auth_hash_hex(&h, response);
 
-    auth_w_t w = { .out = out, .len = 0, .full = false };
+    proven_auth_w_t w = { .out = out, .len = 0, .full = false };
     auth_put_cstr(&w, "Digest username=\"");
     auth_put(&w, user);
     auth_put_cstr(&w, "\", realm=\"");

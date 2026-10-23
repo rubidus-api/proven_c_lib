@@ -30,7 +30,7 @@
 #define SV_TICK_NS 16000000           /* ... of 16 ms each, so one turn is about 16 s */
 #define SV_EVENTS 64u                 /* ready sockets taken from the selector per round */
 
-typedef struct sv_conn sv_conn_t;
+typedef struct sv_conn proven_sv_conn_t;
 
 struct sv_conn {
     proven_http_server_t *server;
@@ -44,11 +44,11 @@ struct sv_conn {
     proven_byte_t *out;                /* the response head being built */
     proven_size_t out_cap;
     proven_net_deadline_t deadline;    /* while waiting: when to give up on this connection */
-    sv_conn_t *next_done;
-    sv_conn_t *prev, *next;            /* every connection of the server */
-    sv_conn_t *timer_prev, *timer_next;/* the others in the same slot of the timer wheel */
+    proven_sv_conn_t *next_done;
+    proven_sv_conn_t *prev, *next;            /* every connection of the server */
+    proven_sv_conn_t *timer_prev, *timer_next;/* the others in the same slot of the timer wheel */
     proven_u64 timer_tick;             /* the tick at which the timer is due */
-    sv_conn_t *next_dead;
+    proven_sv_conn_t *next_dead;
     bool handling;
     bool lingering;                    /* the response is sent; input is read and thrown away until the client closes */
     bool watched;                      /* registered with the selector */
@@ -78,7 +78,7 @@ struct sv_conn {
     proven_http_compressor_t_ *zip;    /* it is: the body goes through this, and `out` holds what comes out */
 };
 
-struct proven_http_exchange { sv_conn_t conn; };
+struct proven_http_exchange { proven_sv_conn_t conn; };
 
 struct proven_http_server {
     proven_http_server_config_t cfg;
@@ -86,14 +86,14 @@ struct proven_http_server {
     proven_size_t listener_count;
     proven_net_waker_t waker;
     proven_net_selector_t *selector;
-    sv_conn_t *conns;                  /* a list: the server never walks it while serving */
+    proven_sv_conn_t *conns;                  /* a list: the server never walks it while serving */
     proven_size_t conn_count;
-    sv_conn_t *dead;                   /* closed in this round; freed when its events are done with */
-    sv_conn_t *wheel[SV_WHEEL_SLOTS];
+    proven_sv_conn_t *dead;                   /* closed in this round; freed when its events are done with */
+    proven_sv_conn_t *wheel[SV_WHEEL_SLOTS];
     proven_u64 wheel_tick;             /* the last tick the wheel has been advanced to */
     proven_size_t timed_count;
     bool listening;                    /* the listeners are registered with the selector */
-    _Atomic(sv_conn_t *) done;
+    _Atomic(proven_sv_conn_t *) done;
     atomic_bool stop;
     atomic_size_t in_flight;
     /* proven_http_server_shutdown: asked from any thread; carried out by the loop. */
@@ -122,18 +122,18 @@ static void sv_free(proven_allocator_t a, void *p) {
     if (p) a.free_fn(a.ctx, p);
 }
 
-static void sv_unwatch(proven_http_server_t *s, sv_conn_t *c);
+static void sv_unwatch(proven_http_server_t *s, proven_sv_conn_t *c);
 
 // -----------------------------------------------------------------------------
 // Responses
 // -----------------------------------------------------------------------------
 
-static proven_net_deadline_t sv_write_deadline(const sv_conn_t *c) {
+static proven_net_deadline_t sv_write_deadline(const proven_sv_conn_t *c) {
     return proven_net_deadline_in(c->server->cfg.write_timeout_ms);
 }
 
 /* Write to the client; a failure means the connection is of no further use. */
-static proven_err_t sv_send(sv_conn_t *c, proven_mem_view_t data) {
+static proven_err_t sv_send(proven_sv_conn_t *c, proven_mem_view_t data) {
     proven_result_size_t w = proven_transport_write_all(c->t, data, sv_write_deadline(c));
     if (w.err != PROVEN_OK) { c->io_failed = true; c->close_after = true; }
     return w.err;
@@ -146,7 +146,7 @@ static bool sv_is_driver_header(proven_u8str_view_t name) {
 
 /* Build the response head in c->out. Nothing is sent, and no state changes, unless it returns
  * PROVEN_OK - so a refused header leaves the handler free to try another response. */
-static proven_err_t sv_build_head(sv_conn_t *c, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
+static proven_err_t sv_build_head(proven_sv_conn_t *c, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
                                   proven_u64 content_length, bool vary, proven_http_coding_t coding,
                                   proven_size_t *head_len, bool *chunked, bool *will_close, bool *bodiless) {
     if (status < 200 || status > 999) return PROVEN_ERR_INVALID_ARG;
@@ -198,7 +198,7 @@ static proven_err_t sv_build_head(sv_conn_t *c, proven_u16 status, const proven_
     return PROVEN_OK;
 }
 
-static void sv_mark_begun(sv_conn_t *c, proven_u64 content_length, bool chunked, bool will_close, bool bodiless) {
+static void sv_mark_begun(proven_sv_conn_t *c, proven_u64 content_length, bool chunked, bool will_close, bool bodiless) {
     c->response_begun = true;
     c->chunked_out = chunked;
     c->head_only = bodiless;
@@ -213,7 +213,7 @@ static proven_http_compress_cfg_t_ sv_compress_cfg(const proven_http_server_t *s
 
 /* What the handler's request for compression comes to for this response: the coding, or
  * identity for none. */
-static void sv_compress_plan(const sv_conn_t *c, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
+static void sv_compress_plan(const proven_sv_conn_t *c, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
                              bool *vary, proven_http_coding_t *coding) {
     *vary = false;
     *coding = PROVEN_HTTP_CODING_IDENTITY;
@@ -231,7 +231,7 @@ proven_err_t proven_http_exchange_begin(proven_http_exchange_t *exchange, proven
                                         const proven_http_header_t *headers, proven_size_t header_count,
                                         proven_u64 content_length) {
     if (!exchange) return PROVEN_ERR_INVALID_ARG;
-    sv_conn_t *c = &exchange->conn;
+    proven_sv_conn_t *c = &exchange->conn;
     if (c->response_begun) return PROVEN_ERR_INVALID_STATE;
     proven_size_t head_len = 0;
     bool chunked = false, will_close = false, bodiless = false, vary = false;
@@ -259,7 +259,7 @@ proven_err_t proven_http_exchange_begin(proven_http_exchange_t *exchange, proven
 }
 
 /* One piece of the body as the client is to get it: a chunk, or bare bytes. */
-static proven_err_t sv_send_piece(sv_conn_t *c, proven_mem_view_t data) {
+static proven_err_t sv_send_piece(proven_sv_conn_t *c, proven_mem_view_t data) {
     if (data.size == 0) return PROVEN_OK;
     if (!c->chunked_out) return sv_send(c, data);
     proven_byte_t frame[24];
@@ -273,7 +273,7 @@ static proven_err_t sv_send_piece(sv_conn_t *c, proven_mem_view_t data) {
 }
 
 /* Body bytes through the compressor. The head has left, so its buffer takes what comes out. */
-static proven_err_t sv_zip(sv_conn_t *c, proven_mem_view_t data, proven_deflate_flush_t flush) {
+static proven_err_t sv_zip(proven_sv_conn_t *c, proven_mem_view_t data, proven_deflate_flush_t flush) {
     for (;;) {
         proven_size_t used = 0, made = 0;
         bool done = false;
@@ -289,7 +289,7 @@ static proven_err_t sv_zip(sv_conn_t *c, proven_mem_view_t data, proven_deflate_
 
 proven_err_t proven_http_exchange_write(proven_http_exchange_t *exchange, proven_mem_view_t data) {
     if (!exchange || (data.size > 0 && !data.ptr)) return PROVEN_ERR_INVALID_ARG;
-    sv_conn_t *c = &exchange->conn;
+    proven_sv_conn_t *c = &exchange->conn;
     if (!c->response_begun || c->response_ended) return PROVEN_ERR_INVALID_STATE;
     if (c->length_known) {
         if ((proven_u64)data.size > c->out_remaining) return PROVEN_ERR_OUT_OF_BOUNDS;
@@ -302,7 +302,7 @@ proven_err_t proven_http_exchange_write(proven_http_exchange_t *exchange, proven
 
 proven_err_t proven_http_exchange_flush(proven_http_exchange_t *exchange) {
     if (!exchange) return PROVEN_ERR_INVALID_ARG;
-    sv_conn_t *c = &exchange->conn;
+    proven_sv_conn_t *c = &exchange->conn;
     if (!c->response_begun || c->response_ended) return PROVEN_ERR_INVALID_STATE;
     if (c->head_only || !c->zip) return PROVEN_OK;     /* nothing is held back: every write has left already */
     return sv_zip(c, (proven_mem_view_t){ 0 }, PROVEN_DEFLATE_FLUSH_SYNC);
@@ -310,7 +310,7 @@ proven_err_t proven_http_exchange_flush(proven_http_exchange_t *exchange) {
 
 proven_err_t proven_http_exchange_end(proven_http_exchange_t *exchange) {
     if (!exchange) return PROVEN_ERR_INVALID_ARG;
-    sv_conn_t *c = &exchange->conn;
+    proven_sv_conn_t *c = &exchange->conn;
     if (!c->response_begun) return PROVEN_ERR_INVALID_STATE;
     if (c->response_ended) return PROVEN_OK;
     c->response_ended = true;
@@ -338,7 +338,7 @@ proven_err_t proven_http_exchange_respond(proven_http_exchange_t *exchange, prov
                                           const proven_http_header_t *headers, proven_size_t header_count,
                                           proven_mem_view_t body) {
     if (!exchange || (body.size > 0 && !body.ptr)) return PROVEN_ERR_INVALID_ARG;
-    sv_conn_t *c = &exchange->conn;
+    proven_sv_conn_t *c = &exchange->conn;
     if (c->response_begun) return PROVEN_ERR_INVALID_STATE;
     proven_allocator_t a = c->server->cfg.alloc;
     proven_size_t head_len = 0;
@@ -386,22 +386,22 @@ typedef struct {
     proven_net_conn_t sock;
     bool tls;
     proven_transport_t over;               /* with TLS: the TLS transport, which reads and writes `sock` */
-} sv_owned_t;
+} proven_sv_owned_t;
 
 static proven_result_size_t sv_owned_read(void *ctx, proven_mem_mut_t dest, proven_net_deadline_t until) {
-    sv_owned_t *o = ctx;
+    proven_sv_owned_t *o = ctx;
     return o->tls ? proven_transport_read(o->over, dest, until) : proven_net_read(&o->sock, dest, until);
 }
 static proven_result_size_t sv_owned_write(void *ctx, proven_mem_view_t src, proven_net_deadline_t until) {
-    sv_owned_t *o = ctx;
+    proven_sv_owned_t *o = ctx;
     return o->tls ? proven_transport_write(o->over, src, until) : proven_net_write(&o->sock, src, until);
 }
 static proven_err_t sv_owned_shutdown(void *ctx) {
-    sv_owned_t *o = ctx;
+    proven_sv_owned_t *o = ctx;
     return o->tls ? proven_transport_shutdown(o->over) : proven_net_shutdown_write(&o->sock);
 }
 static proven_err_t sv_owned_close(void *ctx) {
-    sv_owned_t *o = ctx;
+    proven_sv_owned_t *o = ctx;
     /* Closing the TLS transport says goodbye and closes the socket under it. */
     proven_err_t e = o->tls ? proven_transport_close(o->over) : proven_net_close(&o->sock);
     sv_free(o->alloc, o);
@@ -414,7 +414,7 @@ proven_err_t proven_http_exchange_upgrade(proven_http_exchange_t *exchange, prov
     if (out) *out = (proven_transport_t){0};
     if (early) *early = (proven_mem_view_t){0};
     if (!exchange || !out || !early || protocol.size == 0 || (header_count > 0 && !headers)) return PROVEN_ERR_INVALID_ARG;
-    sv_conn_t *c = &exchange->conn;
+    proven_sv_conn_t *c = &exchange->conn;
     /* Only a request with no body left to read can change protocols: after the 101 the bytes
      * on the connection belong to the new one. */
     if (c->response_begun || c->detached || !c->body_done || c->req.version_minor < 1) return PROVEN_ERR_INVALID_STATE;
@@ -435,7 +435,7 @@ proven_err_t proven_http_exchange_upgrade(proven_http_exchange_t *exchange, prov
     if (e == PROVEN_OK) e = proven_http_write_head_end(head, &len);
     if (e != PROVEN_OK) return e;
 
-    sv_owned_t *owned = sv_alloc(c->server->cfg.alloc, sizeof *owned);
+    proven_sv_owned_t *owned = sv_alloc(c->server->cfg.alloc, sizeof *owned);
     if (!owned) return PROVEN_ERR_NOMEM;
     c->response_begun = true;
     c->response_ended = true;
@@ -468,7 +468,7 @@ proven_err_t proven_http_exchange_upgrade(proven_http_exchange_t *exchange, prov
 /* The response for a request that never reaches a handler, written without waiting: it is a
  * few dozen bytes into an empty socket buffer, and the loop thread must not be held by a
  * client that will not read. */
-static void sv_reject(sv_conn_t *c, proven_u16 status) {
+static void sv_reject(proven_sv_conn_t *c, proven_u16 status) {
     proven_byte_t m[160];
     proven_mem_mut_t out = { .ptr = m, .size = sizeof m };
     proven_size_t len = 0;
@@ -492,7 +492,7 @@ proven_net_addr_t proven_http_exchange_peer(const proven_http_exchange_t *exchan
     return exchange ? exchange->conn.peer : none;
 }
 
-static proven_result_size_t sv_read_body(sv_conn_t *c, proven_mem_mut_t dest) {
+static proven_result_size_t sv_read_body(proven_sv_conn_t *c, proven_mem_mut_t dest) {
     proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
     if (c->body_error != PROVEN_OK) { res.err = c->body_error; return res; }
     if (c->body_done) { res.err = PROVEN_ERR_EOF; return res; }
@@ -554,7 +554,7 @@ proven_result_size_t proven_http_exchange_read(proven_http_exchange_t *exchange,
 
 /* Runs on the loop thread, or on a worker: the handler, and then everything that has to be
  * true before the connection can either carry another request or be closed. */
-static void sv_run(sv_conn_t *c) {
+static void sv_run(proven_sv_conn_t *c) {
     proven_http_server_t *s = c->server;
     s->cfg.handler(s->cfg.handler_ctx, (proven_http_exchange_t *)c);
 
@@ -602,14 +602,14 @@ static void sv_run(sv_conn_t *c) {
 }
 
 static void sv_job(void *arg) {
-    sv_conn_t *c = arg;
+    proven_sv_conn_t *c = arg;
     proven_http_server_t *s = c->server;
     sv_run(c);
     /* Hand the connection back: push, wake, and only then count down. The loop may free the
      * connection as soon as it is on the stack, so nothing touches it after the push; and
      * destroy may free the server as soon as the count reaches zero, so the count is the last
      * thing this thread touches. */
-    sv_conn_t *head = atomic_load_explicit(&s->done, memory_order_relaxed);
+    proven_sv_conn_t *head = atomic_load_explicit(&s->done, memory_order_relaxed);
     do {
         c->next_done = head;
     } while (!atomic_compare_exchange_weak_explicit(&s->done, &head, c, memory_order_release, memory_order_relaxed));
@@ -621,7 +621,7 @@ static void sv_job(void *arg) {
 // Timers: a hashed wheel, so that an idle connection costs nothing until its time comes
 // -----------------------------------------------------------------------------
 
-static void sv_timer_cancel(proven_http_server_t *s, sv_conn_t *c) {
+static void sv_timer_cancel(proven_http_server_t *s, proven_sv_conn_t *c) {
     if (!c->timed) return;
     proven_size_t slot = (proven_size_t)(c->timer_tick % SV_WHEEL_SLOTS);
     if (c->timer_prev) c->timer_prev->timer_next = c->timer_next;
@@ -634,7 +634,7 @@ static void sv_timer_cancel(proven_http_server_t *s, sv_conn_t *c) {
 }
 
 /* Give the connection `ms` from now; the wheel calls sv_expired when that has passed. */
-static void sv_wait_for(proven_http_server_t *s, sv_conn_t *c, proven_u32 ms) {
+static void sv_wait_for(proven_http_server_t *s, proven_sv_conn_t *c, proven_u32 ms) {
     sv_timer_cancel(s, c);
     c->deadline = proven_net_deadline_in(ms);
     /* Rounded up to a tick, and never into a slot the wheel has already passed. */
@@ -664,10 +664,10 @@ static proven_net_deadline_t sv_next_timer(const proven_http_server_t *s) {
 // Watching, closing
 // -----------------------------------------------------------------------------
 
-static void sv_close_conn(proven_http_server_t *s, sv_conn_t *c);
+static void sv_close_conn(proven_http_server_t *s, proven_sv_conn_t *c);
 
 /* Register the connection with the selector, to be told when it has something to read. */
-static bool sv_watch(proven_http_server_t *s, sv_conn_t *c) {
+static bool sv_watch(proven_http_server_t *s, proven_sv_conn_t *c) {
     if (c->watched) return true;
     if (proven_net_selector_add(s->selector, proven_net_conn_handle(&c->sock), PROVEN_NET_READABLE, c) != PROVEN_OK) {
         sv_close_conn(s, c);
@@ -677,7 +677,7 @@ static bool sv_watch(proven_http_server_t *s, sv_conn_t *c) {
     return true;
 }
 
-static void sv_unwatch(proven_http_server_t *s, sv_conn_t *c) {
+static void sv_unwatch(proven_http_server_t *s, proven_sv_conn_t *c) {
     if (!c->watched) return;
     (void)proven_net_selector_remove(s->selector, proven_net_conn_handle(&c->sock));
     c->watched = false;
@@ -698,7 +698,7 @@ static void sv_update_listeners(proven_http_server_t *s) {
 
 /* Close a connection. Its memory stays until the end of the round, because an event for it
  * may already have been taken from the selector and still be waiting to be looked at. */
-static void sv_close_conn(proven_http_server_t *s, sv_conn_t *c) {
+static void sv_close_conn(proven_http_server_t *s, proven_sv_conn_t *c) {
     if (c->dead) return;
     c->dead = true;
     sv_timer_cancel(s, c);
@@ -716,7 +716,7 @@ static void sv_close_conn(proven_http_server_t *s, sv_conn_t *c) {
 
 static void sv_free_dead(proven_http_server_t *s) {
     while (s->dead) {
-        sv_conn_t *c = s->dead;
+        proven_sv_conn_t *c = s->dead;
         s->dead = c->next_dead;
         sv_free(s->cfg.alloc, c);
     }
@@ -732,7 +732,7 @@ static void sv_free_dead(proven_http_server_t *s) {
  * client told "413, too large" in the middle of its upload would see a broken connection
  * instead of the 413.
  */
-static void sv_linger(proven_http_server_t *s, sv_conn_t *c) {
+static void sv_linger(proven_http_server_t *s, proven_sv_conn_t *c) {
     if (c->detached || c->io_failed || atomic_load_explicit(&s->stop, memory_order_relaxed)) { sv_close_conn(s, c); return; }
     if (c->tls) proven_tls_transport_shutdown_now_(c->t);
     (void)proven_net_shutdown_write(&c->sock);
@@ -743,7 +743,7 @@ static void sv_linger(proven_http_server_t *s, sv_conn_t *c) {
 
 /* A connection's time is up: a request that stopped half-way gets a 408 and a moment to hear
  * it; a connection that was merely idle, or was already being closed, is closed. */
-static void sv_expired(proven_http_server_t *s, sv_conn_t *c) {
+static void sv_expired(proven_http_server_t *s, proven_sv_conn_t *c) {
     if (!c->lingering && c->len > 0) {
         sv_reject(c, 408);
         sv_linger(s, c);
@@ -761,9 +761,9 @@ static bool sv_timers_advance(proven_http_server_t *s, proven_time_t now) {
         /* After a long sleep every slot is visited once; more turns would find nothing new. */
         proven_u64 from = target - s->wheel_tick > SV_WHEEL_SLOTS ? target - SV_WHEEL_SLOTS + 1 : s->wheel_tick + 1;
         for (proven_u64 t = from; t <= target && s->timed_count > 0; ++t) {
-            sv_conn_t *c = s->wheel[t % SV_WHEEL_SLOTS];
+            proven_sv_conn_t *c = s->wheel[t % SV_WHEEL_SLOTS];
             while (c) {
-                sv_conn_t *next = c->timer_next;
+                proven_sv_conn_t *next = c->timer_next;
                 if (c->timer_tick <= target) {
                     /* Off the wheel first; what happens to it next may put it back on. Its
                      * neighbour `next` cannot be removed by that: only `c` is touched. */
@@ -780,7 +780,7 @@ static bool sv_timers_advance(proven_http_server_t *s, proven_time_t now) {
     return any;
 }
 
-static void sv_reset_request(sv_conn_t *c) {
+static void sv_reset_request(proven_sv_conn_t *c) {
     c->req = (proven_http_request_t){0};
     c->head_size = 0;
     c->body_pos = 0;
@@ -806,7 +806,7 @@ static void sv_reset_request(sv_conn_t *c) {
  * closed or is being closed. Loops, so that pipelined requests already in the buffer are served
  * in turn.
  */
-static bool sv_service(proven_http_server_t *s, sv_conn_t *c) {
+static bool sv_service(proven_http_server_t *s, proven_sv_conn_t *c) {
     for (;;) {
         /* A TLS transport may hold input the socket will never announce again: a second
          * request that arrived in the same segment as the first. Take it now. */
@@ -884,10 +884,10 @@ static bool sv_service(proven_http_server_t *s, sv_conn_t *c) {
 
 /* Connections that workers have finished with. */
 static bool sv_collect_done(proven_http_server_t *s) {
-    sv_conn_t *c = atomic_exchange_explicit(&s->done, (sv_conn_t *)0, memory_order_acquire);
+    proven_sv_conn_t *c = atomic_exchange_explicit(&s->done, (proven_sv_conn_t *)0, memory_order_acquire);
     bool any = c != (void *)0;
     while (c) {
-        sv_conn_t *next = c->next_done;
+        proven_sv_conn_t *next = c->next_done;
         c->next_done = (void *)0;
         c->handling = false;
         /* A stop that came after the worker decided to keep the connection still wins: nothing
@@ -919,9 +919,9 @@ static void sv_accept(proven_http_server_t *s, proven_net_listener_t *l) {
         proven_size_t headers_bytes = s->cfg.max_headers * sizeof(proven_http_header_t);
         proven_size_t cap = s->cfg.max_head_bytes + SV_BODY_WINDOW;
         proven_size_t out_cap = s->cfg.max_head_bytes;
-        sv_conn_t *c = sv_alloc(s->cfg.alloc, sizeof *c + headers_bytes + cap + out_cap);
+        proven_sv_conn_t *c = sv_alloc(s->cfg.alloc, sizeof *c + headers_bytes + cap + out_cap);
         if (!c) { (void)proven_net_close(&sock); return; }
-        *c = (sv_conn_t){0};
+        *c = (proven_sv_conn_t){0};
         c->server = s;
         c->sock = sock;
         c->t = proven_net_conn_transport(&c->sock);
@@ -952,7 +952,7 @@ static void sv_accept(proven_http_server_t *s, proven_net_listener_t *l) {
 }
 
 /* A waiting connection became readable: take what is there, without waiting, and look at it. */
-static void sv_readable(proven_http_server_t *s, sv_conn_t *c) {
+static void sv_readable(proven_http_server_t *s, proven_sv_conn_t *c) {
     if (c->lingering) {
         /* Whatever arrives now is thrown away; the end of it is what is being waited for. */
         proven_result_size_t r = proven_transport_read(c->t, (proven_mem_mut_t){ .ptr = c->buf, .size = c->cap }, PROVEN_NET_DONT_WAIT);
@@ -997,7 +997,7 @@ proven_err_t proven_http_server_create(const proven_http_server_config_t *config
     if (s->cfg.write_timeout_ms == 0) s->cfg.write_timeout_ms = 30000;
     if (s->cfg.idle_timeout_ms == 0) s->cfg.idle_timeout_ms = 60000;
     if (s->cfg.linger_ms == 0) s->cfg.linger_ms = SV_LINGER_MS;
-    atomic_init(&s->done, (sv_conn_t *)0);
+    atomic_init(&s->done, (proven_sv_conn_t *)0);
     atomic_init(&s->stop, false);
     atomic_init(&s->in_flight, 0);
     atomic_init(&s->shutdown_asked, false);
@@ -1058,7 +1058,7 @@ void proven_http_server_stop(proven_http_server_t *server) {
 /* Close every connection the loop holds now - not those a handler holds: their sockets are the
  * handler's thread's until it returns. With `idle_only`, only those with nothing of a request. */
 static void sv_close_held(proven_http_server_t *s, bool idle_only) {
-    for (sv_conn_t *c = s->conns, *next; c; c = next) {
+    for (proven_sv_conn_t *c = s->conns, *next; c; c = next) {
         next = c->next;
         if (c->handling || c->dead) continue;
         if (idle_only && (c->lingering || c->len > 0)) continue;
@@ -1141,7 +1141,7 @@ proven_err_t proven_http_server_poll(proven_http_server_t *server, proven_net_de
         } else {
             /* A connection. It may have been closed by something earlier in this same batch;
              * its memory is still there, marked. */
-            sv_conn_t *c = tag;
+            proven_sv_conn_t *c = tag;
             if (!c->dead && !c->handling) sv_readable(s, c);
         }
     }

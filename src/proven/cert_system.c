@@ -12,10 +12,10 @@ typedef struct {
     proven_cert_store_t *store;
     proven_size_t added;
     proven_err_t err;
-} cert_visit_t;
+} proven_cert_visit_t;
 
 static bool cert_visit(void *ctx, const uint8_t *der, size_t len) {
-    cert_visit_t *v = (cert_visit_t *)ctx;
+    proven_cert_visit_t *v = (proven_cert_visit_t *)ctx;
     proven_err_t e = proven_cert_store_add_der(v->store, (proven_mem_view_t){ .ptr = der, .size = len });
     if (e == PROVEN_OK) v->added++;
     else if (e == PROVEN_ERR_NOMEM) { v->err = e; return false; }
@@ -39,7 +39,7 @@ proven_allocator_t proven_cert_store_allocator_(const proven_cert_store_t *store
 proven_err_t proven_cert_store_add_system(proven_cert_store_t *store, proven_size_t *added) {
     if (added) *added = 0;
     if (!store) return PROVEN_ERR_INVALID_ARG;
-    cert_visit_t v = { .store = store, .added = 0, .err = PROVEN_OK };
+    proven_cert_visit_t v = { .store = store, .added = 0, .err = PROVEN_OK };
     int rc = proven_sys_trust_enumerate(cert_visit, &v);
     if (rc >= 0) {
         if (added) *added = v.added;

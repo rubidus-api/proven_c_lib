@@ -1908,8 +1908,8 @@ static const unsigned char *const brotli_words[25] = {
 
 /* Elementary transforms, numbered as in Appendix B: 0 identity, 1 the first letter in
  * upper case, 2 all of it, 3 to 11 the first 1 to 9 bytes left off, 12 to 20 the last 1 to 9. */
-typedef struct { const char *prefix; const char *suffix; proven_u8 prefix_len, type, suffix_len; } brotli_transform_t;
-static const brotli_transform_t brotli_transforms[121] = {
+typedef struct { const char *prefix; const char *suffix; proven_u8 prefix_len, type, suffix_len; } proven_brotli_transform_t;
+static const proven_brotli_transform_t brotli_transforms[121] = {
     { "", "", 0, 0, 0 },
     { "", " ", 0, 0, 1 },
     { " ", " ", 1, 0, 1 },

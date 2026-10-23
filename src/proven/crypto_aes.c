@@ -122,9 +122,9 @@ static void bs_unpack(proven_byte_t *out, const proven_u64 q[8], proven_size_t n
 /* The round keys as bit planes, the same key in all four lanes. They are rebuilt from the bytes
  * for each call rather than kept: a context is then a quarter of the size, which is what an
  * idle connection holds two of. */
-typedef struct { proven_u64 k[15][8]; } bs_keys_t;
+typedef struct { proven_u64 k[15][8]; } proven_bs_keys_t;
 
-static void bs_keys(bs_keys_t *bk, const proven_byte_t *rk, int rounds) {
+static void bs_keys(proven_bs_keys_t *bk, const proven_byte_t *rk, int rounds) {
     for (int r = 0; r <= rounds; ++r) {
         bs_pack(bk->k[r], rk + 16 * r, 16);
         for (int b = 0; b < 8; ++b) bk->k[r][b] *= BS_LANES;
@@ -132,7 +132,7 @@ static void bs_keys(bs_keys_t *bk, const proven_byte_t *rk, int rounds) {
 }
 
 /* Encrypt up to four blocks (n bytes, a multiple of 16) in place. */
-static void bs_encrypt(const bs_keys_t *bk, int rounds, proven_byte_t *blocks, proven_size_t n) {
+static void bs_encrypt(const proven_bs_keys_t *bk, int rounds, proven_byte_t *blocks, proven_size_t n) {
     proven_u64 q[8];
     bs_pack(q, blocks, n);
     for (int b = 0; b < 8; ++b) q[b] ^= bk->k[0][b];
@@ -151,7 +151,7 @@ static void bs_encrypt(const bs_keys_t *bk, int rounds, proven_byte_t *blocks, p
 
 /* Decrypt up to four blocks in place: the cipher's steps undone in reverse order. Moving row r
  * left by r three times over is moving it right by r. */
-static void bs_decrypt(const bs_keys_t *bk, int rounds, proven_byte_t *blocks, proven_size_t n) {
+static void bs_decrypt(const proven_bs_keys_t *bk, int rounds, proven_byte_t *blocks, proven_size_t n) {
     proven_u64 q[8];
     bs_pack(q, blocks, n);
     for (int b = 0; b < 8; ++b) q[b] ^= bk->k[rounds][b];
@@ -248,7 +248,7 @@ static void aes_block(const proven_byte_t *rk, int rounds, bool hw, const proven
     (void)hw;
 #endif
     proven_byte_t b[16];
-    bs_keys_t bk;
+    proven_bs_keys_t bk;
     bs_keys(&bk, rk, rounds);
     for (int i = 0; i < 16; ++i) b[i] = in[i];
     bs_encrypt(&bk, rounds, b, 16);
@@ -303,7 +303,7 @@ void proven_crypto_aes_cbc_decrypt(const proven_crypto_aes_gcm_t *ctx, proven_by
      * data either, and it is some forty times faster. */
     if (ctx->hw && proven_sys_aes_cbc_decrypt(ctx->rk, ctx->rounds, iv, data, len & ~(proven_size_t)15)) return;
 #endif
-    bs_keys_t bk;
+    proven_bs_keys_t bk;
     bs_keys(&bk, ctx->rk, ctx->rounds);
     for (proven_size_t at = 0; at + 16 <= len;) {
         proven_size_t n = len - at >= 64 ? 64 : (len - at) & ~(proven_size_t)15;
@@ -324,7 +324,7 @@ static void gcm_ctr(const proven_crypto_aes_gcm_t *ctx, const proven_byte_t nonc
     if (ctx->hw) { proven_sys_aes_ctr(ctx->rk, ctx->rounds, nonce, counter, in, out, len); return; }
 #endif
     proven_byte_t ks[64];
-    bs_keys_t bk;
+    proven_bs_keys_t bk;
     bs_keys(&bk, ctx->rk, ctx->rounds);
     while (len > 0) {
         proven_size_t n = len < 64 ? len : 64;

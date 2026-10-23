@@ -38,15 +38,15 @@ static void *cl_alloc(proven_allocator_t a, proven_size_t n) {
 // Buffers
 // -----------------------------------------------------------------------------
 
-static proven_size_t buf_pending(const cl_buf_t *b) { return b->len - b->off; }
+static proven_size_t buf_pending(const proven_cl_buf_t *b) { return b->len - b->off; }
 
-static void buf_release(proven_http_event_client_t *cl, cl_buf_t *b) {
+static void buf_release(proven_http_event_client_t *cl, proven_cl_buf_t *b) {
     if (b->ptr && !b->borrowed) cl->alloc.free_fn(cl->alloc.ctx, b->ptr);
-    *b = (cl_buf_t){ 0 };
+    *b = (proven_cl_buf_t){ 0 };
 }
 
 /* Make the buffer own its pending bytes, with room for `more` behind them. */
-static bool buf_own(proven_http_event_client_t *cl, cl_buf_t *b, proven_size_t more) {
+static bool buf_own(proven_http_event_client_t *cl, proven_cl_buf_t *b, proven_size_t more) {
     proven_size_t have = buf_pending(b);
     if (!b->borrowed && b->off == 0 && b->cap >= have + more) return true;
     if (!b->borrowed && b->cap >= have + more) {
@@ -64,7 +64,7 @@ static bool buf_own(proven_http_event_client_t *cl, cl_buf_t *b, proven_size_t m
     return true;
 }
 
-static bool buf_append(proven_http_event_client_t *cl, cl_buf_t *b, const proven_byte_t *p, proven_size_t n) {
+static bool buf_append(proven_http_event_client_t *cl, proven_cl_buf_t *b, const proven_byte_t *p, proven_size_t n) {
     if (n == 0) return true;
     if (!buf_own(cl, b, n)) return false;
     proven_sys_mem_copy(b->ptr + b->len, p, n);
@@ -114,7 +114,7 @@ static void cl_watch(proven_http_event_request_t *c);
 static void cl_arm(proven_http_event_request_t *c);
 static void cl_unwait(proven_http_event_request_t *c);
 static proven_err_t cl_conn_open(proven_http_event_request_t *c);
-static void cl_conn_close(cl_conn_t *k, bool serve_waiting);
+static void cl_conn_close(proven_cl_conn_t *k, bool serve_waiting);
 static proven_http_event_request_t *cl_waiter_with_room(const proven_http_event_client_t *cl);
 
 static proven_u8str_view_t cl_host(const proven_http_event_request_t *c) {
@@ -128,14 +128,14 @@ static bool cl_same_addr(const proven_net_addr_t *a, const proven_net_addr_t *b)
 }
 
 /* Whether the connection leads where the request goes: scheme, host, port, and the address. */
-static bool cl_leads_to(const cl_conn_t *k, const proven_http_event_request_t *c) {
+static bool cl_leads_to(const proven_cl_conn_t *k, const proven_http_event_request_t *c) {
     return k->https == c->https && k->port == c->port && cl_same_addr(&k->to, &c->to) &&
            proven_u8str_view_eq_ascii_ci((proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, cl_host(c));
 }
 
 static proven_size_t cl_origin_conns(const proven_http_event_client_t *cl, const proven_http_event_request_t *c) {
     proven_size_t have = 0;
-    for (const cl_conn_t *k = cl->conns; k; k = k->next) if (cl_leads_to(k, c)) have++;
+    for (const proven_cl_conn_t *k = cl->conns; k; k = k->next) if (cl_leads_to(k, c)) have++;
     return have;
 }
 
@@ -178,8 +178,8 @@ static proven_size_t cl_h3_conns(const proven_http_event_client_t *cl) {
 bool proven_http_event_client_room_(proven_http_event_client_t *cl) {
     if (cl->cfg.max_connections == 0) return true;
     if (cl->conn_count + proven_http_event_client_h2_conns_(cl) + cl_h3_conns(cl) < cl->cfg.max_connections) return true;
-    cl_conn_t *oldest = (void *)0;
-    for (cl_conn_t *i = cl->conns; i; i = i->next)
+    proven_cl_conn_t *oldest = (void *)0;
+    for (proven_cl_conn_t *i = cl->conns; i; i = i->next)
         if (i->idle && (!oldest || i->idle_since < oldest->idle_since)) oldest = i;
     if (oldest) { cl_conn_close(oldest, false); return true; }
     if (proven_http_event_client_h2_close_idle_(cl)) return true;
@@ -227,7 +227,7 @@ typedef struct {
     proven_u8 host_len;
     bool quic;
     proven_byte_t host[256];
-} cl_session_t;
+} proven_cl_session_t;
 
 /* A session's mark: FNV-1a of its bytes, 0 for an empty one (and never 0 for another). */
 static proven_u64 cl_session_mark(const proven_tls_session_t *s) {
@@ -237,11 +237,11 @@ static proven_u64 cl_session_mark(const proven_tls_session_t *s) {
     return !any ? 0 : h ? h : 1;
 }
 
-static cl_session_t *cl_session_find(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic) {
-    cl_session_t *t = cl->sessions;
+static proven_cl_session_t *cl_session_find(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic) {
+    proven_cl_session_t *t = cl->sessions;
     if (!t) return (void *)0;
     for (proven_size_t i = 0; i < 2 * PROVEN_HTTP_EVENT_CLIENT_SESSIONS; ++i) {
-        cl_session_t *e = &t[i];
+        proven_cl_session_t *e = &t[i];
         if (!e->used || e->quic != quic || e->port != port || e->host_len != host.size) continue;
         bool same = true;
         for (proven_size_t k = 0; k < host.size && same; ++k) same = cl_lower(e->host[k]) == cl_lower(host.ptr[k]);
@@ -252,7 +252,7 @@ static cl_session_t *cl_session_find(proven_http_event_client_t *cl, proven_u8st
 
 proven_u64 proven_http_event_client_session_start_(proven_http_event_client_t *cl, proven_u8str_view_t host, proven_u16 port, bool quic, proven_tls_session_t *out) {
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(out->opaque), .size = sizeof out->opaque });
-    cl_session_t *e = cl_session_find(cl, host, port, quic);
+    proven_cl_session_t *e = cl_session_find(cl, host, port, quic);
     if (!e) return 0;
     *out = e->s;
     e->used = ++cl->session_clock;
@@ -264,7 +264,7 @@ void proven_http_event_client_session_keep_(proven_http_event_client_t *cl, prov
     if (host.size == 0 || host.size > 255) return;
     const proven_u64 now = cl_session_mark(s);
     if (now == 0) return;
-    cl_session_t *e = cl_session_find(cl, host, port, quic);
+    proven_cl_session_t *e = cl_session_find(cl, host, port, quic);
     if (now == *stored) {
         /* Nothing learned since this connection last stored - and a newer connection may have
          * stored since, which is not to be undone. Offered and refused, with no ticket in its
@@ -276,12 +276,12 @@ void proven_http_event_client_session_keep_(proven_http_event_client_t *cl, prov
     *stored = now;
     if (!e) {
         if (!cl->sessions) {
-            cl->sessions = cl_alloc(cl->alloc, 2 * PROVEN_HTTP_EVENT_CLIENT_SESSIONS * sizeof(cl_session_t));
+            cl->sessions = cl_alloc(cl->alloc, 2 * PROVEN_HTTP_EVENT_CLIENT_SESSIONS * sizeof(proven_cl_session_t));
             if (!cl->sessions) return;             /* none remembered: the next is a full handshake */
-            proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(cl->sessions), .size = 2 * PROVEN_HTTP_EVENT_CLIENT_SESSIONS * sizeof(cl_session_t) });
+            proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(cl->sessions), .size = 2 * PROVEN_HTTP_EVENT_CLIENT_SESSIONS * sizeof(proven_cl_session_t) });
         }
         /* A free slot of this transport's half, or its least recently used. */
-        cl_session_t *t = (cl_session_t *)cl->sessions + (quic ? PROVEN_HTTP_EVENT_CLIENT_SESSIONS : 0);
+        proven_cl_session_t *t = (proven_cl_session_t *)cl->sessions + (quic ? PROVEN_HTTP_EVENT_CLIENT_SESSIONS : 0);
         e = &t[0];
         for (proven_size_t i = 0; i < PROVEN_HTTP_EVENT_CLIENT_SESSIONS; ++i) {
             if (!t[i].used) { e = &t[i]; break; }
@@ -298,7 +298,7 @@ void proven_http_event_client_session_keep_(proven_http_event_client_t *cl, prov
 /* A new connection for a request that has none. On failure nothing is left of it. */
 static proven_err_t cl_conn_open(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->h.client;
-    cl_conn_t *k = cl_alloc(cl->alloc, sizeof *k);
+    proven_cl_conn_t *k = cl_alloc(cl->alloc, sizeof *k);
     if (!k) return PROVEN_ERR_NOMEM;
     for (proven_size_t i = 0; i < sizeof *k; ++i) ((proven_byte_t *)k)[i] = 0;
     k->client = cl;
@@ -335,7 +335,7 @@ static proven_err_t cl_conn_open(proven_http_event_request_t *c) {
 }
 
 /* Give a request that has none a connection that is idle. Its bytes leave from the loop. */
-static void cl_conn_give(cl_conn_t *k, proven_http_event_request_t *c) {
+static void cl_conn_give(proven_cl_conn_t *k, proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = k->client;
     proven_loop_timer_cancel(cl->loop, &k->timer);
     k->idle = false;
@@ -369,7 +369,7 @@ static void cl_unwait(proven_http_event_request_t *c) {
 /* Close a connection that no request owns. `serve_waiting`: a request to the same place that
  * was waiting may now have a connection of its own - the first such, and if that cannot be
  * made, it ends and the next is tried. */
-static void cl_conn_close(cl_conn_t *k, bool serve_waiting) {
+static void cl_conn_close(proven_cl_conn_t *k, bool serve_waiting) {
     proven_http_event_client_t *cl = k->client;
     if (k->idle) { k->idle = false; cl->idle_count--; }
     proven_loop_timer_cancel(cl->loop, &k->timer);
@@ -412,7 +412,7 @@ static void cl_conn_close(cl_conn_t *k, bool serve_waiting) {
 
 /* A connection whose exchange ended cleanly: to the first request waiting for its origin, or
  * kept idle - and then the one idle longest goes if there are too many. */
-static void cl_conn_keep(cl_conn_t *k) {
+static void cl_conn_keep(proven_cl_conn_t *k) {
     proven_http_event_client_t *cl = k->client;
     /* A ticket that came with the exchange is the next connection's to offer (RFC-0020). */
     if (k->https && k->tls) proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = k->host, .size = k->host_len }, k->port, false, &k->session, k->session_mark, &k->session_stored,
@@ -434,8 +434,8 @@ static void cl_conn_keep(cl_conn_t *k) {
     (void)proven_loop_io_set(cl->loop, &k->io, PROVEN_NET_READABLE);
     proven_loop_timer_set(cl->loop, &k->timer, cl->cfg.idle_timeout_ms, cl_on_idle_timer, k);
     if (cl->idle_count > cl->cfg.max_kept_connections) {
-        cl_conn_t *oldest = (void *)0;
-        for (cl_conn_t *i = cl->conns; i; i = i->next)
+        proven_cl_conn_t *oldest = (void *)0;
+        for (proven_cl_conn_t *i = cl->conns; i; i = i->next)
             if (!i->owner && i != k && (!oldest || i->idle_since < oldest->idle_since)) oldest = i;
         cl_conn_close(oldest ? oldest : k, false);
     }
@@ -446,7 +446,7 @@ static void cl_on_idle_timer(void *ctx) { cl_conn_close(ctx, false); }
 /* Something happened on a connection nobody is using. Under TLS it may be the server's
  * housekeeping (a session ticket), which is read and kept; anything else - a close, or bytes
  * nobody asked for - ends it. */
-static void cl_idle_io(cl_conn_t *k) {
+static void cl_idle_io(proven_cl_conn_t *k) {
     proven_http_event_client_t *cl = k->client;
     proven_result_size_t r = proven_net_read(&k->sock, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES }, PROVEN_NET_DONT_WAIT);
     if (r.err == PROVEN_ERR_TIMEOUT || r.err == PROVEN_ERR_AGAIN) return;
@@ -467,7 +467,7 @@ static void cl_idle_io(cl_conn_t *k) {
 /* Whether the connection of a request that has just ended well can carry another. */
 static bool cl_reusable(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->h.client;
-    cl_conn_t *k = c->k;
+    proven_cl_conn_t *k = c->k;
     if (!c->keep || !c->request_ended || c->peer_eof || cl_buffered(c) > 0 || buf_pending(&c->stash) > 0 || k->unfed > 0) return false;
     if (k->tls) {
         /* Nothing more may be waiting inside TLS either. (The stash is empty, so the buffer
@@ -484,7 +484,7 @@ static bool cl_reusable(proven_http_event_request_t *c) {
 /* Its connection is closed and the request is as it was before any of it was sent. */
 static void cl_unsend(proven_http_event_request_t *c, bool serve_waiting) {
     proven_http_event_client_t *cl = c->h.client;
-    cl_conn_t *old = c->k;
+    proven_cl_conn_t *old = c->k;
     c->k = (void *)0;
     old->owner = (void *)0;
     cl_conn_close(old, serve_waiting);
@@ -507,9 +507,9 @@ static proven_err_t cl_send_again(proven_http_event_request_t *c) {
  * free, for which it waits. PROVEN_ERR_BUSY: it would wait, and too many do. */
 static proven_err_t cl_place(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->h.client;
-    cl_conn_t *idle = (void *)0;
+    proven_cl_conn_t *idle = (void *)0;
     proven_size_t have = 0;
-    for (cl_conn_t *k = cl->conns; k; k = k->next) {
+    for (proven_cl_conn_t *k = cl->conns; k; k = k->next) {
         if (!cl_leads_to(k, c)) continue;
         have++;
         if (k->idle && (!idle || k->idle_since > idle->idle_since)) idle = k;      /* the one used last is the likeliest to be alive */
@@ -577,7 +577,7 @@ static void cl_kill(proven_http_event_request_t *c, proven_err_t why) {
     c->dead = true;
     proven_loop_timer_cancel(cl->loop, &c->timer);
     if (c->waiting) cl_unwait(c);
-    cl_conn_t *k = c->k;
+    proven_cl_conn_t *k = c->k;
     const bool keep = k && why == PROVEN_OK && cl_reusable(c);
     c->k = (void *)0;
     if (c->prev) c->prev->next = c->next;
@@ -630,7 +630,7 @@ static void cl_watch(proven_http_event_request_t *c) {
 static bool cl_flush(proven_http_event_request_t *c) {
     if (c->dead) return false;
     if (!c->k || c->state == CL_CONNECTING) return true;
-    cl_conn_t *k = c->k;
+    proven_cl_conn_t *k = c->k;
     for (;;) {
         if (k->tls && buf_pending(&c->out) > 0 && proven_tls_is_established(k->tls)) {
             proven_result_size_t w = proven_tls_write(k->tls, (proven_mem_view_t){ .ptr = c->out.ptr + c->out.off, .size = buf_pending(&c->out) });
@@ -675,7 +675,7 @@ static void cl_progress(proven_http_event_request_t *c) {
  * to do now. */
 static bool cl_decode(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->h.client;
-    cl_dec_t *x = c->dec;
+    proven_cl_dec_t *x = c->dec;
     if (!x->have) {
         proven_mem_view_t in = { .ptr = c->stash.ptr + c->stash.off, .size = buf_pending(&c->stash) };
         if (in.size == 0) return false;
@@ -753,9 +753,9 @@ static void cl_process(proven_http_event_request_t *c) {
             bool no_body = framing.kind == PROVEN_HTTP_BODY_NONE || (framing.kind == PROVEN_HTTP_BODY_LENGTH && framing.length == 0);
             proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
             if (cl->cfg.decompress && !no_body && proven_http_decoder_wanted_(res.status, res.headers, res.header_count, cl->cfg.decompress_zstd, cl->cfg.decompress_brotli, &coding)) {
-                proven_result_mem_mut_t m = cl->alloc.alloc_fn(cl->alloc.ctx, sizeof(cl_dec_t), alignof(cl_dec_t));
+                proven_result_mem_mut_t m = cl->alloc.alloc_fn(cl->alloc.ctx, sizeof(proven_cl_dec_t), alignof(proven_cl_dec_t));
                 if (m.err != PROVEN_OK) { cl_kill(c, PROVEN_ERR_NOMEM); break; }
-                c->dec = (cl_dec_t *)(void *)m.value.ptr;
+                c->dec = (proven_cl_dec_t *)(void *)m.value.ptr;
                 c->dec->total = 0;
                 c->dec->have = false;
                 proven_http_decoder_begin_(&c->dec->d, cl->alloc, coding);
@@ -815,7 +815,7 @@ static void cl_input(proven_http_event_request_t *c, const proven_byte_t *p, pro
     if (c->dead || n == 0) return;
     if (buf_pending(&c->stash) == 0) {
         buf_release(cl, &c->stash);
-        c->stash = (cl_buf_t){ .ptr = (proven_byte_t *)(proven_uintptr_t)p, .len = n, .cap = 0, .off = 0, .borrowed = true };
+        c->stash = (proven_cl_buf_t){ .ptr = (proven_byte_t *)(proven_uintptr_t)p, .len = n, .cap = 0, .off = 0, .borrowed = true };
     } else if (!buf_append(cl, &c->stash, p, n)) {
         cl_kill(c, PROVEN_ERR_NOMEM);
         return;
@@ -833,7 +833,7 @@ static void cl_alive(proven_http_event_request_t *c) {
 
 static void cl_readable(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->h.client;
-    cl_conn_t *k = c->k;
+    proven_cl_conn_t *k = c->k;
     /* The end has been seen and the socket has nothing more to say. A hang-up may still be
      * reported - some systems report one whether or not reading was asked for - and a request
      * that is paused over what it already holds must not take that for a connection cut
@@ -886,7 +886,7 @@ static void cl_readable(proven_http_event_request_t *c) {
 }
 
 static void cl_on_io(void *ctx, proven_u8 got) {
-    cl_conn_t *k = ctx;
+    proven_cl_conn_t *k = ctx;
     proven_http_event_request_t *c = k->owner;
     if (!c) { cl_idle_io(k); return; }
     cl_enter(c);
@@ -1001,7 +1001,7 @@ void proven_http_event_client_destroy(proven_http_event_client_t *cl) {
     if (cl->hbuf) a.free_fn(a.ctx, cl->hbuf);
     if (cl->h2buf) a.free_fn(a.ctx, cl->h2buf);
     if (cl->sessions) {
-        proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(cl->sessions), .size = 2 * PROVEN_HTTP_EVENT_CLIENT_SESSIONS * sizeof(cl_session_t) });
+        proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(cl->sessions), .size = 2 * PROVEN_HTTP_EVENT_CLIENT_SESSIONS * sizeof(proven_cl_session_t) });
         a.free_fn(a.ctx, cl->sessions);
     }
     a.free_fn(a.ctx, cl);

@@ -39,7 +39,7 @@ typedef struct {
     bool running;                      /* ws_rx_run is on the stack */
     bool text;
     proven_byte_t piece[PROVEN_WS_DEFLATE_PIECE];
-} ws_rx_t;
+} proven_ws_rx_t;
 
 struct proven_ws_stream {
     const proven_http_event_raw_ops_t *ops;      /* first: whatever carries the connection finds the operations here */
@@ -60,34 +60,34 @@ struct proven_ws_stream {
     /* One bit each, so that the two this file gained for compression cost a connection
      * nothing. */
     bool closed : 1, close_sent : 1, in_message : 1, want_writable : 1, pinged : 1, paused : 1;
-    bool deflate : 1;                            /* permessage-deflate was agreed: a ws_z_t follows this struct */
+    bool deflate : 1;                            /* permessage-deflate was agreed: a proven_ws_z_t follows this struct */
     bool raw_paused : 1;                         /* the connection underneath was told to stop reading */
     bool plain : 1;                              /* proven_ws_stream_set_compress(false): messages that begin now go as they are */
     bool client : 1;                             /* this side asked for the connection: its frames are masked, the peer's are not */
     bool opening : 1;                            /* a client's, before the server has accepted the upgrade: nothing may be sent */
-    bool may_deflate : 1;                        /* a client's that offered compression: room for a ws_z_t follows this struct, used if the server agrees */
+    bool may_deflate : 1;                        /* a client's that offered compression: room for a proven_ws_z_t follows this struct, used if the server agrees */
 };
 
 /* What a connection that agreed permessage-deflate holds besides: allocated behind the struct
  * above, so that a connection without the extension is not a byte larger for it. */
 typedef struct {
-    ws_rx_t *rx;                                 /* a compressed message being received */
+    proven_ws_rx_t *rx;                                 /* a compressed message being received */
     proven_deflate_t *zip;                       /* a compressed message being sent in pieces */
     proven_byte_t zip_tail[4];
     proven_u8 zip_tail_len;
     proven_i8 level, window_bits;
     bool zip_begun;                              /* the first frame of the compressed message being sent has been queued */
-} ws_z_t;
+} proven_ws_z_t;
 
-/* A client's generator of mask keys: behind the struct, after the room for a ws_z_t if it
+/* A client's generator of mask keys: behind the struct, after the room for a proven_ws_z_t if it
  * offered compression. A server's connection has neither, and is not a byte larger for them. */
 static proven_chacha_rng_t *ws_masks(const proven_ws_stream_t *ws);
 
 /* Only for a connection with `deflate` set. */
-static ws_z_t *ws_z(const proven_ws_stream_t *ws) { return (ws_z_t *)(void *)(ws + 1); }
-static ws_rx_t *ws_rx(const proven_ws_stream_t *ws) { return ws->deflate ? ws_z(ws)->rx : (ws_rx_t *)0; }
+static proven_ws_z_t *ws_z(const proven_ws_stream_t *ws) { return (proven_ws_z_t *)(void *)(ws + 1); }
+static proven_ws_rx_t *ws_rx(const proven_ws_stream_t *ws) { return ws->deflate ? ws_z(ws)->rx : (proven_ws_rx_t *)0; }
 static proven_chacha_rng_t *ws_masks(const proven_ws_stream_t *ws) {
-    return (proven_chacha_rng_t *)(void *)((proven_byte_t *)(ws + 1) + (ws->may_deflate ? sizeof(ws_z_t) : 0));
+    return (proven_chacha_rng_t *)(void *)((proven_byte_t *)(ws + 1) + (ws->may_deflate ? sizeof(proven_ws_z_t) : 0));
 }
 
 static proven_u8str_view_t ws_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
@@ -95,7 +95,7 @@ static proven_u8str_view_t ws_lit_n(const char *s, proven_size_t n) { return (pr
 
 static void ws_enter(proven_ws_stream_t *ws) { ws->depth++; }
 static void ws_rx_free(proven_ws_stream_t *ws) {
-    ws_rx_t *rx = ws_rx(ws);
+    proven_ws_rx_t *rx = ws_rx(ws);
     if (!rx) return;
     ws_z(ws)->rx = (void *)0;
     proven_ws_inflate_end_(&rx->m);
@@ -195,7 +195,7 @@ static void ws_arm(proven_ws_stream_t *ws) {
  * connection is over; false when the handler paused first: the caller keeps the rest.
  */
 static bool ws_rx_run(proven_ws_stream_t *ws, const proven_byte_t *p, proven_size_t n, bool last, proven_size_t *consumed) {
-    ws_rx_t *rx = ws_rx(ws);
+    proven_ws_rx_t *rx = ws_rx(ws);
     *consumed = 0;
     rx->running = true;
     bool finished = true;
@@ -233,7 +233,7 @@ static bool ws_rx_run(proven_ws_stream_t *ws, const proven_byte_t *p, proven_siz
 /* The handler paused in the middle of a frame: set what is left of it aside. The decoder has
  * moved past these bytes, so the connection underneath is told they were used. */
 static bool ws_rx_hold(proven_ws_stream_t *ws, const proven_byte_t *p, proven_size_t n, bool last) {
-    ws_rx_t *rx = ws_rx(ws);
+    proven_ws_rx_t *rx = ws_rx(ws);
     if (rx->held) { ws->alloc.free_fn(ws->alloc.ctx, rx->held); rx->held = (void *)0; }
     rx->held_len = n;
     rx->held_at = 0;
@@ -273,9 +273,9 @@ static proven_size_t ws_on_input(void *raw, proven_mem_mut_t in) {
             if (ev.first) {
                 ws_rx_free(ws);
                 if (!ws->close_sent) {
-                    proven_result_mem_mut_t m = ws->alloc.alloc_fn(ws->alloc.ctx, sizeof(ws_rx_t), alignof(ws_rx_t));
+                    proven_result_mem_mut_t m = ws->alloc.alloc_fn(ws->alloc.ctx, sizeof(proven_ws_rx_t), alignof(proven_ws_rx_t));
                     if (m.err != PROVEN_OK) { ws_fail(ws, PROVEN_ERR_NOMEM); break; }
-                    ws_rx_t *rx = (ws_rx_t *)(void *)m.value.ptr;
+                    proven_ws_rx_t *rx = (proven_ws_rx_t *)(void *)m.value.ptr;
                     rx->held = (void *)0;
                     rx->held_len = 0; rx->held_at = 0;
                     rx->have_held = false; rx->held_last = false; rx->started = false; rx->running = false;
@@ -455,7 +455,7 @@ proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_h
     }
 
     proven_allocator_t alloc = proven_http_event_raw_allocator_(stream);
-    proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, sizeof(proven_ws_stream_t) + (deflate ? sizeof(ws_z_t) : 0), 16);
+    proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, sizeof(proven_ws_stream_t) + (deflate ? sizeof(proven_ws_z_t) : 0), 16);
     if (m.err != PROVEN_OK) return PROVEN_ERR_NOMEM;
     proven_ws_stream_t *ws = (proven_ws_stream_t *)(void *)m.value.ptr;
     *ws = (proven_ws_stream_t){
@@ -468,7 +468,7 @@ proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_h
         .peer = proven_http_stream_peer(stream),
         .deflate = deflate,
     };
-    if (deflate) *ws_z(ws) = (ws_z_t){ .level = (proven_i8)config->compress_level, .window_bits = (proven_i8)window_bits };
+    if (deflate) *ws_z(ws) = (proven_ws_z_t){ .level = (proven_i8)config->compress_level, .window_bits = (proven_i8)window_bits };
     proven_ws_decoder_init(&ws->dec, true, ws->max_message);
     if (deflate) proven_ws_decoder_allow_compressed(&ws->dec);
 
@@ -497,7 +497,7 @@ proven_err_t proven_ws_event_client_new_(proven_allocator_t alloc, const proven_
     if (!proven_random_bytes(seed, sizeof seed)) return PROVEN_ERR_IO;
     /* Behind the struct: room for the compression state, if it was offered, and the
      * generator of mask keys - neither of which a server's connection carries. */
-    const proven_size_t z_bytes = config->compress ? sizeof(ws_z_t) : 0;
+    const proven_size_t z_bytes = config->compress ? sizeof(proven_ws_z_t) : 0;
     proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, sizeof(proven_ws_stream_t) + z_bytes + sizeof(proven_chacha_rng_t), 16);
     if (m.err != PROVEN_OK) return PROVEN_ERR_NOMEM;
     proven_ws_stream_t *ws = (proven_ws_stream_t *)(void *)m.value.ptr;
@@ -510,7 +510,7 @@ proven_err_t proven_ws_event_client_new_(proven_allocator_t alloc, const proven_
         .close_ms = config->close_timeout_ms ? config->close_timeout_ms : WS_DEFAULT_CLOSE_MS,
         .peer = peer, .client = true, .opening = true, .may_deflate = config->compress,
     };
-    if (config->compress) *ws_z(ws) = (ws_z_t){ .level = (proven_i8)config->compress_level, .window_bits = (proven_i8)config->compress_window_bits };
+    if (config->compress) *ws_z(ws) = (proven_ws_z_t){ .level = (proven_i8)config->compress_level, .window_bits = (proven_i8)config->compress_window_bits };
     proven_chacha_rng_seed(ws_masks(ws), seed);
     proven_ws_decoder_init(&ws->dec, false, ws->max_message);
     *out = ws;
@@ -549,7 +549,7 @@ proven_err_t proven_ws_stream_send_piece(proven_ws_stream_t *ws, bool text, prov
     proven_err_t e = ws_may_send(ws);
     if (e != PROVEN_OK) return e;
     ws_enter(ws);
-    ws_z_t *z = ws->deflate ? ws_z(ws) : (ws_z_t *)0;
+    proven_ws_z_t *z = ws->deflate ? ws_z(ws) : (proven_ws_z_t *)0;
     if (z && first) {
         /* A message begins: is it compressed? Not when it is whole and too short to gain, and
          * not when there is no memory for a compressor - then it goes as it is. */
@@ -644,7 +644,7 @@ void proven_ws_stream_resume(proven_ws_stream_t *ws) {
     /* What was set aside when the handler paused comes first: it is older than anything the
      * connection has still to give. */
     if (ws_rx(ws) && ws_rx(ws)->have_held) {
-        ws_rx_t *rx = ws_rx(ws);
+        proven_ws_rx_t *rx = ws_rx(ws);
         proven_size_t took = 0;
         bool finished = ws_rx_run(ws, rx->held + rx->held_at, rx->held_len - rx->held_at, rx->held_last, &took);
         if (ws_rx(ws) == rx) {

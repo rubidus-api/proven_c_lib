@@ -159,7 +159,7 @@ static bool rsa_key_prepare(proven_crypto_rsa_key_t *k);
 
 bool proven_crypto_rsa_key_parse(proven_mem_view_t der, proven_crypto_rsa_key_t *k) {
     if (!k || !der.ptr) return false;
-    der_t in = { .p = der.ptr, .n = der.size }, seq;
+    proven_der_t in = { .p = der.ptr, .n = der.size }, seq;
     proven_u32 version = 1;
     proven_mem_view_t n, e, d, p, q, dp, dq, qinv;
     bool ok = der_expect(&in, DER_SEQUENCE, &seq, (void *)0) && in.n == 0 && der_small_uint(&seq, &version) && version == 0 &&
@@ -200,7 +200,7 @@ bool proven_crypto_rsa_key_parse(proven_mem_view_t der, proven_crypto_rsa_key_t 
 typedef struct {
     const proven_crypto_mp_mod_t *n, *p, *q;
     proven_crypto_mp_mod_t own[3];
-} rsa_mods_t;
+} proven_rsa_mods_t;
 
 static bool rsa_mods_make(const proven_crypto_rsa_key_t *k, proven_crypto_mp_mod_t *n, proven_crypto_mp_mod_t *p, proven_crypto_mp_mod_t *q) {
     return proven_crypto_mp_mod_init(n, k->n, k->n_len) && proven_crypto_mp_mod_init_secret(p, k->p, k->p_len) &&
@@ -208,7 +208,7 @@ static bool rsa_mods_make(const proven_crypto_rsa_key_t *k, proven_crypto_mp_mod
            n->limbs <= RSA_SIGN_LIMBS && n->limbs <= p->limbs + q->limbs;
 }
 
-static bool rsa_mods(const proven_crypto_rsa_key_t *k, rsa_mods_t *m) {
+static bool rsa_mods(const proven_crypto_rsa_key_t *k, proven_rsa_mods_t *m) {
     if (k->prepared) {
         m->n = &k->mod_n; m->p = &k->mod_p; m->q = &k->mod_q;
         return true;
@@ -224,7 +224,7 @@ static bool rsa_key_prepare(proven_crypto_rsa_key_t *k) {
 }
 
 /* The number below n that is m1 modulo p and m2 modulo q (Garner). */
-static void rsa_garner(const proven_crypto_rsa_key_t *k, const rsa_mods_t *m, const proven_crypto_limb_t *m1, const proven_crypto_limb_t *m2, proven_crypto_limb_t *out) {
+static void rsa_garner(const proven_crypto_rsa_key_t *k, const proven_rsa_mods_t *m, const proven_crypto_limb_t *m1, const proven_crypto_limb_t *m2, proven_crypto_limb_t *out) {
     const proven_size_t sp = m->p->limbs, sq = m->q->limbs;
     proven_crypto_limb_t h[RSA_PRIME_LIMBS], t[RSA_PRIME_LIMBS], prod[2 * RSA_PRIME_LIMBS + 1];
     proven_byte_t bytes[RSA_PRIME_BYTES];
@@ -264,7 +264,7 @@ static bool rsa_half(const proven_crypto_mp_mod_t *prime, const proven_byte_t *x
 
 /* c^d mod n for c of n_len bytes below n, into `sig`. False when the result does not verify. */
 static bool rsa_private(const proven_crypto_rsa_key_t *k, const proven_crypto_rsa_blind_t *blind, const proven_byte_t *c, proven_byte_t *sig, bool publish) {
-    rsa_mods_t m;
+    proven_rsa_mods_t m;
     proven_crypto_limb_t cl[RSA_SIGN_LIMBS], x[RSA_SIGN_LIMBS], f[RSA_SIGN_LIMBS], m1[RSA_PRIME_LIMBS], m2[RSA_PRIME_LIMBS], ex[RSA_E_LIMBS];
     proven_byte_t xb[RSA_SIGN_BYTES];
     bool ok = rsa_mods(k, &m) && proven_crypto_mp_load_be(cl, m.n->limbs, c, k->n_len) && proven_crypto_mp_load_be(ex, RSA_E_LIMBS, k->e, k->e_len);
@@ -308,7 +308,7 @@ static bool rsa_private(const proven_crypto_rsa_key_t *k, const proven_crypto_rs
 }
 
 bool proven_crypto_rsa_blind_make(const proven_crypto_rsa_key_t *k, const proven_byte_t *random, proven_crypto_rsa_blind_t *out) {
-    rsa_mods_t m;
+    proven_rsa_mods_t m;
     proven_crypto_limb_t r[RSA_SIGN_LIMBS], t[RSA_SIGN_LIMBS], ip[RSA_PRIME_LIMBS], iq[RSA_PRIME_LIMBS], e2[RSA_PRIME_LIMBS], two[RSA_PRIME_LIMBS], ex[RSA_E_LIMBS];
     proven_byte_t rb[RSA_SIGN_BYTES], eb[RSA_PRIME_BYTES];
     if (!k || !random || !out) return false;
