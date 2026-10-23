@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.78.0] - 2026-10-23
+
 Three of the owner's decisions of 2026-10-23.
 
 ### Removed
