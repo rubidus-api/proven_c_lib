@@ -199,6 +199,59 @@ int main(void) {
                 }
             }
             PROVEN_TEST_ASSERT(wraps, "the counter carries into each of its bytes, and from 2^32 - 1 to 0, inside a run of eight blocks - 28 starting points at each of the four - as it does one block at a time", "");
+
+            /* The one-pass code (RFC-0023): x86 seals and opens with the counter mode and GHASH
+             * in the same loop, the powers of H kept with the key. Every length to 2,048 bytes
+             * (each count of groups and each tail), associated data of every length to 64 (QUIC
+             * long headers), in place and not, against the portable code. */
+#if (defined(__x86_64__) || defined(__i386__)) && !defined(PROVEN_FREESTANDING) && !defined(PROVEN_SYS_AES_DISABLE)
+            PROVEN_TEST_ASSERT(hw.one_pass && !sw16.one_pass, "on x86 a hardware context seals and opens in one pass; a portable one does not", "");
+#endif
+            static proven_byte_t msg[2048 + 64], p1[2048 + 64], p2[2048 + 64];
+            for (proven_size_t i = 0; i < sizeof msg; ++i) msg[i] = (proven_byte_t)(i * 199 + i / 13 + 5);
+            proven_size_t wrong = 0, cleared = 0, opened = 0;
+            for (proven_size_t n = 0; n <= 2048 + 65 * 11; ++n) {
+                /* The first 2,049 rounds walk the text's length; the rest hold a few lengths and walk the associated data's. */
+                static const proven_size_t few[11] = { 0, 1, 15, 16, 17, 127, 128, 129, 255, 256, 1425 };
+                const proven_size_t len = n <= 2048 ? n : few[(n - 2049) % 11];
+                const proven_size_t alen = n <= 2048 ? (n * 11) % 65 : (n - 2049) / 11;
+                const proven_size_t klen = n % 2 ? 32 : 16, at = n % 7;
+                for (proven_size_t i = 0; i < sizeof key; ++i) key[i] = (proven_byte_t)(i * 13 + n);
+                for (proven_size_t i = 0; i < sizeof nonce; ++i) nonce[i] = (proven_byte_t)(i * 7 + n / 3);
+                (void)proven_crypto_aes_gcm_init(&hw, key, klen);
+                proven_crypto_aes_force_portable(true);
+                (void)proven_crypto_aes_gcm_init(&sw, key, klen);
+                proven_crypto_aes_force_portable(false);
+                const proven_mem_view_t ad = { msg + 2048 - alen, alen }, plain = { msg + at, len };
+                proven_crypto_aes_gcm_seal(&sw, nonce, ad, plain, p2, tag_sw);
+                proven_crypto_aes_gcm_seal(&hw, nonce, ad, plain, p1, tag_hw);
+                bool row = memcmp(p1, p2, len) == 0 && memcmp(tag_hw, tag_sw, 16) == 0;
+                /* In place: sealed over the text, then opened over the ciphertext. */
+                memcpy(p1 + at, msg + at, len);
+                proven_crypto_aes_gcm_seal(&hw, nonce, ad, (proven_mem_view_t){ p1 + at, len }, p1 + at, tag_hw);
+                row = row && memcmp(p1 + at, p2, len) == 0 && memcmp(tag_hw, tag_sw, 16) == 0;
+                row = row && proven_crypto_aes_gcm_open(&hw, nonce, ad, (proven_mem_view_t){ p1 + at, len }, tag_sw, p1 + at) && memcmp(p1 + at, msg + at, len) == 0;
+                /* Out of place, with the portable side opening what the hardware sealed. */
+                row = row && proven_crypto_aes_gcm_open(&sw, nonce, ad, (proven_mem_view_t){ p2, len }, tag_hw, p1) && memcmp(p1, msg + at, len) == 0;
+                if (!row) { if (wrong == 0) PROVEN_TEST_INFO("first difference at length {} (associated data {})", PROVEN_ARG((int)len), PROVEN_ARG((int)alen)); wrong++; }
+                /* A wrong tag, or a changed byte: false, and nothing of the plaintext left where it was asked for. */
+                tag_hw[n % 16] ^= (proven_byte_t)(1u << (n % 8));
+                memcpy(p1, p2, len);
+                memset(p1 + len, 0xa5, 16);
+                const bool bad_tag = proven_crypto_aes_gcm_open(&hw, nonce, ad, (proven_mem_view_t){ p1, len }, tag_hw, p1);
+                bool zero = true;
+                for (proven_size_t i = 0; i < len; ++i) zero = zero && p1[i] == 0;
+                if (!bad_tag && zero && p1[len] == 0xa5) cleared++;
+                tag_hw[n % 16] ^= (proven_byte_t)(1u << (n % 8));
+                if (len > 0) {
+                    p2[n % len] ^= 0x10;
+                    if (!proven_crypto_aes_gcm_open(&hw, nonce, ad, (proven_mem_view_t){ p2, len }, tag_hw, p1)) opened++;
+                } else opened++;
+            }
+            PROVEN_TEST_ASSERT(wrong == 0, "one pass: every length from 0 to 2,048 bytes and associated data of 0 to 64, sealed, sealed in place, opened in place, and opened by the portable code, as the portable code does",
+                "Inspect proven_sys_aes_gcm in platform/proven_sys_aes.c: the stitched loop, the group it hashes, what is left after it, and the lengths block.");
+            PROVEN_TEST_ASSERT(cleared == 2049 + 65 * 11, "one pass: a wrong tag is refused, and the plaintext written during the pass is cleared - every byte asked for and none beyond", "");
+            PROVEN_TEST_ASSERT(opened == 2049 + 65 * 11, "one pass: a changed byte of ciphertext anywhere is refused", "");
         } else {
             PROVEN_TEST_INFO("this processor or build has no hardware AES path; only the portable code ran");
         }

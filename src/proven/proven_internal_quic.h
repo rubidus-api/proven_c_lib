@@ -54,7 +54,7 @@ typedef struct {
     bool chacha;
     proven_size_t key_len;                        /* 16 or 32 */
     proven_crypto_aes_gcm_t aead;                 /* AES: the context. ChaCha20: its key, in the first 32 bytes of aead.rk */
-    proven_crypto_aes_gcm_t hp;                   /* the same for the header protection key */
+    proven_crypto_aes_t hp;                       /* the same for the header protection key: AES with no GHASH key */
     proven_byte_t iv[12];
 } proven_quic_keys_t;
 
@@ -86,6 +86,10 @@ proven_size_t proven_quic_protect(const proven_quic_keys_t *keys, proven_byte_t 
  * packet is too short or does not decrypt; its bytes are then not to be used. */
 [[nodiscard]] bool proven_quic_unprotect(const proven_quic_keys_t *keys, proven_byte_t *packet, proven_size_t pn_offset, proven_size_t packet_len,
                                          proven_u64 largest_plus_one, proven_u64 *pn, proven_size_t *header_len, proven_mem_mut_t *payload);
+/* The same with the header protection mask already made from this packet's sample under these
+ * keys' header protection key - which a key update does not change. */
+[[nodiscard]] bool proven_quic_unprotect_masked(const proven_quic_keys_t *keys, proven_byte_t *packet, proven_size_t pn_offset, proven_size_t packet_len,
+                                                proven_u64 largest_plus_one, const proven_byte_t mask[5], proven_u64 *pn, proven_size_t *header_len, proven_mem_mut_t *payload);
 
 /* The Retry integrity tag (RFC 9001 section 5.8): over the Original Destination Connection ID
  * and the Retry packet without its tag. */

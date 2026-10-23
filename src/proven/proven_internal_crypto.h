@@ -223,9 +223,22 @@ void proven_sha512_compress_(proven_u64 state[8], const proven_byte_t block[128]
 typedef struct {
     int rounds;                                  /* 10 or 14 */
     bool hw;
+    bool one_pass;                               /* the hardware path seals and opens in one pass (RFC-0023) */
     proven_byte_t rk[240];                       /* round keys as bytes */
     proven_byte_t h[16];                         /* the GHASH key */
+    proven_byte_t hpow[112];                     /* H^2..H^8 in the one-pass code's form, when one_pass; zeros otherwise */
 } proven_crypto_aes_gcm_t;
+
+/* The block cipher alone, with no GHASH key: QUIC's header protection. */
+typedef struct {
+    int rounds;
+    bool hw;
+    proven_byte_t rk[240];
+} proven_crypto_aes_t;
+
+/* key_len is 16 or 32. False otherwise. SECRET: key. */
+[[nodiscard]] bool proven_crypto_aes_init(proven_crypto_aes_t *ctx, const proven_byte_t *key, proven_size_t key_len);
+void proven_crypto_aes_block(const proven_crypto_aes_t *ctx, const proven_byte_t in[16], proven_byte_t out[16]);
 
 /* key_len is 16 or 32. False otherwise. SECRET: key. */
 [[nodiscard]] bool proven_crypto_aes_gcm_init(proven_crypto_aes_gcm_t *ctx, const proven_byte_t *key, proven_size_t key_len);

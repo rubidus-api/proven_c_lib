@@ -1859,7 +1859,7 @@ requests are read into the loop's scratch buffer, and bytes are copied aside onl
 request is incomplete. (A compressor exists only while a compressed response is being
 written.) On x86-64 Linux the registered tests measure 448 bytes of heap for an
 idle plain HTTP connection, failing above 512, and 944 bytes for an idle plain WebSocket
-connection, failing above 1 KiB. A TLS connection adds the engine's state, about 1 KiB while
+connection, failing above 1 KiB. A TLS connection adds the engine's state, about 1.25 KiB while
 idle (Chapter 14, section 9). **An HTTP/2 connection is another size**: 2,312 bytes idle after
 one small request, failing above 3 KiB, and growing with the header fields it is made to
 remember to about 12.8 KiB when both of its compression tables are full ([Chapter 17, section 6](manual-17-http2.md#6-http2-in-the-event-driven-server)).

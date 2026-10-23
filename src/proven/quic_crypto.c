@@ -81,6 +81,11 @@ static void cipher_init(proven_crypto_aes_gcm_t *ctx, bool chacha, const proven_
     else (void)proven_crypto_aes_gcm_init(ctx, key, key_len);                  /* 16 or 32: cannot fail */
 }
 
+static void hp_init(proven_crypto_aes_t *ctx, bool chacha, const proven_byte_t *key, proven_size_t key_len) {
+    if (chacha) for (int i = 0; i < 32; ++i) ctx->rk[i] = key[i];
+    else (void)proven_crypto_aes_init(ctx, key, key_len);                      /* 16 or 32: cannot fail */
+}
+
 void proven_quic_keys_set(proven_quic_keys_t *keys, const proven_tls_suite_t *suite, const proven_byte_t *secret) {
     proven_byte_t key[32];
     proven_mem_view_t none = { .ptr = key, .size = 0 };
@@ -90,7 +95,7 @@ void proven_quic_keys_set(proven_quic_keys_t *keys, const proven_tls_suite_t *su
     cipher_init(&keys->aead, suite->chacha, key, suite->key_len);
     proven_tls13_expand_label(suite->hash, secret, "quic iv", none, keys->iv, 12);
     proven_tls13_expand_label(suite->hash, secret, "quic hp", none, key, suite->key_len);
-    cipher_init(&keys->hp, suite->chacha, key, suite->key_len);
+    hp_init(&keys->hp, suite->chacha, key, suite->key_len);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = key, .size = sizeof key });
 }
 
@@ -110,7 +115,7 @@ void proven_quic_hp_mask(const proven_quic_keys_t *keys, const proven_byte_t sam
         proven_crypto_chacha20(keys->hp.rk, counter, sample + 4, zeros, mask, 5);
     } else {
         proven_byte_t block[16];
-        proven_crypto_aes_encrypt_block(&keys->hp, sample, block);
+        proven_crypto_aes_block(&keys->hp, sample, block);
         for (int i = 0; i < 5; ++i) mask[i] = block[i];
     }
 }
@@ -148,6 +153,14 @@ bool proven_quic_unprotect(const proven_quic_keys_t *keys, proven_byte_t *packet
     if (pn_offset < 1 || pn_offset > packet_len || packet_len - pn_offset < 4 + 16) return false;
     proven_byte_t mask[5];
     proven_quic_hp_mask(keys, packet + pn_offset + 4, mask);
+    return proven_quic_unprotect_masked(keys, packet, pn_offset, packet_len, largest_plus_one, mask, pn, header_len, payload);
+}
+
+bool proven_quic_unprotect_masked(const proven_quic_keys_t *keys, proven_byte_t *packet, proven_size_t pn_offset, proven_size_t packet_len,
+                                  proven_u64 largest_plus_one, const proven_byte_t mask_in[5], proven_u64 *pn, proven_size_t *header_len, proven_mem_mut_t *payload) {
+    if (pn_offset < 1 || pn_offset > packet_len || packet_len - pn_offset < 4 + 16) return false;
+    proven_byte_t mask[5];
+    for (int i = 0; i < 5; ++i) mask[i] = mask_in[i];
     /* Header protection hides the header from whoever watches the wire, not from the key
      * holder, who must read it to open the packet: what the mask reveals is public here. */
     PROVEN_CT_PUBLIC(mask, sizeof mask);

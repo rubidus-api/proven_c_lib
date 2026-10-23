@@ -8,6 +8,13 @@
 
 #include <immintrin.h>
 
+/* gcc at -O2 leaves the loops over the blocks in flight rolled: the blocks then live in memory and
+ * this code runs at about half its speed (2.2 cycles a byte against 1.2, RFC-0023). Where the
+ * build optimises at all, gcc optimises this part as at -O3. clang unrolls them at -O2. */
+#if !defined(__clang__) && defined(__OPTIMIZE__)
+#pragma GCC optimize("O3")
+#endif
+
 #define AES_TARGET __attribute__((target("aes,pclmul,ssse3,sse4.1")))
 
 bool proven_sys_aes_available(void) {
@@ -167,8 +174,9 @@ AES_TARGET void proven_sys_aes_ghash(uint8_t y[16], const uint8_t h[16], const u
     __m128i hv = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)h), rev);
     __m128i yv = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)y), rev);
     if (blocks >= AES_WIDE) {
-        /* The powers of H are made here, for this call, and not kept with the key: a few
-         * multiplications, against a key that would be 112 bytes larger on every connection. */
+        /* The powers of H are made here, for this call. GCM itself goes through
+         * proven_sys_aes_gcm, which keeps them with the key (RFC-0023); this call is the
+         * two-pass path's, kept for a context made without them. */
         _Static_assert(AES_WIDE == 8 || AES_WIDE == 4, "the powers below are written out for four and for eight");
         __m128i hp[AES_WIDE];
         hp[0] = hv;                                  /* (in an order where no product waits */
@@ -197,6 +205,152 @@ AES_TARGET void proven_sys_aes_ghash(uint8_t y[16], const uint8_t h[16], const u
         data += 16;
     }
     _mm_storeu_si128((__m128i *)y, _mm_shuffle_epi8(yv, rev));
+}
+
+/* ---- GCM in one pass ---- */
+
+AES_TARGET bool proven_sys_aes_gcm_powers(const uint8_t h[16], uint8_t hpow[112]) {
+    const __m128i rev = _mm_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+    __m128i hp[8];
+    hp[0] = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)h), rev);
+    hp[1] = gf_mul(hp[0], hp[0]);
+    hp[2] = gf_mul(hp[1], hp[0]);
+    hp[3] = gf_mul(hp[1], hp[1]);
+    hp[4] = gf_mul(hp[3], hp[0]);
+    hp[5] = gf_mul(hp[2], hp[2]);
+    hp[6] = gf_mul(hp[3], hp[2]);
+    hp[7] = gf_mul(hp[3], hp[3]);
+    for (int i = 1; i < 8; ++i) _mm_storeu_si128((__m128i *)(hpow + 16 * (i - 1)), hp[i]);
+    aes_forget(hp, sizeof hp);
+    return true;
+}
+
+/* GHASH's input as a list of blocks, folded at most eight to a reduction: y is multiplied in
+ * with the first of each group. */
+AES_TARGET static __m128i gf_fold_list(__m128i y, const __m128i *hp, const uint8_t *const *blk, int n, __m128i rev) {
+    for (int at = 0; at < n;) {
+        const int count = n - at < 8 ? n - at : 8;
+        __m128i lo = _mm_setzero_si128(), hi = _mm_setzero_si128();
+        for (int i = 0; i < count; ++i) {
+            __m128i x = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)blk[at + i]), rev), l, h;
+            if (i == 0) x = _mm_xor_si128(x, y);
+            gf_product(x, hp[count - 1 - i], &l, &h);
+            lo = _mm_xor_si128(lo, l);
+            hi = _mm_xor_si128(hi, h);
+        }
+        y = gf_reduce(lo, hi);
+        at += count;
+    }
+    return y;
+}
+
+/* `len` bytes at `data` into y: whole groups of eight, then the rest with the last block zero
+ * padded, and `extra` (the lengths block, or NULL) after them in the same fold. */
+AES_TARGET static __m128i gf_absorb(__m128i y, const __m128i *hp, const uint8_t *data, size_t len, const uint8_t *extra, __m128i rev) {
+    while (len >= 128) {
+        y = gf_fold(y, hp, data, 8, rev);
+        data += 128; len -= 128;
+    }
+    uint8_t pad[16];
+    const uint8_t *blk[9];
+    int n = 0;
+    for (; len >= 16; data += 16, len -= 16) blk[n++] = data;
+    if (len > 0) {
+        for (size_t i = 0; i < 16; ++i) pad[i] = i < len ? data[i] : 0;
+        blk[n++] = pad;
+    }
+    if (extra) blk[n++] = extra;
+    y = gf_fold_list(y, hp, blk, n, rev);
+    aes_forget(pad, sizeof pad);
+    return y;
+}
+
+/* Counter mode over fewer than 16 * AES_WIDE bytes, every block in flight at once. */
+AES_TARGET static void ctr_rest(const aes_keys_t *keys, int rounds, __m128i base, uint32_t counter, const uint8_t *in, uint8_t *out, size_t len) {
+    __m128i b[AES_WIDE];
+    const int n = (int)((len + 15) / 16);
+    for (int i = 0; i < n; ++i) b[i] = _mm_xor_si128(base, _mm_insert_epi32(_mm_setzero_si128(), (int)__builtin_bswap32(counter + (uint32_t)i), 3));
+    for (int r = 1; r < rounds; ++r) {
+        for (int i = 0; i < n; ++i) b[i] = _mm_aesenc_si128(b[i], keys->k[r]);
+    }
+    for (int i = 0; i < n; ++i) {
+        b[i] = _mm_aesenclast_si128(b[i], keys->k[rounds]);
+        if (len >= 16) {
+            _mm_storeu_si128((__m128i *)out, _mm_xor_si128(b[i], _mm_loadu_si128((const __m128i *)in)));
+            in += 16; out += 16; len -= 16;
+        } else {
+            uint8_t ks[16];
+            _mm_storeu_si128((__m128i *)ks, b[i]);
+            for (size_t j = 0; j < len; ++j) out[j] = (uint8_t)(in[j] ^ ks[j]);
+            aes_forget(ks, sizeof ks);
+        }
+    }
+    aes_forget(b, sizeof b);
+}
+
+/* Each group of AES_WIDE counter blocks goes through its rounds while AES_WIDE ciphertext
+ * blocks are multiplied, one product a round: the cipher's instructions and the carry-less
+ * multiply use different execution units, so the two halves overlap instead of following each
+ * other. Sealing hashes the group before (the one just written); opening hashes the group's
+ * own ciphertext, read before its plaintext is stored over it. */
+AES_TARGET bool proven_sys_aes_gcm(const uint8_t *rk, int rounds, const uint8_t h[16], const uint8_t hpow[112], const uint8_t nonce[12],
+                                   const uint8_t *aad, size_t aad_len, const uint8_t *in, uint8_t *out, size_t len, bool decrypt, uint8_t tag[16]) {
+    const __m128i rev = _mm_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+    aes_keys_t keys;
+    aes_keys_load(&keys, rk, rounds);
+    __m128i hp[8];
+    hp[0] = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)h), rev);
+    for (int i = 1; i < 8; ++i) hp[i] = _mm_loadu_si128((const __m128i *)(hpow + 16 * (i - 1)));
+    uint8_t block[16];
+    for (int i = 0; i < 12; ++i) block[i] = nonce[i];
+    block[12] = block[13] = block[14] = 0; block[15] = 1;
+    /* E(J0), the tag's mask: started first, it runs alongside the work that follows. */
+    __m128i ej0 = aes_block(rk, rounds, _mm_loadu_si128((const __m128i *)block));
+    block[15] = 0;
+    const __m128i base = _mm_xor_si128(_mm_loadu_si128((const __m128i *)block), keys.k[0]);
+    __m128i y = _mm_setzero_si128();
+    if (aad_len > 0) y = gf_absorb(y, hp, aad, aad_len, NULL, rev);
+    uint32_t counter = 2;
+    const uint8_t *prev = NULL;                  /* sealing: the group written last, not yet hashed */
+    while (len >= 16 * AES_WIDE) {
+        const uint8_t *hsrc = decrypt ? in : prev;
+        __m128i b[AES_WIDE], lo = _mm_setzero_si128(), hi = _mm_setzero_si128();
+        for (int i = 0; i < AES_WIDE; ++i) {
+            b[i] = _mm_xor_si128(base, _mm_insert_epi32(_mm_setzero_si128(), (int)__builtin_bswap32(counter + (uint32_t)i), 3));
+        }
+        counter += AES_WIDE;
+        for (int r = 1; r < rounds; ++r) {
+            for (int i = 0; i < AES_WIDE; ++i) b[i] = _mm_aesenc_si128(b[i], keys.k[r]);
+            if (hsrc && r <= AES_WIDE) {
+                __m128i x = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)(hsrc + 16 * (r - 1))), rev), l, hh;
+                if (r == 1) x = _mm_xor_si128(x, y);
+                gf_product(x, hp[AES_WIDE - r], &l, &hh);
+                lo = _mm_xor_si128(lo, l);
+                hi = _mm_xor_si128(hi, hh);
+            }
+        }
+        if (hsrc) y = gf_reduce(lo, hi);
+        for (int i = 0; i < AES_WIDE; ++i) {
+            b[i] = _mm_aesenclast_si128(b[i], keys.k[rounds]);
+            _mm_storeu_si128((__m128i *)(out + 16 * i), _mm_xor_si128(b[i], _mm_loadu_si128((const __m128i *)(in + 16 * i))));
+        }
+        prev = out;
+        in += 16 * AES_WIDE; out += 16 * AES_WIDE; len -= 16 * AES_WIDE;
+    }
+    if (!decrypt && prev) y = gf_fold(y, hp, prev, AES_WIDE, rev);
+    /* The rest: fewer than AES_WIDE blocks, and the lengths. Opening hashes the ciphertext
+     * before the plaintext overwrites it; sealing, after. */
+    uint8_t lens[16];
+    const uint64_t abits = (uint64_t)aad_len * 8, cbits = ((uint64_t)(counter - 2) * 16 + len) * 8;
+    for (int i = 0; i < 8; ++i) { lens[7 - i] = (uint8_t)(abits >> (8 * i)); lens[15 - i] = (uint8_t)(cbits >> (8 * i)); }
+    if (decrypt) y = gf_absorb(y, hp, in, len, lens, rev);
+    if (len > 0) ctr_rest(&keys, rounds, base, counter, in, out, len);
+    if (!decrypt) y = gf_absorb(y, hp, out, len, lens, rev);
+    _mm_storeu_si128((__m128i *)tag, _mm_xor_si128(_mm_shuffle_epi8(y, rev), ej0));
+    aes_forget(&keys, sizeof keys);
+    aes_forget(hp, sizeof hp);
+    aes_forget(block, sizeof block);
+    return true;
 }
 
 /* The inverse cipher in the form the instructions want: the round keys in reverse, the
@@ -313,12 +467,34 @@ bool proven_sys_aes_cbc_decrypt(const uint8_t *rk, int rounds, uint8_t iv[16], u
     return false;
 }
 
+bool proven_sys_aes_gcm_powers(const uint8_t h[16], uint8_t hpow[112]) {
+    (void)h; (void)hpow;
+    return false;
+}
+
+bool proven_sys_aes_gcm(const uint8_t *rk, int rounds, const uint8_t h[16], const uint8_t hpow[112], const uint8_t nonce[12],
+                        const uint8_t *aad, size_t aad_len, const uint8_t *in, uint8_t *out, size_t len, bool decrypt, uint8_t tag[16]) {
+    (void)rk; (void)rounds; (void)h; (void)hpow; (void)nonce; (void)aad; (void)aad_len; (void)in; (void)out; (void)len; (void)decrypt; (void)tag;
+    return false;
+}
+
 #else
 
 bool proven_sys_aes_available(void) { return false; }
 
 bool proven_sys_aes_cbc_decrypt(const uint8_t *rk, int rounds, uint8_t iv[16], uint8_t *data, size_t len) {
     (void)rk; (void)rounds; (void)iv; (void)data; (void)len;
+    return false;
+}
+
+bool proven_sys_aes_gcm_powers(const uint8_t h[16], uint8_t hpow[112]) {
+    (void)h; (void)hpow;
+    return false;
+}
+
+bool proven_sys_aes_gcm(const uint8_t *rk, int rounds, const uint8_t h[16], const uint8_t hpow[112], const uint8_t nonce[12],
+                        const uint8_t *aad, size_t aad_len, const uint8_t *in, uint8_t *out, size_t len, bool decrypt, uint8_t tag[16]) {
+    (void)rk; (void)rounds; (void)h; (void)hpow; (void)nonce; (void)aad; (void)aad_len; (void)in; (void)out; (void)len; (void)decrypt; (void)tag;
     return false;
 }
 

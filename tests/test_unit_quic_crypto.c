@@ -46,6 +46,18 @@ static bool same_aes(const proven_crypto_aes_gcm_t *derived, const char *key_hex
     return memcmp(a, b, 16) == 0;
 }
 
+/* The same for header protection's context, which is AES alone. */
+static bool same_hp(const proven_crypto_aes_t *derived, const char *key_hex) {
+    proven_byte_t key[32], a[16], b[16], in[16];
+    proven_size_t n = unhex(key_hex, key, sizeof key);
+    proven_crypto_aes_gcm_t ctx;
+    if (!proven_crypto_aes_gcm_init(&ctx, key, n)) return false;
+    for (int i = 0; i < 16; ++i) in[i] = (proven_byte_t)(i * 17 + 3);
+    proven_crypto_aes_encrypt_block(&ctx, in, a);
+    proven_crypto_aes_block(derived, in, b);
+    return memcmp(a, b, 16) == 0;
+}
+
 /* Protect `payload` behind `header` with `keys` and compare with `packet`; then open the
  * result again. pn_len comes from the header's first byte. */
 static bool protect_and_open(const proven_quic_keys_t *keys, const char *header_hex, const proven_byte_t *payload, proven_size_t payload_len,
@@ -167,9 +179,9 @@ int main(void) {
         PROVEN_TEST_ASSERT(labels, "the labels \"quic key\" and \"quic hp\" behind the TLS 1.3 prefix", "");
         proven_quic_keys_set(&ck, aes128, client_secret);
         proven_quic_keys_set(&sk, aes128, server_secret);
-        PROVEN_TEST_ASSERT(!ck.chacha && ck.key_len == 16 && equals_hex(ck.iv, 12, QV_CLIENT_IV) && same_aes(&ck.aead, QV_CLIENT_KEY) && same_aes(&ck.hp, QV_CLIENT_HP),
+        PROVEN_TEST_ASSERT(!ck.chacha && ck.key_len == 16 && equals_hex(ck.iv, 12, QV_CLIENT_IV) && same_aes(&ck.aead, QV_CLIENT_KEY) && same_hp(&ck.hp, QV_CLIENT_HP),
             "the client's key, IV and header protection key", "");
-        PROVEN_TEST_ASSERT(equals_hex(sk.iv, 12, QV_SERVER_IV) && same_aes(&sk.aead, QV_SERVER_KEY) && same_aes(&sk.hp, QV_SERVER_HP),
+        PROVEN_TEST_ASSERT(equals_hex(sk.iv, 12, QV_SERVER_IV) && same_aes(&sk.aead, QV_SERVER_KEY) && same_hp(&sk.hp, QV_SERVER_HP),
             "the server's key, IV and header protection key", "");
     }
 

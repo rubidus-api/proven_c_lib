@@ -1697,20 +1697,21 @@ static bool open_short(proven_quic_conn_t *c, proven_byte_t *pkt, proven_size_t 
     proven_byte_t mask[5];
     proven_quic_hp_mask(&sp->rx, pkt + pn_offset + 4, mask);
     const bool phase = ((pkt[0] ^ (mask[0] & 0x1f)) & 0x04) != 0;
-    if (phase == c->key_phase) return proven_quic_unprotect(&sp->rx, pkt, pn_offset, len, sp->rx_largest_plus_one, pn, hlen, payload);
+    /* The mask serves every phase: header protection keys are never updated. */
+    if (phase == c->key_phase) return proven_quic_unprotect_masked(&sp->rx, pkt, pn_offset, len, sp->rx_largest_plus_one, mask, pn, hlen, payload);
     /* The other phase: the previous keys for a late packet, or the next ones for an update. */
     if (c->rx_prev_ok && c->now < c->rx_prev_until) {
         if (c->scratch_cap - QC_MAX_DGRAM >= len) {
             proven_byte_t *copy = c->scratch + QC_MAX_DGRAM;   /* the scratch's second half */
             qcopy(copy, pkt, len);
-            if (proven_quic_unprotect(&c->rx_prev, copy, pn_offset, len, sp->rx_largest_plus_one, pn, hlen, payload)) {
+            if (proven_quic_unprotect_masked(&c->rx_prev, copy, pn_offset, len, sp->rx_largest_plus_one, mask, pn, hlen, payload)) {
                 /* Only the previous keys open it: a packet sent before the update. */
                 qcopy(pkt, copy, len); payload->ptr = pkt + *hlen;
                 return true;
             }
         }
     }
-    if (!proven_quic_unprotect(&c->rx_next, pkt, pn_offset, len, sp->rx_largest_plus_one, pn, hlen, payload)) return false;
+    if (!proven_quic_unprotect_masked(&c->rx_next, pkt, pn_offset, len, sp->rx_largest_plus_one, mask, pn, hlen, payload)) return false;
     if (!c->confirmed) { conn_fail(c, PROVEN_QUIC_KEY_UPDATE_ERROR, 0); return false; }
     /* The peer updated its keys: follow, in both directions. */
     c->rx_prev = sp->rx; c->rx_prev_ok = true;

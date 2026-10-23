@@ -18,6 +18,30 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- AES-GCM on x86 seals and opens in one pass (RFC-0023): the counter mode's blocks go through
+  their rounds while the ciphertext blocks are multiplied for GHASH, with the same AES-NI and
+  PCLMULQDQ instructions as before, chosen at run time as before; the powers of the GHASH key are
+  made once a key instead of once a call. Measured on one Coffee Lake host at `-O3`, AES-128-GCM
+  on a 1,452-byte QUIC packet: sealing 2,394 to about 1,750 cycles, opening 2,454 to about 1,790
+  (-26 %); a 16 KiB TLS record 1.26 to 0.91 cycles a byte. 32-bit x86 (four blocks at a time):
+  -9 to -13 % a packet. AArch64 and the portable code are unchanged.
+- gcc at `-O2` left the hardware AES-GCM's loops over the blocks in flight rolled, and it ran at
+  2.2 cycles a byte instead of 1.7; that part of the file is now compiled as at `-O3` by gcc
+  whenever the build optimises (clang unrolls them itself). At `-O2` the packet seal is 1.21
+  cycles a byte, from 2.21. On loopback, this library at both ends, gcc `-O2`, 1 GiB, median of
+  five: HTTP/3 6,392 to 8,458 Mbit/s and HTTP/2 5,304 to 6,695, with 25 to 34 % less user time
+  per GiB on each side.
+- Opening: the plaintext is now written while the tag is computed and, when the tag does not
+  match, cleared before the call returns (it was decrypted only after the check). The result
+  either way is `false` and an output of zeros; no caller in this library reads the output before
+  the call returns.
+- An idle TLS connection holds about 1.25 KiB instead of about 1 KiB (the kept powers: 112 bytes
+  per direction); a QUIC connection 864 bytes more (nine key sets). Header protection keeps an
+  AES key with no GHASH state. The test bounds on idle TLS pairs are raised to 2,600 bytes (2,900 with CBC).
+- A received 1-RTT packet makes its header-protection mask once instead of twice.
+
 ## [0.76.0] - 2026-10-22
 
 ### Added

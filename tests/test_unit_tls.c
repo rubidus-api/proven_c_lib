@@ -1407,7 +1407,7 @@ int main(void) {
             PROVEN_TEST_ASSERT(both_up(&p) && transfer(p.c, p.s, 30000, 1) && transfer(p.s, p.c, 30000, 2), "a TLS 1.0 CBC connection that has carried data", "");
             proven_size_t idle = g_count.live - before;
             fprintf(stderr, "[PROVEN][TEST][INFO] an idle TLS 1.0 CBC pair holds %u bytes\n", (unsigned)idle);
-            PROVEN_TEST_ASSERT(idle <= 2 * 1250, "idle, the two together hold at most 2,500 bytes", "");
+            PROVEN_TEST_ASSERT(idle <= 2 * 1450, "idle, the two together hold at most 2,900 bytes", "");
             close_pair(&p);
             PROVEN_TEST_ASSERT(g_count.live == before, "and free it all", "");
             proven_tls_test_only_suite12(0);
@@ -1602,7 +1602,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(both_up(&p) && transfer(p.c, p.s, 40000, 1) && transfer(p.s, p.c, 40000, 2), "a connection that has carried data", "");
         proven_size_t pair_idle = g_count.live - before;
         fprintf(stderr, "[PROVEN][TEST][INFO] an idle client and server connection together hold %u bytes\n", (unsigned)pair_idle);
-        PROVEN_TEST_ASSERT(pair_idle <= 2 * 1100, "idle, the two together hold at most 2,200 bytes: no record buffer, no handshake state", "");
+        PROVEN_TEST_ASSERT(pair_idle <= 2 * 1300, "idle, the two together hold at most 2,600 bytes: no record buffer, no handshake state", "");
         close_pair(&p);
         PROVEN_TEST_ASSERT(g_count.live == before, "and nothing once destroyed", "");
         proven_tls_options_t o12 = base_options();
