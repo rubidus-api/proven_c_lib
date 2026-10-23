@@ -6,14 +6,17 @@
 
 #if (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__)) && !defined(PROVEN_SYS_AES_DISABLE)
 
-#include <immintrin.h>
-
 /* gcc at -O2 leaves the loops over the blocks in flight rolled: the blocks then live in memory and
  * this code runs at about half its speed (2.2 cycles a byte against 1.2, RFC-0023). Where the
- * build optimises at all, gcc optimises this part as at -O3. clang unrolls them at -O2. */
+ * build optimises at all, gcc optimises this part as at -O3 (clang unrolls them at -O2). The
+ * pragma comes before the intrinsics' header: functions with other optimisation options than
+ * the always-inline intrinsics they call are refused at -O1 and -Os ("target specific option
+ * mismatch"). At -Os this part is larger than the build asked for. */
 #if !defined(__clang__) && defined(__OPTIMIZE__)
 #pragma GCC optimize("O3")
 #endif
+
+#include <immintrin.h>
 
 #define AES_TARGET __attribute__((target("aes,pclmul,ssse3,sse4.1")))
 
