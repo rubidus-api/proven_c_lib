@@ -108,20 +108,18 @@ Ed25519는 P-256보다 조금 싸다(수치는 9절에 있다). 서버에서는 
 P-256이나 Ed25519를 쓴다. RSA 키는 설정을 만들 때 시험된다 - 서명 하나를 만들고 검사한다 - 그래서 손상된
 키 파일은 첫 연결이 아니라 거기서 거절된다.
 
-**기관 없는 신원.**
+**기관 없는 신원.** 라이브러리는 신원을 읽을 뿐 만들지 않는다. 자체 서명 인증서와 그 키는 도구로
+만든다 - OpenSSL로, 여러분에게 닿을 이름들에 대해:
 
-```c
-proven_err_t proven_tls_self_signed(const proven_u8str_view_t *names, proven_size_t name_count,
-                                    proven_i64 not_before, proven_i64 not_after,
-                                    proven_tls_random_fn random, void *random_ctx,
-                                    proven_mem_mut_t certificate_pem, proven_size_t *certificate_len,
-                                    proven_mem_mut_t private_key_pem, proven_size_t *private_key_len);
+```sh
+openssl req -x509 -newkey ed25519 -nodes -days 30 -subj /CN=example.test \
+    -addext subjectAltName=DNS:example.test,IP:127.0.0.1 -keyout key.pem -out cert.pem
 ```
 
-`proven_tls_self_signed`는 Ed25519 키와, 바로 그 키로 서명한 인증서를 둘 다 PEM으로 만든다.
-인증서는 `names`(DNS 이름 또는 IP 리터럴)를 담고, 두 시각 사이에 유효하며, 서버로도 클라이언트로도
-쓸 수 있다. 이름 몇 개라면 1,024바이트와 256바이트에 들어간다. 버퍼가 작으면
-`PROVEN_ERR_OUT_OF_BOUNDS`다.
+`cert.pem`은 `certificate_pem`에, `key.pem`(PKCS #8)은 `private_key_pem`에 들어간다. 아래 두 예제처럼
+파일에서 읽는다. `-newkey ec -pkeyopt ec_paramgen_curve:P-256`이나 `-newkey rsa:2048`은 다른 두 종류를
+만든다. v0.78.0 전에는 라이브러리가 이런 쌍을 스스로 만들었다(`proven_tls_self_signed`). 프로그램이 시작할
+때마다 스스로 지어낸 신원은 배포할 만한 것이 거의 아니므로, 이 함수는 공개 API에서 빠졌다.
 
 **자체 서명 인증서는 아무도 보증하지 않는다.** 상대는 그것을 이미 갖고 있어야만 믿는다. 인증서를
 상대의 앵커 저장소에 넣거나, 상대에게 키의 핀과 `PROVEN_TLS_VERIFY_PIN_ONLY`를 준다(7절). 직접
@@ -158,7 +156,8 @@ URL도 같다. 공개 인터넷이라면 설정의 앵커는 시스템의 것이
 
 `http`와 `https`를 함께 서비스하려면 서버를 둘 돌린다. 서버 하나는 둘 중 하나다.
 
-테스트 스위트가 컴파일하고 실행한다:
+컴파일되고, 테스트 스위트가 스스로 만든 인증서와 키를 주어 실행한다
+(`tests/test_docs_tls_examples.c`):
 
 <!-- example: manual/examples/ko/ex_14_tls_https.c -->
 ```c
@@ -172,9 +171,14 @@ URL도 같다. 공개 인터넷이라면 설정의 앵커는 시스템의 것이
  * 서버는 루프백 인터페이스에서 다른 스레드로 돌아가므로 예제에 네트워크가 필요 없다.
  */
 
-/* 이 파일에는 인증서가 없다. 서버의 신원은 프로그램이 돌 때 만들어진다: 127.0.0.1을 위한 자체
- * 서명 인증서와 그 키, 지금을 전후한 하루 동안 유효. 클라이언트에는 그 인증서를 믿는 단 하나의
- * 것으로 준다. */
+/* 이 파일에는 인증서가 없다. 서버의 신원은 명령줄에서 이름을 준 PEM 파일 두 개에서 읽는다:
+ * 127.0.0.1을 위한 인증서와 그 키. 아무것도 주지 않고 돌리면 OpenSSL로 자체 서명 쌍을 만드는
+ * 법을 알려 준다. 클라이언트에는 그 인증서를 믿는 단 하나의 것으로 준다. */
+
+/* 파일을 주지 않았을 때 실행할 것. */
+static const char *const HOW_TO_MAKE =
+    "  openssl req -x509 -newkey ed25519 -nodes -days 30 -subj /CN=example.test \\\n"
+    "      -addext subjectAltName=DNS:example.test,IP:127.0.0.1 -keyout key.pem -out cert.pem\n";
 
 typedef struct {
     proven_http_server_t *server;
@@ -196,19 +200,22 @@ static void serve(void *arg) {
     (void)proven_http_server_run(((ex_app_t *)arg)->server);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---- 신원 ---------------------------------------------------------------------
-    /* 이 예제가 서비스하는 주소를 위한 자체 서명 인증서. 실제 서버라면 기관이 낸 인증서를 받는다.
-     * 직접 운영하는 기계 한 쌍이라면 이것과 핀을 쓸 수 있다(14장 7절). */
-    proven_byte_t cert_pem[1024], key_pem[256];
-    proven_size_t cert_len = 0, key_len = 0;
-    proven_u8str_view_t names[1] = { PROVEN_LIT("127.0.0.1") };
-    proven_i64 now = proven_time_now() / 1000000000;
-    EXAMPLE_REQUIRE(proven_tls_self_signed(names, 1, now - 3600, now + 86400, NULL, NULL,
-                                           (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len,
-                                           (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_OK, "자체 서명 인증서와 그 키");
+    /* 이 예제가 서비스하는 주소를 위한 인증서와 그 키를 파일에서. 실제 서버라면 기관이 낸 인증서를
+     * 받는다. 직접 운영하는 기계 한 쌍이라면 자체 서명 인증서나 핀을 쓸 수 있다(14장 7절). */
+    if (argc < 3) {
+        printf("usage: %s CERTIFICATE.pem KEY.pem\nA self-signed pair for 127.0.0.1:\n%s", argv[0], HOW_TO_MAKE);
+        return 0;
+    }
+    proven_result_mem_mut_t cert = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[1]), 64 * 1024);
+    proven_result_mem_mut_t key = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[2]), 16 * 1024);
+    EXAMPLE_REQUIRE(cert.err == PROVEN_OK && key.err == PROVEN_OK, "인증서와 키를 읽는다");
+    if (cert.err != PROVEN_OK || key.err != PROVEN_OK) return 1;
+    const proven_byte_t *cert_pem = cert.value.ptr, *key_pem = key.value.ptr;
+    const proven_size_t cert_len = cert.value.size, key_len = key.value.size;
 
     // ---- 서버 ----------------------------------------------------------------------
     /* 필드 하나가 서버를 TLS로 말하게 한다: 설정의 `tls`. TLS 설정은 서버가 내미는 인증서와,
@@ -294,7 +301,9 @@ int main(void) {
     proven_tls_config_destroy(server_tls);
     proven_cert_store_destroy(anchors);
     proven_cert_store_destroy(empty);
-    proven_mem_wipe((proven_mem_mut_t){ key_pem, sizeof key_pem });
+    proven_mem_wipe(key.value);
+    heap.free_fn(heap.ctx, key.value.ptr);
+    heap.free_fn(heap.ctx, cert.value.ptr);
     return EXAMPLE_OK();
 }
 ```
@@ -403,7 +412,8 @@ proven_err_t proven_tls_key_update(proven_tls_conn_t *conn);
   없다: 거기서는 `PROVEN_ERR_UNSUPPORTED`를 돌려주고, 레코드를 2^31개 보낸 연결은 더 쓰기를
   거부한다(`PROVEN_ERR_OVERFLOW`) - 새 연결을 연다.
 
-테스트 스위트가 컴파일하고 실행한다:
+컴파일되고, 테스트 스위트가 스스로 만든 인증서와 키를 주어 실행한다
+(`tests/test_docs_tls_examples.c`):
 
 <!-- example: manual/examples/ko/ex_14_tls_engine.c -->
 ```c
@@ -416,13 +426,15 @@ proven_err_t proven_tls_key_update(proven_tls_conn_t *conn);
  * 전송 래퍼 아래의 층이다. 전송이 여러분의 것일 때 직접 쓴다: 이벤트 루프, 직렬 선, 테스트.
  */
 
-/* 이 파일에는 인증서가 없다. 서버의 신원은 프로그램이 돌 때 만들어진다: example.test를 위한
- * 자체 서명 인증서와 그 키. 아무도 보증하지 않는 인증서는 이미 그것을 가진 상대만 믿으므로,
- * 클라이언트에는 그것을 앵커로 준다. */
+/* 이 파일에는 인증서가 없다. 서버의 신원은 명령줄에서 이름을 준 PEM 파일 두 개에서 읽는다:
+ * example.test를 위한 인증서와 그 키. 아무것도 주지 않고 돌리면 OpenSSL로 자체 서명 쌍을 만드는
+ * 법을 알려 준다. 아무도 보증하지 않는 인증서는 이미 그것을 가진 상대만 믿으므로, 클라이언트에는
+ * 그것을 앵커로 준다. */
 
-/* 엔진은 시계를 읽지 않는다. 프로그램이 건네준다. 이 시계는 언제나 2027-06-01이라고 말하므로
- * 예제는 어느 날에 돌려도 똑같이 동작한다. */
-static proven_i64 fixed_now(void *ctx) { (void)ctx; return 1811808000; }
+/* 파일을 주지 않았을 때 실행할 것. */
+static const char *const HOW_TO_MAKE =
+    "  openssl req -x509 -newkey ed25519 -nodes -days 30 -subj /CN=example.test \\\n"
+    "      -addext subjectAltName=DNS:example.test,IP:127.0.0.1 -keyout key.pem -out cert.pem\n";
 
 /* 한쪽이 보내려는 것을 모두 다른 쪽에 건넨다. 받는 쪽은 읽히기를 기다리는 애플리케이션
  * 데이터가 있으면 받은 것보다 적게 가져갈 수 있다. 가져가지 않은 것은 보류 상태로 남는다. */
@@ -449,19 +461,22 @@ static bool appears(proven_mem_view_t data, const char *text) {
     return false;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---- 신원 ---------------------------------------------------------------------
-    /* proven_tls_self_signed는 Ed25519 키와, 여러분이 요청한 이름을 담고 두 시각 사이에 유효한
-     * 인증서를 만든다. 여기서는 이 예제의 고정된 시계 하루 전부터 일 년 뒤까지. 실제 서버라면
-     * 대신 기관이 낸 인증서를 받는다. */
-    proven_byte_t cert_pem[1024], key_pem[256];
-    proven_size_t cert_len = 0, key_len = 0;
-    proven_u8str_view_t names[1] = { PROVEN_LIT("example.test") };
-    EXAMPLE_REQUIRE(proven_tls_self_signed(names, 1, 1811808000 - 86400, 1811808000 + 365 * 86400, NULL, NULL,
-                                           (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len,
-                                           (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_OK, "자체 서명 인증서와 그 키");
+    /* 실제 서버는 기관이 낸 인증서를 받는다. 직접 운영하는 기계 한 쌍이라면 자체 서명 인증서를 쓸
+     * 수 있다. 어느 쪽이든 파일로 온다. 키는 서버의 비밀이다: 읽고, 쓰고, 지운다. */
+    if (argc < 3) {
+        printf("usage: %s CERTIFICATE.pem KEY.pem\nA self-signed pair for example.test:\n%s", argv[0], HOW_TO_MAKE);
+        return 0;
+    }
+    proven_result_mem_mut_t cert = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[1]), 64 * 1024);
+    proven_result_mem_mut_t key = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[2]), 16 * 1024);
+    EXAMPLE_REQUIRE(cert.err == PROVEN_OK && key.err == PROVEN_OK, "인증서와 키를 읽는다");
+    if (cert.err != PROVEN_OK || key.err != PROVEN_OK) return 1;
+    const proven_byte_t *cert_pem = cert.value.ptr, *key_pem = key.value.ptr;
+    const proven_size_t cert_len = cert.value.size, key_len = key.value.size;
 
     // ---- 설정 둘 ------------------------------------------------------------------
     /* 설정은 누구를 믿을지, 여러분이 누구인지 말한다. 한 번 만들어 모든 연결이 함께 쓴다.
@@ -472,9 +487,11 @@ int main(void) {
                     "앵커");
 
     proven_u8str_view_t protocols[1] = { PROVEN_LIT("example/1") };
-    proven_tls_options_t client_options = { .alloc = heap, .anchors = anchors, .now = fixed_now, .alpn = protocols, .alpn_count = 1 };
+    /* 엔진은 스스로 시계를 읽지 않는다: `now`가 건네준다. 여기처럼 빼면 시스템의 시계다 -
+     * 인증서는 오늘에 대해 검사된다. */
+    proven_tls_options_t client_options = { .alloc = heap, .anchors = anchors, .alpn = protocols, .alpn_count = 1 };
     proven_tls_options_t server_options = {
-        .alloc = heap, .now = fixed_now, .alpn = protocols, .alpn_count = 1,
+        .alloc = heap, .alpn = protocols, .alpn_count = 1,
         .certificate_pem = { cert_pem, cert_len },
         .private_key_pem = { key_pem, key_len },
     };
@@ -548,7 +565,9 @@ int main(void) {
     proven_tls_conn_destroy(server);
 
     proven_mem_wipe((proven_mem_mut_t){ session.opaque, sizeof session.opaque });
-    proven_mem_wipe((proven_mem_mut_t){ key_pem, sizeof key_pem });
+    proven_mem_wipe(key.value);
+    heap.free_fn(heap.ctx, key.value.ptr);
+    heap.free_fn(heap.ctx, cert.value.ptr);
     proven_tls_config_destroy(client_config);
     proven_tls_config_destroy(server_config);
     proven_cert_store_destroy(anchors);
@@ -842,7 +861,7 @@ OpenSSL과 대조해 여섯 스위트 모두와 세 종류의 키 모두, 티켓
 | 비트 | 가능해지는 것 | 포기하는 것 |
 |---|---|---|
 | `PROVEN_TLS_LEGACY_CBC` | AES의 CBC 모드로 암호화하고 HMAC-SHA1, HMAC-SHA256 또는 HMAC-SHA384로 인증하는 암호 스위트. 1.2 미만의 모든 버전에 필요하다 - 거기에는 다른 것이 없다 | 이십 년의 패딩 공격 이력을 가진 구성 |
-| `PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE` | 양쪽이 합의하는 대신 클라이언트가 세션의 시크릿을 서버의 RSA 키로 암호화한다 | **순방향 비밀성**: 나중에 서버의 키를 얻는 자는 녹음된 모든 연결을 읽는다. 그리고 키 자체가 서버 쪽 실수 하나의 사정거리에 놓인다(아래) |
+| `PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE` | 양쪽이 합의하는 대신 클라이언트가 세션의 시크릿을 서버의 RSA 키로 암호화한다 | **순방향 비밀성**: 나중에 서버의 키를 얻는 자는 녹음된 모든 연결을 읽는다. 그리고 키 자체가 서버 쪽 실수 하나의 사정거리에 놓일 것이므로, 서버는 거부한다(아래) |
 | `PROVEN_TLS_LEGACY_DHE` | RSA 인증서와 함께 하는, 유한체의 Diffie-Hellman 키 교환 | 원리상으로는 없다. 실제로는 시간 - 타원곡선 교환보다 몇 배 느리다 - 그리고 대개 다른 면에서도 오래된 상대에게만 있다 |
 | `PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET` | RFC 7627이 없는 상대와의 연결이 진행된다 | 세션의 키를 그것을 만든 핸드셰이크에 묶는 것 |
 
@@ -886,7 +905,10 @@ Lucky Thirteen). 이 라이브러리가 하는 일:
 `AES128-GCM-SHA256`과 `AES256-GCM-SHA384`, 그리고 CBC 비트와 함께 `AES128-SHA256`, `AES256-SHA256`,
 `AES128-SHA`, `AES256-SHA`. 서버의 키는 RSA여야 한다.
 
-두 가지이고, 둘째는 보기보다 나쁘다:
+**v0.78.0부터 클라이언트만 쓴다.** `proven_tls_server_create`는 이 비트가 있는 설정을 거부하고
+(`PROVEN_ERR_INVALID_ARG`), 그 위에 지은 모든 서버도 그렇다 - 이벤트 구동 서버는 만들 때. 클라이언트는
+오래된 서버나 장비에 닿으려고 쓸 수 있다. 아래의 위험은 어느 것도 클라이언트의 것이 아니다: 클라이언트는
+아무것도 복호화하지 않는다. 서버가 쓰지 못하는 까닭:
 
 - **순방향 비밀성이 없다.** 모든 키가 유도되는 시크릿이 서버의 장기 키로 암호화되어 지나간다. 연결의
   녹음은 그 키만큼만, 영원히, 안전하다.
@@ -894,12 +916,14 @@ Lucky Thirteen). 이 라이브러리가 하는 일:
   하는 어떤 일 - 경고, 지연 - 이 그 값이 제대로 된 형태로 복호화되었는지에 의존하면, 공격자는 그것을
   써서, 한 번에 수천 연결로, 서버의 키로 무엇이든 복호화하거나 *서명*할 수 있다(Bleichenbacher 1998,
   ROBOT 2017). 이것은 이 키 교환에 한정되지 않는다: 이렇게 위조한 서명은 TLS 1.3에서도 똑같이 통한다.
-  **서버에서 이 비트를 켜면 그 키는 그것이 쓰이는 모든 프로토콜에 대해 그 위험에 놓인다.** 여기서 하는
-  일: 복호화 전에 난수 48바이트를 뽑는다. 복호화는 9절의 블라인딩되고 검사되는 연산이다. 결과는 마스크로
+  **이 키 교환을 하는 서버의 키는 그것이 쓰이는 모든 프로토콜에 대해 그 위험에 놓인다.** 그리고 그 서버가
+  받아 줄 클라이언트 - ECDHE도 DHE도 못 하는 것 - 는 아주 오래되었다. v0.78.0 전에는 서버도 켤 수 있었다.
+  그 코드는 남아 있고, 이 라이브러리의 클라이언트를 시험하는 상대로서 이 라이브러리 자신의 테스트만 닿는다.
+  하는 일: 복호화 전에 난수 48바이트를 뽑는다. 복호화는 9절의 블라인딩되고 검사되는 연산이다. 결과는 마스크로
   - 모든 바이트를, 고정된 순서로 - 검사하고, 그것이든 난수 바이트든 마스크로 골라 시크릿이 된다. 그러면
   핸드셰이크는 똑같이 이어지고, 실패한다면 틀린 키의 어느 핸드셰이크와도 같이 Finished 메시지에서
   실패한다. 이 경로는 복호화된 바이트에 의존하는 분기나 메모리 인덱스를 보고하는 검사기 아래에서
-  돌렸고, 아무것도 보고되지 않았다. 하드웨어에서 시간을 재지는 않았다.
+  돌렸고, 아무것도 보고되지 않았다. 프로세서 하나에서 시간을 쟀고, 차이는 보이지 않았다.
 
 ### 유한체 Diffie-Hellman
 

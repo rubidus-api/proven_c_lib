@@ -9,13 +9,15 @@
  * an event loop, a serial line, a test.
  */
 
-/* There is no certificate in this file. The server's identity is made when the program runs:
- * a self-signed certificate for example.test and its key. A certificate nobody vouches for is
- * believed only by a peer that already holds it, so the client is given it as its anchor. */
+/* There is no certificate in this file. The server's identity is read from two PEM files named
+ * on the command line: a certificate for example.test and its key. Run with none, the program
+ * says how to make a self-signed pair with OpenSSL. A certificate nobody vouches for is believed
+ * only by a peer that already holds it, so the client is given it as its anchor. */
 
-/* The engine reads no clock. A program gives it one; this one always says 2027-06-01, so the
- * example behaves the same on any day. */
-static proven_i64 fixed_now(void *ctx) { (void)ctx; return 1811808000; }
+/* What to run when no files are given. */
+static const char *const HOW_TO_MAKE =
+    "  openssl req -x509 -newkey ed25519 -nodes -days 30 -subj /CN=example.test \\\n"
+    "      -addext subjectAltName=DNS:example.test,IP:127.0.0.1 -keyout key.pem -out cert.pem\n";
 
 /* Hand everything one side wants sent to the other. The receiver may take less than it was
  * given when it has application data waiting to be read; what it did not take stays pending. */
@@ -42,19 +44,23 @@ static bool appears(proven_mem_view_t data, const char *text) {
     return false;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---- an identity ---------------------------------------------------------------
-    /* proven_tls_self_signed makes an Ed25519 key and a certificate that names what you ask,
-     * valid between two times. Here: from the day before this example's fixed clock to a year
-     * after. A real server would be given a certificate from an authority instead. */
-    proven_byte_t cert_pem[1024], key_pem[256];
-    proven_size_t cert_len = 0, key_len = 0;
-    proven_u8str_view_t names[1] = { PROVEN_LIT("example.test") };
-    EXAMPLE_REQUIRE(proven_tls_self_signed(names, 1, 1811808000 - 86400, 1811808000 + 365 * 86400, NULL, NULL,
-                                           (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len,
-                                           (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_OK, "a self-signed certificate and its key");
+    /* A real server is given a certificate from an authority; a pair of machines you run
+     * yourself can use a self-signed one. Either way it arrives as files. The key is the
+     * server's secret: read it, use it, wipe it. */
+    if (argc < 3) {
+        printf("usage: %s CERTIFICATE.pem KEY.pem\nA self-signed pair for example.test:\n%s", argv[0], HOW_TO_MAKE);
+        return 0;
+    }
+    proven_result_mem_mut_t cert = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[1]), 64 * 1024);
+    proven_result_mem_mut_t key = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[2]), 16 * 1024);
+    EXAMPLE_REQUIRE(cert.err == PROVEN_OK && key.err == PROVEN_OK, "the certificate and the key are read");
+    if (cert.err != PROVEN_OK || key.err != PROVEN_OK) return 1;
+    const proven_byte_t *cert_pem = cert.value.ptr, *key_pem = key.value.ptr;
+    const proven_size_t cert_len = cert.value.size, key_len = key.value.size;
 
     // ---- two configurations ------------------------------------------------------
     /* A config says whom to believe and who you are. It is built once and shared by every
@@ -66,9 +72,11 @@ int main(void) {
                     "the anchors");
 
     proven_u8str_view_t protocols[1] = { PROVEN_LIT("example/1") };
-    proven_tls_options_t client_options = { .alloc = heap, .anchors = anchors, .now = fixed_now, .alpn = protocols, .alpn_count = 1 };
+    /* The engine reads no clock of its own: `now` gives it one. Left out, as here, it is the
+     * system's - the certificate is checked against today. */
+    proven_tls_options_t client_options = { .alloc = heap, .anchors = anchors, .alpn = protocols, .alpn_count = 1 };
     proven_tls_options_t server_options = {
-        .alloc = heap, .now = fixed_now, .alpn = protocols, .alpn_count = 1,
+        .alloc = heap, .alpn = protocols, .alpn_count = 1,
         .certificate_pem = { cert_pem, cert_len },
         .private_key_pem = { key_pem, key_len },
     };
@@ -143,7 +151,9 @@ int main(void) {
     proven_tls_conn_destroy(server);
 
     proven_mem_wipe((proven_mem_mut_t){ session.opaque, sizeof session.opaque });
-    proven_mem_wipe((proven_mem_mut_t){ key_pem, sizeof key_pem });
+    proven_mem_wipe(key.value);
+    heap.free_fn(heap.ctx, key.value.ptr);
+    heap.free_fn(heap.ctx, cert.value.ptr);
     proven_tls_config_destroy(client_config);
     proven_tls_config_destroy(server_config);
     proven_cert_store_destroy(anchors);

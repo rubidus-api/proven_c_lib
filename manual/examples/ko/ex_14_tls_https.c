@@ -9,9 +9,14 @@
  * 서버는 루프백 인터페이스에서 다른 스레드로 돌아가므로 예제에 네트워크가 필요 없다.
  */
 
-/* 이 파일에는 인증서가 없다. 서버의 신원은 프로그램이 돌 때 만들어진다: 127.0.0.1을 위한 자체
- * 서명 인증서와 그 키, 지금을 전후한 하루 동안 유효. 클라이언트에는 그 인증서를 믿는 단 하나의
- * 것으로 준다. */
+/* 이 파일에는 인증서가 없다. 서버의 신원은 명령줄에서 이름을 준 PEM 파일 두 개에서 읽는다:
+ * 127.0.0.1을 위한 인증서와 그 키. 아무것도 주지 않고 돌리면 OpenSSL로 자체 서명 쌍을 만드는
+ * 법을 알려 준다. 클라이언트에는 그 인증서를 믿는 단 하나의 것으로 준다. */
+
+/* 파일을 주지 않았을 때 실행할 것. */
+static const char *const HOW_TO_MAKE =
+    "  openssl req -x509 -newkey ed25519 -nodes -days 30 -subj /CN=example.test \\\n"
+    "      -addext subjectAltName=DNS:example.test,IP:127.0.0.1 -keyout key.pem -out cert.pem\n";
 
 typedef struct {
     proven_http_server_t *server;
@@ -33,19 +38,22 @@ static void serve(void *arg) {
     (void)proven_http_server_run(((ex_app_t *)arg)->server);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---- 신원 ---------------------------------------------------------------------
-    /* 이 예제가 서비스하는 주소를 위한 자체 서명 인증서. 실제 서버라면 기관이 낸 인증서를 받는다.
-     * 직접 운영하는 기계 한 쌍이라면 이것과 핀을 쓸 수 있다(14장 7절). */
-    proven_byte_t cert_pem[1024], key_pem[256];
-    proven_size_t cert_len = 0, key_len = 0;
-    proven_u8str_view_t names[1] = { PROVEN_LIT("127.0.0.1") };
-    proven_i64 now = proven_time_now() / 1000000000;
-    EXAMPLE_REQUIRE(proven_tls_self_signed(names, 1, now - 3600, now + 86400, NULL, NULL,
-                                           (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len,
-                                           (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_OK, "자체 서명 인증서와 그 키");
+    /* 이 예제가 서비스하는 주소를 위한 인증서와 그 키를 파일에서. 실제 서버라면 기관이 낸 인증서를
+     * 받는다. 직접 운영하는 기계 한 쌍이라면 자체 서명 인증서나 핀을 쓸 수 있다(14장 7절). */
+    if (argc < 3) {
+        printf("usage: %s CERTIFICATE.pem KEY.pem\nA self-signed pair for 127.0.0.1:\n%s", argv[0], HOW_TO_MAKE);
+        return 0;
+    }
+    proven_result_mem_mut_t cert = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[1]), 64 * 1024);
+    proven_result_mem_mut_t key = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[2]), 16 * 1024);
+    EXAMPLE_REQUIRE(cert.err == PROVEN_OK && key.err == PROVEN_OK, "인증서와 키를 읽는다");
+    if (cert.err != PROVEN_OK || key.err != PROVEN_OK) return 1;
+    const proven_byte_t *cert_pem = cert.value.ptr, *key_pem = key.value.ptr;
+    const proven_size_t cert_len = cert.value.size, key_len = key.value.size;
 
     // ---- 서버 ----------------------------------------------------------------------
     /* 필드 하나가 서버를 TLS로 말하게 한다: 설정의 `tls`. TLS 설정은 서버가 내미는 인증서와,
@@ -131,6 +139,8 @@ int main(void) {
     proven_tls_config_destroy(server_tls);
     proven_cert_store_destroy(anchors);
     proven_cert_store_destroy(empty);
-    proven_mem_wipe((proven_mem_mut_t){ key_pem, sizeof key_pem });
+    proven_mem_wipe(key.value);
+    heap.free_fn(heap.ctx, key.value.ptr);
+    heap.free_fn(heap.ctx, cert.value.ptr);
     return EXAMPLE_OK();
 }

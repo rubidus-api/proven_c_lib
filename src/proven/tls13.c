@@ -491,6 +491,8 @@ void proven_tls_test_early_tcp_(bool on) { g_test_early_tcp = on; }
  * master secret; bit 2, a server does not answer it. */
 static unsigned g_test12;
 void proven_tls_test_knobs12(unsigned flags) { g_test12 = flags; }
+static bool g_test_server_rsa_kex;
+void proven_tls_test_server_rsa_kex_(bool on) { g_test_server_rsa_kex = on; }
 static proven_u16 g_test_only12;
 void proven_tls_test_only_suite12(proven_u16 id) { g_test_only12 = id; }
 /* The count of records this side has written and the count the other has read, put where a
@@ -3196,6 +3198,9 @@ proven_err_t proven_tls_client_create_replay(const proven_tls_config_t *config, 
 
 proven_err_t proven_tls_server_create(const proven_tls_config_t *config, proven_tls_conn_t **out) {
     if (!out || !config || config->chain_count == 0 || config->key_kind == PROVEN_TLS_KEY_NONE) return PROVEN_ERR_INVALID_ARG;
+    /* A server that decrypts what a client chose is one mistake away from signing anything with
+     * its key, in every protocol the key serves (Bleichenbacher; ROBOT). The bit is a client's. */
+    if ((config->legacy & PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE) && !g_test_server_rsa_kex) return PROVEN_ERR_INVALID_ARG;
     proven_tls_conn_t *c = NULL;
     proven_err_t e = conn_new(config, true, &c);
     if (e != PROVEN_OK) return e;

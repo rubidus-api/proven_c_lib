@@ -480,7 +480,7 @@ static void cases(bool tls) {
 
 /* What an idle connection holds, measured with a counting allocator and the loop driven by
  * hand on this thread. */
-typedef struct { proven_allocator_t heap; proven_size_t live; } counting_t;
+typedef struct { proven_allocator_t heap; _Atomic proven_size_t live; } counting_t;
 typedef struct { proven_size_t size; proven_size_t pad; } count_head_t;
 static proven_result_mem_mut_t count_alloc(void *ctx, proven_size_t size, proven_size_t align) {
     counting_t *c = ctx; (void)align;
@@ -540,6 +540,50 @@ static void memory_case(void) {
     proven_http_event_server_destroy(server);
     PROVEN_TEST_ASSERT(count.live == 0, "and so has the server, destroyed", "");
     proven_loop_destroy(loop);
+}
+
+/* The same over TLS, with the loop on its own thread (a TLS client's handshake needs the loop
+ * to answer while it waits). The target: an idle TLS connection under 2 KiB, the connection
+ * and the engine together (owner decision 2026-10-23; the engine alone is about 1.25 KiB). */
+static void memory_case_tls(void) {
+    counting_t count = { .heap = g_heap, .live = 0 };
+    proven_allocator_t alloc = { .ctx = &count, .alloc_fn = count_alloc, .realloc_fn = count_realloc, .free_fn = count_free };
+    proven_tls_options_t so = { .alloc = alloc, .certificate_pem = { (const proven_byte_t *)TP_SERVER_ED, strlen(TP_SERVER_ED) }, .private_key_pem = { (const proven_byte_t *)TP_SERVER_ED_KEY, strlen(TP_SERVER_ED_KEY) } };
+    proven_tls_config_t *tls = NULL;
+    proven_http_event_server_config_t cfg = { .alloc = alloc, .on = { .on_request = quiet_request } };
+    proven_net_addr_t at;
+    PROVEN_TEST_ASSERT(proven_tls_config_create(&so, &tls) == PROVEN_OK && (cfg.tls = tls, proven_loop_create(g_heap, &g_loop) == PROVEN_OK) &&
+                       proven_http_event_server_create(g_loop, &cfg, &g_server) == PROVEN_OK &&
+                       proven_http_event_server_listen(g_server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a TLS server with a counting allocator", "");
+    proven_job_group_t running;
+    proven_job_group_init(&running);
+    PROVEN_TEST_ASSERT(proven_job_group_submit(g_threads, &running, run_loop, NULL) == PROVEN_OK, "the loop runs on its own thread", "");
+    (void)connections();
+    const proven_size_t base = atomic_load(&count.live);
+    enum { N = 40 };
+    static raw_t socks[N];
+    char text[256];
+    for (int i = 0; i < N; ++i) {
+        proven_err_t end = PROVEN_OK;
+        PROVEN_TEST_ASSERT(raw_open(&socks[i], true, at.port) && raw_send(&socks[i], "GET / HTTP/1.1\r\nHost: x\r\n\r\n") &&
+                           raw_read(&socks[i], text, sizeof text, 200, &end) > 0 && strstr(text, "\r\n\r\nok") != NULL, "a TLS connection that makes one request and is answered", "");
+    }
+    proven_time_sleep(300);
+    PROVEN_TEST_ASSERT(connections() == N, "forty TLS connections, each answered once, all idle", "");
+    const proven_size_t each = (atomic_load(&count.live) - base) / N;
+    fprintf(stderr, "[PROVEN][TEST][INFO] an idle TLS connection holds %u bytes\n", (unsigned)each);
+    PROVEN_TEST_ASSERT(each < 2048, "an idle TLS connection holds less than 2 KiB: the connection's struct and the engine's keys, no buffer", "");
+    for (int i = 0; i < N; ++i) raw_close(&socks[i]);
+    for (int i = 0; i < 3000 && connections() > 0; ++i) proven_time_sleep(2);
+    PROVEN_TEST_ASSERT(connections() == 0 && atomic_load(&count.live) == base, "closed by their clients, they have given everything back", "");
+    proven_loop_stop(g_loop);
+    proven_job_group_wait(g_threads, &running);
+    proven_http_event_server_destroy(g_server);
+    g_server = NULL;
+    proven_loop_destroy(g_loop);
+    g_loop = NULL;
+    proven_tls_config_destroy(tls);
+    PROVEN_TEST_ASSERT(atomic_load(&count.live) == 0, "and the server and its configuration give back the rest", "");
 }
 
 /* A connection that has been answered and then says nothing is closed after the idle timeout. */
@@ -799,6 +843,13 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_http_event_server_create(loop, &none, &s) == PROVEN_ERR_INVALID_ARG && s == NULL, "no on_request is PROVEN_ERR_INVALID_ARG", "");
         PROVEN_TEST_ASSERT(proven_http_event_server_create(NULL, &with_client_tls, &s) == PROVEN_ERR_INVALID_ARG, "and so is no loop", "");
         PROVEN_TEST_ASSERT(proven_http_event_server_create(loop, &with_client_tls, &s) == PROVEN_ERR_INVALID_ARG && s == NULL, "a TLS configuration with no certificate cannot serve, and is refused here", "");
+        proven_tls_options_t rsa_kex = so;
+        rsa_kex.legacy = PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE;
+        proven_tls_config_t *rsa_tls = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&rsa_kex, &rsa_tls) == PROVEN_OK, "a TLS configuration that names RSA key exchange", "");
+        proven_http_event_server_config_t with_rsa_kex = { .on = { .on_request = quiet_request }, .tls = rsa_tls };
+        PROVEN_TEST_ASSERT(proven_http_event_server_create(loop, &with_rsa_kex, &s) == PROVEN_ERR_INVALID_ARG && s == NULL, "is refused here too: that key exchange is a client's (v0.78.0)", "");
+        proven_tls_config_destroy(rsa_tls);
         proven_http_event_server_destroy(NULL);
         proven_loop_destroy(loop);
     }
@@ -819,6 +870,8 @@ int main(void) {
     }
     PROVEN_TEST_SECTION("what an idle connection holds", "Three hundred connections that have each made a request and now say nothing.", "Check that ev_process releases the stash and ev_flush the output buffer.");
     memory_case();
+    PROVEN_TEST_SECTION("what an idle TLS connection holds", "Forty TLS connections that have each made a request and now say nothing: under 2 KiB each, the connection and the engine together.", "Check that the engine keeps no record buffer or handshake state once idle, and ev_flush the output buffer.");
+    memory_case_tls();
     PROVEN_TEST_SECTION("the idle timeout", "A connection that has been answered and then says nothing.", "Check ev_arm: the idle timer is set when an exchange ends with nothing buffered.");
     idle_case();
     PROVEN_TEST_SECTION("the linger time", "A connection that is being closed after its answer.", "Check ev_linger and ev_arm.");

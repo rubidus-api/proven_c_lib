@@ -1111,7 +1111,6 @@
 #define xcv_tls_random_fn proven_tls_random_fn
 #define xcv_tls_read proven_tls_read
 #define xcv_tls_resumed proven_tls_resumed
-#define xcv_tls_self_signed proven_tls_self_signed
 #define xcv_tls_server_create proven_tls_server_create
 #define xcv_tls_server_name proven_tls_server_name
 #define xcv_tls_session_t proven_tls_session_t

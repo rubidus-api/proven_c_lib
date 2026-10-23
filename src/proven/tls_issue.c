@@ -330,11 +330,11 @@ proven_err_t proven_tls_pem_write_(const char *label, proven_mem_view_t der, pro
 static void issue_os_random(void *ctx, proven_byte_t *out, proven_size_t len) { (void)ctx; (void)proven_random_bytes(out, len); }
 #endif
 
-proven_err_t proven_tls_self_signed(const proven_u8str_view_t *names, proven_size_t name_count,
-                                    proven_i64 not_before, proven_i64 not_after,
-                                    proven_tls_random_fn random, void *random_ctx,
-                                    proven_mem_mut_t certificate_pem, proven_size_t *certificate_len,
-                                    proven_mem_mut_t private_key_pem, proven_size_t *private_key_len) {
+proven_err_t proven_tls_self_signed_(const proven_u8str_view_t *names, proven_size_t name_count,
+                                     proven_i64 not_before, proven_i64 not_after,
+                                     proven_tls_random_fn random, void *random_ctx,
+                                     proven_mem_mut_t certificate_pem, proven_size_t *certificate_len,
+                                     proven_mem_mut_t private_key_pem, proven_size_t *private_key_len) {
     if (!names || name_count == 0 || name_count > 16 || !certificate_len || !private_key_len || not_after <= not_before) return PROVEN_ERR_INVALID_ARG;
     for (proven_size_t i = 0; i < name_count; ++i) if (!names[i].ptr || names[i].size == 0 || names[i].size > 253) return PROVEN_ERR_INVALID_ARG;
 #ifndef PROVEN_FREESTANDING

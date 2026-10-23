@@ -1131,7 +1131,6 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_tls_random_fn` | `proven_tls_random_fn` |
 | `xcv_tls_read` | `proven_tls_read` |
 | `xcv_tls_resumed` | `proven_tls_resumed` |
-| `xcv_tls_self_signed` | `proven_tls_self_signed` |
 | `xcv_tls_server_create` | `proven_tls_server_create` |
 | `xcv_tls_server_name` | `proven_tls_server_name` |
 | `xcv_tls_session_t` | `proven_tls_session_t` |

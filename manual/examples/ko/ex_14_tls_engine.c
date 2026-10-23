@@ -8,13 +8,15 @@
  * 전송 래퍼 아래의 층이다. 전송이 여러분의 것일 때 직접 쓴다: 이벤트 루프, 직렬 선, 테스트.
  */
 
-/* 이 파일에는 인증서가 없다. 서버의 신원은 프로그램이 돌 때 만들어진다: example.test를 위한
- * 자체 서명 인증서와 그 키. 아무도 보증하지 않는 인증서는 이미 그것을 가진 상대만 믿으므로,
- * 클라이언트에는 그것을 앵커로 준다. */
+/* 이 파일에는 인증서가 없다. 서버의 신원은 명령줄에서 이름을 준 PEM 파일 두 개에서 읽는다:
+ * example.test를 위한 인증서와 그 키. 아무것도 주지 않고 돌리면 OpenSSL로 자체 서명 쌍을 만드는
+ * 법을 알려 준다. 아무도 보증하지 않는 인증서는 이미 그것을 가진 상대만 믿으므로, 클라이언트에는
+ * 그것을 앵커로 준다. */
 
-/* 엔진은 시계를 읽지 않는다. 프로그램이 건네준다. 이 시계는 언제나 2027-06-01이라고 말하므로
- * 예제는 어느 날에 돌려도 똑같이 동작한다. */
-static proven_i64 fixed_now(void *ctx) { (void)ctx; return 1811808000; }
+/* 파일을 주지 않았을 때 실행할 것. */
+static const char *const HOW_TO_MAKE =
+    "  openssl req -x509 -newkey ed25519 -nodes -days 30 -subj /CN=example.test \\\n"
+    "      -addext subjectAltName=DNS:example.test,IP:127.0.0.1 -keyout key.pem -out cert.pem\n";
 
 /* 한쪽이 보내려는 것을 모두 다른 쪽에 건넨다. 받는 쪽은 읽히기를 기다리는 애플리케이션
  * 데이터가 있으면 받은 것보다 적게 가져갈 수 있다. 가져가지 않은 것은 보류 상태로 남는다. */
@@ -41,19 +43,22 @@ static bool appears(proven_mem_view_t data, const char *text) {
     return false;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---- 신원 ---------------------------------------------------------------------
-    /* proven_tls_self_signed는 Ed25519 키와, 여러분이 요청한 이름을 담고 두 시각 사이에 유효한
-     * 인증서를 만든다. 여기서는 이 예제의 고정된 시계 하루 전부터 일 년 뒤까지. 실제 서버라면
-     * 대신 기관이 낸 인증서를 받는다. */
-    proven_byte_t cert_pem[1024], key_pem[256];
-    proven_size_t cert_len = 0, key_len = 0;
-    proven_u8str_view_t names[1] = { PROVEN_LIT("example.test") };
-    EXAMPLE_REQUIRE(proven_tls_self_signed(names, 1, 1811808000 - 86400, 1811808000 + 365 * 86400, NULL, NULL,
-                                           (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len,
-                                           (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_OK, "자체 서명 인증서와 그 키");
+    /* 실제 서버는 기관이 낸 인증서를 받는다. 직접 운영하는 기계 한 쌍이라면 자체 서명 인증서를 쓸
+     * 수 있다. 어느 쪽이든 파일로 온다. 키는 서버의 비밀이다: 읽고, 쓰고, 지운다. */
+    if (argc < 3) {
+        printf("usage: %s CERTIFICATE.pem KEY.pem\nA self-signed pair for example.test:\n%s", argv[0], HOW_TO_MAKE);
+        return 0;
+    }
+    proven_result_mem_mut_t cert = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[1]), 64 * 1024);
+    proven_result_mem_mut_t key = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[2]), 16 * 1024);
+    EXAMPLE_REQUIRE(cert.err == PROVEN_OK && key.err == PROVEN_OK, "인증서와 키를 읽는다");
+    if (cert.err != PROVEN_OK || key.err != PROVEN_OK) return 1;
+    const proven_byte_t *cert_pem = cert.value.ptr, *key_pem = key.value.ptr;
+    const proven_size_t cert_len = cert.value.size, key_len = key.value.size;
 
     // ---- 설정 둘 ------------------------------------------------------------------
     /* 설정은 누구를 믿을지, 여러분이 누구인지 말한다. 한 번 만들어 모든 연결이 함께 쓴다.
@@ -64,9 +69,11 @@ int main(void) {
                     "앵커");
 
     proven_u8str_view_t protocols[1] = { PROVEN_LIT("example/1") };
-    proven_tls_options_t client_options = { .alloc = heap, .anchors = anchors, .now = fixed_now, .alpn = protocols, .alpn_count = 1 };
+    /* 엔진은 스스로 시계를 읽지 않는다: `now`가 건네준다. 여기처럼 빼면 시스템의 시계다 -
+     * 인증서는 오늘에 대해 검사된다. */
+    proven_tls_options_t client_options = { .alloc = heap, .anchors = anchors, .alpn = protocols, .alpn_count = 1 };
     proven_tls_options_t server_options = {
-        .alloc = heap, .now = fixed_now, .alpn = protocols, .alpn_count = 1,
+        .alloc = heap, .alpn = protocols, .alpn_count = 1,
         .certificate_pem = { cert_pem, cert_len },
         .private_key_pem = { key_pem, key_len },
     };
@@ -140,7 +147,9 @@ int main(void) {
     proven_tls_conn_destroy(server);
 
     proven_mem_wipe((proven_mem_mut_t){ session.opaque, sizeof session.opaque });
-    proven_mem_wipe((proven_mem_mut_t){ key_pem, sizeof key_pem });
+    proven_mem_wipe(key.value);
+    heap.free_fn(heap.ctx, key.value.ptr);
+    heap.free_fn(heap.ctx, cert.value.ptr);
     proven_tls_config_destroy(client_config);
     proven_tls_config_destroy(server_config);
     proven_cert_store_destroy(anchors);

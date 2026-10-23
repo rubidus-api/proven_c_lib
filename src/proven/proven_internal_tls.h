@@ -353,7 +353,17 @@ void proven_tls_transport_close_now_(proven_transport_t tls);
 void proven_tls_transport_shutdown_now_(proven_transport_t tls);
 #endif
 
-/* ---- Issuing certificates: for proven_tls_self_signed, and for tests that need a chain ---- */
+/* ---- Issuing certificates: for tests that need an identity or a chain ---- */
+
+/* A self-signed Ed25519 certificate for `names` (DNS names or IP literals, 1 to 16), valid from
+ * `not_before` to `not_after`, for server and client authentication, and its key, as PEM. Public
+ * as proven_tls_self_signed until v0.78.0 (owner decision 2026-10-23: an identity comes from
+ * files). random NULL: the system's (hosted). PROVEN_ERR_INVALID_ARG, PROVEN_ERR_OUT_OF_BOUNDS. */
+proven_err_t proven_tls_self_signed_(const proven_u8str_view_t *names, proven_size_t name_count,
+                                     proven_i64 not_before, proven_i64 not_after,
+                                     proven_tls_random_fn random, void *random_ctx,
+                                     proven_mem_mut_t certificate_pem, proven_size_t *certificate_len,
+                                     proven_mem_mut_t private_key_pem, proven_size_t *private_key_len);
 
 typedef struct {
     const char *subject;                          /* the subject's common name */
@@ -409,6 +419,10 @@ void proven_tls_test_knobs12(unsigned flags);
  * 256, its value is 1; 512, the client's value is 1; 1024, the client's RSA premaster carries
  * another version; 2048, its ClientKeyExchange is no encryption of anything; 4096, the server
  * asks for a client certificate even on a connection without the extended master secret. */
+/* A server may be made over a configuration with PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE: the only
+ * peer this library's own client has for that key exchange in its tests. Off by default, as a
+ * server must be (owner decision 2026-10-23). */
+void proven_tls_test_server_rsa_kex_(bool on);
 /* The client offers only this TLS 1.2-family suite (0: everything, as usual). */
 void proven_tls_test_only_suite12(proven_u16 id);
 /* How often an RSA key's blinding pair has been used, put where a test says; returns what it was. */

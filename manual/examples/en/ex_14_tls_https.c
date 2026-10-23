@@ -9,9 +9,15 @@
  * The server is on another thread on the loopback interface, so the example needs no network.
  */
 
-/* There is no certificate in this file. The server's identity is made when the program runs:
- * a self-signed certificate for 127.0.0.1 and its key, valid for a day around now. The client
- * is given that certificate as the one thing it believes. */
+/* There is no certificate in this file. The server's identity is read from two PEM files named
+ * on the command line: a certificate for 127.0.0.1 and its key. Run with none, the program says
+ * how to make a self-signed pair with OpenSSL. The client is given that certificate as the one
+ * thing it believes. */
+
+/* What to run when no files are given. */
+static const char *const HOW_TO_MAKE =
+    "  openssl req -x509 -newkey ed25519 -nodes -days 30 -subj /CN=example.test \\\n"
+    "      -addext subjectAltName=DNS:example.test,IP:127.0.0.1 -keyout key.pem -out cert.pem\n";
 
 typedef struct {
     proven_http_server_t *server;
@@ -33,20 +39,23 @@ static void serve(void *arg) {
     (void)proven_http_server_run(((ex_app_t *)arg)->server);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---- an identity ---------------------------------------------------------------
-    /* A self-signed certificate for the address this example serves on. A real server would be
-     * given a certificate from an authority; a pair of machines you run yourself can use this
-     * and a pin (chapter 14, section 7). */
-    proven_byte_t cert_pem[1024], key_pem[256];
-    proven_size_t cert_len = 0, key_len = 0;
-    proven_u8str_view_t names[1] = { PROVEN_LIT("127.0.0.1") };
-    proven_i64 now = proven_time_now() / 1000000000;
-    EXAMPLE_REQUIRE(proven_tls_self_signed(names, 1, now - 3600, now + 86400, NULL, NULL,
-                                           (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len,
-                                           (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_OK, "a self-signed certificate and its key");
+    /* A certificate for the address this example serves on, and its key, from files. A real
+     * server is given a certificate from an authority; a pair of machines you run yourself can
+     * use a self-signed one, or a pin (chapter 14, section 7). */
+    if (argc < 3) {
+        printf("usage: %s CERTIFICATE.pem KEY.pem\nA self-signed pair for 127.0.0.1:\n%s", argv[0], HOW_TO_MAKE);
+        return 0;
+    }
+    proven_result_mem_mut_t cert = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[1]), 64 * 1024);
+    proven_result_mem_mut_t key = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[2]), 16 * 1024);
+    EXAMPLE_REQUIRE(cert.err == PROVEN_OK && key.err == PROVEN_OK, "the certificate and the key are read");
+    if (cert.err != PROVEN_OK || key.err != PROVEN_OK) return 1;
+    const proven_byte_t *cert_pem = cert.value.ptr, *key_pem = key.value.ptr;
+    const proven_size_t cert_len = cert.value.size, key_len = key.value.size;
 
     // ---- the server ----------------------------------------------------------------
     /* One field makes a server speak TLS: its config's `tls`. The TLS config holds the
@@ -132,6 +141,8 @@ int main(void) {
     proven_tls_config_destroy(server_tls);
     proven_cert_store_destroy(anchors);
     proven_cert_store_destroy(empty);
-    proven_mem_wipe((proven_mem_mut_t){ key_pem, sizeof key_pem });
+    proven_mem_wipe(key.value);
+    heap.free_fn(heap.ctx, key.value.ptr);
+    heap.free_fn(heap.ctx, cert.value.ptr);
     return EXAMPLE_OK();
 }

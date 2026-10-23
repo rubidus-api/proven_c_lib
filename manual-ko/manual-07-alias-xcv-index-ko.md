@@ -1133,7 +1133,6 @@ alias 1306개: 소문자 `xcv_` 이름 959개와 대문자 `XCV_` 이름 347개.
 | `xcv_tls_random_fn` | `proven_tls_random_fn` |
 | `xcv_tls_read` | `proven_tls_read` |
 | `xcv_tls_resumed` | `proven_tls_resumed` |
-| `xcv_tls_self_signed` | `proven_tls_self_signed` |
 | `xcv_tls_server_create` | `proven_tls_server_create` |
 | `xcv_tls_server_name` | `proven_tls_server_name` |
 | `xcv_tls_session_t` | `proven_tls_session_t` |

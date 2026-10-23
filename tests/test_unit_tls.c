@@ -361,13 +361,13 @@ int main(void) {
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a self-signed identity",
-        "proven_tls_self_signed makes a certificate this library's own reader accepts, for the names and the period asked, and a key that matches it.",
+        "proven_tls_self_signed_ makes a certificate this library's own reader accepts, for the names and the period asked, and a key that matches it.",
         "Check src/proven/tls_issue.c.");
     {
         static proven_byte_t cert_pem[1024], key_pem[256], der[1024];
         proven_size_t cert_len = 0, key_len = 0, pos = 0, der_len = 0;
         proven_u8str_view_t names[3] = { PROVEN_LIT("box.example.test"), PROVEN_LIT("192.0.2.7"), PROVEN_LIT("2001:db8::7") }, label;
-        PROVEN_TEST_ASSERT(proven_tls_self_signed(names, 3, TP_NOW - 10, TP_NOW + 1000, test_random, NULL, (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len,
+        PROVEN_TEST_ASSERT(proven_tls_self_signed_(names, 3, TP_NOW - 10, TP_NOW + 1000, test_random, NULL, (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len,
                                                   (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_OK && cert_len > 300 && key_len > 100, "made", "");
         proven_cert_t c;
         PROVEN_TEST_ASSERT(proven_pem_next((proven_mem_view_t){ cert_pem, cert_len }, &pos, &label, (proven_mem_mut_t){ der, sizeof der }, &der_len) == PROVEN_OK &&
@@ -399,15 +399,15 @@ int main(void) {
         proven_tls_config_destroy(sc); proven_tls_config_destroy(cc); proven_cert_store_destroy(own);
 
         proven_u8str_view_t empty_name[1] = { { (const proven_byte_t *)"", 0 } };
-        PROVEN_TEST_ASSERT(proven_tls_self_signed(names, 0, 1, 2, test_random, NULL, (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len, (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_ERR_INVALID_ARG &&
-                           proven_tls_self_signed(empty_name, 1, 1, 2, test_random, NULL, (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len, (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_ERR_INVALID_ARG &&
-                           proven_tls_self_signed(names, 3, 5, 5, test_random, NULL, (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len, (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_ERR_INVALID_ARG,
+        PROVEN_TEST_ASSERT(proven_tls_self_signed_(names, 0, 1, 2, test_random, NULL, (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len, (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_ERR_INVALID_ARG &&
+                           proven_tls_self_signed_(empty_name, 1, 1, 2, test_random, NULL, (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len, (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_ERR_INVALID_ARG &&
+                           proven_tls_self_signed_(names, 3, 5, 5, test_random, NULL, (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len, (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_ERR_INVALID_ARG,
             "no names, an empty name, and an end that is not after the start are PROVEN_ERR_INVALID_ARG", "");
-        PROVEN_TEST_ASSERT(proven_tls_self_signed(names, 3, 1, 2, test_random, NULL, (proven_mem_mut_t){ cert_pem, 100 }, &cert_len, (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_ERR_OUT_OF_BOUNDS &&
-                           proven_tls_self_signed(names, 3, 1, 2, test_random, NULL, (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len, (proven_mem_mut_t){ key_pem, 50 }, &key_len) == PROVEN_ERR_OUT_OF_BOUNDS,
+        PROVEN_TEST_ASSERT(proven_tls_self_signed_(names, 3, 1, 2, test_random, NULL, (proven_mem_mut_t){ cert_pem, 100 }, &cert_len, (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_ERR_OUT_OF_BOUNDS &&
+                           proven_tls_self_signed_(names, 3, 1, 2, test_random, NULL, (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len, (proven_mem_mut_t){ key_pem, 50 }, &key_len) == PROVEN_ERR_OUT_OF_BOUNDS,
             "a buffer too small for either is PROVEN_ERR_OUT_OF_BOUNDS", "");
         /* Dates on each side of 2050, where the encoding changes. */
-        PROVEN_TEST_ASSERT(proven_tls_self_signed(names, 1, 2524607999LL, 2524608001LL, test_random, NULL, (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len, (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_OK, "a period across 2050", "");
+        PROVEN_TEST_ASSERT(proven_tls_self_signed_(names, 1, 2524607999LL, 2524608001LL, test_random, NULL, (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len, (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_OK, "a period across 2050", "");
         pos = 0;
         PROVEN_TEST_ASSERT(proven_pem_next((proven_mem_view_t){ cert_pem, cert_len }, &pos, &label, (proven_mem_mut_t){ der, sizeof der }, &der_len) == PROVEN_OK &&
                            proven_cert_parse((proven_mem_view_t){ der, der_len }, &c) == PROVEN_OK && c.not_before == 2524607999LL && c.not_after == 2524608001LL,
@@ -1020,6 +1020,18 @@ int main(void) {
                             *l_ed = server_config(TP_SERVER_ED, TP_SERVER_ED_KEY, &lo);
         proven_tls_config_t *l_client[3];
         for (int v = 0; v < 3; ++v) { proven_tls_options_t co = lo; co.max_version = VERS[v]; l_client[v] = client_config(&co); }
+        /* RSA key exchange is a client's (v0.78.0): a server over a configuration that names it
+         * is refused, a client is made. The test hook below lets this library's own server be
+         * the client's peer for the rest of this file. */
+        {
+            proven_tls_conn_t *refused = NULL, *client = NULL;
+            PROVEN_TEST_ASSERT(proven_tls_server_create(l_rsa, &refused) == PROVEN_ERR_INVALID_ARG && refused == NULL &&
+                               proven_tls_server_create(l_ec, &refused) == PROVEN_ERR_INVALID_ARG && refused == NULL,
+                               "a server over a configuration with RSA key exchange is refused", "");
+            PROVEN_TEST_ASSERT(proven_tls_client_create(l_client[0], sv("localhost"), NULL, &client) == PROVEN_OK, "and a client over one is made", "");
+            proven_tls_conn_destroy(client);
+            proven_tls_test_server_rsa_kex_(true);
+        }
         /* The twenty-one suites: its number, whether the server's key is RSA, whether it is CBC,
          * and whether its MAC is SHA-1 - which is what TLS 1.0 and 1.1 can use. */
         static const struct { proven_u16 id; bool rsa, cbc, sha1; proven_u32 bits; } L[21] = {

@@ -59,7 +59,7 @@ typedef proven_i64 (*proven_tls_now_fn)(void *ctx);
  *         configuration names them, because each has a known weakness (the manual says which).
  *         They exist to reach a peer that has nothing better. */
 #define PROVEN_TLS_LEGACY_CBC              ((proven_u32)1)  /**< CBC cipher suites with HMAC-SHA1, -SHA256 or -SHA384 */
-#define PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE ((proven_u32)2)  /**< key exchange by RSA encryption: no forward secrecy */
+#define PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE ((proven_u32)2)  /**< key exchange by RSA encryption: no forward secrecy. A client's only: proven_tls_server_create refuses a config with it */
 #define PROVEN_TLS_LEGACY_DHE              ((proven_u32)4)  /**< finite-field Diffie-Hellman key exchange */
 #define PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET ((proven_u32)8) /**< go on with a peer that lacks RFC 7627 */
 
@@ -171,7 +171,9 @@ proven_err_t proven_tls_client_create(const proven_tls_config_t *config, proven_
 
 /**
  * @brief A connection in the server role. It waits for the client's first message.
- * @return PROVEN_ERR_INVALID_ARG (also for a config with no certificate), PROVEN_ERR_NOMEM.
+ * @return PROVEN_ERR_INVALID_ARG (also for a config with no certificate, and for one with
+ *         PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE: that key exchange is a client's only, from
+ *         v0.78.0), PROVEN_ERR_NOMEM.
  */
 [[nodiscard]]
 proven_err_t proven_tls_server_create(const proven_tls_config_t *config, proven_tls_conn_t **out);
@@ -272,33 +274,6 @@ proven_u8str_view_t proven_tls_server_name(const proven_tls_conn_t *conn);
 int proven_tls_alert_received(const proven_tls_conn_t *conn);
 /** @brief The alert this side sent when it failed; -1 when none. */
 int proven_tls_alert_sent(const proven_tls_conn_t *conn);
-
-/**
- * @brief Make a self-signed certificate and its key, as PEM: an identity for a server you run
- *        yourself, a development machine, a test.
- *
- * The key is Ed25519, drawn from `random`. The certificate names `names` - DNS names or IP
- * literals, at least one - in its subjectAltName, is valid from `not_before` to `not_after`
- * (seconds since 1970-01-01 UTC), and allows both server and client authentication.
- *
- * Nobody vouches for a self-signed certificate. A peer can only believe it by already holding
- * it: add `certificate_pem` to the peer's anchors, or - better - give the peer the key's pin
- * and PROVEN_TLS_VERIFY_PIN_ONLY. It is not a way to reach a public client such as a browser.
- *
- * @param random NULL: the operating system's source (hosted). Required when freestanding.
- * @param certificate_pem,private_key_pem where the two PEM texts are written; 1024 and 256
- *        bytes are enough for a handful of names. Not zero-terminated: the lengths say.
- * @return PROVEN_ERR_INVALID_ARG for no names, a name that is empty or longer than 253 bytes,
- *         an end that is not after the start, or (freestanding) no random source;
- *         PROVEN_ERR_OUT_OF_BOUNDS when a buffer is too small. The private key is the caller's
- *         to protect and to wipe.
- */
-[[nodiscard]]
-proven_err_t proven_tls_self_signed(const proven_u8str_view_t *names, proven_size_t name_count,
-                                    proven_i64 not_before, proven_i64 not_after,
-                                    proven_tls_random_fn random, void *random_ctx,
-                                    proven_mem_mut_t certificate_pem, proven_size_t *certificate_len,
-                                    proven_mem_mut_t private_key_pem, proven_size_t *private_key_len);
 
 #ifndef PROVEN_FREESTANDING
 #ifndef PROVEN_NO_NET

@@ -116,20 +116,20 @@ largest part of a handshake. Use RSA where a certificate you already have requir
 new one, P-256 or Ed25519. An RSA key is tried when the configuration is made - one signature,
 checked - so a key file that is damaged is refused there and not at the first connection.
 
-**An identity without an authority.**
+**An identity without an authority.** The library reads an identity; it does not make one. A
+self-signed certificate and its key come from a tool - with OpenSSL, for the names you will be
+reached by:
 
-```c
-proven_err_t proven_tls_self_signed(const proven_u8str_view_t *names, proven_size_t name_count,
-                                    proven_i64 not_before, proven_i64 not_after,
-                                    proven_tls_random_fn random, void *random_ctx,
-                                    proven_mem_mut_t certificate_pem, proven_size_t *certificate_len,
-                                    proven_mem_mut_t private_key_pem, proven_size_t *private_key_len);
+```sh
+openssl req -x509 -newkey ed25519 -nodes -days 30 -subj /CN=example.test \
+    -addext subjectAltName=DNS:example.test,IP:127.0.0.1 -keyout key.pem -out cert.pem
 ```
 
-`proven_tls_self_signed` makes an Ed25519 key and a certificate signed with that same key, both
-as PEM: the certificate names `names` (DNS names or IP literals), is valid between the two
-times, and may be used by a server or a client. 1,024 and 256 bytes hold them for a few names;
-`PROVEN_ERR_OUT_OF_BOUNDS` says a buffer was too small.
+`cert.pem` goes in `certificate_pem` and `key.pem` (PKCS #8) in `private_key_pem`, read from
+the files as both examples below do. `-newkey ec -pkeyopt ec_paramgen_curve:P-256` or
+`-newkey rsa:2048` make the other two kinds. Until v0.78.0 the library made such a pair itself
+(`proven_tls_self_signed`); the function is gone from the public API, because an identity a
+program invents for itself at each start is rarely what anyone should deploy.
 
 **Nobody vouches for a self-signed certificate.** A peer believes it only by already having it:
 put the certificate in the peer's anchor store, or give the peer the key's pin and
@@ -169,7 +169,8 @@ and holds up nobody.
 
 To serve both `http` and `https`, run two servers; a server is one or the other.
 
-Compiled and run by the test suite:
+Compiled, and run by the test suite with a certificate and key it makes for it
+(`tests/test_docs_tls_examples.c`):
 
 <!-- example: manual/examples/en/ex_14_tls_https.c -->
 ```c
@@ -183,9 +184,15 @@ Compiled and run by the test suite:
  * The server is on another thread on the loopback interface, so the example needs no network.
  */
 
-/* There is no certificate in this file. The server's identity is made when the program runs:
- * a self-signed certificate for 127.0.0.1 and its key, valid for a day around now. The client
- * is given that certificate as the one thing it believes. */
+/* There is no certificate in this file. The server's identity is read from two PEM files named
+ * on the command line: a certificate for 127.0.0.1 and its key. Run with none, the program says
+ * how to make a self-signed pair with OpenSSL. The client is given that certificate as the one
+ * thing it believes. */
+
+/* What to run when no files are given. */
+static const char *const HOW_TO_MAKE =
+    "  openssl req -x509 -newkey ed25519 -nodes -days 30 -subj /CN=example.test \\\n"
+    "      -addext subjectAltName=DNS:example.test,IP:127.0.0.1 -keyout key.pem -out cert.pem\n";
 
 typedef struct {
     proven_http_server_t *server;
@@ -207,20 +214,23 @@ static void serve(void *arg) {
     (void)proven_http_server_run(((ex_app_t *)arg)->server);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---- an identity ---------------------------------------------------------------
-    /* A self-signed certificate for the address this example serves on. A real server would be
-     * given a certificate from an authority; a pair of machines you run yourself can use this
-     * and a pin (chapter 14, section 7). */
-    proven_byte_t cert_pem[1024], key_pem[256];
-    proven_size_t cert_len = 0, key_len = 0;
-    proven_u8str_view_t names[1] = { PROVEN_LIT("127.0.0.1") };
-    proven_i64 now = proven_time_now() / 1000000000;
-    EXAMPLE_REQUIRE(proven_tls_self_signed(names, 1, now - 3600, now + 86400, NULL, NULL,
-                                           (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len,
-                                           (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_OK, "a self-signed certificate and its key");
+    /* A certificate for the address this example serves on, and its key, from files. A real
+     * server is given a certificate from an authority; a pair of machines you run yourself can
+     * use a self-signed one, or a pin (chapter 14, section 7). */
+    if (argc < 3) {
+        printf("usage: %s CERTIFICATE.pem KEY.pem\nA self-signed pair for 127.0.0.1:\n%s", argv[0], HOW_TO_MAKE);
+        return 0;
+    }
+    proven_result_mem_mut_t cert = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[1]), 64 * 1024);
+    proven_result_mem_mut_t key = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[2]), 16 * 1024);
+    EXAMPLE_REQUIRE(cert.err == PROVEN_OK && key.err == PROVEN_OK, "the certificate and the key are read");
+    if (cert.err != PROVEN_OK || key.err != PROVEN_OK) return 1;
+    const proven_byte_t *cert_pem = cert.value.ptr, *key_pem = key.value.ptr;
+    const proven_size_t cert_len = cert.value.size, key_len = key.value.size;
 
     // ---- the server ----------------------------------------------------------------
     /* One field makes a server speak TLS: its config's `tls`. The TLS config holds the
@@ -306,7 +316,9 @@ int main(void) {
     proven_tls_config_destroy(server_tls);
     proven_cert_store_destroy(anchors);
     proven_cert_store_destroy(empty);
-    proven_mem_wipe((proven_mem_mut_t){ key_pem, sizeof key_pem });
+    proven_mem_wipe(key.value);
+    heap.free_fn(heap.ctx, key.value.ptr);
+    heap.free_fn(heap.ctx, cert.value.ptr);
     return EXAMPLE_OK();
 }
 ```
@@ -419,7 +431,8 @@ proven_err_t proven_tls_key_update(proven_tls_conn_t *conn);
   TLS 1.2 has no such message: there it returns `PROVEN_ERR_UNSUPPORTED`, and a connection
   that has sent 2^31 records refuses to write more (`PROVEN_ERR_OVERFLOW`) - open another.
 
-Compiled and run by the test suite:
+Compiled, and run by the test suite with a certificate and key it makes for it
+(`tests/test_docs_tls_examples.c`):
 
 <!-- example: manual/examples/en/ex_14_tls_engine.c -->
 ```c
@@ -433,13 +446,15 @@ Compiled and run by the test suite:
  * an event loop, a serial line, a test.
  */
 
-/* There is no certificate in this file. The server's identity is made when the program runs:
- * a self-signed certificate for example.test and its key. A certificate nobody vouches for is
- * believed only by a peer that already holds it, so the client is given it as its anchor. */
+/* There is no certificate in this file. The server's identity is read from two PEM files named
+ * on the command line: a certificate for example.test and its key. Run with none, the program
+ * says how to make a self-signed pair with OpenSSL. A certificate nobody vouches for is believed
+ * only by a peer that already holds it, so the client is given it as its anchor. */
 
-/* The engine reads no clock. A program gives it one; this one always says 2027-06-01, so the
- * example behaves the same on any day. */
-static proven_i64 fixed_now(void *ctx) { (void)ctx; return 1811808000; }
+/* What to run when no files are given. */
+static const char *const HOW_TO_MAKE =
+    "  openssl req -x509 -newkey ed25519 -nodes -days 30 -subj /CN=example.test \\\n"
+    "      -addext subjectAltName=DNS:example.test,IP:127.0.0.1 -keyout key.pem -out cert.pem\n";
 
 /* Hand everything one side wants sent to the other. The receiver may take less than it was
  * given when it has application data waiting to be read; what it did not take stays pending. */
@@ -466,19 +481,23 @@ static bool appears(proven_mem_view_t data, const char *text) {
     return false;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---- an identity ---------------------------------------------------------------
-    /* proven_tls_self_signed makes an Ed25519 key and a certificate that names what you ask,
-     * valid between two times. Here: from the day before this example's fixed clock to a year
-     * after. A real server would be given a certificate from an authority instead. */
-    proven_byte_t cert_pem[1024], key_pem[256];
-    proven_size_t cert_len = 0, key_len = 0;
-    proven_u8str_view_t names[1] = { PROVEN_LIT("example.test") };
-    EXAMPLE_REQUIRE(proven_tls_self_signed(names, 1, 1811808000 - 86400, 1811808000 + 365 * 86400, NULL, NULL,
-                                           (proven_mem_mut_t){ cert_pem, sizeof cert_pem }, &cert_len,
-                                           (proven_mem_mut_t){ key_pem, sizeof key_pem }, &key_len) == PROVEN_OK, "a self-signed certificate and its key");
+    /* A real server is given a certificate from an authority; a pair of machines you run
+     * yourself can use a self-signed one. Either way it arrives as files. The key is the
+     * server's secret: read it, use it, wipe it. */
+    if (argc < 3) {
+        printf("usage: %s CERTIFICATE.pem KEY.pem\nA self-signed pair for example.test:\n%s", argv[0], HOW_TO_MAKE);
+        return 0;
+    }
+    proven_result_mem_mut_t cert = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[1]), 64 * 1024);
+    proven_result_mem_mut_t key = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[2]), 16 * 1024);
+    EXAMPLE_REQUIRE(cert.err == PROVEN_OK && key.err == PROVEN_OK, "the certificate and the key are read");
+    if (cert.err != PROVEN_OK || key.err != PROVEN_OK) return 1;
+    const proven_byte_t *cert_pem = cert.value.ptr, *key_pem = key.value.ptr;
+    const proven_size_t cert_len = cert.value.size, key_len = key.value.size;
 
     // ---- two configurations ------------------------------------------------------
     /* A config says whom to believe and who you are. It is built once and shared by every
@@ -490,9 +509,11 @@ int main(void) {
                     "the anchors");
 
     proven_u8str_view_t protocols[1] = { PROVEN_LIT("example/1") };
-    proven_tls_options_t client_options = { .alloc = heap, .anchors = anchors, .now = fixed_now, .alpn = protocols, .alpn_count = 1 };
+    /* The engine reads no clock of its own: `now` gives it one. Left out, as here, it is the
+     * system's - the certificate is checked against today. */
+    proven_tls_options_t client_options = { .alloc = heap, .anchors = anchors, .alpn = protocols, .alpn_count = 1 };
     proven_tls_options_t server_options = {
-        .alloc = heap, .now = fixed_now, .alpn = protocols, .alpn_count = 1,
+        .alloc = heap, .alpn = protocols, .alpn_count = 1,
         .certificate_pem = { cert_pem, cert_len },
         .private_key_pem = { key_pem, key_len },
     };
@@ -567,7 +588,9 @@ int main(void) {
     proven_tls_conn_destroy(server);
 
     proven_mem_wipe((proven_mem_mut_t){ session.opaque, sizeof session.opaque });
-    proven_mem_wipe((proven_mem_mut_t){ key_pem, sizeof key_pem });
+    proven_mem_wipe(key.value);
+    heap.free_fn(heap.ctx, key.value.ptr);
+    heap.free_fn(heap.ctx, cert.value.ptr);
     proven_tls_config_destroy(client_config);
     proven_tls_config_destroy(server_config);
     proven_cert_store_destroy(anchors);
@@ -901,7 +924,7 @@ RFC 9325 says not to negotiate the rest. If you control both ends, change the ot
 | Bit | What becomes possible | What you give up |
 |---|---|---|
 | `PROVEN_TLS_LEGACY_CBC` | Cipher suites that encrypt with AES in CBC mode and authenticate with HMAC-SHA1, HMAC-SHA256 or HMAC-SHA384. Needed for any version below 1.2, which has nothing else | A construction with a twenty-year record of padding attacks |
-| `PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE` | The client encrypts the session's secret under the server's RSA key instead of both sides agreeing on one | **Forward secrecy**: whoever obtains the server's key later reads every recorded connection. And the key itself is put within reach of a server-side mistake (below) |
+| `PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE` | The client encrypts the session's secret under the server's RSA key instead of both sides agreeing on one | **Forward secrecy**: whoever obtains the server's key later reads every recorded connection. And the key itself would be put within reach of a server-side mistake (below), so a server refuses it |
 | `PROVEN_TLS_LEGACY_DHE` | Key exchange by Diffie-Hellman in a finite field, with an RSA certificate | Nothing in principle; in practice time - it is several times slower than the elliptic-curve exchange - and it exists mostly on peers that are old in other ways too |
 | `PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET` | A connection to a peer that does not have RFC 7627 goes ahead | The binding of the session's keys to the handshake that made them |
 
@@ -950,7 +973,10 @@ Lucky Thirteen). What this library does about it:
 `AES128-GCM-SHA256` and `AES256-GCM-SHA384`, and with the CBC bit `AES128-SHA256`,
 `AES256-SHA256`, `AES128-SHA` and `AES256-SHA`. The server's key must be RSA.
 
-Two things, and the second is worse than it looks:
+**A client's only, from v0.78.0.** `proven_tls_server_create` refuses a configuration with this
+bit (`PROVEN_ERR_INVALID_ARG`), and so does every server built on it - the event-driven server
+when it is made. A client may use it to reach an old server or device; no risk below is the
+client's, since the client decrypts nothing. Why a server may not:
 
 - **No forward secrecy.** The secret every key is derived from travels encrypted under the
   server's long-term key. A recording of the connection is as safe as that key, for ever.
@@ -959,14 +985,17 @@ Two things, and the second is worse than it looks:
   value decrypted to something well-formed, an attacker can use it, a few thousand connections
   at a time, to decrypt or *sign* anything with the server's key (Bleichenbacher 1998; ROBOT,
   2017). That is not limited to this key exchange: a signature forged this way is as good in
-  TLS 1.3. **Enabling this bit on a server puts its key at that risk for every protocol the
-  key is used in.** What is done here: 48 random bytes are drawn before the decryption; the
+  TLS 1.3. **A server with this key exchange puts its key at that risk for every protocol the
+  key is used in**, and the clients it would serve - those with neither ECDHE nor DHE - are
+  very old. Before v0.78.0 a server could enable it; the code that did is kept, and reached
+  only by this library's own tests, as the peer its client is tested against. What it does:
+  48 random bytes are drawn before the decryption; the
   decryption is the blinded, checked operation of section 9; the result is examined with
   masks - every byte, in fixed order - and either it or the random bytes become the secret, by
   mask; the handshake then continues identically and fails, if it fails, at the Finished
   message, like any handshake with a wrong key. This path was run under a checker that reports
-  any branch or memory index that depends on the decrypted bytes, and it reported none. It has
-  not been timed on hardware.
+  any branch or memory index that depends on the decrypted bytes, and it reported none, and
+  timed on one processor, where no difference showed.
 
 ### Finite-field Diffie-Hellman
 

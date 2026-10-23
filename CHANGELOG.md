@@ -18,6 +18,30 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+Three of the owner's decisions of 2026-10-23.
+
+### Removed
+
+- `proven_tls_self_signed` (and `xcv_tls_self_signed`) is no longer public API. An identity
+  comes from files: make a self-signed pair with a tool - `openssl req -x509 -newkey ed25519
+  -nodes -days 30 -subj /CN=NAME -addext subjectAltName=DNS:NAME -keyout key.pem -out cert.pem`
+  - and pass the two PEM texts as `certificate_pem` and `private_key_pem`. Chapter 14 says how.
+  The function stays inside the library for its tests.
+
+### Changed
+
+- **A server refuses RSA key exchange.** `proven_tls_server_create` returns
+  `PROVEN_ERR_INVALID_ARG` for a configuration with `PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE`, and so
+  does every server on it (the transport server, the event-driven server when it is made, the
+  QUIC server). A server that decrypts what a client chose is one mistake from signing anything
+  with its key, in every protocol (Bleichenbacher; ROBOT). Clients keep the bit, to reach old
+  servers and devices; the risk is not theirs.
+- Chapter 14's two examples take the certificate and key as command-line arguments; with none,
+  they print the OpenSSL command. Two registered tests issue an identity and run them with it,
+  so the suite still runs both. The engine example now uses the system clock.
+- The idle-connection target for TLS on the event-driven server is 2 KiB (plain stays 1 KiB):
+  a test measures 1,704 bytes for an idle TLS connection and fails at 2 KiB.
+
 ## [0.77.1] - 2026-10-23
 
 ### Fixed
