@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.80.0] - 2026-10-24
+
 RFC-0024 piece B: WebSocket context takeover (the owner's decisions of 2026-10-24: on whenever
 compression is, with a window of 11 bits unless set; and public helpers for the codec).
 
