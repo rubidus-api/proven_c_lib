@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.77.0] - 2026-10-23
+
 ### Changed
 
 - AES-GCM on x86 seals and opens in one pass (RFC-0023): the counter mode's blocks go through
