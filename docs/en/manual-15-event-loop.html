@@ -10,10 +10,10 @@
 <body>
 <a class="skip" href="#content">Skip to content</a>
 <div class="bar"><strong><a href="index.html">proven_c_lib manual</a></strong><button class="here-btn" type="button" aria-expanded="false" aria-controls="here-panel">15 · The event loop and the event-driven server <span class="caret">▾</span></button><span class="bar-nav"><a href="manual-14-tls.html" title="Previous" aria-label="Previous">←</a><a href="index.html" title="Contents" aria-label="Contents">↑</a><a href="manual-16-compression.html" title="Next" aria-label="Next">→</a></span></div>
-<div id="here-panel" class="here-panel" hidden><div class="tools"><span class="ver">proven_c_lib-v0.77.0</span><button class="tool" type="button" id="set-open" aria-expanded="false">⚙ Settings</button><a class="tool" href="../ko/manual-15-event-loop.html">한국어</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib/releases/download/v0.77.0/proven_c_lib-v0.77.0-en-manual.pdf">⤓ PDF</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib" title="This project on GitHub">⌥ Repo</a><a class="tool" href="https://rubidus-api.github.io/" title="rubidus-api.github.io — every published project">⌂ All projects</a><a class="tool" href="https://github.com/rubidus-api" title="github.com/rubidus-api — every repository">≡ All repos</a></div><div class="setbox" id="setbox" hidden><label class="setrow"><input type="checkbox" id="s-width"><span>Limit line width</span></label><div class="setrow"><span class="setlbl">Theme</span><span class="seg"><button type="button" class="segb" data-theme="auto">System</button><button type="button" class="segb" data-theme="light">Light</button><button type="button" class="segb" data-theme="dark">Dark</button></span></div><div class="setrow"><span class="setlbl">Colours</span><label class="col"><span>Text</span><input type="color" id="s-fg"></label><label class="col"><span>Background</span><input type="color" id="s-bg"></label><label class="col"><span>Link</span><input type="color" id="s-link"></label></div><p class="setnote">Settings are kept in this browser only.</p></div><div class="search"><label class="setlbl" for="q">Search</label> <input type="search" id="q" placeholder="Find a function or a heading" autocomplete="off"><p class="hint">Searches every public function and every heading — not the full text.</p><ul id="qr"></ul></div><div class="here-head"><strong>On this page</strong></div><div class="here-body"><a href="#table-of-contents">Table of contents</a><a href="#1-two-ways-to-serve">1. Two ways to serve</a><a href="#2-a-loop">2. A loop</a><a href="#3-timers">3. Timers</a><a href="#4-work-that-is-done-elsewhere">4. Work that is done elsewhere</a><a href="#5-watching-a-socket-of-your-own">5. Watching a socket of your own</a><a href="#6-the-event-driven-server">6. The event-driven server</a><a href="#7-answering">7. Answering</a><a href="#8-request-bodies">8. Request bodies</a><a href="#9-limits-time-and-refusals">9. Limits, time and refusals</a><a href="#10-threads-tls-and-shutting-down">10. Threads, TLS and shutting down</a><a href="#11-websocket-on-the-loop">11. WebSocket on the loop</a><a href="#12-the-event-driven-client">12. The event-driven client</a><a href="#13-several-loops">13. Several loops</a><a href="#14-what-a-connection-holds-what-was-measured-and-what-is-not-here">14. What a connection holds, what was measured, and what is not here</a></div></div>
+<div id="here-panel" class="here-panel" hidden><div class="tools"><span class="ver">proven_c_lib-v0.77.1</span><button class="tool" type="button" id="set-open" aria-expanded="false">⚙ Settings</button><a class="tool" href="../ko/manual-15-event-loop.html">한국어</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib/releases/download/v0.77.1/proven_c_lib-v0.77.1-en-manual.pdf">⤓ PDF</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib" title="This project on GitHub">⌥ Repo</a><a class="tool" href="https://rubidus-api.github.io/" title="rubidus-api.github.io — every published project">⌂ All projects</a><a class="tool" href="https://github.com/rubidus-api" title="github.com/rubidus-api — every repository">≡ All repos</a></div><div class="setbox" id="setbox" hidden><label class="setrow"><input type="checkbox" id="s-width"><span>Limit line width</span></label><div class="setrow"><span class="setlbl">Theme</span><span class="seg"><button type="button" class="segb" data-theme="auto">System</button><button type="button" class="segb" data-theme="light">Light</button><button type="button" class="segb" data-theme="dark">Dark</button></span></div><div class="setrow"><span class="setlbl">Colours</span><label class="col"><span>Text</span><input type="color" id="s-fg"></label><label class="col"><span>Background</span><input type="color" id="s-bg"></label><label class="col"><span>Link</span><input type="color" id="s-link"></label></div><p class="setnote">Settings are kept in this browser only.</p></div><div class="search"><label class="setlbl" for="q">Search</label> <input type="search" id="q" placeholder="Find a function or a heading" autocomplete="off"><p class="hint">Searches every public function and every heading — not the full text.</p><ul id="qr"></ul></div><div class="here-head"><strong>On this page</strong></div><div class="here-body"><a href="#table-of-contents">Table of contents</a><a href="#1-two-ways-to-serve">1. Two ways to serve</a><a href="#2-a-loop">2. A loop</a><a href="#3-timers">3. Timers</a><a href="#4-work-that-is-done-elsewhere">4. Work that is done elsewhere</a><a href="#5-watching-a-socket-of-your-own">5. Watching a socket of your own</a><a href="#6-the-event-driven-server">6. The event-driven server</a><a href="#7-answering">7. Answering</a><a href="#8-request-bodies">8. Request bodies</a><a href="#9-limits-time-and-refusals">9. Limits, time and refusals</a><a href="#10-threads-tls-and-shutting-down">10. Threads, TLS and shutting down</a><a href="#11-websocket-on-the-loop">11. WebSocket on the loop</a><a href="#12-the-event-driven-client">12. The event-driven client</a><a href="#13-several-loops">13. Several loops</a><a href="#14-what-a-connection-holds-what-was-measured-and-what-is-not-here">14. What a connection holds, what was measured, and what is not here</a></div></div>
 <div class="page">
 <main id="content"><div class="content">
-<div class="masthead">proven_c_lib-v0.77.0 · generated from the Markdown manual</div>
+<div class="masthead">proven_c_lib-v0.77.1 · generated from the Markdown manual</div>
 <h1 id="chapter-15-the-event-loop-and-the-event-driven-server">Chapter 15: The event loop and the event-driven server<a class="anchor" href="#chapter-15-the-event-loop-and-the-event-driven-server" aria-hidden="true">#</a></h1><p><strong>Part V - Talking to the operating system. Prerequisites: <a href="manual-09-networking.html">Chapter 9</a> (sockets, deadlines, the selector); <a href="manual-11-http-client-server.html">Chapter 11</a> (the HTTP server this one is the other form of); <a href="manual-14-tls.html">Chapter 14</a> if it is to speak TLS.</strong> <strong>After this chapter</strong> you can run a loop with timers and work that comes back from other threads, serve HTTP from it without a call that waits, answer a request later, stream a response to a client slower than your program, keep WebSocket connections open without a thread each, make many HTTP requests at once from one thread, spread a server over several processor cores, and say what a connection costs while it does nothing - and what was measured.</p><p>This chapter covers <code>loop.h</code>, <code>http_event.h</code>, <code>ws_event.h</code> and <code>http_event_client.h</code>. All are hosted-only, and <code>PROVEN_NO_NET</code> leaves them out.</p><h2 id="table-of-contents">Table of contents<a class="anchor" href="#table-of-contents" aria-hidden="true">#</a></h2><ol><li><a href="#1-two-ways-to-serve">Two ways to serve</a></li><li><a href="#2-a-loop">A loop</a></li><li><a href="#3-timers">Timers</a></li><li><a href="#4-work-that-is-done-elsewhere">Work that is done elsewhere</a></li><li><a href="#5-watching-a-socket-of-your-own">Watching a socket of your own</a></li><li><a href="#6-the-event-driven-server">The event-driven server</a></li><li><a href="#7-answering">Answering</a></li><li><a href="#8-request-bodies">Request bodies</a></li><li><a href="#9-limits-time-and-refusals">Limits, time and refusals</a></li><li><a href="#10-threads-tls-and-shutting-down">Threads, TLS and shutting down</a></li><li><a href="#11-websocket-on-the-loop">WebSocket on the loop</a></li><li><a href="#12-the-event-driven-client">The event-driven client</a></li><li><a href="#13-several-loops">Several loops</a></li><li><a href="#14-what-a-connection-holds-what-was-measured-and-what-is-not-here">What a connection holds, what was measured, and what is not here</a></li></ol><h2 id="1-two-ways-to-serve">1. Two ways to serve<a class="anchor" href="#1-two-ways-to-serve" aria-hidden="true">#</a></h2><p>The server of Chapter 11 hands your handler a request and lets it read and write with calls that wait. Nothing is simpler to write: the handler is a straight line from the request to the response. The price is that a request being handled occupies a thread for as long as it takes - including all the time its client is slow.</p><p>The server of this chapter turns that around. <strong>Nothing in it waits.</strong> It sits on an event loop, one thread that asks the system which sockets have something to say, deals with those, and asks again. Your functions are told what happened - a request arrived, a piece of its body arrived, there is room to write more - and return at once. A connection that is doing nothing is then a small struct and nothing else: no thread, no stack, no buffer.</p><p>What you take on in exchange is real, and it is the whole of this chapter:</p><ul><li><strong>Your functions must not wait</strong> - not on a socket, a file, or a lock someone may hold for long. Work that takes time goes to another thread and its result is posted back (section 4).</li><li><strong>Writing can be refused.</strong> When the client is not taking what was sent, the server stops accepting more from you and says when to continue (section 7).</li><li><strong>What you are shown is short-lived.</strong> The request head and the pieces of a body are views good only until your function returns. Copy what you keep.</li></ul><p>Which to choose: the blocking server while the number of connections open at once is something a pool of threads carries comfortably and the handlers are easier to write as straight lines; this one when most connections are idle most of the time and there are many of them - long polling, event streams, slow clients, a great many kept connections. Both parse HTTP with the same code of <a href="manual-10-http.html">Chapter 10</a> and refuse the same malformed requests.</p><h2 id="2-a-loop">2. A loop<a class="anchor" href="#2-a-loop" aria-hidden="true">#</a></h2><pre><code data-lang="c">proven_err_t <span style="color: #4b69c6">proven_loop_create</span>(proven_allocator_t alloc, proven_loop_t <span style="color: #d73948">*</span><span style="color: #d73948">*</span>out);
 <span style="color: #d73948">void</span> <span style="color: #4b69c6">proven_loop_destroy</span>(proven_loop_t <span style="color: #d73948">*</span>loop);
 proven_err_t <span style="color: #4b69c6">proven_loop_run</span>(proven_loop_t <span style="color: #d73948">*</span>loop);
@@ -37,13 +37,13 @@ proven_err_t <span style="color: #4b69c6">proven_loop_poll</span>(proven_loop_t 
     <span style="color: #d73948">int</span> order[<span style="color: #b60157">8</span>];
     <span style="color: #d73948">int</span> count;
     atomic_int from_worker;
-} <span style="color: #4b69c6">app_t</span>;
+} <span style="color: #4b69c6">ex_app_t</span>;
 
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">note</span>(app_t <span style="color: #d73948">*</span>app, <span style="color: #d73948">int</span> what) { <span style="color: #d73948">if</span> (app->count <span style="color: #d73948">&lt;</span> <span style="color: #b60157">8</span>) app->order[app->count<span style="color: #d73948">++</span>] <span style="color: #d73948">=</span> what; }
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">note</span>(ex_app_t <span style="color: #d73948">*</span>app, <span style="color: #d73948">int</span> what) { <span style="color: #d73948">if</span> (app->count <span style="color: #d73948">&lt;</span> <span style="color: #b60157">8</span>) app->order[app->count<span style="color: #d73948">++</span>] <span style="color: #d73948">=</span> what; }
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> A timer fires once. One that should repeat sets itself again. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_tick</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     <span style="color: #4b69c6">note</span>(app, <span style="color: #b60157">1</span>);
     <span style="color: #d73948">if</span> (<span style="color: #d73948">++</span>app->ticks <span style="color: #d73948">&lt;</span> <span style="color: #b60157">3</span>) <span style="color: #4b69c6">proven_loop_timer_set</span>(app->loop, <span style="color: #d73948">&amp;</span>app->tick, <span style="color: #b60157">20</span>, on_tick, app);
 }
@@ -52,7 +52,7 @@ proven_err_t <span style="color: #4b69c6">proven_loop_poll</span>(proven_loop_t 
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> This runs on the loop's thread, although a worker thread asked for it. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_result</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     <span style="color: #4b69c6">note</span>(app, <span style="color: #b60157">5</span>);
     <span style="color: #4b69c6">proven_loop_timer_cancel</span>(app->loop, <span style="color: #d73948">&amp;</span>app->late);      <span style="color: #74747c">/*</span><span style="color: #74747c"> it would have fired in five seconds; now it never will </span><span style="color: #74747c">*/</span>
     <span style="color: #4b69c6">proven_loop_stop</span>(app->loop);
@@ -60,7 +60,7 @@ proven_err_t <span style="color: #4b69c6">proven_loop_poll</span>(proven_loop_t 
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> This runs on a worker thread. It may take as long as it likes: the loop is not waiting. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">slow_work</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     <span style="color: #4b69c6">proven_time_sleep</span>(<span style="color: #b60157">400</span>);
     <span style="color: #4b69c6">atomic_store</span>(<span style="color: #d73948">&amp;</span>app->from_worker, <span style="color: #b60157">1</span>);
     <span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_loop_post</span>(app->loop, on_result, app) <span style="color: #d73948">!=</span> PROVEN_OK) <span style="color: #4b69c6">proven_loop_stop</span>(app->loop);   <span style="color: #74747c">/*</span><span style="color: #74747c"> only a failed allocation refuses a post; then just end the run </span><span style="color: #74747c">*/</span>
@@ -68,7 +68,7 @@ proven_err_t <span style="color: #4b69c6">proven_loop_poll</span>(proven_loop_t 
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
-    app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
+    ex_app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
 
     <span style="color: #74747c">//</span><span style="color: #74747c"> ---- a loop -------------------------------------------------------------------</span>
     <span style="color: #74747c">/*</span><span style="color: #74747c"> A loop is a selector, a set of timers, and a queue other threads can post to. </span><span style="color: #74747c">*/</span>
@@ -145,20 +145,20 @@ proven_size_t <span style="color: #4b69c6">proven_http_stream_buffered</span>(<s
     <span style="color: #d73948">int</span> served;
     proven_http_event_server_t <span style="color: #d73948">*</span>server;
     proven_err_t ended;                <span style="color: #74747c">/*</span><span style="color: #74747c"> what on_drained was told </span><span style="color: #74747c">*/</span>
-} <span style="color: #4b69c6">app_t</span>;
+} <span style="color: #4b69c6">ex_app_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> What this program keeps for one request while it is being answered. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> {
-    app_t <span style="color: #d73948">*</span>app;
+    ex_app_t <span style="color: #d73948">*</span>app;
     proven_http_stream_t <span style="color: #d73948">*</span>stream;
     proven_loop_timer_t timer;
     proven_size_t sent, total;         <span style="color: #74747c">/*</span><span style="color: #74747c"> /count: how far the body has got </span><span style="color: #74747c">*/</span>
     proven_size_t received;            <span style="color: #74747c">/*</span><span style="color: #74747c"> /size: body bytes seen </span><span style="color: #74747c">*/</span>
-} <span style="color: #4b69c6">exchange_t</span>;
+} <span style="color: #4b69c6">ex_exchange_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> Write lines until the server says "no more for now". It says so when the client has not</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> taken what was already sent; the rest waits for on_writable. </span><span style="color: #74747c">*/</span>
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">count_pump</span>(exchange_t <span style="color: #d73948">*</span>x) {
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">count_pump</span>(ex_exchange_t <span style="color: #d73948">*</span>x) {
     <span style="color: #d73948">while</span> (x->sent <span style="color: #d73948">&lt;</span> x->total) {
         <span style="color: #d73948">char</span> line[<span style="color: #b60157">32</span>];
         <span style="color: #d73948">int</span> n <span style="color: #d73948">=</span> <span style="color: #4b69c6">snprintf</span>(line, <span style="color: #d73948">sizeof</span> line, <span style="color: #198810">"</span><span style="color: #b60157">%u</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>, (<span style="color: #d73948">unsigned</span>)x->sent);
@@ -171,13 +171,13 @@ proven_size_t <span style="color: #4b69c6">proven_http_stream_buffered</span>(<s
 }
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">answer_later</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> ctx;
+    ex_exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_http_stream_respond</span>(x->stream, <span style="color: #b60157">200</span>, <span style="color: #d73948">NULL</span>, <span style="color: #b60157">0</span>, <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">worth the wait</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>)));
 }
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_request</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_stream_t <span style="color: #d73948">*</span>stream, <span style="color: #d73948">const</span> proven_http_request_t <span style="color: #d73948">*</span>head) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
-    exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">calloc</span>(<span style="color: #b60157">1</span>, <span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>x);
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">calloc</span>(<span style="color: #b60157">1</span>, <span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>x);
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>x) { <span style="color: #4b69c6">proven_http_stream_abort</span>(stream); <span style="color: #d73948">return</span>; }
     x->app <span style="color: #d73948">=</span> app;
     x->stream <span style="color: #d73948">=</span> stream;
@@ -203,7 +203,7 @@ proven_size_t <span style="color: #4b69c6">proven_http_stream_buffered</span>(<s
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_body</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_stream_t <span style="color: #d73948">*</span>stream, proven_mem_view_t piece, <span style="color: #d73948">bool</span> last) {
     (<span style="color: #d73948">void</span>)ctx;
-    exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_http_stream_user</span>(stream);
+    ex_exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_http_stream_user</span>(stream);
     x->received <span style="color: #d73948">+=</span> piece.size;
     <span style="color: #d73948">if</span> (last) {
         <span style="color: #d73948">char</span> text[<span style="color: #b60157">32</span>];
@@ -215,14 +215,14 @@ proven_size_t <span style="color: #4b69c6">proven_http_stream_buffered</span>(<s
 <span style="color: #74747c">/*</span><span style="color: #74747c"> The output that was held back has gone: carry on from where the writing stopped. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_writable</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_stream_t <span style="color: #d73948">*</span>stream) {
     (<span style="color: #d73948">void</span>)ctx;
-    exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_http_stream_user</span>(stream);
+    ex_exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_http_stream_user</span>(stream);
     <span style="color: #d73948">if</span> (x->total <span style="color: #d73948">></span> <span style="color: #b60157">0</span>) <span style="color: #4b69c6">count_pump</span>(x);
 }
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> Called once for every on_request, whatever happened. The place to free what was attached. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_done</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_stream_t <span style="color: #d73948">*</span>stream, proven_err_t why) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
-    exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_http_stream_user</span>(stream);
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_http_stream_user</span>(stream);
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>x) <span style="color: #d73948">return</span>;
     <span style="color: #4b69c6">proven_loop_timer_cancel</span>(app->loop, <span style="color: #d73948">&amp;</span>x->timer);
     <span style="color: #4b69c6">free</span>(x);
@@ -231,16 +231,16 @@ proven_size_t <span style="color: #4b69c6">proven_http_stream_buffered</span>(<s
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> The end, on the loop's thread: what is open finishes, and then the loop is stopped. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_drained</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_err_t why) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     app->ended <span style="color: #d73948">=</span> why;
     <span style="color: #4b69c6">proven_loop_stop</span>(app->loop);
 }
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">begin_end</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     <span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_http_event_server_shutdown</span>(app->server, <span style="color: #b60157">2000</span>, on_drained, app) <span style="color: #d73948">!=</span> PROVEN_OK) <span style="color: #4b69c6">proven_loop_stop</span>(app->loop);
 }
 
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((app_t <span style="color: #d73948">*</span>)arg)->loop); }
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((ex_app_t <span style="color: #d73948">*</span>)arg)->loop); }
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">char</span> g_url[<span style="color: #b60157">64</span>];
 <span style="color: #d73948">static</span> proven_u8str_view_t <span style="color: #4b69c6">url_for</span>(proven_u16 port, <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>path) {
@@ -258,7 +258,7 @@ proven_size_t <span style="color: #4b69c6">proven_http_stream_buffered</span>(<s
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
-    app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
+    ex_app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
 
     <span style="color: #74747c">//</span><span style="color: #74747c"> ---- the server ----------------------------------------------------------------</span>
     <span style="color: #74747c">/*</span><span style="color: #74747c"> A server is made on a loop and listens; it does nothing until the loop runs. </span><span style="color: #74747c">*/</span>
@@ -350,19 +350,19 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
     proven_loop_t <span style="color: #d73948">*</span>loop;
     <span style="color: #d73948">int</span> opened, closed;
     proven_u16 last_code;
-} <span style="color: #4b69c6">app_t</span>;
+} <span style="color: #4b69c6">ex_app_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> What this program keeps for one connection: the message being collected. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> {
-    app_t <span style="color: #d73948">*</span>app;
+    ex_app_t <span style="color: #d73948">*</span>app;
     <span style="color: #d73948">char</span> text[<span style="color: #b60157">4096</span>];
     proven_size_t len;
     <span style="color: #d73948">bool</span> waiting;                 <span style="color: #74747c">/*</span><span style="color: #74747c"> a reply the server would not take yet </span><span style="color: #74747c">*/</span>
-} <span style="color: #4b69c6">peer_t</span>;
+} <span style="color: #4b69c6">ex_peer_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> Send the reply. If the client is not taking what was sent before, the server refuses it:</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> keep it, stop reading from this client, and try again when on_writable says so. </span><span style="color: #74747c">*/</span>
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">reply</span>(proven_ws_stream_t <span style="color: #d73948">*</span>ws, peer_t <span style="color: #d73948">*</span>peer) {
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">reply</span>(proven_ws_stream_t <span style="color: #d73948">*</span>ws, ex_peer_t <span style="color: #d73948">*</span>peer) {
     proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_ws_stream_send</span>(ws, <span style="color: #d73948">true</span>, (proven_mem_view_t){ (<span style="color: #d73948">const</span> proven_byte_t <span style="color: #d73948">*</span>)peer->text, peer->len });
     <span style="color: #d73948">if</span> (err <span style="color: #d73948">==</span> PROVEN_ERR_AGAIN) {
         peer->waiting <span style="color: #d73948">=</span> <span style="color: #d73948">true</span>;
@@ -377,7 +377,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> so it collects them - up to a limit of its own, which is the point of doing it by hand. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_message</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, <span style="color: #d73948">bool</span> text, proven_mem_view_t piece, <span style="color: #d73948">bool</span> first, <span style="color: #d73948">bool</span> last) {
     (<span style="color: #d73948">void</span>)ctx;
-    peer_t <span style="color: #d73948">*</span>peer <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_ws_stream_user</span>(ws);
+    ex_peer_t <span style="color: #d73948">*</span>peer <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_ws_stream_user</span>(ws);
     <span style="color: #d73948">if</span> (first) peer->len <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>text <span style="color: #d73948">||</span> peer->len <span style="color: #d73948">+</span> piece.size <span style="color: #d73948">></span> <span style="color: #d73948">sizeof</span> peer->text) {
         <span style="color: #4b69c6">proven_ws_stream_close</span>(ws, <span style="color: #b60157">1009</span>, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">short text only</span><span style="color: #198810">"</span>));       <span style="color: #74747c">/*</span><span style="color: #74747c"> 1009: too big </span><span style="color: #74747c">*/</span>
@@ -393,7 +393,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 <span style="color: #74747c">/*</span><span style="color: #74747c"> There is room again. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_writable</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws) {
     (<span style="color: #d73948">void</span>)ctx;
-    peer_t <span style="color: #d73948">*</span>peer <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_ws_stream_user</span>(ws);
+    ex_peer_t <span style="color: #d73948">*</span>peer <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_ws_stream_user</span>(ws);
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>peer->waiting) <span style="color: #d73948">return</span>;
     <span style="color: #4b69c6">reply</span>(ws, peer);
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>peer->waiting) <span style="color: #4b69c6">proven_ws_stream_resume</span>(ws);
@@ -401,7 +401,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> Called once, however the connection ended. The place to free what was attached. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_closed</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, proven_u16 code, proven_err_t why) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)why;
     <span style="color: #4b69c6">free</span>(<span style="color: #4b69c6">proven_ws_stream_user</span>(ws));
     app->last_code <span style="color: #d73948">=</span> code;
@@ -409,8 +409,8 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 }
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_request</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_stream_t <span style="color: #d73948">*</span>stream, <span style="color: #d73948">const</span> proven_http_request_t <span style="color: #d73948">*</span>head) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
-    peer_t <span style="color: #d73948">*</span>peer <span style="color: #d73948">=</span> <span style="color: #4b69c6">calloc</span>(<span style="color: #b60157">1</span>, <span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>peer);
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_peer_t <span style="color: #d73948">*</span>peer <span style="color: #d73948">=</span> <span style="color: #4b69c6">calloc</span>(<span style="color: #b60157">1</span>, <span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>peer);
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>peer) { <span style="color: #4b69c6">proven_http_stream_abort</span>(stream); <span style="color: #d73948">return</span>; }
     peer->app <span style="color: #d73948">=</span> app;
 
@@ -439,11 +439,11 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
     app->opened<span style="color: #d73948">++</span>;
 }
 
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((app_t <span style="color: #d73948">*</span>)arg)->loop); }
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((ex_app_t <span style="color: #d73948">*</span>)arg)->loop); }
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
-    app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
+    ex_app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
 
     <span style="color: #74747c">//</span><span style="color: #74747c"> ---- a server on a loop, on its own thread -------------------------------------</span>
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_loop_create</span>(heap, <span style="color: #d73948">&amp;</span>app.loop) <span style="color: #d73948">==</span> PROVEN_OK, <span style="color: #198810">"</span><span style="color: #198810">a loop</span><span style="color: #198810">"</span>);
@@ -517,7 +517,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
     <span style="color: #d73948">int</span> opened, answers, closed, refused;
     proven_u16 code;
     <span style="color: #d73948">char</span> last[<span style="color: #b60157">64</span>];
-} <span style="color: #4b69c6">app_t</span>;
+} <span style="color: #4b69c6">ex_app_t</span>;
 
 <span style="color: #74747c">//</span><span style="color: #74747c"> ---- the server: it says what it was sent ----</span>
 
@@ -540,7 +540,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> The server accepted. From here on - and from inside this call - messages may be sent. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_open</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, proven_u8str_view_t protocol) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)protocol;
     app->opened<span style="color: #d73948">++</span>;
     (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_ws_stream_send</span>(ws, <span style="color: #d73948">true</span>, <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">hello</span><span style="color: #198810">"</span>)));
@@ -548,7 +548,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> The same callback a server has. This side asks twice and then says goodbye. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_message</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, <span style="color: #d73948">bool</span> text, proven_mem_view_t piece, <span style="color: #d73948">bool</span> first, <span style="color: #d73948">bool</span> last) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)text; (<span style="color: #d73948">void</span>)first;
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>last) <span style="color: #d73948">return</span>;
     proven_size_t n <span style="color: #d73948">=</span> piece.size <span style="color: #d73948">&lt;</span> <span style="color: #d73948">sizeof</span> app->last <span style="color: #d73948">-</span> <span style="color: #b60157">1</span> <span style="color: #d73948">?</span> piece.size <span style="color: #d73948">:</span> <span style="color: #d73948">sizeof</span> app->last <span style="color: #d73948">-</span> <span style="color: #b60157">1</span>;
@@ -566,7 +566,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 <span style="color: #74747c">/*</span><span style="color: #74747c"> Called exactly once for every connection that was begun - also for one that never opened:</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> its code is then 0, and `why` says what went wrong. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_closed</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, proven_u16 code, proven_err_t why) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)ws;
     <span style="color: #d73948">if</span> (code <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>) {
         <span style="color: #74747c">/*</span><span style="color: #74747c"> Never a WebSocket: nothing listened, the server answered something else, or time ran out. </span><span style="color: #74747c">*/</span>
@@ -582,7 +582,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
-    app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
+    ex_app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_loop_create</span>(heap, <span style="color: #d73948">&amp;</span>app.loop) <span style="color: #d73948">==</span> PROVEN_OK, <span style="color: #198810">"</span><span style="color: #198810">a loop</span><span style="color: #198810">"</span>);
     proven_http_event_server_config_t server_config <span style="color: #d73948">=</span> { .on <span style="color: #d73948">=</span> { .on_request <span style="color: #d73948">=</span> on_request } };
     proven_http_event_server_t <span style="color: #d73948">*</span>server <span style="color: #d73948">=</span> <span style="color: #d73948">NULL</span>;
@@ -653,7 +653,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
     proven_ws_stream_t <span style="color: #d73948">*</span>ws;           <span style="color: #74747c">/*</span><span style="color: #74747c"> the client's connection: the loop's thread only </span><span style="color: #74747c">*/</span>
     atomic_bool open;                 <span style="color: #74747c">/*</span><span style="color: #74747c"> what the typing thread may read </span><span style="color: #74747c">*/</span>
     <span style="color: #d73948">int</span> answers, closed;
-} <span style="color: #4b69c6">app_t</span>;
+} <span style="color: #4b69c6">ex_app_t</span>;
 
 <span style="color: #74747c">//</span><span style="color: #74747c"> ---- the server: it answers each message ------------------------------------</span>
 
@@ -675,14 +675,14 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 <span style="color: #74747c">//</span><span style="color: #74747c"> ---- the client, on the loop's thread -----------------------------------------</span>
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_open</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, proven_u8str_view_t protocol) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)protocol;
     app->ws <span style="color: #d73948">=</span> ws;
     <span style="color: #4b69c6">atomic_store</span>(<span style="color: #d73948">&amp;</span>app->open, <span style="color: #d73948">true</span>);
 }
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_message</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, <span style="color: #d73948">bool</span> text, proven_mem_view_t piece, <span style="color: #d73948">bool</span> first, <span style="color: #d73948">bool</span> last) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)text; (<span style="color: #d73948">void</span>)first;
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>last) <span style="color: #d73948">return</span>;
     <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">the server says: </span><span style="color: #b60157">%.*s</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>, (<span style="color: #d73948">int</span>)piece.size, (<span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>)piece.ptr);
@@ -690,7 +690,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 }
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_closed</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, proven_u16 code, proven_err_t why) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)ws; (<span style="color: #d73948">void</span>)code; (<span style="color: #d73948">void</span>)why;
     app->ws <span style="color: #d73948">=</span> <span style="color: #d73948">NULL</span>;
     app->closed<span style="color: #d73948">++</span>;
@@ -700,22 +700,22 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 <span style="color: #74747c">//</span><span style="color: #74747c"> ---- what crosses from the typing thread ---------------------------------------</span>
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> A line to send, in memory of its own: the typing thread has moved on by the time it is sent. </span><span style="color: #74747c">*/</span>
-<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> { app_t <span style="color: #d73948">*</span>app; proven_size_t len; <span style="color: #d73948">char</span> text[<span style="color: #b60157">64</span>]; } <span style="color: #4b69c6">line_t</span>;
+<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> { ex_app_t <span style="color: #d73948">*</span>app; proven_size_t len; <span style="color: #d73948">char</span> text[<span style="color: #b60157">64</span>]; } <span style="color: #4b69c6">ex_line_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> On the loop's thread. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">send_here</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    line_t <span style="color: #d73948">*</span>line <span style="color: #d73948">=</span> ctx;
+    ex_line_t <span style="color: #d73948">*</span>line <span style="color: #d73948">=</span> ctx;
     <span style="color: #d73948">if</span> (line->app->ws) (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_ws_stream_send</span>(line->app->ws, <span style="color: #d73948">true</span>, (proven_mem_view_t){ (<span style="color: #d73948">const</span> proven_byte_t <span style="color: #d73948">*</span>)line->text, line->len });
     <span style="color: #4b69c6">free</span>(line);
 }
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> The typing thread. It never touches the connection: it posts. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">typist</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> arg;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> arg;
     <span style="color: #d73948">static</span> <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span><span style="color: #d73948">const</span> lines[LINES] <span style="color: #d73948">=</span> { <span style="color: #198810">"</span><span style="color: #198810">hello</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">how are you</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">goodbye</span><span style="color: #198810">"</span> };
     <span style="color: #d73948">while</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">atomic_load</span>(<span style="color: #d73948">&amp;</span>app->open)) <span style="color: #4b69c6">proven_time_sleep</span>(<span style="color: #b60157">1</span>);
     <span style="color: #d73948">for</span> (<span style="color: #d73948">int</span> i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> LINES; <span style="color: #d73948">++</span>i) {
-        line_t <span style="color: #d73948">*</span>line <span style="color: #d73948">=</span> <span style="color: #4b69c6">malloc</span>(<span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>line);
+        ex_line_t <span style="color: #d73948">*</span>line <span style="color: #d73948">=</span> <span style="color: #4b69c6">malloc</span>(<span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>line);
         <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>line) <span style="color: #d73948">return</span>;
         line->app <span style="color: #d73948">=</span> app;
         line->len <span style="color: #d73948">=</span> <span style="color: #4b69c6">strlen</span>(lines[i]);
@@ -725,11 +725,11 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
     }
 }
 
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((app_t <span style="color: #d73948">*</span>)arg)->loop); }
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((ex_app_t <span style="color: #d73948">*</span>)arg)->loop); }
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
-    <span style="color: #d73948">static</span> app_t app;
+    <span style="color: #d73948">static</span> ex_app_t app;
     <span style="color: #4b69c6">atomic_init</span>(<span style="color: #d73948">&amp;</span>app.open, <span style="color: #d73948">false</span>);
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_loop_create</span>(heap, <span style="color: #d73948">&amp;</span>app.loop) <span style="color: #d73948">==</span> PROVEN_OK, <span style="color: #198810">"</span><span style="color: #198810">a loop</span><span style="color: #198810">"</span>);
     proven_http_event_server_config_t server_config <span style="color: #d73948">=</span> { .on <span style="color: #d73948">=</span> { .on_request <span style="color: #d73948">=</span> on_request } };
@@ -803,25 +803,25 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> a worker, post the answer back, start the request.</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
 
-<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> app <span style="color: #4b69c6">app_t</span>;
+<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> app <span style="color: #4b69c6">ex_app_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> What this program keeps for one request. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> {
-    app_t <span style="color: #d73948">*</span>app;
+    ex_app_t <span style="color: #d73948">*</span>app;
     <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>path;
     <span style="color: #d73948">int</span> status;
     <span style="color: #d73948">char</span> body[<span style="color: #b60157">64</span>];
     proven_size_t len;
     proven_err_t why;
     <span style="color: #d73948">bool</span> done;
-} <span style="color: #4b69c6">fetch_t</span>;
+} <span style="color: #4b69c6">ex_fetch_t</span>;
 
 <span style="color: #d73948">struct</span> <span style="color: #4b69c6">app</span> {
     proven_loop_t <span style="color: #d73948">*</span>loop;
     proven_http_event_client_t <span style="color: #d73948">*</span>client;
     proven_job_sys_t <span style="color: #d73948">*</span>workers;
     proven_u16 port;
-    fetch_t fetch[<span style="color: #b60157">3</span>];
+    ex_fetch_t fetch[<span style="color: #b60157">3</span>];
     <span style="color: #d73948">int</span> finished;
     <span style="color: #74747c">/*</span><span style="color: #74747c"> written by the worker, read on the loop after it has been posted </span><span style="color: #74747c">*/</span>
     proven_net_addr_t found;
@@ -842,26 +842,26 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
 <span style="color: #74747c">/*</span><span style="color: #74747c"> The head: good only until this function returns, so take what is wanted from it. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_response</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_event_request_t <span style="color: #d73948">*</span>request, <span style="color: #d73948">const</span> proven_http_response_t <span style="color: #d73948">*</span>head) {
     (<span style="color: #d73948">void</span>)request;
-    ((fetch_t <span style="color: #d73948">*</span>)ctx)->status <span style="color: #d73948">=</span> head->status;
+    ((ex_fetch_t <span style="color: #d73948">*</span>)ctx)->status <span style="color: #d73948">=</span> head->status;
 }
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> The body, a piece at a time. Nothing is collected for you; collect what you want. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_body</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_event_request_t <span style="color: #d73948">*</span>request, proven_mem_view_t piece, <span style="color: #d73948">bool</span> last) {
     (<span style="color: #d73948">void</span>)request; (<span style="color: #d73948">void</span>)last;
-    fetch_t <span style="color: #d73948">*</span>f <span style="color: #d73948">=</span> ctx;
+    ex_fetch_t <span style="color: #d73948">*</span>f <span style="color: #d73948">=</span> ctx;
     <span style="color: #d73948">for</span> (proven_size_t i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> piece.size <span style="color: #d73948">&amp;&amp;</span> f->len <span style="color: #d73948">&lt;</span> <span style="color: #d73948">sizeof</span> f->body <span style="color: #d73948">-</span> <span style="color: #b60157">1</span>; <span style="color: #d73948">++</span>i) f->body[f->len<span style="color: #d73948">++</span>] <span style="color: #d73948">=</span> (<span style="color: #d73948">char</span>)piece.ptr[i];
 }
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> Once for every request that was started, whatever happened to it. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_done</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_event_request_t <span style="color: #d73948">*</span>request, proven_err_t why) {
     (<span style="color: #d73948">void</span>)request;
-    fetch_t <span style="color: #d73948">*</span>f <span style="color: #d73948">=</span> ctx;
+    ex_fetch_t <span style="color: #d73948">*</span>f <span style="color: #d73948">=</span> ctx;
     f->why <span style="color: #d73948">=</span> why;
     f->done <span style="color: #d73948">=</span> <span style="color: #d73948">true</span>;
     <span style="color: #d73948">if</span> (<span style="color: #d73948">++</span>f->app->finished <span style="color: #d73948">==</span> <span style="color: #b60157">3</span>) <span style="color: #4b69c6">proven_loop_stop</span>(f->app->loop);
 }
 
-<span style="color: #d73948">static</span> proven_err_t <span style="color: #4b69c6">fetch</span>(app_t <span style="color: #d73948">*</span>app, fetch_t <span style="color: #d73948">*</span>f, <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>path, <span style="color: #d73948">const</span> proven_net_addr_t <span style="color: #d73948">*</span>address, <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>host) {
+<span style="color: #d73948">static</span> proven_err_t <span style="color: #4b69c6">fetch</span>(ex_app_t <span style="color: #d73948">*</span>app, ex_fetch_t <span style="color: #d73948">*</span>f, <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>path, <span style="color: #d73948">const</span> proven_net_addr_t <span style="color: #d73948">*</span>address, <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>host) {
     <span style="color: #d73948">char</span> url[<span style="color: #b60157">96</span>];
     <span style="color: #d73948">int</span> n <span style="color: #d73948">=</span> <span style="color: #4b69c6">snprintf</span>(url, <span style="color: #d73948">sizeof</span> url, <span style="color: #198810">"</span><span style="color: #198810">http://</span><span style="color: #b60157">%s</span><span style="color: #198810">:</span><span style="color: #b60157">%u</span><span style="color: #b60157">%s</span><span style="color: #198810">"</span>, host, (<span style="color: #d73948">unsigned</span>)app->port, path);
     f->app <span style="color: #d73948">=</span> app;
@@ -880,7 +880,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
 <span style="color: #74747c">/*</span><span style="color: #74747c"> On the loop's thread again: now there is an address, and the request can start.</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> The URL keeps the name - it is what goes into Host - and the address says where to connect. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">resolved</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     <span style="color: #d73948">if</span> (app->lookup <span style="color: #d73948">!=</span> PROVEN_OK <span style="color: #d73948">||</span> <span style="color: #4b69c6">fetch</span>(app, <span style="color: #d73948">&amp;</span>app->fetch[<span style="color: #b60157">2</span>], <span style="color: #198810">"</span><span style="color: #198810">/missing</span><span style="color: #198810">"</span>, <span style="color: #d73948">&amp;</span>app->found, <span style="color: #198810">"</span><span style="color: #198810">localhost</span><span style="color: #198810">"</span>) <span style="color: #d73948">!=</span> PROVEN_OK) {
         app->fetch[<span style="color: #b60157">2</span>].why <span style="color: #d73948">=</span> PROVEN_ERR_NOT_FOUND;
         <span style="color: #d73948">if</span> (<span style="color: #d73948">++</span>app->finished <span style="color: #d73948">==</span> <span style="color: #b60157">3</span>) <span style="color: #4b69c6">proven_loop_stop</span>(app->loop);
@@ -889,7 +889,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> On a worker thread: this call may wait as long as the resolver takes. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">resolve</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     proven_net_addr_t all[<span style="color: #b60157">8</span>];
     proven_size_t count <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
     app->lookup <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_net_resolve</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">localhost</span><span style="color: #198810">"</span>), app->port, all, <span style="color: #b60157">8</span>, <span style="color: #d73948">&amp;</span>count);
@@ -904,7 +904,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
-    app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
+    ex_app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
 
     <span style="color: #74747c">//</span><span style="color: #74747c"> ---- one loop, a server and a client on it ------------------------------------</span>
     <span style="color: #74747c">/*</span><span style="color: #74747c"> Nothing runs yet: a loop does nothing until it is run. </span><span style="color: #74747c">*/</span>
@@ -925,7 +925,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_http_event_client_requests</span>(app.client) <span style="color: #d73948">==</span> <span style="color: #b60157">2</span> <span style="color: #d73948">&amp;&amp;</span> <span style="color: #d73948">!</span>app.fetch[<span style="color: #b60157">0</span>].done <span style="color: #d73948">&amp;&amp;</span> <span style="color: #d73948">!</span>app.fetch[<span style="color: #b60157">1</span>].done, <span style="color: #198810">"</span><span style="color: #198810">both in flight, neither answered: nothing has run yet</span><span style="color: #198810">"</span>);
 
     <span style="color: #74747c">/*</span><span style="color: #74747c"> One by name. Without an address it is refused - so resolve first, on the worker. </span><span style="color: #74747c">*/</span>
-    fetch_t unresolved <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
+    ex_fetch_t unresolved <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">fetch</span>(<span style="color: #d73948">&amp;</span>app, <span style="color: #d73948">&amp;</span>unresolved, <span style="color: #198810">"</span><span style="color: #198810">/missing</span><span style="color: #198810">"</span>, <span style="color: #d73948">NULL</span>, <span style="color: #198810">"</span><span style="color: #198810">localhost</span><span style="color: #198810">"</span>) <span style="color: #d73948">==</span> PROVEN_ERR_INVALID_ARG, <span style="color: #198810">"</span><span style="color: #198810">a name with no address is refused</span><span style="color: #198810">"</span>);
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_job_submit</span>(app.workers, resolve, <span style="color: #d73948">&amp;</span>app), <span style="color: #198810">"</span><span style="color: #198810">the lookup is handed to a worker</span><span style="color: #198810">"</span>);
 
@@ -966,14 +966,14 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
     proven_loop_t <span style="color: #d73948">*</span>loop;
     proven_http_event_server_t <span style="color: #d73948">*</span>server;
     <span style="color: #d73948">int</span> served;                       <span style="color: #74747c">/*</span><span style="color: #74747c"> read by the main thread only after the loop has stopped </span><span style="color: #74747c">*/</span>
-} <span style="color: #4b69c6">worker_t</span>;
+} <span style="color: #4b69c6">ex_worker_t</span>;
 
-<span style="color: #d73948">static</span> worker_t g_workers[LOOPS];
+<span style="color: #d73948">static</span> ex_worker_t g_workers[LOOPS];
 <span style="color: #d73948">static</span> proven_net_listener_t g_listener;
 <span style="color: #d73948">static</span> atomic_bool g_stop;
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_request</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_stream_t <span style="color: #d73948">*</span>stream, <span style="color: #d73948">const</span> proven_http_request_t <span style="color: #d73948">*</span>head) {
-    worker_t <span style="color: #d73948">*</span>me <span style="color: #d73948">=</span> ctx;
+    ex_worker_t <span style="color: #d73948">*</span>me <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)head;
     <span style="color: #d73948">char</span> text[<span style="color: #b60157">16</span>];
     <span style="color: #d73948">int</span> n <span style="color: #d73948">=</span> <span style="color: #4b69c6">snprintf</span>(text, <span style="color: #d73948">sizeof</span> text, <span style="color: #198810">"</span><span style="color: #198810">loop </span><span style="color: #b60157">%d</span><span style="color: #198810">"</span>, me->index);
@@ -983,11 +983,11 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> What crosses from the accepting thread to a loop. An open connection is not to be copied,</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> so it travels in memory of its own. </span><span style="color: #74747c">*/</span>
-<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> { worker_t <span style="color: #d73948">*</span>to; proven_net_conn_t conn; } <span style="color: #4b69c6">handoff_t</span>;
+<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> { ex_worker_t <span style="color: #d73948">*</span>to; proven_net_conn_t conn; } <span style="color: #4b69c6">ex_handoff_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> On the loop's thread - the only place a server may be given a connection. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">adopt_here</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    handoff_t <span style="color: #d73948">*</span>h <span style="color: #d73948">=</span> ctx;
+    ex_handoff_t <span style="color: #d73948">*</span>h <span style="color: #d73948">=</span> ctx;
     <span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_http_event_server_adopt</span>(h->to->server, <span style="color: #d73948">&amp;</span>h->conn) <span style="color: #d73948">!=</span> PROVEN_OK) (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_net_close</span>(<span style="color: #d73948">&amp;</span>h->conn);   <span style="color: #74747c">/*</span><span style="color: #74747c"> refused: still ours to close </span><span style="color: #74747c">*/</span>
     <span style="color: #4b69c6">free</span>(h);
 }
@@ -997,7 +997,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
     (<span style="color: #d73948">void</span>)arg;
     <span style="color: #d73948">int</span> next <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
     <span style="color: #d73948">while</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">atomic_load</span>(<span style="color: #d73948">&amp;</span>g_stop)) {
-        handoff_t <span style="color: #d73948">*</span>h <span style="color: #d73948">=</span> <span style="color: #4b69c6">malloc</span>(<span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>h);
+        ex_handoff_t <span style="color: #d73948">*</span>h <span style="color: #d73948">=</span> <span style="color: #4b69c6">malloc</span>(<span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>h);
         <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>h) <span style="color: #d73948">break</span>;
         <span style="color: #74747c">/*</span><span style="color: #74747c"> A short wait at a time, so that the thread notices when it is told to stop. </span><span style="color: #74747c">*/</span>
         <span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_net_accept</span>(<span style="color: #d73948">&amp;</span>g_listener, <span style="color: #4b69c6">proven_net_deadline_in</span>(<span style="color: #b60157">20</span>), <span style="color: #d73948">&amp;</span>h->conn, <span style="color: #d73948">NULL</span>) <span style="color: #d73948">!=</span> PROVEN_OK) { <span style="color: #4b69c6">free</span>(h); <span style="color: #d73948">continue</span>; }
@@ -1007,7 +1007,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
     }
 }
 
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((worker_t <span style="color: #d73948">*</span>)arg)->loop); }
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((ex_worker_t <span style="color: #d73948">*</span>)arg)->loop); }
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
@@ -1020,7 +1020,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
     <span style="color: #4b69c6">proven_job_group_init</span>(<span style="color: #d73948">&amp;</span>accepting);
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_job_system_init</span>(heap, LOOPS <span style="color: #d73948">+</span> <span style="color: #b60157">1</span>, <span style="color: #b60157">8</span>, <span style="color: #d73948">&amp;</span>threads) <span style="color: #d73948">==</span> PROVEN_OK, <span style="color: #198810">"</span><span style="color: #198810">three threads</span><span style="color: #198810">"</span>);
     <span style="color: #d73948">for</span> (<span style="color: #d73948">int</span> i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> LOOPS; <span style="color: #d73948">++</span>i) {
-        worker_t <span style="color: #d73948">*</span>w <span style="color: #d73948">=</span> <span style="color: #d73948">&amp;</span>g_workers[i];
+        ex_worker_t <span style="color: #d73948">*</span>w <span style="color: #d73948">=</span> <span style="color: #d73948">&amp;</span>g_workers[i];
         w->index <span style="color: #d73948">=</span> i;
         proven_http_event_server_config_t config <span style="color: #d73948">=</span> { .on <span style="color: #d73948">=</span> { .on_request <span style="color: #d73948">=</span> on_request }, .ctx <span style="color: #d73948">=</span> w };
         <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_loop_create</span>(heap, <span style="color: #d73948">&amp;</span>w->loop) <span style="color: #d73948">==</span> PROVEN_OK <span style="color: #d73948">&amp;&amp;</span>

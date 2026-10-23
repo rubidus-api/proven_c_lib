@@ -10,10 +10,10 @@
 <body>
 <a class="skip" href="#content">본문으로 건너뛰기</a>
 <div class="bar"><strong><a href="index.html">proven_c_lib 매뉴얼</a></strong><button class="here-btn" type="button" aria-expanded="false" aria-controls="here-panel">15 · 이벤트 루프와 이벤트 구동 서버 <span class="caret">▾</span></button><span class="bar-nav"><a href="manual-14-tls.html" title="이전" aria-label="이전">←</a><a href="index.html" title="목차" aria-label="목차">↑</a><a href="manual-16-compression.html" title="다음" aria-label="다음">→</a></span></div>
-<div id="here-panel" class="here-panel" hidden><div class="tools"><span class="ver">proven_c_lib-v0.77.0</span><button class="tool" type="button" id="set-open" aria-expanded="false">⚙ 설정</button><a class="tool" href="../en/manual-15-event-loop.html">English</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib/releases/download/v0.77.0/proven_c_lib-v0.77.0-ko-manual.pdf">⤓ PDF</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib" title="이 프로젝트의 GitHub 저장소">⌥ 저장소</a><a class="tool" href="https://rubidus-api.github.io/" title="rubidus-api.github.io — 공개된 모든 프로젝트">⌂ 전체 사이트</a><a class="tool" href="https://github.com/rubidus-api" title="github.com/rubidus-api — 모든 저장소">≡ 저장소 목록</a></div><div class="setbox" id="setbox" hidden><label class="setrow"><input type="checkbox" id="s-width"><span>가로폭 제한</span></label><div class="setrow"><span class="setlbl">테마</span><span class="seg"><button type="button" class="segb" data-theme="auto">시스템</button><button type="button" class="segb" data-theme="light">밝게</button><button type="button" class="segb" data-theme="dark">어둡게</button></span></div><div class="setrow"><span class="setlbl">색</span><label class="col"><span>글자</span><input type="color" id="s-fg"></label><label class="col"><span>배경</span><input type="color" id="s-bg"></label><label class="col"><span>링크</span><input type="color" id="s-link"></label></div><p class="setnote">설정은 이 브라우저에만 저장됩니다.</p></div><div class="search"><label class="setlbl" for="q">검색</label> <input type="search" id="q" placeholder="함수나 제목으로 찾기" autocomplete="off"><p class="hint">공개 함수 전부와 모든 제목에서 찾습니다 — 본문 전문은 아닙니다.</p><ul id="qr"></ul></div><div class="here-head"><strong>이 페이지 안에서</strong></div><div class="here-body"><a href="#목차">목차</a><a href="#1-서비스하는-두-가지-방식">1. 서비스하는 두 가지 방식</a><a href="#2-루프">2. 루프</a><a href="#3-타이머">3. 타이머</a><a href="#4-다른-곳에서-하는-일">4. 다른 곳에서 하는 일</a><a href="#5-여러분-자신의-소켓-지켜보기">5. 여러분 자신의 소켓 지켜보기</a><a href="#6-이벤트-구동-서버">6. 이벤트 구동 서버</a><a href="#7-답하기">7. 답하기</a><a href="#8-요청-본문">8. 요청 본문</a><a href="#9-한도-시간-거절">9. 한도, 시간, 거절</a><a href="#10-스레드-tls-종료">10. 스레드, TLS, 종료</a><a href="#11-루프-위의-websocket">11. 루프 위의 WebSocket</a><a href="#12-이벤트-구동-클라이언트">12. 이벤트 구동 클라이언트</a><a href="#13-여러-루프">13. 여러 루프</a><a href="#14-연결-하나가-붙드는-것-측정한-것-그리고-여기-없는-것">14. 연결 하나가 붙드는 것, 측정한 것, 그리고 여기 없는 것</a></div></div>
+<div id="here-panel" class="here-panel" hidden><div class="tools"><span class="ver">proven_c_lib-v0.77.1</span><button class="tool" type="button" id="set-open" aria-expanded="false">⚙ 설정</button><a class="tool" href="../en/manual-15-event-loop.html">English</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib/releases/download/v0.77.1/proven_c_lib-v0.77.1-ko-manual.pdf">⤓ PDF</a><a class="tool" href="https://github.com/rubidus-api/proven_c_lib" title="이 프로젝트의 GitHub 저장소">⌥ 저장소</a><a class="tool" href="https://rubidus-api.github.io/" title="rubidus-api.github.io — 공개된 모든 프로젝트">⌂ 전체 사이트</a><a class="tool" href="https://github.com/rubidus-api" title="github.com/rubidus-api — 모든 저장소">≡ 저장소 목록</a></div><div class="setbox" id="setbox" hidden><label class="setrow"><input type="checkbox" id="s-width"><span>가로폭 제한</span></label><div class="setrow"><span class="setlbl">테마</span><span class="seg"><button type="button" class="segb" data-theme="auto">시스템</button><button type="button" class="segb" data-theme="light">밝게</button><button type="button" class="segb" data-theme="dark">어둡게</button></span></div><div class="setrow"><span class="setlbl">색</span><label class="col"><span>글자</span><input type="color" id="s-fg"></label><label class="col"><span>배경</span><input type="color" id="s-bg"></label><label class="col"><span>링크</span><input type="color" id="s-link"></label></div><p class="setnote">설정은 이 브라우저에만 저장됩니다.</p></div><div class="search"><label class="setlbl" for="q">검색</label> <input type="search" id="q" placeholder="함수나 제목으로 찾기" autocomplete="off"><p class="hint">공개 함수 전부와 모든 제목에서 찾습니다 — 본문 전문은 아닙니다.</p><ul id="qr"></ul></div><div class="here-head"><strong>이 페이지 안에서</strong></div><div class="here-body"><a href="#목차">목차</a><a href="#1-서비스하는-두-가지-방식">1. 서비스하는 두 가지 방식</a><a href="#2-루프">2. 루프</a><a href="#3-타이머">3. 타이머</a><a href="#4-다른-곳에서-하는-일">4. 다른 곳에서 하는 일</a><a href="#5-여러분-자신의-소켓-지켜보기">5. 여러분 자신의 소켓 지켜보기</a><a href="#6-이벤트-구동-서버">6. 이벤트 구동 서버</a><a href="#7-답하기">7. 답하기</a><a href="#8-요청-본문">8. 요청 본문</a><a href="#9-한도-시간-거절">9. 한도, 시간, 거절</a><a href="#10-스레드-tls-종료">10. 스레드, TLS, 종료</a><a href="#11-루프-위의-websocket">11. 루프 위의 WebSocket</a><a href="#12-이벤트-구동-클라이언트">12. 이벤트 구동 클라이언트</a><a href="#13-여러-루프">13. 여러 루프</a><a href="#14-연결-하나가-붙드는-것-측정한-것-그리고-여기-없는-것">14. 연결 하나가 붙드는 것, 측정한 것, 그리고 여기 없는 것</a></div></div>
 <div class="page">
 <main id="content"><div class="content">
-<div class="masthead">proven_c_lib-v0.77.0 · 마크다운 매뉴얼에서 생성됨</div>
+<div class="masthead">proven_c_lib-v0.77.1 · 마크다운 매뉴얼에서 생성됨</div>
 <h1 id="15장-이벤트-루프와-이벤트-구동-서버">15장: 이벤트 루프와 이벤트 구동 서버<a class="anchor" href="#15장-이벤트-루프와-이벤트-구동-서버" aria-hidden="true">#</a></h1><p><strong>5부 — 운영체제와 대화하기. 선행 조건: 소켓, 데드라인, 셀렉터를 다루는 <a href="manual-09-networking.html">9장</a>. 이 장의 서버가 그 다른 형태인 HTTP 서버를 다루는 <a href="manual-11-http-client-server.html">11장</a>. TLS를 쓰려면 <a href="manual-14-tls.html">14장</a>.</strong> <strong>이 장을 마치면</strong> 타이머와 다른 스레드에서 돌아오는 일을 가진 루프를 돌리고, 기다리는 호출 하나 없이 그 위에서 HTTP를 서비스하고, 요청에 나중에 답하고, 프로그램보다 느린 클라이언트에게 응답을 스트리밍하고, 연결마다 스레드를 두지 않고 WebSocket 연결을 열어 두고, 한 스레드에서 많은 HTTP 요청을 한꺼번에 보내고, 서버를 여러 프로세서 코어에 펼치고, 아무 일도 하지 않는 연결 하나가 무엇을 차지하는지 - 그리고 무엇을 측정했는지 - 말할 수 있다.</p><p>이 장은 <code>loop.h</code>, <code>http_event.h</code>, <code>ws_event.h</code>, <code>http_event_client.h</code>를 다룬다. 모두 호스티드(hosted) 전용이고 <code>PROVEN_NO_NET</code>으로 빠진다.</p><h2 id="목차">목차<a class="anchor" href="#목차" aria-hidden="true">#</a></h2><ol><li><a href="#1-서비스하는-두-가지-방식">서비스하는 두 가지 방식</a></li><li><a href="#2-루프">루프</a></li><li><a href="#3-타이머">타이머</a></li><li><a href="#4-다른-곳에서-하는-일">다른 곳에서 하는 일</a></li><li><a href="#5-여러분-자신의-소켓-지켜보기">여러분 자신의 소켓 지켜보기</a></li><li><a href="#6-이벤트-구동-서버">이벤트 구동 서버</a></li><li><a href="#7-답하기">답하기</a></li><li><a href="#8-요청-본문">요청 본문</a></li><li><a href="#9-한도-시간-거절">한도, 시간, 거절</a></li><li><a href="#10-스레드-tls-종료">스레드, TLS, 종료</a></li><li><a href="#11-루프-위의-websocket">루프 위의 WebSocket</a></li><li><a href="#12-이벤트-구동-클라이언트">이벤트 구동 클라이언트</a></li><li><a href="#13-여러-루프">여러 루프</a></li><li><a href="#14-연결-하나가-붙드는-것-측정한-것-그리고-여기-없는-것">연결 하나가 붙드는 것, 측정한 것, 그리고 여기 없는 것</a></li></ol><h2 id="1-서비스하는-두-가지-방식">1. 서비스하는 두 가지 방식<a class="anchor" href="#1-서비스하는-두-가지-방식" aria-hidden="true">#</a></h2><p>11장의 서버는 핸들러에게 요청을 건네고, 기다리는 호출로 읽고 쓰게 한다. 이보다 쓰기 쉬운 것은 없다: 핸들러는 요청에서 응답까지 이어지는 한 줄기다. 그 값은, 처리 중인 요청 하나가 걸리는 시간 내내 - 클라이언트가 느린 시간까지 전부 - 스레드 하나를 차지한다는 것이다.</p><p>이 장의 서버는 그것을 뒤집는다. <strong>그 안의 무엇도 기다리지 않는다.</strong> 서버는 이벤트 루프 위에 앉는다. 루프는 어느 소켓에 할 말이 있는지 시스템에 묻고, 그것들을 처리하고, 다시 묻는 스레드 하나다. 여러분의 함수들은 무슨 일이 일어났는지 - 요청이 도착했다, 본문 한 조각이 도착했다, 더 쓸 자리가 생겼다 - 전해 듣고 곧바로 돌아온다. 그러면 아무 일도 하지 않는 연결은 작은 구조체 하나일 뿐 다른 것이 아니다: 스레드도, 스택도, 버퍼도 없다.</p><p>그 대신 떠맡는 것은 실제로 있고, 그것이 이 장의 전부다:</p><ul><li><strong>여러분의 함수는 기다려서는 안 된다</strong> - 소켓도, 파일도, 누군가 오래 쥘 수 있는 락도. 시간이 걸리는 일은 다른 스레드로 가고 그 결과가 게시되어 돌아온다(4절).</li><li><strong>쓰기는 거절될 수 있다.</strong> 클라이언트가 보낸 것을 가져가지 않으면 서버는 여러분에게서 더 받기를 멈추고, 언제 계속할지 알려 준다(7절).</li><li><strong>보여 주는 것은 수명이 짧다.</strong> 요청 헤드와 본문 조각은 여러분의 함수가 돌아올 때까지만 유효한 뷰(view)다. 간직할 것은 복사한다.</li></ul><p>어느 쪽을 고를까: 동시에 열려 있는 연결 수가 스레드 풀(pool)이 넉넉히 감당하는 정도이고 핸들러를 한 줄기로 쓰는 편이 쉬운 동안에는 블로킹 서버. 대부분의 연결이 대부분의 시간 동안 한가하고 그런 연결이 많을 때 - 롱 폴링, 이벤트 스트림, 느린 클라이언트, 아주 많은 유지 연결 - 는 이 서버. 둘은 <a href="manual-10-http.html">10장</a>의 같은 코드로 HTTP를 파싱하고 같은 잘못된 요청을 거절한다.</p><h2 id="2-루프">2. 루프<a class="anchor" href="#2-루프" aria-hidden="true">#</a></h2><pre><code data-lang="c">proven_err_t <span style="color: #4b69c6">proven_loop_create</span>(proven_allocator_t alloc, proven_loop_t <span style="color: #d73948">*</span><span style="color: #d73948">*</span>out);
 <span style="color: #d73948">void</span> <span style="color: #4b69c6">proven_loop_destroy</span>(proven_loop_t <span style="color: #d73948">*</span>loop);
 proven_err_t <span style="color: #4b69c6">proven_loop_run</span>(proven_loop_t <span style="color: #d73948">*</span>loop);
@@ -37,13 +37,13 @@ proven_err_t <span style="color: #4b69c6">proven_loop_poll</span>(proven_loop_t 
     <span style="color: #d73948">int</span> order[<span style="color: #b60157">8</span>];
     <span style="color: #d73948">int</span> count;
     atomic_int from_worker;
-} <span style="color: #4b69c6">app_t</span>;
+} <span style="color: #4b69c6">ex_app_t</span>;
 
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">note</span>(app_t <span style="color: #d73948">*</span>app, <span style="color: #d73948">int</span> what) { <span style="color: #d73948">if</span> (app->count <span style="color: #d73948">&lt;</span> <span style="color: #b60157">8</span>) app->order[app->count<span style="color: #d73948">++</span>] <span style="color: #d73948">=</span> what; }
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">note</span>(ex_app_t <span style="color: #d73948">*</span>app, <span style="color: #d73948">int</span> what) { <span style="color: #d73948">if</span> (app->count <span style="color: #d73948">&lt;</span> <span style="color: #b60157">8</span>) app->order[app->count<span style="color: #d73948">++</span>] <span style="color: #d73948">=</span> what; }
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 타이머는 한 번 울린다. 반복해야 하는 타이머는 스스로 다시 맞춘다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_tick</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     <span style="color: #4b69c6">note</span>(app, <span style="color: #b60157">1</span>);
     <span style="color: #d73948">if</span> (<span style="color: #d73948">++</span>app->ticks <span style="color: #d73948">&lt;</span> <span style="color: #b60157">3</span>) <span style="color: #4b69c6">proven_loop_timer_set</span>(app->loop, <span style="color: #d73948">&amp;</span>app->tick, <span style="color: #b60157">20</span>, on_tick, app);
 }
@@ -52,7 +52,7 @@ proven_err_t <span style="color: #4b69c6">proven_loop_poll</span>(proven_loop_t 
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 워커 스레드가 요청했지만, 이것은 루프의 스레드에서 실행된다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_result</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     <span style="color: #4b69c6">note</span>(app, <span style="color: #b60157">5</span>);
     <span style="color: #4b69c6">proven_loop_timer_cancel</span>(app->loop, <span style="color: #d73948">&amp;</span>app->late);      <span style="color: #74747c">/*</span><span style="color: #74747c"> 오 초 뒤에 울렸을 것이다. 이제는 영영 울리지 않는다 </span><span style="color: #74747c">*/</span>
     <span style="color: #4b69c6">proven_loop_stop</span>(app->loop);
@@ -60,7 +60,7 @@ proven_err_t <span style="color: #4b69c6">proven_loop_poll</span>(proven_loop_t 
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 이것은 워커 스레드에서 실행된다. 얼마든지 오래 걸려도 된다: 루프는 기다리지 않는다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">slow_work</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     <span style="color: #4b69c6">proven_time_sleep</span>(<span style="color: #b60157">400</span>);
     <span style="color: #4b69c6">atomic_store</span>(<span style="color: #d73948">&amp;</span>app->from_worker, <span style="color: #b60157">1</span>);
     <span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_loop_post</span>(app->loop, on_result, app) <span style="color: #d73948">!=</span> PROVEN_OK) <span style="color: #4b69c6">proven_loop_stop</span>(app->loop);   <span style="color: #74747c">/*</span><span style="color: #74747c"> 게시는 할당 실패일 때만 거절된다. 그때는 그냥 실행을 끝낸다 </span><span style="color: #74747c">*/</span>
@@ -68,7 +68,7 @@ proven_err_t <span style="color: #4b69c6">proven_loop_poll</span>(proven_loop_t 
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
-    app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
+    ex_app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
 
     <span style="color: #74747c">//</span><span style="color: #74747c"> ---- 루프 ---------------------------------------------------------------------</span>
     <span style="color: #74747c">/*</span><span style="color: #74747c"> 루프는 셀렉터, 타이머 묶음, 그리고 다른 스레드가 게시할 수 있는 큐다. </span><span style="color: #74747c">*/</span>
@@ -145,20 +145,20 @@ proven_size_t <span style="color: #4b69c6">proven_http_stream_buffered</span>(<s
     <span style="color: #d73948">int</span> served;
     proven_http_event_server_t <span style="color: #d73948">*</span>server;
     proven_err_t ended;                <span style="color: #74747c">/*</span><span style="color: #74747c"> on_drained가 들은 것 </span><span style="color: #74747c">*/</span>
-} <span style="color: #4b69c6">app_t</span>;
+} <span style="color: #4b69c6">ex_app_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 요청 하나에 답하는 동안 이 프로그램이 간직하는 것. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> {
-    app_t <span style="color: #d73948">*</span>app;
+    ex_app_t <span style="color: #d73948">*</span>app;
     proven_http_stream_t <span style="color: #d73948">*</span>stream;
     proven_loop_timer_t timer;
     proven_size_t sent, total;         <span style="color: #74747c">/*</span><span style="color: #74747c"> /count: how far the body has got </span><span style="color: #74747c">*/</span>
     proven_size_t received;            <span style="color: #74747c">/*</span><span style="color: #74747c"> /size: body bytes seen </span><span style="color: #74747c">*/</span>
-} <span style="color: #4b69c6">exchange_t</span>;
+} <span style="color: #4b69c6">ex_exchange_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 서버가 "지금은 그만"이라고 할 때까지 줄을 쓴다. 이미 보낸 것을 클라이언트가 가져가지</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> 않았을 때 그렇게 말한다. 나머지는 on_writable을 기다린다. </span><span style="color: #74747c">*/</span>
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">count_pump</span>(exchange_t <span style="color: #d73948">*</span>x) {
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">count_pump</span>(ex_exchange_t <span style="color: #d73948">*</span>x) {
     <span style="color: #d73948">while</span> (x->sent <span style="color: #d73948">&lt;</span> x->total) {
         <span style="color: #d73948">char</span> line[<span style="color: #b60157">32</span>];
         <span style="color: #d73948">int</span> n <span style="color: #d73948">=</span> <span style="color: #4b69c6">snprintf</span>(line, <span style="color: #d73948">sizeof</span> line, <span style="color: #198810">"</span><span style="color: #b60157">%u</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>, (<span style="color: #d73948">unsigned</span>)x->sent);
@@ -171,13 +171,13 @@ proven_size_t <span style="color: #4b69c6">proven_http_stream_buffered</span>(<s
 }
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">answer_later</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> ctx;
+    ex_exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_http_stream_respond</span>(x->stream, <span style="color: #b60157">200</span>, <span style="color: #d73948">NULL</span>, <span style="color: #b60157">0</span>, <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">worth the wait</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>)));
 }
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_request</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_stream_t <span style="color: #d73948">*</span>stream, <span style="color: #d73948">const</span> proven_http_request_t <span style="color: #d73948">*</span>head) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
-    exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">calloc</span>(<span style="color: #b60157">1</span>, <span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>x);
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">calloc</span>(<span style="color: #b60157">1</span>, <span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>x);
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>x) { <span style="color: #4b69c6">proven_http_stream_abort</span>(stream); <span style="color: #d73948">return</span>; }
     x->app <span style="color: #d73948">=</span> app;
     x->stream <span style="color: #d73948">=</span> stream;
@@ -203,7 +203,7 @@ proven_size_t <span style="color: #4b69c6">proven_http_stream_buffered</span>(<s
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_body</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_stream_t <span style="color: #d73948">*</span>stream, proven_mem_view_t piece, <span style="color: #d73948">bool</span> last) {
     (<span style="color: #d73948">void</span>)ctx;
-    exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_http_stream_user</span>(stream);
+    ex_exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_http_stream_user</span>(stream);
     x->received <span style="color: #d73948">+=</span> piece.size;
     <span style="color: #d73948">if</span> (last) {
         <span style="color: #d73948">char</span> text[<span style="color: #b60157">32</span>];
@@ -215,14 +215,14 @@ proven_size_t <span style="color: #4b69c6">proven_http_stream_buffered</span>(<s
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 보류되었던 출력이 나갔다: 쓰기가 멈춘 자리에서 이어 간다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_writable</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_stream_t <span style="color: #d73948">*</span>stream) {
     (<span style="color: #d73948">void</span>)ctx;
-    exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_http_stream_user</span>(stream);
+    ex_exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_http_stream_user</span>(stream);
     <span style="color: #d73948">if</span> (x->total <span style="color: #d73948">></span> <span style="color: #b60157">0</span>) <span style="color: #4b69c6">count_pump</span>(x);
 }
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 무슨 일이 있었든 on_request마다 한 번 불린다. 붙여 둔 것을 해제할 자리. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_done</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_stream_t <span style="color: #d73948">*</span>stream, proven_err_t why) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
-    exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_http_stream_user</span>(stream);
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_exchange_t <span style="color: #d73948">*</span>x <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_http_stream_user</span>(stream);
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>x) <span style="color: #d73948">return</span>;
     <span style="color: #4b69c6">proven_loop_timer_cancel</span>(app->loop, <span style="color: #d73948">&amp;</span>x->timer);
     <span style="color: #4b69c6">free</span>(x);
@@ -231,16 +231,16 @@ proven_size_t <span style="color: #4b69c6">proven_http_stream_buffered</span>(<s
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 끝, 루프의 스레드에서: 열린 것이 끝나고, 그다음 루프를 멈춘다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_drained</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_err_t why) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     app->ended <span style="color: #d73948">=</span> why;
     <span style="color: #4b69c6">proven_loop_stop</span>(app->loop);
 }
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">begin_end</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     <span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_http_event_server_shutdown</span>(app->server, <span style="color: #b60157">2000</span>, on_drained, app) <span style="color: #d73948">!=</span> PROVEN_OK) <span style="color: #4b69c6">proven_loop_stop</span>(app->loop);
 }
 
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((app_t <span style="color: #d73948">*</span>)arg)->loop); }
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((ex_app_t <span style="color: #d73948">*</span>)arg)->loop); }
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">char</span> g_url[<span style="color: #b60157">64</span>];
 <span style="color: #d73948">static</span> proven_u8str_view_t <span style="color: #4b69c6">url_for</span>(proven_u16 port, <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>path) {
@@ -258,7 +258,7 @@ proven_size_t <span style="color: #4b69c6">proven_http_stream_buffered</span>(<s
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
-    app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
+    ex_app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
 
     <span style="color: #74747c">//</span><span style="color: #74747c"> ---- 서버 ----------------------------------------------------------------------</span>
     <span style="color: #74747c">/*</span><span style="color: #74747c"> 서버는 루프 위에 만들어지고 듣는다. 루프가 돌 때까지는 아무 일도 하지 않는다. </span><span style="color: #74747c">*/</span>
@@ -350,19 +350,19 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
     proven_loop_t <span style="color: #d73948">*</span>loop;
     <span style="color: #d73948">int</span> opened, closed;
     proven_u16 last_code;
-} <span style="color: #4b69c6">app_t</span>;
+} <span style="color: #4b69c6">ex_app_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 연결 하나에 대해 이 프로그램이 간직하는 것: 모으고 있는 메시지. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> {
-    app_t <span style="color: #d73948">*</span>app;
+    ex_app_t <span style="color: #d73948">*</span>app;
     <span style="color: #d73948">char</span> text[<span style="color: #b60157">4096</span>];
     proven_size_t len;
     <span style="color: #d73948">bool</span> waiting;                 <span style="color: #74747c">/*</span><span style="color: #74747c"> 서버가 아직 받아 주지 않은 답 </span><span style="color: #74747c">*/</span>
-} <span style="color: #4b69c6">peer_t</span>;
+} <span style="color: #4b69c6">ex_peer_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 답을 보낸다. 클라이언트가 앞서 보낸 것을 가져가지 않고 있으면 서버가 거절한다:</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> 답을 간직하고, 이 클라이언트에게서 읽기를 멈추고, on_writable이 알려 줄 때 다시 시도한다. </span><span style="color: #74747c">*/</span>
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">reply</span>(proven_ws_stream_t <span style="color: #d73948">*</span>ws, peer_t <span style="color: #d73948">*</span>peer) {
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">reply</span>(proven_ws_stream_t <span style="color: #d73948">*</span>ws, ex_peer_t <span style="color: #d73948">*</span>peer) {
     proven_err_t err <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_ws_stream_send</span>(ws, <span style="color: #d73948">true</span>, (proven_mem_view_t){ (<span style="color: #d73948">const</span> proven_byte_t <span style="color: #d73948">*</span>)peer->text, peer->len });
     <span style="color: #d73948">if</span> (err <span style="color: #d73948">==</span> PROVEN_ERR_AGAIN) {
         peer->waiting <span style="color: #d73948">=</span> <span style="color: #d73948">true</span>;
@@ -377,7 +377,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> 직접 모은다 - 스스로 정한 한도까지. 손으로 하는 까닭이 바로 그 한도다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_message</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, <span style="color: #d73948">bool</span> text, proven_mem_view_t piece, <span style="color: #d73948">bool</span> first, <span style="color: #d73948">bool</span> last) {
     (<span style="color: #d73948">void</span>)ctx;
-    peer_t <span style="color: #d73948">*</span>peer <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_ws_stream_user</span>(ws);
+    ex_peer_t <span style="color: #d73948">*</span>peer <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_ws_stream_user</span>(ws);
     <span style="color: #d73948">if</span> (first) peer->len <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>text <span style="color: #d73948">||</span> peer->len <span style="color: #d73948">+</span> piece.size <span style="color: #d73948">></span> <span style="color: #d73948">sizeof</span> peer->text) {
         <span style="color: #4b69c6">proven_ws_stream_close</span>(ws, <span style="color: #b60157">1009</span>, <span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">short text only</span><span style="color: #198810">"</span>));       <span style="color: #74747c">/*</span><span style="color: #74747c"> 1009: 너무 크다 </span><span style="color: #74747c">*/</span>
@@ -393,7 +393,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 다시 자리가 생겼다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_writable</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws) {
     (<span style="color: #d73948">void</span>)ctx;
-    peer_t <span style="color: #d73948">*</span>peer <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_ws_stream_user</span>(ws);
+    ex_peer_t <span style="color: #d73948">*</span>peer <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_ws_stream_user</span>(ws);
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>peer->waiting) <span style="color: #d73948">return</span>;
     <span style="color: #4b69c6">reply</span>(ws, peer);
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>peer->waiting) <span style="color: #4b69c6">proven_ws_stream_resume</span>(ws);
@@ -401,7 +401,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 연결이 어떻게 끝났든 한 번 불린다. 붙여 둔 것을 해제할 자리. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_closed</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, proven_u16 code, proven_err_t why) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)why;
     <span style="color: #4b69c6">free</span>(<span style="color: #4b69c6">proven_ws_stream_user</span>(ws));
     app->last_code <span style="color: #d73948">=</span> code;
@@ -409,8 +409,8 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 }
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_request</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_stream_t <span style="color: #d73948">*</span>stream, <span style="color: #d73948">const</span> proven_http_request_t <span style="color: #d73948">*</span>head) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
-    peer_t <span style="color: #d73948">*</span>peer <span style="color: #d73948">=</span> <span style="color: #4b69c6">calloc</span>(<span style="color: #b60157">1</span>, <span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>peer);
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_peer_t <span style="color: #d73948">*</span>peer <span style="color: #d73948">=</span> <span style="color: #4b69c6">calloc</span>(<span style="color: #b60157">1</span>, <span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>peer);
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>peer) { <span style="color: #4b69c6">proven_http_stream_abort</span>(stream); <span style="color: #d73948">return</span>; }
     peer->app <span style="color: #d73948">=</span> app;
 
@@ -439,11 +439,11 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
     app->opened<span style="color: #d73948">++</span>;
 }
 
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((app_t <span style="color: #d73948">*</span>)arg)->loop); }
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((ex_app_t <span style="color: #d73948">*</span>)arg)->loop); }
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
-    app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
+    ex_app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
 
     <span style="color: #74747c">//</span><span style="color: #74747c"> ---- 루프 위의 서버, 자기 스레드에서 --------------------------------------------</span>
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_loop_create</span>(heap, <span style="color: #d73948">&amp;</span>app.loop) <span style="color: #d73948">==</span> PROVEN_OK, <span style="color: #198810">"</span><span style="color: #198810">루프</span><span style="color: #198810">"</span>);
@@ -517,7 +517,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
     <span style="color: #d73948">int</span> opened, answers, closed, refused;
     proven_u16 code;
     <span style="color: #d73948">char</span> last[<span style="color: #b60157">64</span>];
-} <span style="color: #4b69c6">app_t</span>;
+} <span style="color: #4b69c6">ex_app_t</span>;
 
 <span style="color: #74747c">//</span><span style="color: #74747c"> ---- 서버: 무엇을 받았는지 말해 준다 ----</span>
 
@@ -540,7 +540,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 서버가 수락했다. 여기서부터 - 이 호출 안에서도 - 메시지를 보낼 수 있다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_open</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, proven_u8str_view_t protocol) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)protocol;
     app->opened<span style="color: #d73948">++</span>;
     (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_ws_stream_send</span>(ws, <span style="color: #d73948">true</span>, <span style="color: #4b69c6">proven_mem_view_from_u8</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">hello</span><span style="color: #198810">"</span>)));
@@ -548,7 +548,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 서버가 갖는 것과 같은 콜백. 이쪽은 두 번 묻고 작별한다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_message</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, <span style="color: #d73948">bool</span> text, proven_mem_view_t piece, <span style="color: #d73948">bool</span> first, <span style="color: #d73948">bool</span> last) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)text; (<span style="color: #d73948">void</span>)first;
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>last) <span style="color: #d73948">return</span>;
     proven_size_t n <span style="color: #d73948">=</span> piece.size <span style="color: #d73948">&lt;</span> <span style="color: #d73948">sizeof</span> app->last <span style="color: #d73948">-</span> <span style="color: #b60157">1</span> <span style="color: #d73948">?</span> piece.size <span style="color: #d73948">:</span> <span style="color: #d73948">sizeof</span> app->last <span style="color: #d73948">-</span> <span style="color: #b60157">1</span>;
@@ -566,7 +566,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 시작한 연결마다 정확히 한 번 불린다 - 끝내 열리지 않은 연결에도:</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> 그때 코드는 0이고 `why`가 무엇이 잘못되었는지 말한다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_closed</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, proven_u16 code, proven_err_t why) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)ws;
     <span style="color: #d73948">if</span> (code <span style="color: #d73948">==</span> <span style="color: #b60157">0</span>) {
         <span style="color: #74747c">/*</span><span style="color: #74747c"> WebSocket이 되지 못했다: 아무도 듣지 않았거나, 서버가 다른 답을 했거나, 시간이 다 됐다. </span><span style="color: #74747c">*/</span>
@@ -582,7 +582,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
-    app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
+    ex_app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_loop_create</span>(heap, <span style="color: #d73948">&amp;</span>app.loop) <span style="color: #d73948">==</span> PROVEN_OK, <span style="color: #198810">"</span><span style="color: #198810">a loop</span><span style="color: #198810">"</span>);
     proven_http_event_server_config_t server_config <span style="color: #d73948">=</span> { .on <span style="color: #d73948">=</span> { .on_request <span style="color: #d73948">=</span> on_request } };
     proven_http_event_server_t <span style="color: #d73948">*</span>server <span style="color: #d73948">=</span> <span style="color: #d73948">NULL</span>;
@@ -652,7 +652,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
     proven_ws_stream_t <span style="color: #d73948">*</span>ws;           <span style="color: #74747c">/*</span><span style="color: #74747c"> 클라이언트의 연결: 루프의 스레드만 </span><span style="color: #74747c">*/</span>
     atomic_bool open;                 <span style="color: #74747c">/*</span><span style="color: #74747c"> 타이핑 스레드가 읽어도 되는 것 </span><span style="color: #74747c">*/</span>
     <span style="color: #d73948">int</span> answers, closed;
-} <span style="color: #4b69c6">app_t</span>;
+} <span style="color: #4b69c6">ex_app_t</span>;
 
 <span style="color: #74747c">//</span><span style="color: #74747c"> ---- 서버: 메시지마다 답한다 --------------------------------------------------</span>
 
@@ -674,14 +674,14 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 <span style="color: #74747c">//</span><span style="color: #74747c"> ---- 클라이언트, 루프의 스레드에서 -------------------------------------------</span>
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_open</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, proven_u8str_view_t protocol) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)protocol;
     app->ws <span style="color: #d73948">=</span> ws;
     <span style="color: #4b69c6">atomic_store</span>(<span style="color: #d73948">&amp;</span>app->open, <span style="color: #d73948">true</span>);
 }
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_message</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, <span style="color: #d73948">bool</span> text, proven_mem_view_t piece, <span style="color: #d73948">bool</span> first, <span style="color: #d73948">bool</span> last) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)text; (<span style="color: #d73948">void</span>)first;
     <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>last) <span style="color: #d73948">return</span>;
     <span style="color: #4b69c6">printf</span>(<span style="color: #198810">"</span><span style="color: #198810">the server says: </span><span style="color: #b60157">%.*s</span><span style="color: #1d6c76">\n</span><span style="color: #198810">"</span>, (<span style="color: #d73948">int</span>)piece.size, (<span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>)piece.ptr);
@@ -689,7 +689,7 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 }
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_closed</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_ws_stream_t <span style="color: #d73948">*</span>ws, proven_u16 code, proven_err_t why) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)ws; (<span style="color: #d73948">void</span>)code; (<span style="color: #d73948">void</span>)why;
     app->ws <span style="color: #d73948">=</span> <span style="color: #d73948">NULL</span>;
     app->closed<span style="color: #d73948">++</span>;
@@ -699,22 +699,22 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
 <span style="color: #74747c">//</span><span style="color: #74747c"> ---- 타이핑 스레드에서 건너오는 것 --------------------------------------------</span>
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 보낼 한 줄, 자기 메모리에: 그것이 보내질 때쯤 타이핑 스레드는 이미 다음으로 넘어가 있다. </span><span style="color: #74747c">*/</span>
-<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> { app_t <span style="color: #d73948">*</span>app; proven_size_t len; <span style="color: #d73948">char</span> text[<span style="color: #b60157">64</span>]; } <span style="color: #4b69c6">line_t</span>;
+<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> { ex_app_t <span style="color: #d73948">*</span>app; proven_size_t len; <span style="color: #d73948">char</span> text[<span style="color: #b60157">64</span>]; } <span style="color: #4b69c6">ex_line_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 루프의 스레드에서. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">send_here</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    line_t <span style="color: #d73948">*</span>line <span style="color: #d73948">=</span> ctx;
+    ex_line_t <span style="color: #d73948">*</span>line <span style="color: #d73948">=</span> ctx;
     <span style="color: #d73948">if</span> (line->app->ws) (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_ws_stream_send</span>(line->app->ws, <span style="color: #d73948">true</span>, (proven_mem_view_t){ (<span style="color: #d73948">const</span> proven_byte_t <span style="color: #d73948">*</span>)line->text, line->len });
     <span style="color: #4b69c6">free</span>(line);
 }
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 타이핑 스레드. 연결은 절대 만지지 않는다: post한다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">typist</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> arg;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> arg;
     <span style="color: #d73948">static</span> <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span><span style="color: #d73948">const</span> lines[LINES] <span style="color: #d73948">=</span> { <span style="color: #198810">"</span><span style="color: #198810">hello</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">how are you</span><span style="color: #198810">"</span>, <span style="color: #198810">"</span><span style="color: #198810">goodbye</span><span style="color: #198810">"</span> };
     <span style="color: #d73948">while</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">atomic_load</span>(<span style="color: #d73948">&amp;</span>app->open)) <span style="color: #4b69c6">proven_time_sleep</span>(<span style="color: #b60157">1</span>);
     <span style="color: #d73948">for</span> (<span style="color: #d73948">int</span> i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> LINES; <span style="color: #d73948">++</span>i) {
-        line_t <span style="color: #d73948">*</span>line <span style="color: #d73948">=</span> <span style="color: #4b69c6">malloc</span>(<span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>line);
+        ex_line_t <span style="color: #d73948">*</span>line <span style="color: #d73948">=</span> <span style="color: #4b69c6">malloc</span>(<span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>line);
         <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>line) <span style="color: #d73948">return</span>;
         line->app <span style="color: #d73948">=</span> app;
         line->len <span style="color: #d73948">=</span> <span style="color: #4b69c6">strlen</span>(lines[i]);
@@ -724,11 +724,11 @@ proven_size_t <span style="color: #4b69c6">proven_ws_stream_buffered</span>(<spa
     }
 }
 
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((app_t <span style="color: #d73948">*</span>)arg)->loop); }
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((ex_app_t <span style="color: #d73948">*</span>)arg)->loop); }
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
-    <span style="color: #d73948">static</span> app_t app;
+    <span style="color: #d73948">static</span> ex_app_t app;
     <span style="color: #4b69c6">atomic_init</span>(<span style="color: #d73948">&amp;</span>app.open, <span style="color: #d73948">false</span>);
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_loop_create</span>(heap, <span style="color: #d73948">&amp;</span>app.loop) <span style="color: #d73948">==</span> PROVEN_OK, <span style="color: #198810">"</span><span style="color: #198810">a loop</span><span style="color: #198810">"</span>);
     proven_http_event_server_config_t server_config <span style="color: #d73948">=</span> { .on <span style="color: #d73948">=</span> { .on_request <span style="color: #d73948">=</span> on_request } };
@@ -802,25 +802,25 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> 워커에서 해석하고, 답을 게시해 돌려보내고, 요청을 시작한다.</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*/</span>
 
-<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> app <span style="color: #4b69c6">app_t</span>;
+<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> app <span style="color: #4b69c6">ex_app_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 요청 하나에 대해 이 프로그램이 간직하는 것. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> {
-    app_t <span style="color: #d73948">*</span>app;
+    ex_app_t <span style="color: #d73948">*</span>app;
     <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>path;
     <span style="color: #d73948">int</span> status;
     <span style="color: #d73948">char</span> body[<span style="color: #b60157">64</span>];
     proven_size_t len;
     proven_err_t why;
     <span style="color: #d73948">bool</span> done;
-} <span style="color: #4b69c6">fetch_t</span>;
+} <span style="color: #4b69c6">ex_fetch_t</span>;
 
 <span style="color: #d73948">struct</span> <span style="color: #4b69c6">app</span> {
     proven_loop_t <span style="color: #d73948">*</span>loop;
     proven_http_event_client_t <span style="color: #d73948">*</span>client;
     proven_job_sys_t <span style="color: #d73948">*</span>workers;
     proven_u16 port;
-    fetch_t fetch[<span style="color: #b60157">3</span>];
+    ex_fetch_t fetch[<span style="color: #b60157">3</span>];
     <span style="color: #d73948">int</span> finished;
     <span style="color: #74747c">/*</span><span style="color: #74747c"> 워커가 쓰고, 게시된 뒤 루프에서 읽는다 </span><span style="color: #74747c">*/</span>
     proven_net_addr_t found;
@@ -841,26 +841,26 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 헤드: 이 함수가 돌아올 때까지만 유효하므로, 필요한 것을 여기서 꺼낸다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_response</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_event_request_t <span style="color: #d73948">*</span>request, <span style="color: #d73948">const</span> proven_http_response_t <span style="color: #d73948">*</span>head) {
     (<span style="color: #d73948">void</span>)request;
-    ((fetch_t <span style="color: #d73948">*</span>)ctx)->status <span style="color: #d73948">=</span> head->status;
+    ((ex_fetch_t <span style="color: #d73948">*</span>)ctx)->status <span style="color: #d73948">=</span> head->status;
 }
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 본문, 한 번에 한 조각. 대신 모아 주지 않는다. 원하는 것을 직접 모은다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_body</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_event_request_t <span style="color: #d73948">*</span>request, proven_mem_view_t piece, <span style="color: #d73948">bool</span> last) {
     (<span style="color: #d73948">void</span>)request; (<span style="color: #d73948">void</span>)last;
-    fetch_t <span style="color: #d73948">*</span>f <span style="color: #d73948">=</span> ctx;
+    ex_fetch_t <span style="color: #d73948">*</span>f <span style="color: #d73948">=</span> ctx;
     <span style="color: #d73948">for</span> (proven_size_t i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> piece.size <span style="color: #d73948">&amp;&amp;</span> f->len <span style="color: #d73948">&lt;</span> <span style="color: #d73948">sizeof</span> f->body <span style="color: #d73948">-</span> <span style="color: #b60157">1</span>; <span style="color: #d73948">++</span>i) f->body[f->len<span style="color: #d73948">++</span>] <span style="color: #d73948">=</span> (<span style="color: #d73948">char</span>)piece.ptr[i];
 }
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 시작된 요청마다 한 번, 무슨 일이 있었든. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_done</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_event_request_t <span style="color: #d73948">*</span>request, proven_err_t why) {
     (<span style="color: #d73948">void</span>)request;
-    fetch_t <span style="color: #d73948">*</span>f <span style="color: #d73948">=</span> ctx;
+    ex_fetch_t <span style="color: #d73948">*</span>f <span style="color: #d73948">=</span> ctx;
     f->why <span style="color: #d73948">=</span> why;
     f->done <span style="color: #d73948">=</span> <span style="color: #d73948">true</span>;
     <span style="color: #d73948">if</span> (<span style="color: #d73948">++</span>f->app->finished <span style="color: #d73948">==</span> <span style="color: #b60157">3</span>) <span style="color: #4b69c6">proven_loop_stop</span>(f->app->loop);
 }
 
-<span style="color: #d73948">static</span> proven_err_t <span style="color: #4b69c6">fetch</span>(app_t <span style="color: #d73948">*</span>app, fetch_t <span style="color: #d73948">*</span>f, <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>path, <span style="color: #d73948">const</span> proven_net_addr_t <span style="color: #d73948">*</span>address, <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>host) {
+<span style="color: #d73948">static</span> proven_err_t <span style="color: #4b69c6">fetch</span>(ex_app_t <span style="color: #d73948">*</span>app, ex_fetch_t <span style="color: #d73948">*</span>f, <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>path, <span style="color: #d73948">const</span> proven_net_addr_t <span style="color: #d73948">*</span>address, <span style="color: #d73948">const</span> <span style="color: #d73948">char</span> <span style="color: #d73948">*</span>host) {
     <span style="color: #d73948">char</span> url[<span style="color: #b60157">96</span>];
     <span style="color: #d73948">int</span> n <span style="color: #d73948">=</span> <span style="color: #4b69c6">snprintf</span>(url, <span style="color: #d73948">sizeof</span> url, <span style="color: #198810">"</span><span style="color: #198810">http://</span><span style="color: #b60157">%s</span><span style="color: #198810">:</span><span style="color: #b60157">%u</span><span style="color: #b60157">%s</span><span style="color: #198810">"</span>, host, (<span style="color: #d73948">unsigned</span>)app->port, path);
     f->app <span style="color: #d73948">=</span> app;
@@ -879,7 +879,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 다시 루프의 스레드: 이제 주소가 있으니 요청을 시작할 수 있다.</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> URL은 이름을 그대로 둔다 - Host에 들어가는 것이 그것이다 - 그리고 주소가 어디로 연결할지 말한다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">resolved</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     <span style="color: #d73948">if</span> (app->lookup <span style="color: #d73948">!=</span> PROVEN_OK <span style="color: #d73948">||</span> <span style="color: #4b69c6">fetch</span>(app, <span style="color: #d73948">&amp;</span>app->fetch[<span style="color: #b60157">2</span>], <span style="color: #198810">"</span><span style="color: #198810">/missing</span><span style="color: #198810">"</span>, <span style="color: #d73948">&amp;</span>app->found, <span style="color: #198810">"</span><span style="color: #198810">localhost</span><span style="color: #198810">"</span>) <span style="color: #d73948">!=</span> PROVEN_OK) {
         app->fetch[<span style="color: #b60157">2</span>].why <span style="color: #d73948">=</span> PROVEN_ERR_NOT_FOUND;
         <span style="color: #d73948">if</span> (<span style="color: #d73948">++</span>app->finished <span style="color: #d73948">==</span> <span style="color: #b60157">3</span>) <span style="color: #4b69c6">proven_loop_stop</span>(app->loop);
@@ -888,7 +888,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 워커 스레드에서: 이 호출은 리졸버가 걸리는 만큼 기다려도 된다. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">resolve</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
+    ex_app_t <span style="color: #d73948">*</span>app <span style="color: #d73948">=</span> ctx;
     proven_net_addr_t all[<span style="color: #b60157">8</span>];
     proven_size_t count <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
     app->lookup <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_net_resolve</span>(<span style="color: #4b69c6">PROVEN_LIT</span>(<span style="color: #198810">"</span><span style="color: #198810">localhost</span><span style="color: #198810">"</span>), app->port, all, <span style="color: #b60157">8</span>, <span style="color: #d73948">&amp;</span>count);
@@ -903,7 +903,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
-    app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
+    ex_app_t app <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
 
     <span style="color: #74747c">//</span><span style="color: #74747c"> ---- 루프 하나, 그 위의 서버와 클라이언트 --------------------------------------</span>
     <span style="color: #74747c">/*</span><span style="color: #74747c"> 아직 아무것도 돌지 않는다: 루프는 돌릴 때까지 아무 일도 하지 않는다. </span><span style="color: #74747c">*/</span>
@@ -924,7 +924,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_http_event_client_requests</span>(app.client) <span style="color: #d73948">==</span> <span style="color: #b60157">2</span> <span style="color: #d73948">&amp;&amp;</span> <span style="color: #d73948">!</span>app.fetch[<span style="color: #b60157">0</span>].done <span style="color: #d73948">&amp;&amp;</span> <span style="color: #d73948">!</span>app.fetch[<span style="color: #b60157">1</span>].done, <span style="color: #198810">"</span><span style="color: #198810">둘 다 진행 중이고 답은 없다: 아직 아무것도 돌지 않았다</span><span style="color: #198810">"</span>);
 
     <span style="color: #74747c">/*</span><span style="color: #74747c"> 하나는 이름으로. 주소가 없으면 거절된다 - 그러니 먼저 워커에서 해석한다. </span><span style="color: #74747c">*/</span>
-    fetch_t unresolved <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
+    ex_fetch_t unresolved <span style="color: #d73948">=</span> { <span style="color: #b60157">0</span> };
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">fetch</span>(<span style="color: #d73948">&amp;</span>app, <span style="color: #d73948">&amp;</span>unresolved, <span style="color: #198810">"</span><span style="color: #198810">/missing</span><span style="color: #198810">"</span>, <span style="color: #d73948">NULL</span>, <span style="color: #198810">"</span><span style="color: #198810">localhost</span><span style="color: #198810">"</span>) <span style="color: #d73948">==</span> PROVEN_ERR_INVALID_ARG, <span style="color: #198810">"</span><span style="color: #198810">주소 없는 이름은 거절된다</span><span style="color: #198810">"</span>);
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_job_submit</span>(app.workers, resolve, <span style="color: #d73948">&amp;</span>app), <span style="color: #198810">"</span><span style="color: #198810">조회를 워커에 넘겼다</span><span style="color: #198810">"</span>);
 
@@ -965,14 +965,14 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
     proven_loop_t <span style="color: #d73948">*</span>loop;
     proven_http_event_server_t <span style="color: #d73948">*</span>server;
     <span style="color: #d73948">int</span> served;                       <span style="color: #74747c">/*</span><span style="color: #74747c"> 루프가 멈춘 뒤에만 메인 스레드가 읽는다 </span><span style="color: #74747c">*/</span>
-} <span style="color: #4b69c6">worker_t</span>;
+} <span style="color: #4b69c6">ex_worker_t</span>;
 
-<span style="color: #d73948">static</span> worker_t g_workers[LOOPS];
+<span style="color: #d73948">static</span> ex_worker_t g_workers[LOOPS];
 <span style="color: #d73948">static</span> proven_net_listener_t g_listener;
 <span style="color: #d73948">static</span> atomic_bool g_stop;
 
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">on_request</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx, proven_http_stream_t <span style="color: #d73948">*</span>stream, <span style="color: #d73948">const</span> proven_http_request_t <span style="color: #d73948">*</span>head) {
-    worker_t <span style="color: #d73948">*</span>me <span style="color: #d73948">=</span> ctx;
+    ex_worker_t <span style="color: #d73948">*</span>me <span style="color: #d73948">=</span> ctx;
     (<span style="color: #d73948">void</span>)head;
     <span style="color: #d73948">char</span> text[<span style="color: #b60157">16</span>];
     <span style="color: #d73948">int</span> n <span style="color: #d73948">=</span> <span style="color: #4b69c6">snprintf</span>(text, <span style="color: #d73948">sizeof</span> text, <span style="color: #198810">"</span><span style="color: #198810">loop </span><span style="color: #b60157">%d</span><span style="color: #198810">"</span>, me->index);
@@ -982,11 +982,11 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 받아들이는 스레드에서 루프로 건너가는 것. 열린 연결은 복사해서는 안 되므로</span>
 <span style="color: #74747c"> </span><span style="color: #74747c">*</span><span style="color: #74747c"> 자기 메모리에 담겨 간다. </span><span style="color: #74747c">*/</span>
-<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> { worker_t <span style="color: #d73948">*</span>to; proven_net_conn_t conn; } <span style="color: #4b69c6">handoff_t</span>;
+<span style="color: #d73948">typedef</span> <span style="color: #d73948">struct</span> { ex_worker_t <span style="color: #d73948">*</span>to; proven_net_conn_t conn; } <span style="color: #4b69c6">ex_handoff_t</span>;
 
 <span style="color: #74747c">/*</span><span style="color: #74747c"> 루프의 스레드에서 - 서버에 연결을 줄 수 있는 유일한 곳. </span><span style="color: #74747c">*/</span>
 <span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">adopt_here</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>ctx) {
-    handoff_t <span style="color: #d73948">*</span>h <span style="color: #d73948">=</span> ctx;
+    ex_handoff_t <span style="color: #d73948">*</span>h <span style="color: #d73948">=</span> ctx;
     <span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_http_event_server_adopt</span>(h->to->server, <span style="color: #d73948">&amp;</span>h->conn) <span style="color: #d73948">!=</span> PROVEN_OK) (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_net_close</span>(<span style="color: #d73948">&amp;</span>h->conn);   <span style="color: #74747c">/*</span><span style="color: #74747c"> 거절됨: 여전히 우리 것이니 닫는다 </span><span style="color: #74747c">*/</span>
     <span style="color: #4b69c6">free</span>(h);
 }
@@ -996,7 +996,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
     (<span style="color: #d73948">void</span>)arg;
     <span style="color: #d73948">int</span> next <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>;
     <span style="color: #d73948">while</span> (<span style="color: #d73948">!</span><span style="color: #4b69c6">atomic_load</span>(<span style="color: #d73948">&amp;</span>g_stop)) {
-        handoff_t <span style="color: #d73948">*</span>h <span style="color: #d73948">=</span> <span style="color: #4b69c6">malloc</span>(<span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>h);
+        ex_handoff_t <span style="color: #d73948">*</span>h <span style="color: #d73948">=</span> <span style="color: #4b69c6">malloc</span>(<span style="color: #d73948">sizeof</span> <span style="color: #d73948">*</span>h);
         <span style="color: #d73948">if</span> (<span style="color: #d73948">!</span>h) <span style="color: #d73948">break</span>;
         <span style="color: #74747c">/*</span><span style="color: #74747c"> 한 번에 잠깐씩만 기다려서, 멈추라는 말을 스레드가 알아채게 한다. </span><span style="color: #74747c">*/</span>
         <span style="color: #d73948">if</span> (<span style="color: #4b69c6">proven_net_accept</span>(<span style="color: #d73948">&amp;</span>g_listener, <span style="color: #4b69c6">proven_net_deadline_in</span>(<span style="color: #b60157">20</span>), <span style="color: #d73948">&amp;</span>h->conn, <span style="color: #d73948">NULL</span>) <span style="color: #d73948">!=</span> PROVEN_OK) { <span style="color: #4b69c6">free</span>(h); <span style="color: #d73948">continue</span>; }
@@ -1006,7 +1006,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
     }
 }
 
-<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((worker_t <span style="color: #d73948">*</span>)arg)->loop); }
+<span style="color: #d73948">static</span> <span style="color: #d73948">void</span> <span style="color: #4b69c6">run</span>(<span style="color: #d73948">void</span> <span style="color: #d73948">*</span>arg) { (<span style="color: #d73948">void</span>)<span style="color: #4b69c6">proven_loop_run</span>(((ex_worker_t <span style="color: #d73948">*</span>)arg)->loop); }
 
 <span style="color: #d73948">int</span> <span style="color: #4b69c6">main</span>(<span style="color: #d73948">void</span>) {
     proven_allocator_t heap <span style="color: #d73948">=</span> <span style="color: #4b69c6">proven_heap_allocator</span>();
@@ -1019,7 +1019,7 @@ proven_err_t <span style="color: #4b69c6">proven_http_event_request_end</span>(p
     <span style="color: #4b69c6">proven_job_group_init</span>(<span style="color: #d73948">&amp;</span>accepting);
     <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_job_system_init</span>(heap, LOOPS <span style="color: #d73948">+</span> <span style="color: #b60157">1</span>, <span style="color: #b60157">8</span>, <span style="color: #d73948">&amp;</span>threads) <span style="color: #d73948">==</span> PROVEN_OK, <span style="color: #198810">"</span><span style="color: #198810">스레드 셋</span><span style="color: #198810">"</span>);
     <span style="color: #d73948">for</span> (<span style="color: #d73948">int</span> i <span style="color: #d73948">=</span> <span style="color: #b60157">0</span>; i <span style="color: #d73948">&lt;</span> LOOPS; <span style="color: #d73948">++</span>i) {
-        worker_t <span style="color: #d73948">*</span>w <span style="color: #d73948">=</span> <span style="color: #d73948">&amp;</span>g_workers[i];
+        ex_worker_t <span style="color: #d73948">*</span>w <span style="color: #d73948">=</span> <span style="color: #d73948">&amp;</span>g_workers[i];
         w->index <span style="color: #d73948">=</span> i;
         proven_http_event_server_config_t config <span style="color: #d73948">=</span> { .on <span style="color: #d73948">=</span> { .on_request <span style="color: #d73948">=</span> on_request }, .ctx <span style="color: #d73948">=</span> w };
         <span style="color: #4b69c6">EXAMPLE_REQUIRE</span>(<span style="color: #4b69c6">proven_loop_create</span>(heap, <span style="color: #d73948">&amp;</span>w->loop) <span style="color: #d73948">==</span> PROVEN_OK <span style="color: #d73948">&amp;&amp;</span>
