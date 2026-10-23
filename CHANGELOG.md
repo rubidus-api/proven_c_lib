@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.79.0] - 2026-10-23
+
 RFC-0024 piece A: HTTP/2 settings changed after the connection is made (the owner's decisions
 of 2026-10-23: both the stream count and the window, the engine and the event server).
 
