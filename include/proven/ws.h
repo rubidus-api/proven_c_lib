@@ -24,8 +24,9 @@
  * frame without a mask or a server frame with one, text that is not UTF-8, a close code that
  * may not be sent.
  *
- * No extension is implemented. `permessage-deflate` in particular is not: the library has no
- * DEFLATE. A peer that uses one sets a reserved bit, and that is refused.
+ * One extension is spoken: `permessage-deflate` (RFC 7692), negotiated with the functions of
+ * the compression section below and allowed by proven_ws_decoder_allow_compressed. A peer
+ * that sets a reserved bit without it is refused.
  */
 
 // -----------------------------------------------------------------------------
@@ -173,6 +174,62 @@ proven_err_t proven_ws_deflate_accept(const proven_http_request_t *request, prov
 [[nodiscard]]
 proven_err_t proven_ws_check_response_deflate(const proven_http_response_t *response, proven_u8str_view_t key,
                                               proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate);
+
+/**
+ * @brief What a client sends in `Sec-WebSocket-Extensions` to ask for compressed messages with
+ *        **context takeover**: each side may keep its window from one message to the next.
+ *
+ * A message then refers back to the messages before it, so short, similar messages shrink to
+ * a third or a quarter where on their own they would not shrink at all - at the price of a
+ * compressor and a decompressor kept for the connection's life. `client_max_window_bits` lets
+ * the server bound the window this client compresses with. Check the answer with
+ * proven_ws_check_response_takeover.
+ */
+#define PROVEN_WS_DEFLATE_OFFER_TAKEOVER "permessage-deflate; client_max_window_bits"
+
+/** @brief What the two sides agreed for `permessage-deflate`. */
+typedef struct {
+    bool server_takeover;     /**< the server may keep its window between messages: the client keeps one decompressor for all of them */
+    bool client_takeover;     /**< the client may: the server keeps one decompressor */
+    int server_window_bits;   /**< the largest window the server may compress with, 8 to 15 (this compressor's smallest is 9) */
+    int client_window_bits;   /**< the largest the client may compress with, 8 to 15. 8: this library's compressor cannot, so such a client sends its messages uncompressed */
+} proven_ws_deflate_terms_t;
+
+/**
+ * @brief proven_ws_deflate_accept for a server that keeps its window between messages.
+ *
+ * The offers are tried and passed over as there. The answer forbids takeover only where the
+ * offer asked for it: `server_no_context_takeover` and `client_no_context_takeover` are
+ * answered when the offer had them, `server_max_window_bits` when the offer had it.
+ * `client_max_window_bits` is never answered: a decompressor here holds 32 KiB whatever the
+ * window, so there is nothing to save.
+ *
+ * @param terms receives what was agreed: takeover in each direction not forbidden, the
+ *        server's window the offer's or 15, the client's 15.
+ * @return as proven_ws_deflate_accept.
+ */
+[[nodiscard]]
+proven_err_t proven_ws_deflate_accept_takeover(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len,
+                                               proven_ws_deflate_terms_t *terms);
+
+/**
+ * @brief proven_ws_check_response for a client that sent PROVEN_WS_DEFLATE_OFFER_TAKEOVER.
+ *
+ * The answer may name this one extension, once, with any of its four parameters at most once
+ * each; `client_max_window_bits` must then have a value. `*deflate` is true when the server
+ * accepted it, and `*terms` says what was agreed (zeroed when it did not).
+ *
+ * A side whose peer may take over keeps one decompressor and, when it reports `done` (the
+ * sender ended a final block), goes on with proven_inflate_restart, not reset. A side that
+ * takes over keeps one compressor and ends each message with PROVEN_DEFLATE_FLUSH_SYNC.
+ *
+ * @return also PROVEN_ERR_INVALID_FORMAT when the server names another extension, names this
+ *         one twice, or gives a parameter twice, an unknown one or a value out of range.
+ */
+[[nodiscard]]
+proven_err_t proven_ws_check_response_takeover(const proven_http_response_t *response, proven_u8str_view_t key,
+                                               proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate,
+                                               proven_ws_deflate_terms_t *terms);
 
 // -----------------------------------------------------------------------------
 // Frames

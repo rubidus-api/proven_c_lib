@@ -16,8 +16,9 @@ int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---- the handshake ---------------------------------------------------------------
-    /* A client asks with one header. PROVEN_WS_DEFLATE_OFFER is the form this library speaks:
-     * each message compressed on its own, in both directions. */
+    /* A client asks with one header. PROVEN_WS_DEFLATE_OFFER is the simpler of the two forms
+     * this library speaks: each message compressed on its own, in both directions. The other,
+     * with context takeover, is at the end. */
     proven_http_header_t asked[] = {
         { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER) },
     };
@@ -109,5 +110,44 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_ws_frame_write((proven_mem_mut_t){ header, sizeof header }, &header_len, &frame) == PROVEN_OK && header[0] == 0xc1, "a frame header with the bit");
     printf("%u bytes of text go out as %u\n", (unsigned)(sizeof said - 1), (unsigned)(header_len + payload));
     EXAMPLE_REQUIRE(header_len + payload < sizeof said - 1, "fewer than were said");
+
+    // ---- with context takeover ---------------------------------------------------------
+    /* The other form: each side keeps its window from one message to the next, so a message
+     * refers back to the ones before it. A client offers PROVEN_WS_DEFLATE_OFFER_TAKEOVER; a
+     * server answers with proven_ws_deflate_accept_takeover, which forbids takeover only
+     * where the offer asked, and says what was agreed. */
+    proven_http_header_t asked_take[] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER_TAKEOVER) } };
+    proven_http_request_t request_take = { .headers = asked_take, .header_count = 1 };
+    proven_ws_deflate_terms_t terms;
+    answer_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept_takeover(&request_take, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &terms) == PROVEN_OK &&
+                    terms.server_takeover && terms.client_takeover, "takeover is agreed both ways");
+    printf("the server answers: %.*s\n", (int)answer_len, (const char *)answer);
+    answered[3].value = (proven_u8str_view_t){ answer, answer_len };
+    proven_ws_deflate_terms_t seen;
+    EXAMPLE_REQUIRE(proven_ws_check_response_takeover(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed, &seen) == PROVEN_OK &&
+                    compressed && seen.server_takeover && seen.client_takeover, "and the client sees the same terms");
+
+    /* A side that takes over keeps one compressor for the connection and ends every message
+     * with a sync flush; the side that reads keeps one decompressor. The same line twice: the
+     * second goes out as a reference to the first. */
+    EXAMPLE_REQUIRE(proven_deflate_create(&options, &c) == PROVEN_OK && proven_inflate_create(heap, PROVEN_DEFLATE_RAW, &z) == PROVEN_OK, "one of each, kept");
+    for (int round = 0; round < 2; ++round) {
+        EXAMPLE_REQUIRE(proven_deflate(c, (proven_mem_view_t){ (const proven_byte_t *)said, sizeof said - 1 }, &taken, (proven_mem_mut_t){ packed, sizeof packed }, &made,
+                                       PROVEN_DEFLATE_FLUSH_SYNC, &ended) == PROVEN_OK && made > 4, "a message through the kept compressor");
+        printf("message %d goes out as %u bytes\n", round + 1, (unsigned)(made - 4));
+        if (round == 1) EXAMPLE_REQUIRE(made - 4 < 10, "the second is a few bytes: a reference into the first");
+        /* The reader: the payload as it arrived - the four bytes left off, then put back. */
+        proven_byte_t back[128];
+        proven_size_t got = 0;
+        EXAMPLE_REQUIRE(proven_inflate(z, (proven_mem_view_t){ packed, made }, &taken, (proven_mem_mut_t){ back, sizeof back }, &got, &ended) == PROVEN_OK &&
+                        got == sizeof said - 1 && memcmp(back, said, got) == 0, "and the kept decompressor reads it");
+        /* A sender may end a message with a final block instead (RFC 7692, 7.2.3.4): the
+         * decompressor then reports `ended`, and the reader goes on with
+         * proven_inflate_restart, which keeps the window - not reset, which forgets it. */
+        if (ended) proven_inflate_restart(z);
+    }
+    proven_deflate_destroy(c);
+    proven_inflate_destroy(z);
     return EXAMPLE_OK();
 }

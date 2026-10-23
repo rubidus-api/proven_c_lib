@@ -9,8 +9,10 @@
  * Internal: what the two WebSocket drivers share for permessage-deflate (RFC 7692), so that
  * the rules exist once. Not public API.
  *
- * Every message is compressed on its own - no context takeover, in either direction - so all
- * of this lives from the first frame of a message to its last and no longer.
+ * Without context takeover a message is compressed on its own, and all of this lives from the
+ * first frame of a message to its last. With it, a direction that takes over keeps its
+ * compressor or its decompressor (`kept`) from one message to the next, and the rest still
+ * lives for one message.
  */
 
 /* The largest piece a driver inflates into or compresses out of in one step. */
@@ -18,6 +20,13 @@
 
 /* Messages shorter than this are sent as they are: there is nothing in them to refer back to. */
 #define PROVEN_WS_DEFLATE_MIN 64u
+/* With takeover a message refers back to the ones before it, and only those shorter than this
+ * mostly grow (measured over messages of 1 to 40 bytes: 8 sent the fewest bytes). They are
+ * sent as they are and kept out of the compressor, as the peer keeps them out of its window. */
+#define PROVEN_WS_DEFLATE_MIN_TAKEOVER 8u
+/* The compressor's window under takeover when the configuration leaves it 0: about 28 KiB held
+ * against about 324 KiB at 15, for nearly the same size on short messages. */
+#define PROVEN_WS_DEFLATE_TAKEOVER_BITS 11
 
 /* The UTF-8 check of ws.c, for text that was inflated by a driver. */
 [[nodiscard]]
@@ -32,10 +41,13 @@ typedef struct {
     proven_u8 held_len;
     proven_u8 tail;                    /* how many of the four closing bytes have been fed */
     bool text;
+    bool kept;                         /* `z` is the connection's, kept between messages: not freed here */
 } proven_ws_inflate_t_;
 
+/* `kept`: null for a decompressor of this message only; otherwise the connection's, made here
+ * the first time (`*kept` null) and used from then on. */
 [[nodiscard]]
-proven_err_t proven_ws_inflate_begin_(proven_ws_inflate_t_ *m, proven_allocator_t alloc, bool text);
+proven_err_t proven_ws_inflate_begin_(proven_ws_inflate_t_ *m, proven_allocator_t alloc, bool text, proven_inflate_t **kept);
 
 /* Decode: takes some of `in` (the compressed bytes of one piece of the message), fills some
  * of `out`. With `last` - no more compressed bytes will come - the four bytes the sender left
@@ -84,8 +96,9 @@ struct proven_ws_stream;
 [[nodiscard]]
 proven_err_t proven_ws_event_client_new_(proven_allocator_t alloc, const proven_ws_event_config_t *config, const proven_ws_transport_t_ *transport,
                                          void *conn, proven_net_addr_t peer, struct proven_ws_stream **out);
-/* The upgrade was accepted, with compression or without: frames from here on. */
-void proven_ws_event_client_opened_(struct proven_ws_stream *ws, bool deflate);
+/* The upgrade was accepted, with compression (`terms`, what was agreed) or without (null):
+ * frames from here on. */
+void proven_ws_event_client_opened_(struct proven_ws_stream *ws, const proven_ws_deflate_terms_t *terms);
 /* The connection was not made, or the upgrade not granted, and is gone: on_closed, code 0. */
 void proven_ws_event_client_failed_(struct proven_ws_stream *ws, proven_err_t why);
 /* It was never started: freed, and nobody is told. */

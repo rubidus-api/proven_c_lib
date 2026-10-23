@@ -511,8 +511,9 @@ static bool ws_frame_send(cl_t *c, proven_u32 id, proven_ws_opcode_t op, const p
 }
 
 /* The server's frames that arrived on the captured stream, read with the codec: the next
- * message whole (inflated when compressed), or its close. */
-typedef struct { proven_ws_decoder_t dec; proven_size_t at; } ws_rd_t;
+ * message whole (inflated when compressed), or its close. The server keeps its window from
+ * one message to the next (context takeover), so the reader keeps one decompressor, `z`. */
+typedef struct { proven_ws_decoder_t dec; proven_size_t at; proven_inflate_t *z; } ws_rd_t;
 static bool ws_frame_read(cl_t *c, ws_rd_t *rd, bool *text, proven_byte_t *out, proven_size_t cap, proven_size_t *len, proven_u16 *close_code, bool deflate) {
     static proven_byte_t z[300100];
     proven_size_t zl = 0;
@@ -533,9 +534,10 @@ static bool ws_frame_read(cl_t *c, ws_rd_t *rd, bool *text, proven_byte_t *out, 
                 if (!compressed) return true;
                 if (!deflate) return false;
                 memcpy(z + zl, "\x00\x00\xff\xff", 4); zl += 4;
+                if (!rd->z && proven_inflate_create(g_heap, PROVEN_DEFLATE_RAW, &rd->z) != PROVEN_OK) return false;
                 proven_size_t used = 0;
-                return proven_inflate_all(g_heap, PROVEN_DEFLATE_RAW, (proven_mem_view_t){ z, zl }, (proven_mem_mut_t){ out, cap }, len, &used) == PROVEN_OK ||
-                       *len > 0;
+                bool done = false;
+                return proven_inflate(rd->z, (proven_mem_view_t){ z, zl }, &used, (proven_mem_mut_t){ out, cap }, len, &done) == PROVEN_OK && used == zl;
             }
         }
         (void)cl_pump(c, 10);
@@ -571,7 +573,7 @@ static void ws_over_h2(void) {
     proven_size_t len = 0;
     proven_u16 code = 0;
     bool text = false;
-    ws_rd_t rd;
+    ws_rd_t rd = { 0 };
     atomic_store(&g_ws_closed, 0);
 
     /* A server that does not offer it: the stream is refused. */
@@ -622,6 +624,11 @@ static void ws_over_h2(void) {
     PROVEN_TEST_ASSERT(ws_frame_send(&c, id, PROVEN_WS_TEXT, (const proven_byte_t *)words, sizeof words - 1) &&
                        ws_frame_read(&c, &rd, &text, got, sizeof got, &len, &code, true) && len == sizeof words - 1 && memcmp(got, words, len) == 0,
         "permessage-deflate is taken, and the answer comes back compressed and inflates to the message", "");
+    PROVEN_TEST_ASSERT(ws_frame_send(&c, id, PROVEN_WS_TEXT, (const proven_byte_t *)words, sizeof words - 1) &&
+                       ws_frame_read(&c, &rd, &text, got, sizeof got, &len, &code, true) && len == sizeof words - 1 && memcmp(got, words, len) == 0,
+        "and the same again, which the server compresses against the first: context takeover over HTTP/2", "");
+    proven_inflate_destroy(rd.z);
+    rd.z = NULL;
     /* An abort: RST_STREAM with CANCEL. */
     PROVEN_TEST_ASSERT(proven_h2_conn_reset(c.e, id, PROVEN_H2_CANCEL) == PROVEN_OK && cl_pump(&c, 1) == cl_pump(&c, 1), "the client resets the stream", "");
     PROVEN_TEST_ASSERT(ws_closed_is(2) && atomic_load(&g_ws_why) == PROVEN_ERR_RESET, "the server's WebSocket is told it ended with PROVEN_ERR_RESET, once", "");

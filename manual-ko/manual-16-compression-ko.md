@@ -162,6 +162,7 @@ proven_err_t proven_inflate_create(proven_allocator_t alloc, proven_deflate_form
 proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_size_t *consumed,
                             proven_mem_mut_t out, proven_size_t *produced, bool *done);
 void proven_inflate_reset(proven_inflate_t *z);
+void proven_inflate_restart(proven_inflate_t *z);
 void proven_inflate_destroy(proven_inflate_t *z);
 ```
 
@@ -188,13 +189,15 @@ void proven_inflate_destroy(proven_inflate_t *z);
 | `PROVEN_DEFLATE_FLUSH_FINISH` | 그것이 마지막 입력이었다: 스트림을 끝낸다 | 끝에서 한 번. `*done`이 될 때까지 이것과 함께, 자리를 더 주며 계속 부른다 |
 
 sync flush는 바이트 경계에서 끝나고, 그것이 내는 마지막 네 바이트는 언제나 `00 00 ff ff`다. WebSocket의
-`permessage-deflate`는 메시지마다 그 네 바이트를 뗀 sync flush로 보내고, 받는 쪽이 그것을 다시 붙인다([12장](manual-12-websocket-ko.md) 9절: WebSocket 드라이버는 그 네 바이트를 떼고 다시 붙이며, 메시지마다 새로 시작한다).
+`permessage-deflate`는 메시지마다 그 네 바이트를 뗀 sync flush로 보내고, 받는 쪽이 그것을 다시 붙인다([12장](manual-12-websocket-ko.md) 9절: WebSocket 드라이버는 그 네 바이트를 떼고 다시 붙이며, context takeover에서는 연결 내내 압축기 하나와 해제기 하나를 쓴다).
 raw 스트림이 끝나지 않아도 되는 까닭도 그것이다: 해제기는 조각조각 받고, `*done`은 참이 되지 않으며,
 앞선 조각에 대해 기억하는 것이 뒤의 조각을 작게 만든다.
 
 `proven_deflate_reset`과 `proven_inflate_reset`은 같은 객체에서 새 스트림을 시작한다. 하나 더 만드는
 것보다 싸다. `*done` 뒤에, 첫 gzip 멤버에 이어지는 둘째를 읽어야 하는 해제기는 reset하고 첫째가 끝난
-곳부터 받는다.
+곳부터 받는다. `proven_inflate_restart`도 새 스트림을 시작하지만 마지막 32 KiB를 지킨다. 그래서 새
+스트림의 일치가 옛 스트림 안을 가리킬 수 있다. context takeover를 쓰는 `permessage-deflate`를 위한
+것이다: 보내는 쪽이 메시지를 마지막 블록으로 끝내도, 다음 메시지는 여전히 앞의 메시지들을 가리킨다.
 
 테스트 스위트가 컴파일하고 실행한다:
 

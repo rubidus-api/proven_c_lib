@@ -29,7 +29,8 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
     if (!last) return;
     char answer[64];
     int n = snprintf(answer, sizeof answer, "%u bytes", (unsigned)app->received);
-    /* Sent like any message. Short ones go as they are: under 64 bytes there is nothing to gain. */
+    /* Sent like any message. Short ones go as they are: under 8 bytes there is nothing to gain
+     * (under 64 with compress_no_takeover, where a message has only itself to refer to). */
     (void)proven_ws_stream_send(ws, true, (proven_mem_view_t){ (const proven_byte_t *)answer, (proven_size_t)n });
 }
 

@@ -653,12 +653,21 @@ bool proven_ws_stream_compressed(const proven_ws_stream_t *ws);          /* ws_e
 proven_err_t proven_ws_deflate_accept(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len, int *window_bits);
 proven_err_t proven_ws_check_response_deflate(const proven_http_response_t *response, proven_u8str_view_t key,
                                               proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate);
+
+#define PROVEN_WS_DEFLATE_OFFER_TAKEOVER "permessage-deflate; client_max_window_bits"
+/* proven_ws_deflate_terms_t: bool server_takeover, client_takeover; int server_window_bits, client_window_bits; */
+proven_err_t proven_ws_deflate_accept_takeover(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len,
+                                               proven_ws_deflate_terms_t *terms);
+proven_err_t proven_ws_check_response_takeover(const proven_http_response_t *response, proven_u8str_view_t key,
+                                               proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate,
+                                               proven_ws_deflate_terms_t *terms);
+void proven_inflate_restart(proven_inflate_t *z);                         /* deflate.h, 16장 */
 void proven_ws_decoder_allow_compressed(proven_ws_decoder_t *decoder);
 ```
 
 WebSocket 연결은 핸드셰이크에서 메시지를 압축하기로 합의할 수 있다: 이 확장은
 `permessage-deflate`(RFC 7692)라고 부르고, 모든 브라우저가 제안하며, [16장](manual-16-compression-ko.md)의
-DEFLATE다. JSON 한 쪽이나 로그 여러 줄은 3분의 1 이하로 줄어든다. 수십 바이트짜리 메시지는 얻는 것이 적은데, 까닭은 아래에 있다.
+DEFLATE다. JSON 한 쪽이나 로그 여러 줄은 3분의 1 이하로 줄어든다. 각 쪽이 메시지에서 다음 메시지로 윈도를 이어 가므로, 앞선 메시지와 닮은 짧은 메시지도 그만큼 줄어든다.
 
 **요청하기 전에는 꺼져 있다.** 연결 설정 - `proven_ws_conn_config_t`나 15장의
 `proven_ws_event_config_t` - 에서 `compress`를 켠다. 그러면 클라이언트는 확장을 제안하고 서버는 제안을
@@ -668,19 +677,40 @@ DEFLATE다. JSON 한 쪽이나 로그 여러 줄은 3분의 1 이하로 줄어�
 
 | | 압축에 합의했을 때 |
 |---|---|
-| 보내는 메시지 | 64바이트 이상이면 압축된다. 더 짧으면 그대로 간다 |
+| 보내는 메시지 | 8바이트 이상이면 압축된다(`compress_no_takeover`에서는 64바이트). 더 짧으면 그대로 가고, 윈도에도 들어가지 않는다 |
 | 받는 메시지 | 보기 전에 풀린다: `proven_ws_conn_receive`에서는 통째로, 이벤트 구동 서버에서는 최대 16 KiB 조각으로 |
 | `max_message_bytes` | **풀린** 크기를 센다. 몇백 바이트가 그것을 넘겨 펼쳐지면, 너무 큰 평문 메시지와 마찬가지로 1009로 연결이 끝난다 |
 | 텍스트 | 푼 다음 UTF-8인지 검사한다. 아니면 1007 |
 | 풀리지 않는 바이트 | 1007 |
 | 합의하지 않은 연결에서 압축 표시가 된 프레임 | 1002 |
 
-**메시지는 하나하나 따로 압축된다.** 확장은 각 쪽이 32 KiB 윈도를 한 메시지에서 다음 메시지로 이어 갈
-수 있게 하는데, 작고 비슷한 메시지에는 도움이 된다 - 그리고 연결이 열려 있는 내내 연결마다 압축기와
-해제기를 하나씩 쥐게 된다. 이 라이브러리는 언제나 다른 쪽 형태("no context takeover", 양방향)로
-협상한다: 압축기는 한 번의 전송 동안만, 해제기는 압축된 메시지의 첫 프레임부터 마지막 프레임까지만
-존재하고, **유휴 연결은 압축 상태를 전혀 쥐지 않는다**. 조용한 연결 만 개는 압축이 없을 때와 같은
-비용이 든다. 대가는 짧은 메시지가 자기 자신만을 참조할 수 있다는 것이다.
+**각 쪽이 메시지에서 다음 메시지로 윈도를 이어 간다**("context takeover"): 메시지가 앞선 메시지들을
+참조한다. 작고 비슷한 메시지가 이득을 보는 곳이 거기다 - 이 라이브러리의 압축기로, 종류마다 메시지
+2,000개를 잰 값이다:
+
+| 메시지 | 하나하나 따로 압축 | takeover (기본 윈도 11) | takeover, 윈도 15 |
+|---|---|---|---|
+| 채팅 JSON, 약 140바이트 | 원래 크기의 80.7% | 22.1% | 17.3% |
+| 시세, 약 60바이트 | 100% (너무 짧아 압축 안 함) | 39.3% | 35.5% |
+| ping, 약 25바이트 | 100% (너무 짧아 압축 안 함) | 26.1% | 26.1% |
+| 게임 상태, 약 750바이트 | 30.4% | 17.4% | 16.7% |
+
+대가는 첫 압축 메시지부터 **연결이 끝날 때까지** 드는 메모리다: 압축기(기본 윈도 11비트에서 약
+28 KiB, 15에서 324 KiB)와 해제기(약 35 KiB) - 한 번씩 보내고 받은 연결에서 약 64 KiB로 쟀다
+(`test_unit_ws_event`). 메시지 하나의 시간은 짧은 메시지에서 거의 같고, 750바이트짜리는 따로 압축할 때
+24 us에 비해 38 us였다.
+
+설정의 `compress_no_takeover`는 다른 형태("no context takeover", 양방향)를 요청한다. v0.80.0 전에는
+이것뿐이었다: 압축기는 한 번의 전송 동안만, 해제기는 압축된 메시지의 첫 프레임부터 마지막 프레임까지만
+존재하고, **유휴 연결은 압축 상태를 전혀 쥐지 않는다** - 조용한 연결 만 개는 압축이 없을 때와 같은 비용이
+든다. 어느 쪽이든 이것을 요청할 수 있다: takeover를 쓰는 서버도 takeover를 막는 제안에는 그대로 답하고,
+takeover를 쓰는 클라이언트도 takeover를 막는 답을 받아들인다. 이쪽의 윈도를 제한하는 상대(제안의
+`server_max_window_bits`, 답의 `client_max_window_bits`)는 따른다. 이 압축기의 최소보다 작은 256바이트로
+제한하는 상대에게는 이쪽 메시지를 압축 없이 보낸다.
+
+`proven_ws_conn_open`은 핸드셰이크를 하지 않는다: 양 끝이 같게 말해야 한다 - takeover, 또는
+`compress_no_takeover`. v0.80.0 전에 빌드한 끝은 언제나 takeover 없음을 뜻한다. 다른 끝에
+`compress_no_takeover`를 주어라. 그러지 않으면 그 끝의 두 번째 압축 메시지는 1007로 거부된다.
 
 ### 예제: 필드 하나, 그리고 그것이 바꾸는 것
 
@@ -716,7 +746,8 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
     if (!last) return;
     char answer[64];
     int n = snprintf(answer, sizeof answer, "%u bytes", (unsigned)app->received);
-    /* 여느 메시지처럼 보낸다. 짧은 것은 그대로 간다: 64바이트 미만에서는 얻을 것이 없다. */
+    /* 여느 메시지처럼 보낸다. 짧은 것은 그대로 간다: 8바이트 미만에서는 얻을 것이 없다
+     * (compress_no_takeover에서는 64바이트 미만. 메시지가 자기 자신만 참조할 수 있기 때문이다). */
     (void)proven_ws_stream_send(ws, true, (proven_mem_view_t){ (const proven_byte_t *)answer, (proven_size_t)n });
 }
 
@@ -835,8 +866,9 @@ int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---- 핸드셰이크 ------------------------------------------------------------------
-    /* 클라이언트는 헤더 하나로 요청한다. PROVEN_WS_DEFLATE_OFFER는 이 라이브러리가 말하는 형태다:
-     * 양쪽 방향 모두, 메시지 하나하나를 따로 압축한다. */
+    /* 클라이언트는 헤더 하나로 요청한다. PROVEN_WS_DEFLATE_OFFER는 이 라이브러리가 말하는 두
+     * 형태 가운데 단순한 쪽이다: 양쪽 방향 모두, 메시지 하나하나를 따로 압축한다. 다른 하나인
+     * context takeover는 맨 끝에 있다. */
     proven_http_header_t asked[] = {
         { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER) },
     };
@@ -928,6 +960,44 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_ws_frame_write((proven_mem_mut_t){ header, sizeof header }, &header_len, &frame) == PROVEN_OK && header[0] == 0xc1, "a frame header with the bit");
     printf("%u bytes of text go out as %u\n", (unsigned)(sizeof said - 1), (unsigned)(header_len + payload));
     EXAMPLE_REQUIRE(header_len + payload < sizeof said - 1, "fewer than were said");
+
+    // ---- context takeover와 함께 -------------------------------------------------------
+    /* 다른 형태: 양쪽이 메시지에서 다음 메시지로 창을 이어 가므로, 메시지가 앞선 메시지들을
+     * 가리킬 수 있다. 클라이언트는 PROVEN_WS_DEFLATE_OFFER_TAKEOVER를 제안하고, 서버는
+     * proven_ws_deflate_accept_takeover로 답한다. 이 함수는 제안이 요청한 곳에서만 takeover를
+     * 막고, 무엇이 합의되었는지 알려 준다. */
+    proven_http_header_t asked_take[] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER_TAKEOVER) } };
+    proven_http_request_t request_take = { .headers = asked_take, .header_count = 1 };
+    proven_ws_deflate_terms_t terms;
+    answer_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept_takeover(&request_take, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &terms) == PROVEN_OK &&
+                    terms.server_takeover && terms.client_takeover, "takeover is agreed both ways");
+    printf("the server answers: %.*s\n", (int)answer_len, (const char *)answer);
+    answered[3].value = (proven_u8str_view_t){ answer, answer_len };
+    proven_ws_deflate_terms_t seen;
+    EXAMPLE_REQUIRE(proven_ws_check_response_takeover(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed, &seen) == PROVEN_OK &&
+                    compressed && seen.server_takeover && seen.client_takeover, "and the client sees the same terms");
+
+    /* takeover하는 쪽은 연결에 압축기 하나를 두고 메시지마다 sync flush로 끝낸다. 읽는 쪽은
+     * 해제기 하나를 둔다. 같은 줄을 두 번: 두 번째는 첫 번째를 가리키는 참조로 나간다. */
+    EXAMPLE_REQUIRE(proven_deflate_create(&options, &c) == PROVEN_OK && proven_inflate_create(heap, PROVEN_DEFLATE_RAW, &z) == PROVEN_OK, "one of each, kept");
+    for (int round = 0; round < 2; ++round) {
+        EXAMPLE_REQUIRE(proven_deflate(c, (proven_mem_view_t){ (const proven_byte_t *)said, sizeof said - 1 }, &taken, (proven_mem_mut_t){ packed, sizeof packed }, &made,
+                                       PROVEN_DEFLATE_FLUSH_SYNC, &ended) == PROVEN_OK && made > 4, "a message through the kept compressor");
+        printf("message %d goes out as %u bytes\n", round + 1, (unsigned)(made - 4));
+        if (round == 1) EXAMPLE_REQUIRE(made - 4 < 10, "the second is a few bytes: a reference into the first");
+        /* 읽는 쪽: 도착한 그대로의 payload - 빠진 네 바이트를 다시 붙인 것. */
+        proven_byte_t back[128];
+        proven_size_t got = 0;
+        EXAMPLE_REQUIRE(proven_inflate(z, (proven_mem_view_t){ packed, made }, &taken, (proven_mem_mut_t){ back, sizeof back }, &got, &ended) == PROVEN_OK &&
+                        got == sizeof said - 1 && memcmp(back, said, got) == 0, "and the kept decompressor reads it");
+        /* 보내는 쪽은 메시지를 마지막 블록으로 끝낼 수도 있다(RFC 7692, 7.2.3.4). 그러면 해제기가
+         * `ended`를 알리고, 읽는 쪽은 창을 지키는 proven_inflate_restart로 이어 간다 - 창을 잊는
+         * reset이 아니다. */
+        if (ended) proven_inflate_restart(z);
+    }
+    proven_deflate_destroy(c);
+    proven_inflate_destroy(z);
     return EXAMPLE_OK();
 }
 ```
@@ -937,12 +1007,18 @@ int main(void) {
 | API | 의도 | 반환 |
 |---|---|---|
 | `compress` (두 연결 설정) | 확장을 제안한다(클라이언트) 또는 제안받으면 수락한다(서버). | - |
-| `compress_level`, `compress_window_bits` (둘 다) | 16장 4절과 같다: 1부터 9 또는 -1. 9부터 15. 0이면 6과 15. | 범위를 벗어나면 `INVALID_ARG`. |
+| `compress_level`, `compress_window_bits` (둘 다) | 16장 4절과 같다: 1부터 9 또는 -1. 9부터 15. 0이면 6, 그리고 takeover에서 11, 아니면 15. | 범위를 벗어나면 `INVALID_ARG`. |
+| `compress_no_takeover` (둘 다) | 메시지를 하나하나 따로 압축하고 메시지 사이에 아무것도 남기지 않는다 - v0.80.0 전의 형태. | - |
 | `proven_ws_conn_compressed(conn)`, `proven_ws_stream_compressed(ws)` | 상대가 동의했는가. | `bool`. |
 | `proven_ws_conn_set_compress(conn, on)`, `proven_ws_stream_set_compress(ws, on)` | 이쪽이 이제부터 보내는 메시지를 압축할지. 압축하면 안 되는 한 메시지 - 상대가 고른 텍스트 옆의 비밀, 또는 이미 압축된 바이트 - 를 위한 것: 끄고, 보내고, 켠다. 압축에 합의하지 않은 연결에서는 아무 일도 하지 않는다. | 없음. |
 | `PROVEN_WS_DEFLATE_OFFER` | 클라이언트가 보내는 `Sec-WebSocket-Extensions` 값. | 문자열 리터럴. |
 | `proven_ws_deflate_accept(request, out, &len, &window_bits)` | 요청의 제안 가운데 서버가 고른다. 답을 쓴다. | `proven_err_t`: 맞춰 줄 제안이 없으면 `NOT_FOUND` - 압축 없이 간다. `OUT_OF_BOUNDS`(`PROVEN_WS_DEFLATE_ANSWER_MAX` 바이트면 충분하다). |
 | `proven_ws_check_response_deflate(response, key, offered, &protocol, &deflate)` | 제안을 보낸 클라이언트를 위한 `proven_ws_check_response`. | 같고, 제안하지 않은 형태의 답에는 `INVALID_FORMAT`. |
+| `PROVEN_WS_DEFLATE_OFFER_TAKEOVER` | takeover를 요청하는 클라이언트가 보내는 값. | 문자열 리터럴. |
+| `proven_ws_deflate_accept_takeover(request, out, &len, &terms)` | 윈도를 이어 가는 서버의 `proven_ws_deflate_accept`: 제안이 요청한 곳에서만 takeover를 막는다. `terms`는 합의된 것을 말한다. | `proven_ws_deflate_accept`와 같다. |
+| `proven_ws_check_response_takeover(response, key, offered, &protocol, &deflate, &terms)` | `PROVEN_WS_DEFLATE_OFFER_TAKEOVER`를 보낸 클라이언트의 검사: 네 매개변수 무엇이든 한 번씩. `terms`는 합의된 것을 말한다. | 같고, 매개변수가 두 번이거나 모르는 것이거나 범위 밖이면 `INVALID_FORMAT`. |
+| `proven_ws_deflate_terms_t` | 누가 윈도를 이어 가도 되는지(`server_takeover`, `client_takeover`), 각 쪽 윈도가 얼마까지인지(`server_window_bits`, `client_window_bits`. 8이면 이쪽은 압축할 수 없어 압축 없이 보낸다). | - |
+| `proven_inflate_restart(z)` | `ended` 뒤에 윈도를 지키며 이어 간다. takeover를 쓰는 상대가 메시지를 마지막 블록으로 끝냈을 때. | 없음. |
 | `proven_ws_decoder_allow_compressed(decoder)` | 디코더가 압축된 메시지를 `compressed` 표시와 함께 통과시키게 한다. 풀지는 않는다. | 없음. |
 | `proven_ws_frame_t`의 `rsv1` | 압축된 메시지를 표시하는 비트. 첫 프레임에 있다. | - |
 
@@ -950,9 +1026,10 @@ int main(void) {
 
 - **비밀과 상대가 고른 글자가 함께 실린 메시지는 압축하지 말 것.** 압축된 메시지의 길이는 연결을
   지켜보는 이에게 그 둘이 얼마나 겹치는지를 알려 준다. TLS가 있든 없든 그렇다 - 16장 5절에서 설명한
-  누출이다. 메시지를 하나씩 따로 압축하므로 한 메시지가 다른 메시지를 새게 하지는 못한다. 한 메시지
-  안의 것은 여전히 샐 수 있다. 여기서 압축은 연결 단위다: 그런 메시지가 오가는 연결은 압축을 요청하지
-  말아야 한다.
+  누출이다. takeover(기본)에서는 비밀과 상대가 고른 글자가 같은 메시지에 있지 않아도 된다: 앞선
+  메시지가 뒤 메시지의 길이도 바꾼다. `compress_no_takeover`에서는 메시지를 하나씩 따로 압축하므로 한
+  메시지가 다른 메시지를 새게 하지는 못한다. 한 메시지 안의 것은 여전히 샐 수 있다. 여기서 압축은 연결
+  단위다: 그런 메시지가 오가는 연결은 압축을 요청하지 말아야 한다.
 - **한도는 풀린 크기에 걸리며, 정해 두어야 한다.** 킬로바이트가 기가바이트가 되는 것을 막는 것이
   `max_message_bytes`다. 기본값은 1 MiB.
 - **raw DEFLATE에는 체크섬이 없다.** 전송 중 손상된 압축 메시지는 오류 없이 다른 바이트로 풀릴 수
@@ -960,20 +1037,22 @@ int main(void) {
 - **맞춰 줄 수 없는 것만 제안하는 상대는 거절하지 않고 압축 없이 응대한다.** 그런 제안은 하나뿐이다:
   256바이트 압축 윈도(`server_max_window_bits=8`)인데, 이 압축기에는 그 크기가 없다. 클라이언트 자신의
   윈도 크기(`client_max_window_bits`)는 받아들이고 무시한다: 어떤 윈도든 읽을 수 있다.
-- **다른 형태로 수락하는 서버는 클라이언트가 거부한다.** `server_no_context_takeover` 없이 제안을
-  받아들이는 서버는 메시지에 걸쳐 압축할 텐데, 이쪽은 그것을 읽지 않는다. 연결은
+- **`compress_no_takeover`인 클라이언트는 다른 형태로 답하는 서버를 거부한다.** 그 제안을
+  `server_no_context_takeover` 없이 받아들이는 서버는 요청과 달리 메시지에 걸쳐 압축할 것이다. 연결은
   `PROVEN_ERR_INVALID_FORMAT`으로 실패한다. RFC 7692를 따르는 서버는 제안을 그대로 수락하거나 거절한다.
-- **압축된 메시지가 오가는 동안의 메모리:** 하나를 푸는 데 약 35 KiB(이벤트 구동 서버에서는 51 KiB),
-  하나를 압축하는 데 윈도에 따라 11 KiB에서 325 KiB까지이며 메시지가 필요로 하는 것보다 크지 않다.
-  메시지를 위해 할당하고 메시지와 함께 해제한다 - 그래서 압축을 쓰는 바쁜 연결은, 쓰지 않는 연결이
-  하지 않는 할당을 메시지마다 한다.
+- **메모리.** takeover에서는: 약 28 KiB(윈도 11)와 35 KiB를 첫 압축 메시지부터 끝까지 쥐고, 이벤트 구동
+  서버는 메시지가 도착하는 동안 16 KiB를 더 쓴다. `compress_no_takeover`에서는: 메시지 하나를 푸는 데 약
+  35 KiB(이벤트 구동 서버에서는 51 KiB), 하나를 압축하는 데 윈도에 따라 11 KiB에서 325 KiB까지이며
+  메시지가 필요로 하는 것보다 크지 않고, 메시지를 위해 할당해 메시지와 함께 해제한다 - 그래서 바쁜 연결은
+  takeover 연결이 하지 않는 할당을 메시지마다 한다.
 - **코덱만 쓸 때 텍스트 검사는 여러분 몫이다.** 디코더는 아직 텍스트가 아닌 바이트를 검사할 수 없다.
   푼 다음에 검사한다. 그리고 나오는 양을 센다: 디코더의 한도는 압축된 바이트를 센다.
 
 ## 10. 여기에 없는 것
 
-- **윈도를 한 메시지에서 다음 메시지로 이어 가는 압축**("context takeover"), 그리고
-  `permessage-deflate` 말고 다른 확장. 9절.
+- **`permessage-deflate` 말고 다른 확장.** 9절.
+- **자기 takeover는 지키면서 클라이언트의 takeover만 막는 서버**(약 64 KiB 대신 28 KiB를 쥘 것이다):
+  서버는 각 제안이 허락하는 만큼만 정확히 takeover한다.
 - **여러 연결을 한꺼번에 기다리는 호출.** §5를 보라.
 - **한 연결에서 동시에 보내고 받기.**
 - **자동 ping, 재연결, 백오프.** 정책이고, 여러분의 것이다.

@@ -318,6 +318,18 @@ static void cases(bool tls) {
     proven_ws_stream_set_compress(c.ws, false);
     PROVEN_TEST_ASSERT(echoed(&c, true, g_msg, 5000), "and one sent as it is, on the same connection", how);
     proven_ws_stream_set_compress(c.ws, true);
+    /* Takeover, the default: short similar messages, over and over, each referring back. */
+    bool again = true;
+    for (int i = 0; i < 20 && again; ++i) again = echoed(&c, i % 2 == 0, g_msg, i % 3 == 0 ? 7 : i % 3 == 1 ? 8 : 300);
+    PROVEN_TEST_ASSERT(again, "twenty short messages, on each side of the 8 bytes compression begins at with takeover, go and come back", how);
+    proven_ws_stream_close(c.ws, 1000, sv(""));
+    PROVEN_TEST_ASSERT(turn_until(&c.closes, 1, 5000) && c.code == 1000, "closed", how);
+    proven_ws_event_connect_options_t fresh = zip;
+    fresh.ws.compress_no_takeover = true;
+    PROVEN_TEST_ASSERT(dial(&c, tls, at.port, "/echo", fresh) == PROVEN_OK && turn_until(&c.opens, 1, 5000) && c.compressed_at_open, "compression offered without takeover: agreed", how);
+    again = true;
+    for (int i = 0; i < 20 && again; ++i) again = echoed(&c, i % 2 == 0, g_msg, i % 2 ? 64 : 3000);
+    PROVEN_TEST_ASSERT(again, "and twenty messages go and come back, each compressed on its own", how);
     proven_ws_stream_close(c.ws, 1000, sv(""));
     PROVEN_TEST_ASSERT(turn_until(&c.closes, 1, 5000) && c.code == 1000, "closed", how);
     PROVEN_TEST_ASSERT(dial(&c, tls, at.port, "/plain", zip) == PROVEN_OK && turn_until(&c.opens, 1, 5000) && !c.compressed_at_open && echoed(&c, true, g_msg, 20000),

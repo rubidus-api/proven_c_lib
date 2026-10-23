@@ -145,7 +145,7 @@ bool proven_ws_request_offers(const proven_http_request_t *request, proven_u8str
 /* One `permessage-deflate` element of Sec-WebSocket-Extensions, taken apart. */
 typedef struct {
     bool server_no_takeover, client_no_takeover, server_bits_seen, client_bits_seen;
-    int server_bits;
+    int server_bits, client_bits;      /* 15 when not given (or, for the client's in an offer, given bare) */
     bool whole;                        /* the element was the only thing in the value */
 } proven_ws_deflate_params_t;
 
@@ -169,7 +169,7 @@ static bool ws_deflate_element(proven_u8str_view_t list, bool offer, proven_ws_d
     while (end < list.size && list.ptr[end] != ',') end++;
     if (rest) *rest = (proven_u8str_view_t){ .ptr = list.ptr + (end < list.size ? end + 1 : end), .size = list.size - (end < list.size ? end + 1 : end) };
     proven_u8str_view_t element = { .ptr = list.ptr, .size = end };
-    *out = (proven_ws_deflate_params_t){ .server_bits = 15 };
+    *out = (proven_ws_deflate_params_t){ .server_bits = 15, .client_bits = 15 };
     bool named = false;
     proven_size_t start = 0;
     for (proven_size_t i = 0; i <= element.size; ++i) {
@@ -198,8 +198,10 @@ static bool ws_deflate_element(proven_u8str_view_t list, bool offer, proven_ws_d
             out->server_bits_seen = true;
             out->server_bits = bits;
         } else if (ws_eq_nocase(name, "client_max_window_bits")) {
-            if (out->client_bits_seen || (has_value ? ws_window_value(value) == 0 : !offer)) return false;
+            int bits = has_value ? ws_window_value(value) : 0;
+            if (out->client_bits_seen || (has_value ? bits == 0 : !offer)) return false;
             out->client_bits_seen = true;
+            if (bits != 0) out->client_bits = bits;
         } else {
             return false;
         }
@@ -215,8 +217,10 @@ static bool ws_deflate_parse(proven_u8str_view_t value, bool offer, proven_ws_de
     return true;
 }
 
-proven_err_t proven_ws_deflate_accept(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len, int *window_bits) {
-    if (!request || !len || !window_bits || (out.size > 0 && !out.ptr) || *len > out.size) return PROVEN_ERR_INVALID_ARG;
+/* Both servers' choice. Without `takeover`, the answer forbids it both ways, as it always has;
+ * with it, only where the offer asked. */
+static proven_err_t ws_deflate_answer(const proven_http_request_t *request, bool takeover, proven_mem_mut_t out, proven_size_t *len,
+                                      proven_ws_deflate_terms_t *terms) {
     for (proven_size_t i = 0; i < request->header_count; ++i) {
         if (!ws_eq_nocase(request->headers[i].name, "sec-websocket-extensions")) continue;
         proven_u8str_view_t rest = request->headers[i].value;
@@ -228,27 +232,51 @@ proven_err_t proven_ws_deflate_accept(const proven_http_request_t *request, prov
             /* This compressor's smallest window is 512 bytes; an offer that insists on 256
              * is one for the next offer, or for no compression. */
             if (!ok || p.server_bits < 9) continue;
-            static const char base[] = "permessage-deflate; server_no_context_takeover; client_no_context_takeover";
+            static const char name[] = "permessage-deflate";
+            static const char server_no[] = "; server_no_context_takeover";
+            static const char client_no[] = "; client_no_context_takeover";
             static const char bits[] = "; server_max_window_bits=";
-            proven_size_t need = sizeof base - 1 + (p.server_bits_seen ? sizeof bits - 1 + 2 : 0);
+            bool say_server = !takeover || p.server_no_takeover, say_client = !takeover || p.client_no_takeover;
+            proven_size_t need = sizeof name - 1 + (say_server ? sizeof server_no - 1 : 0) + (say_client ? sizeof client_no - 1 : 0) +
+                                 (p.server_bits_seen ? sizeof bits - 1 + 2 : 0);
             if (out.size - *len < need) return PROVEN_ERR_OUT_OF_BOUNDS;
             proven_size_t at = *len;
-            for (proven_size_t k = 0; k < sizeof base - 1; ++k) out.ptr[at++] = (proven_byte_t)base[k];
+            for (proven_size_t k = 0; k < sizeof name - 1; ++k) out.ptr[at++] = (proven_byte_t)name[k];
+            for (proven_size_t k = 0; say_server && k < sizeof server_no - 1; ++k) out.ptr[at++] = (proven_byte_t)server_no[k];
+            for (proven_size_t k = 0; say_client && k < sizeof client_no - 1; ++k) out.ptr[at++] = (proven_byte_t)client_no[k];
             if (p.server_bits_seen) {
                 for (proven_size_t k = 0; k < sizeof bits - 1; ++k) out.ptr[at++] = (proven_byte_t)bits[k];
                 if (p.server_bits >= 10) out.ptr[at++] = '1';
                 out.ptr[at++] = (proven_byte_t)('0' + p.server_bits % 10);
             }
             *len = at;
-            *window_bits = p.server_bits;
+            *terms = (proven_ws_deflate_terms_t){ .server_takeover = !say_server, .client_takeover = !say_client,
+                                                  .server_window_bits = p.server_bits, .client_window_bits = 15 };
             return PROVEN_OK;
         }
     }
     return PROVEN_ERR_NOT_FOUND;
 }
 
+proven_err_t proven_ws_deflate_accept(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len, int *window_bits) {
+    if (!request || !len || !window_bits || (out.size > 0 && !out.ptr) || *len > out.size) return PROVEN_ERR_INVALID_ARG;
+    proven_ws_deflate_terms_t terms;
+    proven_err_t e = ws_deflate_answer(request, false, out, len, &terms);
+    if (e == PROVEN_OK) *window_bits = terms.server_window_bits;
+    return e;
+}
+
+proven_err_t proven_ws_deflate_accept_takeover(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len,
+                                               proven_ws_deflate_terms_t *terms) {
+    if (!request || !len || !terms || (out.size > 0 && !out.ptr) || *len > out.size) return PROVEN_ERR_INVALID_ARG;
+    return ws_deflate_answer(request, true, out, len, terms);
+}
+
+/* `deflate` null: nothing was offered. `terms` null: PROVEN_WS_DEFLATE_OFFER was; otherwise
+ * PROVEN_WS_DEFLATE_OFFER_TAKEOVER. */
 static proven_err_t ws_check_response(const proven_http_response_t *response, proven_u8str_view_t key,
-                                     proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate) {
+                                     proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate,
+                                     proven_ws_deflate_terms_t *terms) {
     if (!response || !protocol) return PROVEN_ERR_INVALID_ARG;
     *protocol = (proven_u8str_view_t){0};
     const proven_http_header_t *h = response->headers;
@@ -264,12 +292,18 @@ static proven_err_t ws_check_response(const proven_http_response_t *response, pr
         !ws_eq(ws_trim(got), (proven_u8str_view_t){ .ptr = want, .size = sizeof want })) return PROVEN_ERR_INVALID_FORMAT;
     proven_size_t extensions = proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Extensions"));
     if (extensions != 0) {
-        /* Only a client that offered permessage-deflate may be answered with it, once, in the
-         * one form that was offered. */
+        /* Only a client that offered permessage-deflate may be answered with it, once, in a
+         * form that was offered: without takeover, the server must keep nothing between
+         * messages, and the client's window was not put up for negotiation. */
         proven_u8str_view_t value;
         if (!deflate || extensions != 1 || !proven_http_header_find(h, n, ws_lit("Sec-WebSocket-Extensions"), &value)) return PROVEN_ERR_INVALID_FORMAT;
         proven_ws_deflate_params_t params;
-        if (!ws_deflate_parse(value, false, &params) || !params.whole || !params.server_no_takeover || params.client_bits_seen) return PROVEN_ERR_INVALID_FORMAT;
+        if (!ws_deflate_parse(value, false, &params) || !params.whole) return PROVEN_ERR_INVALID_FORMAT;
+        if (!terms && (!params.server_no_takeover || params.client_bits_seen)) return PROVEN_ERR_INVALID_FORMAT;
+        if (terms) {
+            *terms = (proven_ws_deflate_terms_t){ .server_takeover = !params.server_no_takeover, .client_takeover = !params.client_no_takeover,
+                                                  .server_window_bits = params.server_bits, .client_window_bits = params.client_bits };
+        }
         *deflate = true;
     }
     proven_size_t protocols = proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Protocol"));
@@ -286,14 +320,25 @@ static proven_err_t ws_check_response(const proven_http_response_t *response, pr
 
 proven_err_t proven_ws_check_response(const proven_http_response_t *response, proven_u8str_view_t key,
                                       proven_u8str_view_t offered, proven_u8str_view_t *protocol) {
-    return ws_check_response(response, key, offered, protocol, (void *)0);
+    return ws_check_response(response, key, offered, protocol, (void *)0, (void *)0);
 }
 
 proven_err_t proven_ws_check_response_deflate(const proven_http_response_t *response, proven_u8str_view_t key,
                                               proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate) {
     if (!deflate) return PROVEN_ERR_INVALID_ARG;
     *deflate = false;
-    return ws_check_response(response, key, offered, protocol, deflate);
+    return ws_check_response(response, key, offered, protocol, deflate, (void *)0);
+}
+
+proven_err_t proven_ws_check_response_takeover(const proven_http_response_t *response, proven_u8str_view_t key,
+                                               proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate,
+                                               proven_ws_deflate_terms_t *terms) {
+    if (!deflate || !terms) return PROVEN_ERR_INVALID_ARG;
+    *deflate = false;
+    *terms = (proven_ws_deflate_terms_t){ 0 };
+    proven_err_t e = ws_check_response(response, key, offered, protocol, deflate, terms);
+    if (e != PROVEN_OK) { *deflate = false; *terms = (proven_ws_deflate_terms_t){ 0 }; }
+    return e;
 }
 
 // -----------------------------------------------------------------------------

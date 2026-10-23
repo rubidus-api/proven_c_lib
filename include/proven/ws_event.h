@@ -65,7 +65,8 @@ typedef struct {
     proven_u32 close_timeout_ms;           /**< how long to wait for the client's answer to a close, counted from the last output it took. 0: 5 s */
     bool compress;                         /**< accept compressed messages (`permessage-deflate`) when the client offers them. See proven_ws_stream_compressed. false: not */
     int compress_level;                    /**< 1 (fastest) to 9 (smallest); -1 stores without compressing. 0: 6 */
-    int compress_window_bits;              /**< how far back the compressor looks, 9 to 15: its memory during one send runs from about 11 KiB to about 325 KiB, less for a message smaller than the window. 0: 15 */
+    int compress_window_bits;              /**< how far back the compressor looks, 9 to 15: about 11 KiB of memory at 9, 28 KiB at 11, 325 KiB at 15 (without takeover only during one send, and less for a message smaller than the window). 0: 11 with takeover, 15 without */
+    bool compress_no_takeover;             /**< with `compress`: compress each message on its own, keeping nothing between messages (no context takeover), as before v0.80.0. Short, similar messages then shrink far less, and an idle connection holds no compression state. false: each side may keep its window (see proven_ws_stream_compressed) */
 } proven_ws_event_config_t;
 
 /**
@@ -210,20 +211,27 @@ proven_net_addr_t proven_ws_stream_peer(const proven_ws_stream_t *ws);
  * @brief Whether messages on this connection may be compressed: `compress` was set and the
  *        client offered `permessage-deflate` in a form that could be met.
  *
- * When it is on, the calls are used as before. A message of 64 bytes or more is compressed as
- * it is queued - each on its own, with nothing kept from one message to the next, so that an
- * idle connection holds no compression state and the size of one message says nothing about
- * another. A send is still taken or refused on `max_buffered_output`, and is queued a few
- * kilobytes at a time. A compressed message that arrives is inflated on its way to
- * `on_message`, in pieces of at most 16 KiB with `first` and `last` marking its ends:
- * `max_message_bytes` bounds the **inflated** size (1009 past it), text is checked across
- * the pieces, and bytes that do not inflate end the connection with 1007. While such a
- * message is arriving the connection holds about 51 KiB for it.
+ * When it is on, the calls are used as before. Each side may keep its window from one message
+ * to the next (**context takeover**), unless the configuration says `compress_no_takeover` or
+ * the other side forbade it: a message then refers back to the messages before it, so short,
+ * similar messages shrink to a third or less. A message of 8 bytes or more is compressed as it
+ * is queued; shorter ones go as they are. The price is memory for the life of the connection,
+ * from its first compressed message: a compressor (about 28 KiB at the default window of 11
+ * bits) and a decompressor (about 35 KiB). Without takeover a message of 64 bytes or more is
+ * compressed on its own, and an idle connection holds no compression state. A send is still
+ * taken or refused on `max_buffered_output`, and is queued a few kilobytes at a time. A
+ * compressed message that arrives is inflated on its way to `on_message`, in pieces of at most
+ * 16 KiB with `first` and `last` marking its ends: `max_message_bytes` bounds the **inflated**
+ * size (1009 past it), text is checked across the pieces, and bytes that do not inflate end
+ * the connection with 1007. While such a message is arriving the connection holds about 51 KiB
+ * for it (16 KiB of it with takeover, which keeps the decompressor anyway).
  *
  * Raw DEFLATE carries no checksum: a compressed message damaged on the way can inflate to
  * other bytes without an error. And **do not turn compression on for messages that carry a
  * secret together with text the client chose**: the length of a compressed message tells an
- * observer of the connection how much the two have in common, TLS or not.
+ * observer of the connection how much the two have in common, TLS or not. With takeover the
+ * secret and the chosen text need not be in the same message: earlier messages change a later
+ * one's length too.
  */
 [[nodiscard]]
 bool proven_ws_stream_compressed(const proven_ws_stream_t *ws);
@@ -235,8 +243,9 @@ bool proven_ws_stream_compressed(const proven_ws_stream_t *ws);
  *
  * For the message that must not be: one that carries a secret together with text the other
  * side chose (see above), or one that is compressed already and would only cost time. Turn
- * it off, send, turn it on again. A message already begun in pieces goes on as it began; what
- * arrives is not affected - the other side decides that for itself.
+ * it off, send, turn it on again. A message sent uncompressed is not added to the window. A
+ * message already begun in pieces goes on as it began; what arrives is not affected - the
+ * other side decides that for itself.
  */
 void proven_ws_stream_set_compress(proven_ws_stream_t *ws, bool on);
 

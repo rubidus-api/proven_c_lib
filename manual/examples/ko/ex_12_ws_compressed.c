@@ -29,7 +29,8 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
     if (!last) return;
     char answer[64];
     int n = snprintf(answer, sizeof answer, "%u bytes", (unsigned)app->received);
-    /* 여느 메시지처럼 보낸다. 짧은 것은 그대로 간다: 64바이트 미만에서는 얻을 것이 없다. */
+    /* 여느 메시지처럼 보낸다. 짧은 것은 그대로 간다: 8바이트 미만에서는 얻을 것이 없다
+     * (compress_no_takeover에서는 64바이트 미만. 메시지가 자기 자신만 참조할 수 있기 때문이다). */
     (void)proven_ws_stream_send(ws, true, (proven_mem_view_t){ (const proven_byte_t *)answer, (proven_size_t)n });
 }
 

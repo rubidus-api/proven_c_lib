@@ -26,7 +26,7 @@ static proven_err_t inflate_pieces(const proven_mem_view_t *pieces, int count, b
                                    proven_u64 max_bytes, proven_size_t *size) {
     proven_ws_inflate_t_ m = { 0 };
     *size = 0;
-    proven_err_t e = proven_ws_inflate_begin_(&m, g_heap, text);
+    proven_err_t e = proven_ws_inflate_begin_(&m, g_heap, text, NULL);
     bool done = false;
     for (int i = 0; i < count && e == PROVEN_OK; ++i) {
         proven_size_t at = 0;
@@ -83,6 +83,46 @@ static proven_size_t deflate_parts(proven_size_t n, int parts, proven_size_t roo
     }
     proven_deflate_destroy(z);
     return wire;
+}
+
+/* One whole message through a compressor kept from message to message (takeover): its bytes
+ * on the wire, the four closing ones left off, into `wire`. */
+static proven_size_t deflate_kept(proven_deflate_t *z, const proven_byte_t *msg, proven_size_t n, proven_byte_t *wire, proven_size_t cap) {
+    proven_byte_t tail[4];
+    proven_u8 tail_len = 0;
+    proven_size_t out = 0, at = 0;
+    bool done = false;
+    while (!done) {
+        proven_size_t used = 0, made = 0;
+        proven_byte_t buf[512];
+        proven_err_t e = proven_ws_deflate_step_(z, (proven_mem_view_t){ .ptr = msg + at, .size = n - at }, &used, true, true,
+                                                 (proven_mem_mut_t){ .ptr = buf, .size = sizeof buf }, &made, tail, &tail_len, &done);
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && out + made <= cap, "a step of a kept compressor", "Check proven_ws_deflate_step_ in src/proven/ws_deflate.c.");
+        memcpy(wire + out, buf, made);
+        out += made;
+        at += used;
+    }
+    return out;
+}
+
+/* One whole message through a decompressor kept from message to message: its decoded size, or
+ * an error. */
+static proven_err_t inflate_kept(proven_inflate_t **kept, const proven_byte_t *bytes, proven_size_t n, bool text, proven_size_t *size) {
+    proven_ws_inflate_t_ m = { 0 };
+    *size = 0;
+    proven_err_t e = proven_ws_inflate_begin_(&m, g_heap, text, kept);
+    bool done = false;
+    proven_size_t at = 0;
+    while (e == PROVEN_OK && !done) {
+        proven_size_t used = 0, made = 0;
+        e = proven_ws_inflate_step_(&m, (proven_mem_view_t){ .ptr = bytes + at, .size = n - at }, &used, true,
+                                    (proven_mem_mut_t){ .ptr = g_back + *size, .size = sizeof g_back - *size }, &made, 0, &done);
+        at += used;
+        *size += made;
+        if (e == PROVEN_OK && !done && used == 0 && made == 0) e = PROVEN_ERR_NEED_MORE;
+    }
+    proven_ws_inflate_end_(&m);
+    return e;
 }
 
 int main(void) {
@@ -265,6 +305,91 @@ int main(void) {
         #undef BOTH
     }
 
+    PROVEN_TEST_SECTION("the negotiation with takeover", "What a server that keeps its window answers, what it agreed, and what a client that offered takeover accepts.", "Check ws_deflate_answer, proven_ws_deflate_accept_takeover and ws_check_response in src/proven/ws.c.");
+    {
+        static const struct { const char *offer; const char *answer; bool server_takeover, client_takeover; int server_bits; } rows[] = {
+            { "permessage-deflate", "permessage-deflate", true, true, 15 },
+            { PROVEN_WS_DEFLATE_OFFER_TAKEOVER, "permessage-deflate", true, true, 15 },
+            { "permessage-deflate; client_max_window_bits=10", "permessage-deflate", true, true, 15 },
+            { "permessage-deflate; server_no_context_takeover", "permessage-deflate; server_no_context_takeover", false, true, 15 },
+            { "permessage-deflate; client_no_context_takeover", "permessage-deflate; client_no_context_takeover", true, false, 15 },
+            { PROVEN_WS_DEFLATE_OFFER, "permessage-deflate; server_no_context_takeover; client_no_context_takeover", false, false, 15 },
+            { "permessage-deflate; server_max_window_bits=10", "permessage-deflate; server_max_window_bits=10", true, true, 10 },
+            { "permessage-deflate; server_max_window_bits=8, permessage-deflate; client_no_context_takeover", "permessage-deflate; client_no_context_takeover", true, false, 15 },
+            { "permessage-deflate; client_no_context_takeover; server_no_context_takeover; server_max_window_bits=9",
+              "permessage-deflate; server_no_context_takeover; client_no_context_takeover; server_max_window_bits=9", false, false, 9 },
+            { "permessage-deflate; mystery, permessage-deflate", "permessage-deflate", true, true, 15 },
+            { "permessage-deflate; server_max_window_bits=8", NULL, false, false, 0 },
+            { "x-webkit-deflate-frame", NULL, false, false, 0 },
+        };
+        for (proven_size_t i = 0; i < sizeof rows / sizeof rows[0]; ++i) {
+            proven_http_header_t h[1] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), sv(rows[i].offer) } };
+            proven_http_request_t req = { .headers = h, .header_count = 1 };
+            proven_byte_t out[PROVEN_WS_DEFLATE_ANSWER_MAX];
+            proven_size_t len = 0;
+            proven_ws_deflate_terms_t t = { 0 };
+            proven_err_t e = proven_ws_deflate_accept_takeover(&req, (proven_mem_mut_t){ out, sizeof out }, &len, &t);
+            if (!rows[i].answer) {
+                PROVEN_TEST_ASSERT(e == PROVEN_ERR_NOT_FOUND && len == 0, "an offer that cannot be met is passed over", rows[i].offer);
+                continue;
+            }
+            PROVEN_TEST_ASSERT(e == PROVEN_OK && len == strlen(rows[i].answer) && memcmp(out, rows[i].answer, len) == 0,
+                "takeover is forbidden in the answer only where the offer asked for it", rows[i].offer);
+            PROVEN_TEST_ASSERT(t.server_takeover == rows[i].server_takeover && t.client_takeover == rows[i].client_takeover &&
+                               t.server_window_bits == rows[i].server_bits && t.client_window_bits == 15, "and the terms say what was agreed", rows[i].offer);
+        }
+        {
+            proven_http_request_t none = { 0 };
+            proven_byte_t out[8];
+            proven_size_t len = 0;
+            proven_ws_deflate_terms_t t;
+            PROVEN_TEST_ASSERT(proven_ws_deflate_accept_takeover(&none, (proven_mem_mut_t){ out, sizeof out }, &len, NULL) == PROVEN_ERR_INVALID_ARG, "no place for the terms is PROVEN_ERR_INVALID_ARG", "");
+            proven_http_header_t h[1] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT("permessage-deflate; server_no_context_takeover") } };
+            proven_http_request_t req = { .headers = h, .header_count = 1 };
+            len = 2;
+            PROVEN_TEST_ASSERT(proven_ws_deflate_accept_takeover(&req, (proven_mem_mut_t){ out, sizeof out }, &len, &t) == PROVEN_ERR_OUT_OF_BOUNDS && len == 2,
+                "too little room is PROVEN_ERR_OUT_OF_BOUNDS with nothing written", "");
+        }
+        PROVEN_TEST_ASSERT(strcmp(PROVEN_WS_DEFLATE_OFFER_TAKEOVER, "permessage-deflate; client_max_window_bits") == 0,
+            "the offer of takeover leaves each side its window and lets the server bound the client's", "");
+
+        static const struct { const char *answer; proven_err_t want; bool deflate, server_takeover, client_takeover; int server_bits, client_bits; } answers[] = {
+            { NULL, PROVEN_OK, false, false, false, 0, 0 },
+            { "permessage-deflate", PROVEN_OK, true, true, true, 15, 15 },
+            { "permessage-deflate; server_no_context_takeover", PROVEN_OK, true, false, true, 15, 15 },
+            { "permessage-deflate; client_no_context_takeover", PROVEN_OK, true, true, false, 15, 15 },
+            { "permessage-deflate; server_no_context_takeover; client_no_context_takeover", PROVEN_OK, true, false, false, 15, 15 },
+            { "permessage-deflate; client_max_window_bits=10", PROVEN_OK, true, true, true, 15, 10 },
+            { "permessage-deflate; client_max_window_bits=8", PROVEN_OK, true, true, true, 15, 8 },
+            { "permessage-deflate; server_max_window_bits=9; client_max_window_bits=\"12\"", PROVEN_OK, true, true, true, 9, 12 },
+            { "permessage-deflate; client_max_window_bits", PROVEN_ERR_INVALID_FORMAT, false, false, false, 0, 0 },     /* an answer gives the value */
+            { "permessage-deflate; client_no_context_takeover; client_no_context_takeover", PROVEN_ERR_INVALID_FORMAT, false, false, false, 0, 0 },
+            { "permessage-deflate; client_max_window_bits=16", PROVEN_ERR_INVALID_FORMAT, false, false, false, 0, 0 },
+            { "permessage-deflate, permessage-deflate", PROVEN_ERR_INVALID_FORMAT, false, false, false, 0, 0 },
+            { "permessage-deflate; mystery", PROVEN_ERR_INVALID_FORMAT, false, false, false, 0, 0 },
+            { "foo", PROVEN_ERR_INVALID_FORMAT, false, false, false, 0, 0 },
+        };
+        for (proven_size_t i = 0; i < sizeof answers / sizeof answers[0]; ++i) {
+            proven_http_header_t h[4] = { { PROVEN_LIT("Upgrade"), PROVEN_LIT("websocket") }, { PROVEN_LIT("Connection"), PROVEN_LIT("Upgrade") },
+                                          { PROVEN_LIT("Sec-WebSocket-Accept"), PROVEN_LIT("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") },
+                                          { PROVEN_LIT("Sec-WebSocket-Extensions"), sv(answers[i].answer ? answers[i].answer : "") } };
+            proven_http_response_t res = { .status = 101, .headers = h, .header_count = answers[i].answer ? 4 : 3 };
+            proven_u8str_view_t protocol;
+            bool deflate = true;
+            proven_ws_deflate_terms_t t = { .server_takeover = true, .client_window_bits = 99 };
+            proven_err_t e = proven_ws_check_response_takeover(&res, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &deflate, &t);
+            const char *what = answers[i].answer ? answers[i].answer : "(no field)";
+            PROVEN_TEST_ASSERT(e == answers[i].want && deflate == answers[i].deflate, "a client that offered takeover accepts every legal answer and nothing else", what);
+            PROVEN_TEST_ASSERT(t.server_takeover == answers[i].server_takeover && t.client_takeover == answers[i].client_takeover &&
+                               t.server_window_bits == answers[i].server_bits && t.client_window_bits == answers[i].client_bits, "and reports what was agreed - nothing, unless agreed", what);
+        }
+        proven_http_response_t bad = { .status = 200 };
+        proven_u8str_view_t protocol;
+        bool deflate = false;
+        PROVEN_TEST_ASSERT(proven_ws_check_response_takeover(&bad, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &deflate, NULL) == PROVEN_ERR_INVALID_ARG,
+            "no place for the terms is PROVEN_ERR_INVALID_ARG", "");
+    }
+
     PROVEN_TEST_SECTION("the examples of RFC 7692", "Messages somebody else compressed, read at every step size.", "Check proven_ws_inflate_step_ in src/proven/ws_deflate.c.");
     {
         static const proven_byte_t hello[] = { 0xf2, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00 };                     /* 7.2.3.1 */
@@ -334,6 +459,83 @@ int main(void) {
             proven_deflate_destroy(z);
             proven_size_t back = 0;
             PROVEN_TEST_ASSERT(inflate_one(g_wire, wire, false, 3, 64, &back) == PROVEN_OK && back == 100 && memcmp(g_back, g_plain, 100) == 0, "and the message reads back whole", "");
+        }
+    }
+
+    PROVEN_TEST_SECTION("context takeover", "A window kept from one message to the next, on both sides: the RFC's shared-window example, a final block between messages, and similar short messages.", "Check proven_ws_inflate_begin_ with a kept decompressor, the restart in proven_ws_inflate_step_, and proven_inflate_restart in src/proven/deflate.c.");
+    {
+        /* RFC 7692 7.2.3.2: "Hello", then "Hello" again as a match five bytes back - into the
+         * message before. */
+        static const proven_byte_t first[] = { 0xf2, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00 };
+        static const proven_byte_t again[] = { 0xf2, 0x00, 0x11, 0x00, 0x00 };
+        /* 7.2.3.4: "Hello" in a final block, and the byte that starts the next stream. */
+        static const proven_byte_t final_block[] = { 0xf3, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00, 0x00 };
+        proven_inflate_t *kept = NULL;
+        proven_size_t n = 0;
+        PROVEN_TEST_ASSERT(inflate_kept(&kept, first, sizeof first, true, &n) == PROVEN_OK && n == 5 && memcmp(g_back, "Hello", 5) == 0 && kept != NULL,
+            "the first message, through a decompressor made for the connection", "");
+        PROVEN_TEST_ASSERT(inflate_kept(&kept, again, sizeof again, true, &n) == PROVEN_OK && n == 5 && memcmp(g_back, "Hello", 5) == 0,
+            "the second refers back into the first, and decodes", "");
+        PROVEN_TEST_ASSERT(inflate_one(again, sizeof again, true, 16, 64, &n) == PROVEN_ERR_INVALID_FORMAT, "where a decompressor of one message finds nothing to refer to", "");
+        proven_inflate_destroy(kept);
+
+        kept = NULL;
+        PROVEN_TEST_ASSERT(inflate_kept(&kept, final_block, sizeof final_block, true, &n) == PROVEN_OK && n == 5 && memcmp(g_back, "Hello", 5) == 0,
+            "a message that ends in a final block (7.2.3.4)", "");
+        PROVEN_TEST_ASSERT(inflate_kept(&kept, again, sizeof again, true, &n) == PROVEN_OK && n == 5 && memcmp(g_back, "Hello", 5) == 0,
+            "and the next still refers back across it: the stream restarts with its window", "Check that the `ended` branch calls proven_inflate_restart, not reset, for a kept decompressor.");
+        PROVEN_TEST_ASSERT(inflate_kept(&kept, again, sizeof again, true, &n) == PROVEN_OK && n == 5 && memcmp(g_back, "Hello", 5) == 0, "and the one after", "");
+        proven_inflate_destroy(kept);
+
+        /* proven_inflate_restart itself, and that reset is not it. */
+        {
+            proven_inflate_t *z = NULL;
+            PROVEN_TEST_ASSERT(proven_inflate_create(g_heap, PROVEN_DEFLATE_RAW, &z) == PROVEN_OK, "a raw decompressor", "");
+            static const proven_byte_t hello_final[] = { 0xf3, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00 };   /* "Hello", BFINAL */
+            static const proven_byte_t again_final[] = { 0xf3, 0x00, 0x11, 0x00, 0x00 };          /* a match 5 back, BFINAL: the RFC's second Hello with its first bit set */
+            proven_byte_t out[16];
+            proven_size_t used = 0, made = 0;
+            bool done = false;
+            PROVEN_TEST_ASSERT(proven_inflate(z, (proven_mem_view_t){ hello_final, sizeof hello_final }, &used, (proven_mem_mut_t){ out, sizeof out }, &made, &done) == PROVEN_OK &&
+                               done && made == 5, "a stream that ends", "");
+            proven_inflate_restart(z);
+            PROVEN_TEST_ASSERT(proven_inflate(z, (proven_mem_view_t){ again_final, sizeof again_final }, &used, (proven_mem_mut_t){ out, sizeof out }, &made, &done) == PROVEN_OK &&
+                               done && made == 5 && memcmp(out, "Hello", 5) == 0, "after proven_inflate_restart, the next stream reaches back into it", "");
+            proven_inflate_reset(z);
+            PROVEN_TEST_ASSERT(proven_inflate(z, (proven_mem_view_t){ again_final, sizeof again_final }, &used, (proven_mem_mut_t){ out, sizeof out }, &made, &done) == PROVEN_ERR_INVALID_FORMAT,
+                "after reset it cannot", "");
+            proven_inflate_restart(NULL);
+            proven_inflate_destroy(z);
+        }
+
+        /* Two hundred short, similar messages, through one compressor and one decompressor -
+         * and the same through a compressor for each, to compare. */
+        {
+            proven_deflate_t *z = NULL;
+            PROVEN_TEST_ASSERT(proven_ws_deflate_begin_(g_heap, 0, PROVEN_WS_DEFLATE_TAKEOVER_BITS, 0, &z) == PROVEN_OK, "a compressor for the connection", "");
+            proven_inflate_t *in = NULL;
+            proven_size_t raw = 0, kept_bytes = 0, alone_bytes = 0;
+            bool all_back = true;
+            static const char *const words[] = { "ready", "steady", "go", "again", "later", "now" };
+            for (int i = 0; i < 200; ++i) {
+                char msg[128];
+                int len = snprintf(msg, sizeof msg, "{\"type\":\"chat\",\"room\":\"lobby\",\"user\":%d,\"text\":\"%s %s\",\"seq\":%d}",
+                                   i % 7, words[i % 6], words[(i * 5) % 6], i);
+                raw += (proven_size_t)len;
+                proven_size_t w = deflate_kept(z, (const proven_byte_t *)msg, (proven_size_t)len, g_wire, sizeof g_wire);
+                kept_bytes += w;
+                proven_size_t back = 0;
+                if (inflate_kept(&in, g_wire, w, true, &back) != PROVEN_OK || back != (proven_size_t)len || memcmp(g_back, msg, back) != 0) all_back = false;
+                proven_deflate_t *one = NULL;
+                PROVEN_TEST_ASSERT(proven_ws_deflate_begin_(g_heap, 0, 0, (proven_size_t)len, &one) == PROVEN_OK, "a compressor for one message", "");
+                alone_bytes += deflate_kept(one, (const proven_byte_t *)msg, (proven_size_t)len, g_wire, sizeof g_wire);
+                proven_deflate_destroy(one);
+            }
+            fprintf(stderr, "[PROVEN][TEST][INFO] 200 chat messages, %u bytes: %u with takeover, %u each on its own\n", (unsigned)raw, (unsigned)kept_bytes, (unsigned)alone_bytes);
+            PROVEN_TEST_ASSERT(all_back, "every message comes back, byte for byte, through the kept decompressor", "");
+            PROVEN_TEST_ASSERT(kept_bytes * 3 < raw && kept_bytes * 2 < alone_bytes, "and takeover sends under a third of the bytes, and under half of what each on its own would", "");
+            proven_deflate_destroy(z);
+            proven_inflate_destroy(in);
         }
     }
 

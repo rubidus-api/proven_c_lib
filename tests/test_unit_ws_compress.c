@@ -15,7 +15,8 @@
  * wanted, and raw sockets - a handshake written by hand, frames built byte by byte - where one
  * that does not is, and to see what the servers put on the wire.
  *
- *   /echo   compression accepted; every message comes back
+ *   /echo   compression accepted, with context takeover (the default); every message comes back
+ *   /fresh  compression accepted without takeover (`compress_no_takeover`); the same
  *   /plain  compression not accepted; the same
  *   /small  compression accepted, messages limited to 100,000 bytes
  *   /count  (event server) pauses after every piece and answers with what it saw
@@ -56,7 +57,8 @@ static void blocking_handler(void *ctx, proven_http_exchange_t *x) {
     const proven_http_request_t *req = proven_http_exchange_request(x);
     char path[32] = { 0 };
     memcpy(path, req->target.ptr, req->target.size < sizeof path - 1 ? req->target.size : sizeof path - 1);
-    proven_ws_conn_config_t cfg = { .alloc = g_heap, .max_message_bytes = 2 * MIB, .compress = strcmp(path, "/plain") != 0, .compress_window_bits = 12 };
+    proven_ws_conn_config_t cfg = { .alloc = g_heap, .max_message_bytes = 2 * MIB, .compress = strcmp(path, "/plain") != 0, .compress_window_bits = 12,
+                                    .compress_no_takeover = strcmp(path, "/fresh") == 0 };
     if (strcmp(path, "/small") == 0) cfg.max_message_bytes = 100000;
     proven_ws_conn_t *c = NULL;
     if (proven_ws_conn_accept(x, sv(""), &cfg, &c) != PROVEN_OK) return;
@@ -196,7 +198,7 @@ static void ev_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     char path[32] = { 0 };
     memcpy(path, head->target.ptr, head->target.size < sizeof path - 1 ? head->target.size : sizeof path - 1);
     proven_ws_event_config_t cfg = { .on = { ev_message, ev_writable, ev_closed }, .max_message_bytes = 2 * MIB, .max_buffered_output = 16 * 1024,
-                                     .compress = strcmp(path, "/plain") != 0, .compress_window_bits = 12 };
+                                     .compress = strcmp(path, "/plain") != 0, .compress_window_bits = 12, .compress_no_takeover = strcmp(path, "/fresh") == 0 };
     if (strcmp(path, "/small") == 0) cfg.max_message_bytes = 100000;
     proven_ws_stream_t *ws = NULL;
     if (strcmp(path, "/config") == 0) {
@@ -252,10 +254,12 @@ static void blocking_tls_serve(void *arg) { (void)arg; (void)proven_http_server_
 static proven_http_client_t *g_https;       /* the same, with TLS: for wss */
 static bool g_wss;
 
+static bool g_no_takeover;                  /* the client dials with compress_no_takeover */
+
 static proven_ws_conn_t *dial(proven_u16 port, const char *path, bool compress) {
     char url[96];
     int n = snprintf(url, sizeof url, "%s://127.0.0.1:%u%s", g_wss ? "wss" : "ws", (unsigned)port, path);
-    proven_ws_conn_config_t cfg = { .alloc = g_heap, .max_message_bytes = 2 * MIB, .compress = compress };
+    proven_ws_conn_config_t cfg = { .alloc = g_heap, .max_message_bytes = 2 * MIB, .compress = compress, .compress_no_takeover = g_no_takeover };
     proven_ws_conn_t *c = NULL;
     proven_u16 status = 0;
     proven_err_t e = proven_ws_conn_connect(g_wss ? g_https : g_http, (proven_u8str_view_t){ (const proven_byte_t *)url, (proven_size_t)n }, NULL, 0, sv(""), &cfg, &c, &status);
@@ -405,7 +409,36 @@ int main(void) {
             PROVEN_TEST_ASSERT(proven_ws_conn_open(proven_net_conn_transport(&a), false, (proven_mem_view_t){ 0 }, &cfg, &c) == PROVEN_ERR_INVALID_ARG && c == NULL,
                 "a compression level or window outside its range is PROVEN_ERR_INVALID_ARG", "");
         }
-        (void)proven_net_close(&a); (void)proven_net_close(&b); (void)proven_net_listener_close(&l);
+        /* proven_ws_conn_open negotiates nothing: both ends take over unless told not to. Two
+         * ends that agree read each other; a sender that takes over and a receiver told
+         * compress_no_takeover (as every receiver before v0.80.0 was) do not, from the second
+         * message on. */
+        for (int k = 0; k < 2; ++k) {
+            proven_ws_conn_config_t sc = { .alloc = g_heap, .compress = true }, rc = sc;
+            rc.compress_no_takeover = k == 1;
+            proven_ws_conn_t *tx = NULL, *rx = NULL;
+            PROVEN_TEST_ASSERT(proven_ws_conn_open(proven_net_conn_transport(&a), false, (proven_mem_view_t){ 0 }, &sc, &tx) == PROVEN_OK &&
+                               proven_ws_conn_open(proven_net_conn_transport(&b), true, (proven_mem_view_t){ 0 }, &rc, &rx) == PROVEN_OK, "two ends opened over a pair of sockets", "");
+            static const char line[] = "the same line of text, said once and said again";
+            proven_err_t got = PROVEN_OK;
+            int read = 0;
+            for (int i = 0; i < 3 && got == PROVEN_OK; ++i) {
+                PROVEN_TEST_ASSERT(proven_ws_conn_send_text(tx, (proven_u8str_view_t){ (const proven_byte_t *)line, sizeof line - 1 }) == PROVEN_OK, "a message is sent", "");
+                proven_ws_message_t m;
+                got = proven_ws_conn_receive(rx, proven_net_deadline_in(5000), &m);
+                if (got == PROVEN_OK && m.data.size == sizeof line - 1 && memcmp(m.data.ptr, line, m.data.size) == 0) read++;
+            }
+            if (k == 0) PROVEN_TEST_ASSERT(read == 3, "both ends with takeover: every message is read", "");
+            else PROVEN_TEST_ASSERT(read == 1 && got == PROVEN_ERR_INVALID_ENCODING && proven_ws_conn_close_code(rx) == 0,
+                "a sender that takes over, a receiver told not to: the first message is read and the second is not", "The CHANGELOG names this: ends before v0.80.0 need compress_no_takeover on the other end.");
+            /* The connections own the transports: they are made again for the second round. */
+            proven_ws_conn_destroy(tx); proven_ws_conn_destroy(rx);
+            if (k == 0) {
+                PROVEN_TEST_ASSERT(proven_net_connect(at, proven_net_deadline_in(5000), &a) == PROVEN_OK &&
+                                   proven_net_accept(&l, proven_net_deadline_in(5000), &b, NULL) == PROVEN_OK, "a second pair of sockets", "");
+            }
+        }
+        (void)proven_net_listener_close(&l);
         proven_ws_conn_t *c = dial(eat.port, "/config", true);
         PROVEN_TEST_ASSERT(atomic_load(&g_bad_config) == 15, "and from proven_ws_event_accept too, four ways, with the request still answerable", "");
         hang_up(c);
@@ -428,8 +461,25 @@ int main(void) {
             hang_up(c);
         }
 
+        /* Takeover on one side only, either way: the side that keeps nothing says so, and
+         * messages of every kind still go round, many times over. */
+        for (int k = 0; k < 2; ++k) {
+            g_no_takeover = k == 1;
+            proven_ws_conn_t *c = dial(port, k ? "/echo" : "/fresh", true);
+            PROVEN_TEST_ASSERT(proven_ws_conn_compressed(c), "compression is agreed with takeover on one side only", server);
+            bool ok = true;
+            for (int m = 0; m < 30 && ok; ++m) {
+                fill(m % 3 == 0 ? 7 : m % 3 == 1 ? 200 : 9000, m % 2 == 0, (unsigned)(m % 4));
+                ok = echo_ok(c, m % 3 == 0 ? 7 : m % 3 == 1 ? 200 : 9000, m % 2 == 0, m % 5 == 0);
+            }
+            PROVEN_TEST_ASSERT(ok, k ? "a client with compress_no_takeover and a server with takeover: thirty messages, repeated, round" :
+                                       "a client with takeover and a server with compress_no_takeover: thirty messages, repeated, round", server);
+            hang_up(c);
+            g_no_takeover = false;
+        }
+
         proven_ws_conn_t *c = dial(port, "/echo", true);
-        static const proven_size_t sizes[] = { 0, 1, 2, 63, 64, 65, 1000, 16384, 70000, MIB };
+        static const proven_size_t sizes[] = { 0, 1, 2, 7, 8, 9, 63, 64, 65, 1000, 16384, 70000, MIB };
         for (proven_size_t i = 0; i < sizeof sizes / sizeof sizes[0]; ++i) {
             /* The event-driven server here answers a message while it is still arriving, and
              * this client sends a whole message before it reads: with a megabyte, each end
@@ -468,8 +518,8 @@ int main(void) {
             proven_byte_t b0 = 0, payload[20000];
             proven_size_t n = 0;
             PROVEN_TEST_ASSERT(raw_upgrade(&r, port, "/echo", OFFER, head, sizeof head), "a handshake by hand, offering the extension", server);
-            PROVEN_TEST_ASSERT(strstr(head, "Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover\r\n") != NULL,
-                "is answered with both no-takeover parameters", server);
+            PROVEN_TEST_ASSERT(strstr(head, "Sec-WebSocket-Extensions: permessage-deflate\r\n") != NULL,
+                "is answered with no parameter: each side may keep its window", server);
             /* RFC 7692, 7.2.3.1: "Hello", compressed by somebody else. */
             static const proven_byte_t hello[] = { 0xf2, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00 };
             PROVEN_TEST_ASSERT(raw_frame(&r, 0xc1, hello, sizeof hello) && raw_next(&r, &b0, payload, sizeof payload, &n) && b0 == 0x81 && n == 5 && memcmp(payload, "Hello", 5) == 0,
@@ -512,6 +562,55 @@ int main(void) {
             PROVEN_TEST_ASSERT(raw_upgrade(&r, port, "/echo", "permessage-deflate; server_max_window_bits=10", head, sizeof head) && strstr(head, "; server_max_window_bits=10\r\n") != NULL,
                 "a window that was asked for is echoed", server);
             (void)proven_net_close(&r);
+
+            /* Without takeover, the answer as it always was. */
+            PROVEN_TEST_ASSERT(raw_upgrade(&r, port, "/fresh", OFFER, head, sizeof head) &&
+                               strstr(head, "Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover\r\n") != NULL,
+                "a server with compress_no_takeover answers with both no-takeover parameters", server);
+            (void)proven_net_close(&r);
+            PROVEN_TEST_ASSERT(raw_upgrade(&r, port, "/echo", "permessage-deflate; client_no_context_takeover", head, sizeof head) &&
+                               strstr(head, "Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover\r\n") != NULL,
+                "and a server with takeover forbids it only where the offer asked", server);
+            (void)proven_net_close(&r);
+
+            /* Takeover from the client: RFC 7692 7.2.3.2, a second Hello that is a match into the
+             * first; and 7.2.3.4, a first that ends in a final block. */
+            {
+                static const proven_byte_t again[] = { 0xf2, 0x00, 0x11, 0x00, 0x00 };
+                static const proven_byte_t final_block[] = { 0xf3, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00, 0x00 };
+                const proven_byte_t *firsts[2] = { hello, final_block };
+                const proven_size_t first_sizes[2] = { sizeof hello, sizeof final_block };
+                for (int k = 0; k < 2; ++k) {
+                    PROVEN_TEST_ASSERT(raw_upgrade(&r, port, "/echo", OFFER, head, sizeof head), "a handshake by hand, with takeover agreed", server);
+                    bool ok = raw_frame(&r, 0xc1, firsts[k], first_sizes[k]) && raw_next(&r, &b0, payload, sizeof payload, &n) && n == 5 && memcmp(payload, "Hello", 5) == 0;
+                    for (int m = 0; m < 2 && ok; ++m) ok = raw_frame(&r, 0xc1, again, sizeof again) && raw_next(&r, &b0, payload, sizeof payload, &n) && n == 5 && memcmp(payload, "Hello", 5) == 0;
+                    PROVEN_TEST_ASSERT(ok, k ? "a final block, then messages that reach back across it: the server's decompressor keeps its window"
+                                             : "the RFC's shared window: the second Hello refers into the first, and the server reads it", server);
+                    (void)proven_net_close(&r);
+                }
+                PROVEN_TEST_ASSERT(raw_verdict(port, "/fresh", OFFER, 0xc1, again, sizeof again) == 1007,
+                    "where takeover was forbidden, the same bytes refer to nothing: 1007", server);
+            }
+
+            /* Takeover from the server: the same 3,000 bytes twice. The second answer refers back
+             * into the first. */
+            {
+                fill(3000, true, 4242);
+                proven_size_t sizes[2] = { 0, 0 };
+                PROVEN_TEST_ASSERT(raw_upgrade(&r, port, "/echo", OFFER, head, sizeof head), "a handshake by hand, with takeover agreed", server);
+                for (int k = 0; k < 2; ++k) {
+                    fin = false;
+                    PROVEN_TEST_ASSERT(raw_frame(&r, 0x81, g_msg, 3000), "three thousand bytes of text, uncompressed", server);
+                    for (int frames = 0; !fin && frames < 64; ++frames) {
+                        PROVEN_TEST_ASSERT(raw_next(&r, &b0, payload, sizeof payload, &n), "a frame of the answer", server);
+                        fin = (b0 & 0x80) != 0;
+                        sizes[k] += n;
+                    }
+                }
+                fprintf(stderr, "[PROVEN][TEST][INFO] %s: 3000 bytes sent back as %u, then the same as %u\n", server, (unsigned)sizes[0], (unsigned)sizes[1]);
+                PROVEN_TEST_ASSERT(sizes[1] * 10 < sizes[0], "the second answer is under a tenth of the first: the server kept its window", server);
+                (void)proven_net_close(&r);
+            }
 
             static const proven_byte_t not_deflate[] = { 0x06, 0x00 };                               /* a block type that does not exist */
             static const proven_byte_t not_text[] = { 0x00, 0x02, 0x00, 0xfd, 0xff, 0xc3, 0x28, 0x00 };  /* a stored block holding c3 28 */

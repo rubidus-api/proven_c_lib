@@ -18,6 +18,51 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+RFC-0024 piece B: WebSocket context takeover (the owner's decisions of 2026-10-24: on whenever
+compression is, with a window of 11 bits unless set; and public helpers for the codec).
+
+### Changed
+
+- **A WebSocket connection with `compress` now keeps its window from one message to the next
+  (context takeover, RFC 7692), in both drivers and both directions, unless the other side
+  forbids it or the new `compress_no_takeover` is set.** Short, similar messages now shrink:
+  measured over 2,000 messages each, chat JSON of about 140 bytes to 22% of its size (81% each
+  on its own), quotes of about 60 bytes and pings of about 25 to 39% and 26% (not compressed
+  before: under 64 bytes). A message of 8 bytes or more is compressed (64 without takeover);
+  shorter ones go as they are and stay out of the window. The price is memory for the life of
+  the connection from its first compressed message: a compressor of about 28 KiB at the new
+  default window (`compress_window_bits` 0 is now 11 under takeover, 15 without) and a
+  decompressor of about 35 KiB - an idle compressed connection on the event-driven server
+  measured at about 64 KiB, against under 1 KiB with `compress_no_takeover`. Connections
+  without `compress` are unchanged.
+- A client with `compress` offers `permessage-deflate; client_max_window_bits` and accepts any
+  answer RFC 7692 allows; a server answers an offer with no parameter unless the offer forbade
+  takeover. With `compress_no_takeover` both send what they sent before, byte for byte.
+- **`proven_ws_conn_open` (no handshake) now means takeover in both directions with
+  `compress`.** Two ends must agree: an end built before v0.80.0 means none, and reading a
+  v0.80.0 sender's second compressed message it ends the connection with 1007. Give the newer
+  end `compress_no_takeover`.
+- The warning about compressing a secret beside text the other side chose now says that under
+  takeover the two need not share a message: earlier messages change a later one's length.
+
+### Added
+
+- `PROVEN_WS_DEFLATE_OFFER_TAKEOVER`, `proven_ws_deflate_terms_t`,
+  `proven_ws_deflate_accept_takeover` and `proven_ws_check_response_takeover`: the codec's
+  negotiation with takeover, for a program that drives frames itself; the terms say who may
+  keep a window and how large each side's may be. `proven_ws_deflate_accept` and
+  `proven_ws_check_response_deflate` are unchanged.
+- `proven_inflate_restart`: a new stream that keeps the last 32 KiB, for a takeover peer that
+  ends a message with a final block (RFC 7692 section 7.2.3.4).
+- `compress_no_takeover` in `proven_ws_conn_config_t` and `proven_ws_event_config_t`.
+- Aliases for the five new names; chapter 12 (en/ko) section 9 with the measurements, chapter
+  16 (en/ko) on `proven_inflate_restart`; the codec example uses the new helpers.
+
+### Fixed
+
+- `ws.h` said the library had no DEFLATE and spoke no extension; `ws_conn.h` said a connection
+  does not compress.
+
 ## [0.79.0] - 2026-10-23
 
 RFC-0024 piece A: HTTP/2 settings changed after the connection is made (the owner's decisions

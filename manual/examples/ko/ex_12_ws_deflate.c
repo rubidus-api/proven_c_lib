@@ -16,8 +16,9 @@ int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---- 핸드셰이크 ------------------------------------------------------------------
-    /* 클라이언트는 헤더 하나로 요청한다. PROVEN_WS_DEFLATE_OFFER는 이 라이브러리가 말하는 형태다:
-     * 양쪽 방향 모두, 메시지 하나하나를 따로 압축한다. */
+    /* 클라이언트는 헤더 하나로 요청한다. PROVEN_WS_DEFLATE_OFFER는 이 라이브러리가 말하는 두
+     * 형태 가운데 단순한 쪽이다: 양쪽 방향 모두, 메시지 하나하나를 따로 압축한다. 다른 하나인
+     * context takeover는 맨 끝에 있다. */
     proven_http_header_t asked[] = {
         { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER) },
     };
@@ -109,5 +110,43 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_ws_frame_write((proven_mem_mut_t){ header, sizeof header }, &header_len, &frame) == PROVEN_OK && header[0] == 0xc1, "a frame header with the bit");
     printf("%u bytes of text go out as %u\n", (unsigned)(sizeof said - 1), (unsigned)(header_len + payload));
     EXAMPLE_REQUIRE(header_len + payload < sizeof said - 1, "fewer than were said");
+
+    // ---- context takeover와 함께 -------------------------------------------------------
+    /* 다른 형태: 양쪽이 메시지에서 다음 메시지로 창을 이어 가므로, 메시지가 앞선 메시지들을
+     * 가리킬 수 있다. 클라이언트는 PROVEN_WS_DEFLATE_OFFER_TAKEOVER를 제안하고, 서버는
+     * proven_ws_deflate_accept_takeover로 답한다. 이 함수는 제안이 요청한 곳에서만 takeover를
+     * 막고, 무엇이 합의되었는지 알려 준다. */
+    proven_http_header_t asked_take[] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER_TAKEOVER) } };
+    proven_http_request_t request_take = { .headers = asked_take, .header_count = 1 };
+    proven_ws_deflate_terms_t terms;
+    answer_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept_takeover(&request_take, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &terms) == PROVEN_OK &&
+                    terms.server_takeover && terms.client_takeover, "takeover is agreed both ways");
+    printf("the server answers: %.*s\n", (int)answer_len, (const char *)answer);
+    answered[3].value = (proven_u8str_view_t){ answer, answer_len };
+    proven_ws_deflate_terms_t seen;
+    EXAMPLE_REQUIRE(proven_ws_check_response_takeover(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed, &seen) == PROVEN_OK &&
+                    compressed && seen.server_takeover && seen.client_takeover, "and the client sees the same terms");
+
+    /* takeover하는 쪽은 연결에 압축기 하나를 두고 메시지마다 sync flush로 끝낸다. 읽는 쪽은
+     * 해제기 하나를 둔다. 같은 줄을 두 번: 두 번째는 첫 번째를 가리키는 참조로 나간다. */
+    EXAMPLE_REQUIRE(proven_deflate_create(&options, &c) == PROVEN_OK && proven_inflate_create(heap, PROVEN_DEFLATE_RAW, &z) == PROVEN_OK, "one of each, kept");
+    for (int round = 0; round < 2; ++round) {
+        EXAMPLE_REQUIRE(proven_deflate(c, (proven_mem_view_t){ (const proven_byte_t *)said, sizeof said - 1 }, &taken, (proven_mem_mut_t){ packed, sizeof packed }, &made,
+                                       PROVEN_DEFLATE_FLUSH_SYNC, &ended) == PROVEN_OK && made > 4, "a message through the kept compressor");
+        printf("message %d goes out as %u bytes\n", round + 1, (unsigned)(made - 4));
+        if (round == 1) EXAMPLE_REQUIRE(made - 4 < 10, "the second is a few bytes: a reference into the first");
+        /* 읽는 쪽: 도착한 그대로의 payload - 빠진 네 바이트를 다시 붙인 것. */
+        proven_byte_t back[128];
+        proven_size_t got = 0;
+        EXAMPLE_REQUIRE(proven_inflate(z, (proven_mem_view_t){ packed, made }, &taken, (proven_mem_mut_t){ back, sizeof back }, &got, &ended) == PROVEN_OK &&
+                        got == sizeof said - 1 && memcmp(back, said, got) == 0, "and the kept decompressor reads it");
+        /* 보내는 쪽은 메시지를 마지막 블록으로 끝낼 수도 있다(RFC 7692, 7.2.3.4). 그러면 해제기가
+         * `ended`를 알리고, 읽는 쪽은 창을 지키는 proven_inflate_restart로 이어 간다 - 창을 잊는
+         * reset이 아니다. */
+        if (ended) proven_inflate_restart(z);
+    }
+    proven_deflate_destroy(c);
+    proven_inflate_destroy(z);
     return EXAMPLE_OK();
 }

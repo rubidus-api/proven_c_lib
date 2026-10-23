@@ -72,11 +72,16 @@ struct proven_ws_stream {
  * above, so that a connection without the extension is not a byte larger for it. */
 typedef struct {
     proven_ws_rx_t *rx;                                 /* a compressed message being received */
-    proven_deflate_t *zip;                       /* a compressed message being sent in pieces */
+    proven_deflate_t *zip;                       /* a compressed message being sent in pieces; under takeover, every one */
+    proven_inflate_t *kept;                      /* under the peer's takeover: the decompressor of every message */
     proven_byte_t zip_tail[4];
     proven_u8 zip_tail_len;
-    proven_i8 level, window_bits;
-    bool zip_begun;                              /* the first frame of the compressed message being sent has been queued */
+    proven_i8 level, window_bits;                /* a client's window is the configured one (0 too) until the server answers */
+    bool zip_begun : 1;                          /* the first frame of the compressed message being sent has been queued */
+    bool zipping : 1;                            /* the message being sent goes through `zip` */
+    bool send_takeover : 1;                      /* this side keeps `zip` between messages */
+    bool recv_takeover : 1;                      /* the peer may keep its window: `kept` reads every message */
+    bool zip_off : 1;                            /* nothing is compressed from now on: the peer allows no window this side has, or a compressed message failed half-sent under takeover */
 } proven_ws_z_t;
 
 /* A client's generator of mask keys: behind the struct, after the room for a proven_ws_z_t if it
@@ -103,10 +108,24 @@ static void ws_rx_free(proven_ws_stream_t *ws) {
     ws->alloc.free_fn(ws->alloc.ctx, rx);
 }
 
+/* What was agreed, onto a connection's compression state: who keeps a window, and this side's
+ * window - the configured one (0 is 11 under takeover, 15 without), no larger than the peer
+ * allows; smaller than this compressor's smallest, nothing is compressed. */
+static void ws_z_agree(proven_ws_z_t *z, bool client, const proven_ws_deflate_terms_t *t) {
+    z->send_takeover = client ? t->client_takeover : t->server_takeover;
+    z->recv_takeover = client ? t->server_takeover : t->client_takeover;
+    int limit = client ? t->client_window_bits : t->server_window_bits;
+    int bits = z->window_bits != 0 ? z->window_bits : z->send_takeover ? PROVEN_WS_DEFLATE_TAKEOVER_BITS : 15;
+    if (limit < bits) bits = limit;
+    if (bits < 9) z->zip_off = true;
+    else z->window_bits = (proven_i8)bits;
+}
+
 static void ws_leave(proven_ws_stream_t *ws) {
     if (--ws->depth > 0 || !ws->closed) return;
     ws_rx_free(ws);
     if (ws->deflate && ws_z(ws)->zip) proven_deflate_destroy(ws_z(ws)->zip);
+    if (ws->deflate && ws_z(ws)->kept) proven_inflate_destroy(ws_z(ws)->kept);
     ws->alloc.free_fn(ws->alloc.ctx, ws);
 }
 
@@ -280,7 +299,8 @@ static proven_size_t ws_on_input(void *raw, proven_mem_mut_t in) {
                     rx->held_len = 0; rx->held_at = 0;
                     rx->have_held = false; rx->held_last = false; rx->started = false; rx->running = false;
                     rx->text = ev.text;
-                    if (proven_ws_inflate_begin_(&rx->m, ws->alloc, ev.text) != PROVEN_OK) {
+                    proven_ws_z_t *z = ws_z(ws);
+                    if (proven_ws_inflate_begin_(&rx->m, ws->alloc, ev.text, z->recv_takeover ? &z->kept : (void *)0) != PROVEN_OK) {
                         ws->alloc.free_fn(ws->alloc.ctx, rx);
                         ws_fail(ws, PROVEN_ERR_NOMEM);
                         break;
@@ -421,10 +441,16 @@ proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_h
     /* Compression, when this side wants it and the client offered a form of it that can be met. */
     proven_byte_t extension[PROVEN_WS_DEFLATE_ANSWER_MAX];
     proven_size_t extension_len = 0;
-    int window_bits = 0;
-    bool deflate = config->compress &&
-                   proven_ws_deflate_accept(head, (proven_mem_mut_t){ .ptr = extension, .size = sizeof extension }, &extension_len, &window_bits) == PROVEN_OK;
-    if (deflate && config->compress_window_bits != 0 && config->compress_window_bits < window_bits) window_bits = config->compress_window_bits;
+    proven_ws_deflate_terms_t terms = { 0 };
+    proven_mem_mut_t room = { .ptr = extension, .size = sizeof extension };
+    bool deflate = false;
+    if (config->compress && config->compress_no_takeover) {
+        int window_bits = 0;
+        deflate = proven_ws_deflate_accept(head, room, &extension_len, &window_bits) == PROVEN_OK;
+        terms = (proven_ws_deflate_terms_t){ .server_window_bits = window_bits, .client_window_bits = 15 };
+    } else if (config->compress) {
+        deflate = proven_ws_deflate_accept_takeover(head, room, &extension_len, &terms) == PROVEN_OK;
+    }
 
     /* Over HTTP/2 (RFC 8441) the answer is 200 with the same two optional fields, and no
      * Upgrade, Connection or Sec-WebSocket-Accept: the stream is the connection. */
@@ -468,7 +494,10 @@ proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_h
         .peer = proven_http_stream_peer(stream),
         .deflate = deflate,
     };
-    if (deflate) *ws_z(ws) = (proven_ws_z_t){ .level = (proven_i8)config->compress_level, .window_bits = (proven_i8)window_bits };
+    if (deflate) {
+        *ws_z(ws) = (proven_ws_z_t){ .level = (proven_i8)config->compress_level, .window_bits = (proven_i8)config->compress_window_bits };
+        ws_z_agree(ws_z(ws), false, &terms);
+    }
     proven_ws_decoder_init(&ws->dec, true, ws->max_message);
     if (deflate) proven_ws_decoder_allow_compressed(&ws->dec);
 
@@ -510,17 +539,20 @@ proven_err_t proven_ws_event_client_new_(proven_allocator_t alloc, const proven_
         .close_ms = config->close_timeout_ms ? config->close_timeout_ms : WS_DEFAULT_CLOSE_MS,
         .peer = peer, .client = true, .opening = true, .may_deflate = config->compress,
     };
-    if (config->compress) *ws_z(ws) = (proven_ws_z_t){ .level = (proven_i8)config->compress_level, .window_bits = (proven_i8)config->compress_window_bits };
+    if (config->compress) {
+        *ws_z(ws) = (proven_ws_z_t){ .level = (proven_i8)config->compress_level, .window_bits = (proven_i8)config->compress_window_bits };
+    }
     proven_chacha_rng_seed(ws_masks(ws), seed);
     proven_ws_decoder_init(&ws->dec, false, ws->max_message);
     *out = ws;
     return PROVEN_OK;
 }
 
-void proven_ws_event_client_opened_(proven_ws_stream_t *ws, bool deflate) {
+void proven_ws_event_client_opened_(proven_ws_stream_t *ws, const proven_ws_deflate_terms_t *terms) {
     ws->opening = false;
-    if (deflate && ws->may_deflate) {
+    if (terms && ws->may_deflate) {
         ws->deflate = true;
+        ws_z_agree(ws_z(ws), true, terms);
         proven_ws_decoder_allow_compressed(&ws->dec);
     }
     ws_arm(ws);
@@ -552,14 +584,18 @@ proven_err_t proven_ws_stream_send_piece(proven_ws_stream_t *ws, bool text, prov
     proven_ws_z_t *z = ws->deflate ? ws_z(ws) : (proven_ws_z_t *)0;
     if (z && first) {
         /* A message begins: is it compressed? Not when it is whole and too short to gain, and
-         * not when there is no memory for a compressor - then it goes as it is. */
-        if (z->zip) { proven_deflate_destroy(z->zip); z->zip = (void *)0; }
-        bool worth = !ws->plain && !(last && data.size < PROVEN_WS_DEFLATE_MIN);
-        if (worth && proven_ws_deflate_begin_(ws->alloc, z->level, z->window_bits, last ? data.size : 0, &z->zip) != PROVEN_OK) z->zip = (void *)0;
+         * not when there is no memory for a compressor - then it goes as it is (and, under
+         * takeover, the next message tries again: nothing went into a window). */
+        if (z->zip && !z->send_takeover) { proven_deflate_destroy(z->zip); z->zip = (void *)0; }
+        bool worth = !ws->plain && !z->zip_off &&
+                     !(last && data.size < (z->send_takeover ? PROVEN_WS_DEFLATE_MIN_TAKEOVER : PROVEN_WS_DEFLATE_MIN));
+        if (worth && !z->zip &&
+            proven_ws_deflate_begin_(ws->alloc, z->level, z->window_bits, last && !z->send_takeover ? data.size : 0, &z->zip) != PROVEN_OK) z->zip = (void *)0;
+        z->zipping = worth && z->zip;
         z->zip_tail_len = 0;
         z->zip_begun = false;
     }
-    if (!z || !z->zip) {
+    if (!z || !z->zipping) {
         e = ws_frame(ws, first ? (text ? PROVEN_WS_TEXT : PROVEN_WS_BINARY) : PROVEN_WS_CONTINUATION, last, false, data);
     } else {
         /* Compressed a buffer at a time, each buffer queued as a frame: nothing the size of
@@ -582,9 +618,16 @@ proven_err_t proven_ws_stream_send_piece(proven_ws_stream_t *ws, bool text, prov
             }
             if (done) break;
         }
-        if ((e != PROVEN_OK || last) && z->zip) {
-            proven_deflate_destroy(z->zip);
-            z->zip = (void *)0;
+        if (e != PROVEN_OK || last) {
+            /* Under takeover the compressor is the window both sides share; one that failed in
+             * the middle of a message no longer matches the client's, so nothing more is
+             * compressed. */
+            if (e != PROVEN_OK && z->send_takeover) z->zip_off = true;
+            if (z->zip && (e != PROVEN_OK || !z->send_takeover)) {
+                proven_deflate_destroy(z->zip);
+                z->zip = (void *)0;
+            }
+            z->zipping = false;
         }
     }
     if (e == PROVEN_OK) ws->in_message = !last;

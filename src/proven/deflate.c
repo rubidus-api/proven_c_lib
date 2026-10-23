@@ -161,6 +161,14 @@ void proven_inflate_reset(proven_inflate_t *z) {
     if (z) start(z);
 }
 
+void proven_inflate_restart(proven_inflate_t *z) {
+    if (!z) return;
+    const proven_u32 wpos = z->wpos, whave = z->whave;
+    start(z);
+    z->wpos = wpos;
+    z->whave = whave;
+}
+
 /* What one call works on. */
 typedef struct {
     const proven_byte_t *in;

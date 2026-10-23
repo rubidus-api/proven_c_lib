@@ -675,13 +675,23 @@ bool proven_ws_stream_compressed(const proven_ws_stream_t *ws);          /* ws_e
 proven_err_t proven_ws_deflate_accept(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len, int *window_bits);
 proven_err_t proven_ws_check_response_deflate(const proven_http_response_t *response, proven_u8str_view_t key,
                                               proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate);
+
+#define PROVEN_WS_DEFLATE_OFFER_TAKEOVER "permessage-deflate; client_max_window_bits"
+/* proven_ws_deflate_terms_t: bool server_takeover, client_takeover; int server_window_bits, client_window_bits; */
+proven_err_t proven_ws_deflate_accept_takeover(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len,
+                                               proven_ws_deflate_terms_t *terms);
+proven_err_t proven_ws_check_response_takeover(const proven_http_response_t *response, proven_u8str_view_t key,
+                                               proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate,
+                                               proven_ws_deflate_terms_t *terms);
+void proven_inflate_restart(proven_inflate_t *z);                         /* deflate.h, Chapter 16 */
 void proven_ws_decoder_allow_compressed(proven_ws_decoder_t *decoder);
 ```
 
 A WebSocket connection can agree, in its handshake, to compress its messages: the extension
 is called `permessage-deflate` (RFC 7692), every browser offers it, and it is the DEFLATE of
 [Chapter 16](manual-16-compression.md). A page of JSON or a batch of log lines shrinks to a
-third or less; a message of a few dozen bytes gains little, for the reason given below.
+third or less, and so - because each side keeps its window from one message to the next - do
+short messages that resemble the ones before them.
 
 **It is off until you ask.** Set `compress` in the connection's configuration - in a
 `proven_ws_conn_config_t`, or in the `proven_ws_event_config_t` of Chapter 15. A client then
@@ -692,21 +702,43 @@ uncompressed.
 
 | | With compression agreed |
 |---|---|
-| A message you send | Compressed when it is 64 bytes or more; shorter ones go as they are |
+| A message you send | Compressed when it is 8 bytes or more (64 with `compress_no_takeover`); shorter ones go as they are, and stay out of the window |
 | A message you receive | Inflated before you see it: whole from `proven_ws_conn_receive`, in pieces of at most 16 KiB from the event-driven server |
 | `max_message_bytes` | Counts the **inflated** size. A few hundred bytes that unfold past it end the connection with 1009, as an oversized plain message does |
 | Text | Checked to be UTF-8 after inflating; 1007 if it is not |
 | Bytes that do not inflate | 1007 |
 | A frame marked compressed on a connection that did not agree | 1002 |
 
-**Every message is compressed on its own.** The extension allows each side to keep its
-32 KiB window from one message to the next, which helps small, similar messages - and costs
-a compressor and a decompressor per connection for as long as it is open. This library
-always negotiates the other form ("no context takeover", in both directions): a compressor
-exists for the length of one send, a decompressor from the first frame of a compressed
-message to its last, and **a connection that is idle holds no compression state at all**.
-Ten thousand quiet connections cost what they cost without compression. The price is that a
-short message has only itself to refer back to.
+**Each side keeps its window from one message to the next** ("context takeover"): a message
+refers back to the messages before it. That is where small, similar messages gain - measured
+with this library's compressor over 2,000 messages each:
+
+| Messages | Each compressed on its own | With takeover (window 11, the default) | With takeover, window 15 |
+|---|---|---|---|
+| Chat JSON, about 140 bytes | 80.7% of their size | 22.1% | 17.3% |
+| Quotes, about 60 bytes | 100% (too short to compress) | 39.3% | 35.5% |
+| Pings, about 25 bytes | 100% (too short to compress) | 26.1% | 26.1% |
+| Game state, about 750 bytes | 30.4% | 17.4% | 16.7% |
+
+The price is memory **for the life of the connection**, from its first compressed message: a
+compressor (about 28 KiB at the default window of 11 bits; 324 KiB at 15) and a decompressor
+(about 35 KiB) - about 64 KiB for a connection that has sent and received one, measured
+(`test_unit_ws_event`). Time per message is about the same for short ones; a 750-byte one
+took 38 us against 24 compressed on its own.
+
+`compress_no_takeover` in the configuration asks for the other form ("no context takeover",
+in both directions), which was the only one before v0.80.0: a compressor exists for the
+length of one send, a decompressor from the first frame of a compressed message to its last,
+and **a connection that is idle holds no compression state at all** - ten thousand quiet
+connections cost what they cost without compression. Either side may ask for it: a server
+with takeover still answers an offer that forbids it, and a client with takeover accepts an
+answer that forbids it. A peer that limits this side's window (`server_max_window_bits` in an
+offer, `client_max_window_bits` in an answer) is obeyed; one that limits it to 256 bytes,
+smaller than this compressor's smallest, gets this side's messages uncompressed.
+
+`proven_ws_conn_open` makes no handshake: both ends must say the same - takeover, or
+`compress_no_takeover`. An end built before v0.80.0 always means no takeover; give the
+other end `compress_no_takeover`, or its second compressed message is refused with 1007.
 
 ### Example: one field, and what it changes
 
@@ -742,7 +774,8 @@ static void on_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_
     if (!last) return;
     char answer[64];
     int n = snprintf(answer, sizeof answer, "%u bytes", (unsigned)app->received);
-    /* Sent like any message. Short ones go as they are: under 64 bytes there is nothing to gain. */
+    /* Sent like any message. Short ones go as they are: under 8 bytes there is nothing to gain
+     * (under 64 with compress_no_takeover, where a message has only itself to refer to). */
     (void)proven_ws_stream_send(ws, true, (proven_mem_view_t){ (const proven_byte_t *)answer, (proven_size_t)n });
 }
 
@@ -862,8 +895,9 @@ int main(void) {
     proven_allocator_t heap = proven_heap_allocator();
 
     // ---- the handshake ---------------------------------------------------------------
-    /* A client asks with one header. PROVEN_WS_DEFLATE_OFFER is the form this library speaks:
-     * each message compressed on its own, in both directions. */
+    /* A client asks with one header. PROVEN_WS_DEFLATE_OFFER is the simpler of the two forms
+     * this library speaks: each message compressed on its own, in both directions. The other,
+     * with context takeover, is at the end. */
     proven_http_header_t asked[] = {
         { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER) },
     };
@@ -955,6 +989,45 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_ws_frame_write((proven_mem_mut_t){ header, sizeof header }, &header_len, &frame) == PROVEN_OK && header[0] == 0xc1, "a frame header with the bit");
     printf("%u bytes of text go out as %u\n", (unsigned)(sizeof said - 1), (unsigned)(header_len + payload));
     EXAMPLE_REQUIRE(header_len + payload < sizeof said - 1, "fewer than were said");
+
+    // ---- with context takeover ---------------------------------------------------------
+    /* The other form: each side keeps its window from one message to the next, so a message
+     * refers back to the ones before it. A client offers PROVEN_WS_DEFLATE_OFFER_TAKEOVER; a
+     * server answers with proven_ws_deflate_accept_takeover, which forbids takeover only
+     * where the offer asked, and says what was agreed. */
+    proven_http_header_t asked_take[] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER_TAKEOVER) } };
+    proven_http_request_t request_take = { .headers = asked_take, .header_count = 1 };
+    proven_ws_deflate_terms_t terms;
+    answer_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept_takeover(&request_take, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &terms) == PROVEN_OK &&
+                    terms.server_takeover && terms.client_takeover, "takeover is agreed both ways");
+    printf("the server answers: %.*s\n", (int)answer_len, (const char *)answer);
+    answered[3].value = (proven_u8str_view_t){ answer, answer_len };
+    proven_ws_deflate_terms_t seen;
+    EXAMPLE_REQUIRE(proven_ws_check_response_takeover(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed, &seen) == PROVEN_OK &&
+                    compressed && seen.server_takeover && seen.client_takeover, "and the client sees the same terms");
+
+    /* A side that takes over keeps one compressor for the connection and ends every message
+     * with a sync flush; the side that reads keeps one decompressor. The same line twice: the
+     * second goes out as a reference to the first. */
+    EXAMPLE_REQUIRE(proven_deflate_create(&options, &c) == PROVEN_OK && proven_inflate_create(heap, PROVEN_DEFLATE_RAW, &z) == PROVEN_OK, "one of each, kept");
+    for (int round = 0; round < 2; ++round) {
+        EXAMPLE_REQUIRE(proven_deflate(c, (proven_mem_view_t){ (const proven_byte_t *)said, sizeof said - 1 }, &taken, (proven_mem_mut_t){ packed, sizeof packed }, &made,
+                                       PROVEN_DEFLATE_FLUSH_SYNC, &ended) == PROVEN_OK && made > 4, "a message through the kept compressor");
+        printf("message %d goes out as %u bytes\n", round + 1, (unsigned)(made - 4));
+        if (round == 1) EXAMPLE_REQUIRE(made - 4 < 10, "the second is a few bytes: a reference into the first");
+        /* The reader: the payload as it arrived - the four bytes left off, then put back. */
+        proven_byte_t back[128];
+        proven_size_t got = 0;
+        EXAMPLE_REQUIRE(proven_inflate(z, (proven_mem_view_t){ packed, made }, &taken, (proven_mem_mut_t){ back, sizeof back }, &got, &ended) == PROVEN_OK &&
+                        got == sizeof said - 1 && memcmp(back, said, got) == 0, "and the kept decompressor reads it");
+        /* A sender may end a message with a final block instead (RFC 7692, 7.2.3.4): the
+         * decompressor then reports `ended`, and the reader goes on with
+         * proven_inflate_restart, which keeps the window - not reset, which forgets it. */
+        if (ended) proven_inflate_restart(z);
+    }
+    proven_deflate_destroy(c);
+    proven_inflate_destroy(z);
     return EXAMPLE_OK();
 }
 ```
@@ -964,12 +1037,18 @@ int main(void) {
 | API | Intent | Return |
 |---|---|---|
 | `compress` (both connection configurations) | Offer the extension (a client) or accept it when offered (a server). | - |
-| `compress_level`, `compress_window_bits` (both) | As in Chapter 16, section 4: 1 to 9 or -1; 9 to 15. Zero: 6, and 15. | `INVALID_ARG` outside those ranges. |
+| `compress_level`, `compress_window_bits` (both) | As in Chapter 16, section 4: 1 to 9 or -1; 9 to 15. Zero: 6, and 11 with takeover or 15 without. | `INVALID_ARG` outside those ranges. |
+| `compress_no_takeover` (both) | Each message compressed on its own, nothing kept between messages - the form before v0.80.0. | - |
 | `proven_ws_conn_compressed(conn)`, `proven_ws_stream_compressed(ws)` | Whether the other side agreed. | `bool`. |
 | `proven_ws_conn_set_compress(conn, on)`, `proven_ws_stream_set_compress(ws, on)` | Whether the messages this side sends from now on are compressed. For the one that must not be - a secret beside text the other side chose, or bytes compressed already: off, send, on. Nothing on a connection that did not agree to compression. | none. |
 | `PROVEN_WS_DEFLATE_OFFER` | The `Sec-WebSocket-Extensions` value a client sends. | a string literal. |
 | `proven_ws_deflate_accept(request, out, &len, &window_bits)` | A server's choice among the request's offers; writes the answer. | `proven_err_t`: `NOT_FOUND` when no offer can be met - go on without; `OUT_OF_BOUNDS` (`PROVEN_WS_DEFLATE_ANSWER_MAX` bytes are enough). |
 | `proven_ws_check_response_deflate(response, key, offered, &protocol, &deflate)` | `proven_ws_check_response` for a client that offered. | the same, and `INVALID_FORMAT` for an answer in a form that was not offered. |
+| `PROVEN_WS_DEFLATE_OFFER_TAKEOVER` | The value a client sends to ask for takeover. | a string literal. |
+| `proven_ws_deflate_accept_takeover(request, out, &len, &terms)` | `proven_ws_deflate_accept` for a server that keeps its window: forbids takeover only where the offer asked; `terms` says what was agreed. | as `proven_ws_deflate_accept`. |
+| `proven_ws_check_response_takeover(response, key, offered, &protocol, &deflate, &terms)` | The check for a client that sent `PROVEN_WS_DEFLATE_OFFER_TAKEOVER`: any of the four parameters, once each; `terms` says what was agreed. | the same, and `INVALID_FORMAT` for a parameter twice, unknown, or out of range. |
+| `proven_ws_deflate_terms_t` | Who may keep a window (`server_takeover`, `client_takeover`), and how large each side's may be (`server_window_bits`, `client_window_bits`; 8 means this side cannot compress and sends uncompressed). | - |
+| `proven_inflate_restart(z)` | After `ended`: go on keeping the window, for a peer that took over and ended a message with a final block. | none. |
 | `proven_ws_decoder_allow_compressed(decoder)` | Let the decoder pass compressed messages through, marked `compressed`. It does not inflate. | none. |
 | `rsv1` in `proven_ws_frame_t` | The bit that marks a compressed message, on its first frame. | - |
 
@@ -977,10 +1056,12 @@ int main(void) {
 
 - **Do not compress messages that carry a secret together with text the other side chose.**
   The length of a compressed message tells an observer of the connection how much the two
-  have in common, with or without TLS - the leak described in Chapter 16, section 5. Because
-  each message is compressed alone, one message cannot leak another; what is inside a single
-  message still can. Compression is per connection here: a connection that carries such
-  messages should not ask for it.
+  have in common, with or without TLS - the leak described in Chapter 16, section 5. With
+  takeover (the default) the secret and the chosen text need not be in the same message:
+  earlier messages change a later one's length too. With `compress_no_takeover` each message
+  is compressed alone and one message cannot leak another; what is inside a single message
+  still can. Compression is per connection here: a connection that carries such messages
+  should not ask for it.
 - **The limit is on the inflated size, and you should set one.** `max_message_bytes` is what
   stops a kilobyte from becoming a gigabyte. Its default is 1 MiB.
 - **Raw DEFLATE has no checksum.** A compressed message damaged in transit can inflate to
@@ -989,22 +1070,25 @@ int main(void) {
   one such offer is a compression window of 256 bytes (`server_max_window_bits=8`), which
   this compressor does not have. A client's own window size (`client_max_window_bits`) is
   accepted and ignored: any window can be read.
-- **A server that accepts in another form is refused by the client.** One that takes the
-  offer without `server_no_context_takeover` would compress across messages, which this side
-  does not read; the connection fails with `PROVEN_ERR_INVALID_FORMAT`. Servers that follow
-  RFC 7692 either accept the offer as made or decline it.
-- **Memory while a compressed message is in flight:** about 35 KiB to inflate one (51 KiB in
+- **A client with `compress_no_takeover` refuses a server that answers in another form.** One
+  that takes that offer without `server_no_context_takeover` would compress across messages
+  against what was asked; the connection fails with `PROVEN_ERR_INVALID_FORMAT`. Servers that
+  follow RFC 7692 either accept the offer as made or decline it.
+- **Memory.** With takeover: about 28 KiB (window 11) and 35 KiB, kept from the first
+  compressed message to the end, and 16 KiB more in the event-driven server while a message
+  is arriving. With `compress_no_takeover`: about 35 KiB to inflate one message (51 KiB in
   the event-driven server), and from 11 KiB to 325 KiB to compress one, by the window and no
-  more than the message needs. It is allocated for the message and freed with it - so a busy
-  connection with compression allocates per message where one without does not.
+  more than the message needs, allocated for the message and freed with it - so a busy
+  connection allocates per message where one with takeover does not.
 - **With the codec alone, text is yours to check.** The decoder cannot check bytes that are
   not text yet; after inflating, check them. And count what comes out: the decoder's limit
   counts compressed bytes.
 
 ## 10. What is not here
 
-- **Compression that carries its window from one message to the next** ("context takeover"),
-  and any extension other than `permessage-deflate`. Section 9.
+- **Any extension other than `permessage-deflate`.** Section 9.
+- **A server that forbids its clients' takeover while keeping its own** (it would hold about
+  28 KiB instead of 64): a server takes over exactly as far as each offer allows.
 - **One call that waits on many connections.** See section 5.
 - **Concurrent send and receive on one connection.**
 - **Automatic pings, reconnection, backoff.** Policy, and yours.

@@ -1,8 +1,9 @@
 #include "proven_internal_ws.h"
 
 /*
- * permessage-deflate (RFC 7692) for the WebSocket drivers: one message in, one message out,
- * nothing kept between messages.
+ * permessage-deflate (RFC 7692) for the WebSocket drivers: one message in, one message out.
+ * Between messages nothing is kept, unless a direction takes over: then its compressor or
+ * decompressor is the connection's.
  *
  * On the wire a compressed message is raw DEFLATE ended by a sync flush - an empty stored
  * block, whose last four bytes are always 00 00 ff ff - with those four bytes left off. The
@@ -15,13 +16,22 @@ static const proven_byte_t WS_TAIL[4] = { 0x00, 0x00, 0xff, 0xff };
 // Receiving
 // -----------------------------------------------------------------------------
 
-proven_err_t proven_ws_inflate_begin_(proven_ws_inflate_t_ *m, proven_allocator_t alloc, bool text) {
-    *m = (proven_ws_inflate_t_){ .text = text };
-    return proven_inflate_create(alloc, PROVEN_DEFLATE_RAW, &m->z);
+proven_err_t proven_ws_inflate_begin_(proven_ws_inflate_t_ *m, proven_allocator_t alloc, bool text, proven_inflate_t **kept) {
+    *m = (proven_ws_inflate_t_){ .text = text, .kept = kept != (void *)0 };
+    if (!kept) return proven_inflate_create(alloc, PROVEN_DEFLATE_RAW, &m->z);
+    if (!*kept) {
+        proven_err_t e = proven_inflate_create(alloc, PROVEN_DEFLATE_RAW, kept);
+        if (e != PROVEN_OK) return e;
+    }
+    m->z = *kept;
+    return PROVEN_OK;
 }
 
 void proven_ws_inflate_end_(proven_ws_inflate_t_ *m) {
-    if (m && m->z) { proven_inflate_destroy(m->z); m->z = (void *)0; }
+    if (m && m->z) {
+        if (!m->kept) proven_inflate_destroy(m->z);
+        m->z = (void *)0;
+    }
 }
 
 proven_err_t proven_ws_inflate_step_(proven_ws_inflate_t_ *m, proven_mem_view_t in, proven_size_t *consumed, bool last,
@@ -50,9 +60,13 @@ proven_err_t proven_ws_inflate_step_(proven_ws_inflate_t_ *m, proven_mem_view_t 
             if (e != PROVEN_OK) return e;
         }
         /* A sender may close its last block instead of flushing (RFC 7692, 7.2.3.4). What
-         * follows is then read as the start of a stream: with nothing carried from one
-         * message to the next, that is what it is. */
-        if (ended) { proven_inflate_reset(m->z); continue; }
+         * follows is then read as the start of a stream - one that, under takeover, may still
+         * refer back to everything before it. */
+        if (ended) {
+            if (m->kept) proven_inflate_restart(m->z);
+            else proven_inflate_reset(m->z);
+            continue;
+        }
         if (used == 0 && made == 0) {
             /* It wants input, or room. With every byte given and room to spare, that is the
              * end of the message. */

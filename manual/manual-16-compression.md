@@ -167,6 +167,7 @@ proven_err_t proven_inflate_create(proven_allocator_t alloc, proven_deflate_form
 proven_err_t proven_inflate(proven_inflate_t *z, proven_mem_view_t in, proven_size_t *consumed,
                             proven_mem_mut_t out, proven_size_t *produced, bool *done);
 void proven_inflate_reset(proven_inflate_t *z);
+void proven_inflate_restart(proven_inflate_t *z);
 void proven_inflate_destroy(proven_inflate_t *z);
 ```
 
@@ -199,14 +200,18 @@ The contract of a step is short, and worth reading once:
 A sync flush ends on a byte boundary, and the last four bytes it produces are always
 `00 00 ff ff`. WebSocket's `permessage-deflate` sends each message as a sync flush with
 those four bytes left off, and the receiver puts them back ([Chapter 12](manual-12-websocket.md),
-section 9: the WebSocket drivers cut and put back those four bytes, and start afresh with
-every message). That is also why a raw stream
+section 9: the WebSocket drivers cut and put back those four bytes, and with context
+takeover keep one compressor and one decompressor for the whole connection). That is also why a raw stream
 need never end: the decompressor is fed piece after piece, `*done` never becomes true, and
 what it remembers of earlier pieces is what makes later ones small.
 
 `proven_deflate_reset` and `proven_inflate_reset` start a new stream in the same object,
 which is cheaper than making another. After `*done`, a decompressor that should read a
 second gzip member following the first is reset and fed from where the first ended.
+`proven_inflate_restart` starts a new stream too but keeps the last 32 KiB, so the new
+stream's matches may reach back into the old one: that is for `permessage-deflate` with
+context takeover, where a sender may end a message with a final block and its next message
+still refers to earlier ones.
 
 Compiled and run by the test suite:
 
