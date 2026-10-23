@@ -479,6 +479,48 @@ proven_err_t proven_h2_conn_ping(proven_h2_conn_t *conn, const proven_byte_t opa
  *         connection at once. */
 void proven_h2_conn_shutdown(proven_h2_conn_t *conn, proven_h2_error_t code);
 
+/**
+ * @brief Change how many streams the peer may have open at once (SETTINGS_MAX_CONCURRENT_STREAMS),
+ *        after the opening: a SETTINGS frame is queued, and the number holds once the peer
+ *        acknowledges it.
+ *
+ * `n` is 0 to the configuration's `max_concurrent_streams`: what a connection may come to hold
+ * is fixed when it is made, so a change lowers the number or raises it back, never above.
+ * Streams already open are not touched, however many there are. Until the peer acknowledges,
+ * it may still open streams under the number before, and those are taken; after, a stream
+ * over the number is refused with PROVEN_H2_REFUSED_STREAM, which the peer may send again.
+ *
+ * On a client the number is also the most this side opens, and that holds at once.
+ *
+ * One change is in flight at a time. A call made while one is waiting for its
+ * acknowledgement is kept, and the latest values of both calls go out together when it comes.
+ *
+ * @return PROVEN_ERR_INVALID_ARG for a null connection or `n` above that ceiling;
+ *         PROVEN_ERR_INVALID_STATE after a goodbye of this side or the end; PROVEN_ERR_NOMEM.
+ */
+[[nodiscard]]
+proven_err_t proven_h2_conn_set_max_streams(proven_h2_conn_t *conn, proven_u32 n);
+
+/**
+ * @brief Change the body bytes the peer may send on each stream before this side gives room
+ *        back (SETTINGS_INITIAL_WINDOW_SIZE), after the opening.
+ *
+ * `n` is 0 to the configuration's `initial_window` (the ceiling, as for streams). Every open
+ * stream's window moves by the difference, as RFC 9113 section 6.9.2 says, and a stream begun
+ * later starts at `n`. A raise holds at once; a lowering once the peer acknowledges it, so
+ * what it sent before it read the change is taken. A lowering can leave a stream that has
+ * already been given its room with less than nothing: it then waits until enough is consumed.
+ * The connection's own window is not a setting and does not change. On a connection whose
+ * windows grow while they are read (the event-driven drivers), a stream that has grown keeps
+ * its growth above the new start.
+ *
+ * Changes are in flight one at a time, with proven_h2_conn_set_max_streams's.
+ *
+ * @return as proven_h2_conn_set_max_streams.
+ */
+[[nodiscard]]
+proven_err_t proven_h2_conn_set_initial_window(proven_h2_conn_t *conn, proven_u32 n);
+
 /** @brief Whether the connection is over: PROVEN_H2_EVENT_CLOSED was or is about to be
  *         reported. Pending output should still be sent. */
 [[nodiscard]]

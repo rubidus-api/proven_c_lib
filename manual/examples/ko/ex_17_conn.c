@@ -143,6 +143,17 @@ int main(void) {
     static const proven_byte_t opaque[8] = { 'p', 'r', 'o', 'v', 'e', 'n', '!', '!' };
     EXAMPLE_REQUIRE(proven_h2_conn_ping(client.conn, opaque) == PROVEN_OK && carry(&client, &server) && carry(&server, &client) && client.pongs == 1, "a ping is answered by the connection itself");
 
+    // ---- 연결 뒤에 바꾸는 설정 ----------------------------------------------------------------
+    /* 바쁜 서버가 동시 스트림 수와 창을 줄인다. SETTINGS 프레임 하나이고, 클라이언트가 확인한
+     * 뒤부터 유효하다. 만들 때 준 값이 상한이고, 이미 열린 스트림은 건드리지 않는다. */
+    EXAMPLE_REQUIRE(proven_h2_conn_set_max_streams(server.conn, 1) == PROVEN_OK && proven_h2_conn_set_initial_window(server.conn, 16384) == PROVEN_OK, "the server lowers both");
+    EXAMPLE_REQUIRE(carry(&server, &client) && carry(&client, &server), "the change crosses, and is acknowledged");
+    EXAMPLE_REQUIRE(proven_h2_conn_submit_request(client.conn, request, 5, true, &stream) == PROVEN_OK && carry(&client, &server), "one request");
+    proven_u32 second = 0;
+    EXAMPLE_REQUIRE(proven_h2_conn_submit_request(client.conn, request, 5, true, &second) == PROVEN_ERR_BUSY, "and not a second at the same time: the client holds itself to the new number");
+    EXAMPLE_REQUIRE(proven_h2_conn_set_max_streams(server.conn, 11) == PROVEN_ERR_INVALID_ARG, "above the number given at creation: refused");
+    EXAMPLE_REQUIRE(proven_h2_conn_reset(server.conn, stream, PROVEN_H2_CANCEL) == PROVEN_OK && carry(&server, &client), "the server lets that one go");
+
     // ---- 규칙을 어기는 상대 ------------------------------------------------------------------
     /* 아무것도 더하지 않는 WINDOW_UPDATE는 프로토콜 오류다. 연결은 상대에게 그렇게 말하고
      * (GOAWAY), 끝났다고 알리고, 더는 아무것도 받지 않는다. */

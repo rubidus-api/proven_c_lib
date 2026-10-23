@@ -255,6 +255,7 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
 proven_err_t proven_http_event_server_listen(proven_http_event_server_t *server, proven_net_addr_t at, proven_net_addr_t *bound);
 void proven_http_event_server_destroy(proven_http_event_server_t *server);
 proven_size_t proven_http_event_server_connections(const proven_http_event_server_t *server);
+proven_err_t proven_http_event_server_set_max_streams(proven_http_event_server_t *server, proven_size_t n);
 void proven_http_event_server_stop_listening(proven_http_event_server_t *server);
 typedef void (*proven_http_event_drained_fn)(void *ctx, proven_err_t why);
 proven_err_t proven_http_event_server_shutdown(proven_http_event_server_t *server, proven_u32 grace_ms,
@@ -268,6 +269,7 @@ proven_err_t proven_http_event_server_shutdown(proven_http_event_server_t *serve
 | `proven_http_event_server_create(loop, &config, &server)` | 서버를 만든다. | `proven_err_t`: 루프가 없거나, `on_request`가 없거나, TLS 설정에 인증서가 없으면 `INVALID_ARG`. `NOMEM`. |
 | `proven_http_event_server_listen(server, at, &bound)` | `at`에서 듣는다. 서버 하나에 주소 넷까지. `bound`(선택)는 쓰이는 주소를 받는다 - `at`이 포트 0을 청했다면 시스템이 고른 포트와 함께. | `proven_err_t`. |
 | `proven_http_event_server_connections(server)` | 지금 열려 있는 연결. | `proven_size_t`. |
+| `proven_http_event_server_set_max_streams(server, n)` | 서버가 도는 동안 `max_concurrent_streams`를 바꾼다: 1부터 설정값까지, 열린 연결과 앞으로 올 연결에 ([17장](manual-17-http2-ko.md) 6절과 9절). 루프의 스레드에서. | `proven_err_t`: `INVALID_ARG`. |
 | `proven_http_event_server_stop_listening(server)` | 받아들이기를 멈춘다. 열린 연결은 계속되지만, 이제부터 HTTP/1.1 응답은 `Connection: close`를 말하고 HTTP/2는 작별한다. | 없음. |
 | `proven_http_event_server_shutdown(server, grace_ms, on_drained, ctx)` | 부드럽게 끝낸다(10절). 끝나면 `on_drained(ctx, why)`. | `proven_err_t`: 이미 종료 중이면 `INVALID_STATE`. |
 | `proven_http_event_server_destroy(server)` | 모든 연결과 리스너를 닫고 서버를 해제한다. 진행 중인 교환은 `PROVEN_ERR_RESET`과 함께 `on_done`을 받는다. 루프는 멈추지도 해제되지도 않는다. 널을 받는다. | 없음. |

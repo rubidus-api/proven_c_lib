@@ -157,7 +157,7 @@ URL도 같다. 공개 인터넷이라면 설정의 앵커는 시스템의 것이
 `http`와 `https`를 함께 서비스하려면 서버를 둘 돌린다. 서버 하나는 둘 중 하나다.
 
 컴파일되고, 테스트 스위트가 스스로 만든 인증서와 키를 주어 실행한다
-(`tests/test_docs_tls_examples.c`):
+(`tests/test_docs_tls_example_https.c`):
 
 <!-- example: manual/examples/ko/ex_14_tls_https.c -->
 ```c
@@ -413,7 +413,7 @@ proven_err_t proven_tls_key_update(proven_tls_conn_t *conn);
   거부한다(`PROVEN_ERR_OVERFLOW`) - 새 연결을 연다.
 
 컴파일되고, 테스트 스위트가 스스로 만든 인증서와 키를 주어 실행한다
-(`tests/test_docs_tls_examples.c`):
+(`tests/test_docs_tls_example_engine.c`):
 
 <!-- example: manual/examples/ko/ex_14_tls_engine.c -->
 ```c

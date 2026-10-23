@@ -561,6 +561,7 @@ struct proven_quic_conn {
     proven_size_t nstreams, streams_cap, cursor, ev_cursor;
     proven_u64 local_opened[2], peer_max_streams[2];    /* [0] bidi, [1] uni */
     proven_u64 peer_opened[2], peer_closed[2], our_max_streams[2];
+    proven_u64 grant_bidi;              /* the peer's request streams open at once: cfg.max_streams_bidi, or lower (proven_quic_conn_set_max_streams_) */
     bool max_streams_owed[2];
     proven_u64 rx_ranges;               /* received ranges held by all streams */
 
@@ -701,7 +702,7 @@ static proven_size_t local_params(proven_quic_conn_t *c, proven_byte_t *out, pro
     tp.initial_max_stream_data_bidi_local = c->cfg.stream_window;
     tp.initial_max_stream_data_bidi_remote = c->cfg.stream_window;
     tp.initial_max_stream_data_uni = c->cfg.stream_window;
-    tp.initial_max_streams_bidi = c->cfg.max_streams_bidi;
+    tp.initial_max_streams_bidi = c->grant_bidi;
     tp.initial_max_streams_uni = c->cfg.max_streams_uni;
     tp.active_connection_id_limit = QC_PEER_CIDS;
     tp.disable_active_migration = true;
@@ -803,10 +804,14 @@ static void stream_maybe_free(proven_quic_conn_t *c, proven_qstream_t *s) {
     if (!s->local) {
         const unsigned k = id_kind(s->id);
         ++c->peer_closed[k];
-        const proven_u64 lim = k ? c->cfg.max_streams_uni : c->cfg.max_streams_bidi;
-        /* A stream over is a stream more the peer may open: the latest limit goes in the next packet. */
-        c->our_max_streams[k] = c->peer_closed[k] + lim;
-        c->max_streams_owed[k] = true;
+        const proven_u64 lim = k ? c->cfg.max_streams_uni : c->grant_bidi;
+        /* A stream over is a stream more the peer may open: the latest limit goes in the next
+         * packet. Credit given is never taken back (RFC 9000, section 4.6): a lowered number
+         * shows once enough streams have ended. */
+        if (c->peer_closed[k] + lim > c->our_max_streams[k]) {
+            c->our_max_streams[k] = c->peer_closed[k] + lim;
+            c->max_streams_owed[k] = true;
+        }
     }
     sendq_free(&c->mem, &s->tx);
     recvq_free(&c->mem, &s->rx);
@@ -2713,7 +2718,8 @@ static proven_quic_conn_t *conn_new(const proven_quic_config_t *cfg, bool server
     c->rx_max_data = c->cfg.conn_window;
     c->rx_conn_window = c->cfg.conn_window;
     c->rx_conn_moved_at = c->now;
-    c->our_max_streams[0] = c->cfg.max_streams_bidi;
+    c->grant_bidi = c->cfg.streams_bidi_now && c->cfg.streams_bidi_now < c->cfg.max_streams_bidi ? c->cfg.streams_bidi_now : c->cfg.max_streams_bidi;
+    c->our_max_streams[0] = c->grant_bidi;
     c->our_max_streams[1] = c->cfg.max_streams_uni;
     c->state = QS_HANDSHAKE;
     bool zero = true;
@@ -2892,6 +2898,18 @@ proven_size_t proven_quic_stateless_reset(const proven_quic_config_t *cfg, const
     out.ptr[0] = (proven_byte_t)(0x40 | (out.ptr[0] & 0x3f));
     reset_token_for(cfg->static_key, dcid, out.ptr + n - 16);
     return n;
+}
+
+/* For the event server (declared in proven_internal_quic.h; RFC-0024): how many bidirectional
+ * streams the peer may have open at once from now on, at most the configured number. What was
+ * granted stands; later grants follow `n`, and a raise is granted at once. */
+void proven_quic_conn_set_max_streams_(proven_quic_conn_t *c, proven_u64 n) {
+    if (!c || n > c->cfg.max_streams_bidi) return;
+    c->grant_bidi = n;
+    if (c->peer_closed[0] + n > c->our_max_streams[0]) {
+        c->our_max_streams[0] = c->peer_closed[0] + n;
+        c->max_streams_owed[0] = true;
+    }
 }
 
 #endif /* PROVEN_NO_HTTP3 */

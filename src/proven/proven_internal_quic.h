@@ -365,6 +365,7 @@ typedef struct {
     const proven_tls_config_t *tls;                /* required: names a protocol (ALPN); its random source is this connection's */
     proven_u8str_view_t alpn;                      /* the one protocol of `tls`'s list the connection may agree (HTTP/3: "h3"); empty: any of them */
     proven_u32 max_streams_bidi;                   /* streams the peer may open, each kind. 0: 100 */
+    proven_u32 streams_bidi_now;                   /* of those, bidirectional ones it may open at first: 1 to max_streams_bidi, which stays the ceiling for proven_quic_conn_set_max_streams_. 0: max_streams_bidi */
     proven_u32 max_streams_uni;                    /* 0: 100 */
     proven_u32 stream_window;                      /* bytes a stream may receive ahead of the reader. 0: 256 KiB */
     proven_u32 conn_window;                        /* the same for all streams together. 0: 1 MiB */
@@ -483,6 +484,10 @@ void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s)
  * its result: the close code, or 0), and a key update started by this side. */
 proven_u64 proven_quic_conn_test_frames_(proven_quic_conn_t *c, int lvl, proven_mem_view_t payload, proven_u64 now);
 bool proven_quic_conn_test_key_update_(proven_quic_conn_t *c);
+/* The peer's bidirectional streams open at once from now on: at most the configured number;
+ * credit already granted stands (RFC 9000, section 4.6), and a raise is granted at once. For the
+ * event server (RFC-0024). */
+void proven_quic_conn_set_max_streams_(proven_quic_conn_t *c, proven_u64 n);
 /* Whether the handshake resumed a session the client offered (RFC-0020). */
 bool proven_quic_conn_resumed(const proven_quic_conn_t *c);
 /* The protocol agreed (ALPN), as proven_tls_alpn: empty before the handshake has agreed one. */

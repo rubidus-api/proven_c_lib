@@ -170,7 +170,7 @@ and holds up nobody.
 To serve both `http` and `https`, run two servers; a server is one or the other.
 
 Compiled, and run by the test suite with a certificate and key it makes for it
-(`tests/test_docs_tls_examples.c`):
+(`tests/test_docs_tls_example_https.c`):
 
 <!-- example: manual/examples/en/ex_14_tls_https.c -->
 ```c
@@ -432,7 +432,7 @@ proven_err_t proven_tls_key_update(proven_tls_conn_t *conn);
   that has sent 2^31 records refuses to write more (`PROVEN_ERR_OVERFLOW`) - open another.
 
 Compiled, and run by the test suite with a certificate and key it makes for it
-(`tests/test_docs_tls_examples.c`):
+(`tests/test_docs_tls_example_engine.c`):
 
 <!-- example: manual/examples/en/ex_14_tls_engine.c -->
 ```c

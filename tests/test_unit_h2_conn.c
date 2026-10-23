@@ -543,6 +543,52 @@ static proven_h2_conn_t *grow_run(bool grow, proven_u64 rtt, proven_u64 step, pr
     return c;
 }
 
+/* The SETTINGS frames (not acknowledgements) a connection has queued: how many, and the
+ * entries of the last. Marks everything as sent. */
+typedef struct { int frames, entries; proven_u16 id[8]; proven_u32 value[8]; } said_t;
+
+static said_t said(proven_h2_conn_t *c) {
+    said_t r = { 0 };
+    proven_mem_view_t out = proven_h2_conn_pending_output(c);
+    proven_size_t pos = out.size >= 24 && memcmp(out.ptr, PROVEN_H2_PREFACE, 24) == 0 ? 24 : 0;
+    while (pos + 9 <= out.size) {
+        proven_h2_frame_t f;
+        PROVEN_TEST_ASSERT(proven_h2_frame_parse((proven_mem_view_t){ out.ptr + pos, out.size - pos }, &f) == PROVEN_OK, "what a connection queues is whole frames", "");
+        if (f.type == PROVEN_H2_SETTINGS && (f.flags & PROVEN_H2_FLAG_ACK) == 0) {
+            r.frames++;
+            r.entries = 0;
+            proven_size_t at = 0; proven_h2_setting_t st; proven_h2_error_t code;
+            while (r.entries < 8 && proven_h2_settings_next((proven_mem_view_t){ out.ptr + pos + 9, f.length }, &at, &st, &code) == PROVEN_OK) {
+                r.id[r.entries] = st.id; r.value[r.entries] = st.value; r.entries++;
+            }
+        }
+        pos += 9 + f.length;
+    }
+    proven_h2_conn_output_sent(c, out.size);
+    return r;
+}
+
+static bool said_one(said_t r, proven_u16 id, proven_u32 value) {
+    return r.frames == 1 && r.entries == 1 && r.id[0] == id && r.value[0] == value;
+}
+
+/* The peer's acknowledgement of one SETTINGS frame. */
+static void ack(proven_h2_conn_t *c, log_t *log) {
+    buf_t *b = &g_rec;
+    b->n = 0;
+    put_frame(b, PROVEN_H2_SETTINGS, PROVEN_H2_FLAG_ACK, 0, (void *)0, 0);
+    feed(c, b->b, b->n, b->n, log);
+}
+
+/* `n` bytes of DATA on a stream, in frames of at most 16,384. */
+static void put_data(buf_t *b, proven_u32 id, proven_size_t n) {
+    while (n > 0) {
+        proven_size_t k = n < 16384 ? n : 16384;
+        put_frame(b, PROVEN_H2_DATA, 0, id, g_zero, k);
+        n -= k;
+    }
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("h2_conn: an HTTP/2 connection without a socket",
         "Two connections wired together in memory carry requests, bodies, trailers, resets and goodbyes at every delivery size; a scripted peer breaks each rule of RFC 9113 and the connection answers with the verdict the RFC names; and every bound on what a peer may make a connection hold or do is driven to its edge.",
@@ -1855,6 +1901,157 @@ int main(void) {
         proven_h2_conn_destroy(c);
         c = grow_run(true, 0, 100, (proven_size_t)4 << 20, false, &sent);
         PROVEN_TEST_ASSERT(proven_h2_conn_test_window_(c, 1) == PROVEN_H2_DEFAULT_WINDOW, "and nothing grows before the round trip is known (no SETTINGS acknowledgement)", "");
+        proven_h2_conn_destroy(c);
+    }
+
+    PROVEN_TEST_SECTION("settings changed after the opening", "proven_h2_conn_set_max_streams and proven_h2_conn_set_initial_window: one frame in flight, the larger value enforced until the peer acknowledges, the values at creation as ceilings.", "Check h2c_settings_change, h2c_settings_acked and the enforced number in h2c_on_block.");
+    {
+        /* Streams: lowered, and the old number holds until the acknowledgement. */
+        proven_h2_config_t sc = base;
+        sc.server = true; sc.max_concurrent_streams = 10;
+        proven_h2_conn_t *c = opened(&sc);
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_max_streams(c, 2) == PROVEN_OK, "a server lowers its streams from 10 to 2", "");
+        PROVEN_TEST_ASSERT(said_one(said(c), PROVEN_H2_SETTINGS_MAX_CONCURRENT_STREAMS, 2), "one SETTINGS frame goes out, carrying only that setting", "");
+        log_t log = { 0 };
+        g_buf.n = 0;
+        for (proven_u32 id = 1; id <= 9; id += 2) put_get(&g_buf, id, false);
+        feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+        seen_t seen = { 0 };
+        drain(c, &seen);
+        PROVEN_TEST_ASSERT(log.err == PROVEN_OK && log.headers == 5 && seen.rst == 0, "before the peer acknowledges, the old number holds: five streams are taken", "");
+        ack(c, &log);
+        g_buf.n = 0;
+        put_get(&g_buf, 11, false);
+        feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+        seen = (seen_t){ 0 };
+        drain(c, &seen);
+        PROVEN_TEST_ASSERT(log.headers == 5 && seen.rst == 1 && seen.rst_id[0] == 11 && seen.rst_code[0] == PROVEN_H2_REFUSED_STREAM,
+            "after the acknowledgement a stream over the new number is refused, safe to send again", "");
+        PROVEN_TEST_ASSERT(proven_h2_conn_stream_count(c) == 5 && !proven_h2_conn_is_closed(c), "and the streams already open are not touched", "");
+
+        /* Bounds. */
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_max_streams(c, 11) == PROVEN_ERR_INVALID_ARG, "above the number given at creation: PROVEN_ERR_INVALID_ARG", "");
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_initial_window(c, 65536) == PROVEN_ERR_INVALID_ARG, "a window above the one given at creation: PROVEN_ERR_INVALID_ARG", "");
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_max_streams((void *)0, 1) == PROVEN_ERR_INVALID_ARG && proven_h2_conn_set_initial_window((void *)0, 1) == PROVEN_ERR_INVALID_ARG, "no connection: PROVEN_ERR_INVALID_ARG", "");
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_max_streams(c, 10) == PROVEN_OK && said_one(said(c), PROVEN_H2_SETTINGS_MAX_CONCURRENT_STREAMS, 10), "raised back to the ceiling", "");
+        proven_h2_conn_shutdown(c, PROVEN_H2_NO_ERROR);
+        drain(c, (void *)0);
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_max_streams(c, 3) == PROVEN_ERR_INVALID_STATE && proven_h2_conn_set_initial_window(c, 100) == PROVEN_ERR_INVALID_STATE, "after a goodbye: PROVEN_ERR_INVALID_STATE", "");
+        proven_h2_conn_destroy(c);
+
+        /* One frame in flight: calls made meanwhile become one frame, with the last values. */
+        c = opened(&sc);
+        log = (log_t){ 0 };
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_max_streams(c, 5) == PROVEN_OK && said_one(said(c), PROVEN_H2_SETTINGS_MAX_CONCURRENT_STREAMS, 5), "a change goes out at once when none is in flight", "");
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_max_streams(c, 4) == PROVEN_OK && proven_h2_conn_set_max_streams(c, 3) == PROVEN_OK
+            && proven_h2_conn_set_initial_window(c, 30000) == PROVEN_OK, "calls while one is in flight succeed", "");
+        PROVEN_TEST_ASSERT(said(c).frames == 0, "and send nothing yet", "");
+        ack(c, &log);
+        said_t r = said(c);
+        bool streams3 = false, window30000 = false;
+        for (int i = 0; i < r.entries; i++) {
+            if (r.id[i] == PROVEN_H2_SETTINGS_MAX_CONCURRENT_STREAMS && r.value[i] == 3) streams3 = true;
+            if (r.id[i] == PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE && r.value[i] == 30000) window30000 = true;
+        }
+        PROVEN_TEST_ASSERT(log.err == PROVEN_OK && r.frames == 1 && r.entries == 2 && streams3 && window30000, "the acknowledgement lets one frame go, with the latest of each", "");
+        ack(c, &log);
+        PROVEN_TEST_ASSERT(said(c).frames == 0, "nothing more is owed", "");
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_max_streams(c, 3) == PROVEN_OK && said(c).frames == 0, "a value equal to the one in force sends nothing", "");
+        proven_h2_conn_destroy(c);
+
+        /* The window lowered: what the peer sent before it read the change is taken; after the
+         * acknowledgement every open stream's window moves down by the difference. */
+        g_consume = false;
+        sc.max_concurrent_streams = 0;
+        c = opened(&sc);
+        log = (log_t){ 0 };
+        g_buf.n = 0;
+        put_get(&g_buf, 1, false);
+        feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_initial_window(c, 16384) == PROVEN_OK && said_one(said(c), PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, 16384), "a server lowers the initial window from 65,535 to 16,384", "");
+        g_buf.n = 0;
+        put_data(&g_buf, 1, 30000);
+        feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+        seen = (seen_t){ 0 };
+        drain(c, &seen);
+        PROVEN_TEST_ASSERT(log.data_bytes == 30000 && seen.rst == 0 && !log.closed, "30,000 bytes sent under the old window are taken", "");
+        ack(c, &log);
+        g_buf.n = 0;
+        put_data(&g_buf, 1, 1);
+        feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+        seen = (seen_t){ 0 };
+        drain(c, &seen);
+        PROVEN_TEST_ASSERT(seen.rst == 1 && seen.rst_id[0] == 1 && seen.rst_code[0] == PROVEN_H2_FLOW_CONTROL_ERROR && !log.closed,
+            "after the acknowledgement that stream has 16,384 less room than it was given: one more byte is its error", "");
+        g_buf.n = 0;
+        put_get(&g_buf, 3, false);
+        put_data(&g_buf, 3, 16384);
+        feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+        seen = (seen_t){ 0 };
+        drain(c, &seen);
+        PROVEN_TEST_ASSERT(seen.rst == 0 && log.data_bytes == 30000 + 16384, "a new stream may send 16,384", "");
+        g_buf.n = 0;
+        put_data(&g_buf, 3, 1);
+        feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+        seen = (seen_t){ 0 };
+        drain(c, &seen);
+        PROVEN_TEST_ASSERT(seen.rst == 1 && seen.rst_id[0] == 3 && seen.rst_code[0] == PROVEN_H2_FLOW_CONTROL_ERROR, "and not one byte more", "");
+        proven_h2_conn_destroy(c);
+
+        /* The window raised: the peer may use it before its acknowledgement arrives. */
+        sc.initial_window = 1 << 20;
+        c = opened(&sc);
+        log = (log_t){ 0 };
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_initial_window(c, 16384) == PROVEN_OK, "lowered", "");
+        said(c);
+        ack(c, &log);
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_initial_window(c, 1 << 20) == PROVEN_OK && said_one(said(c), PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, 1u << 20), "and raised back", "");
+        g_buf.n = 0;
+        put_get(&g_buf, 1, false);
+        put_data(&g_buf, 1, 100000);
+        feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+        seen = (seen_t){ 0 };
+        drain(c, &seen);
+        PROVEN_TEST_ASSERT(seen.rst == 0 && !log.closed && log.data_bytes == 100000, "a raise holds at once: 100,000 bytes before the acknowledgement are taken", "");
+        ack(c, &log);
+        PROVEN_TEST_ASSERT(!log.closed && said(c).frames == 0, "and its acknowledgement changes nothing more", "");
+        proven_h2_conn_destroy(c);
+
+        /* A change made before the opening is acknowledged: the opening's value holds first. */
+        c = conn_new(&sc);
+        said(c);
+        log = (log_t){ 0 };
+        g_buf.n = 0;
+        memcpy(g_buf.b, PROVEN_H2_PREFACE, 24); g_buf.n = 24;
+        put_frame(&g_buf, PROVEN_H2_SETTINGS, 0, 0, (void *)0, 0);
+        feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+        drain(c, (void *)0);
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_initial_window(c, 16384) == PROVEN_OK && said_one(said(c), PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, 16384), "a change before the opening is acknowledged goes out at once", "");
+        ack(c, &log);                                  /* the opening's */
+        g_buf.n = 0;
+        put_get(&g_buf, 1, false);
+        put_data(&g_buf, 1, 70000);
+        feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+        seen = (seen_t){ 0 };
+        drain(c, &seen);
+        PROVEN_TEST_ASSERT(seen.rst == 0 && log.data_bytes == 70000, "the first acknowledgement is the opening's: its window of 1 MiB holds", "");
+        ack(c, &log);                                  /* the change's */
+        g_buf.n = 0;
+        put_data(&g_buf, 1, 1);
+        feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+        seen = (seen_t){ 0 };
+        drain(c, &seen);
+        PROVEN_TEST_ASSERT(seen.rst == 1 && seen.rst_code[0] == PROVEN_H2_FLOW_CONTROL_ERROR, "the second is the change's: the stream is now 70,000 into a window of 16,384", "");
+        proven_h2_conn_destroy(c);
+        g_consume = true;
+
+        /* A client: its own limit holds at once. */
+        proven_h2_config_t cc = base;
+        c = opened(&cc);
+        proven_u32 id = 0;
+        PROVEN_TEST_ASSERT(proven_h2_conn_set_max_streams(c, 1) == PROVEN_OK && said_one(said(c), PROVEN_H2_SETTINGS_MAX_CONCURRENT_STREAMS, 1), "a client lowers its streams to 1, and says so", "");
+        PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c, GET, 4, true, &id) == PROVEN_OK, "it opens one", "");
+        PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c, GET, 4, true, &id) == PROVEN_ERR_BUSY, "and a second is PROVEN_ERR_BUSY at once, with no acknowledgement", "");
         proven_h2_conn_destroy(c);
     }
 

@@ -143,6 +143,18 @@ int main(void) {
     static const proven_byte_t opaque[8] = { 'p', 'r', 'o', 'v', 'e', 'n', '!', '!' };
     EXAMPLE_REQUIRE(proven_h2_conn_ping(client.conn, opaque) == PROVEN_OK && carry(&client, &server) && carry(&server, &client) && client.pongs == 1, "a ping is answered by the connection itself");
 
+    // ---- settings changed after the opening ------------------------------------------------
+    /* A server under load asks for fewer streams at once and smaller windows: one SETTINGS
+     * frame, in force once the client acknowledges it. The numbers given at creation stay the
+     * ceilings; streams already open are not touched. */
+    EXAMPLE_REQUIRE(proven_h2_conn_set_max_streams(server.conn, 1) == PROVEN_OK && proven_h2_conn_set_initial_window(server.conn, 16384) == PROVEN_OK, "the server lowers both");
+    EXAMPLE_REQUIRE(carry(&server, &client) && carry(&client, &server), "the change crosses, and is acknowledged");
+    EXAMPLE_REQUIRE(proven_h2_conn_submit_request(client.conn, request, 5, true, &stream) == PROVEN_OK && carry(&client, &server), "one request");
+    proven_u32 second = 0;
+    EXAMPLE_REQUIRE(proven_h2_conn_submit_request(client.conn, request, 5, true, &second) == PROVEN_ERR_BUSY, "and not a second at the same time: the client holds itself to the new number");
+    EXAMPLE_REQUIRE(proven_h2_conn_set_max_streams(server.conn, 11) == PROVEN_ERR_INVALID_ARG, "above the number given at creation: refused");
+    EXAMPLE_REQUIRE(proven_h2_conn_reset(server.conn, stream, PROVEN_H2_CANCEL) == PROVEN_OK && carry(&server, &client), "the server lets that one go");
+
     // ---- a peer that breaks a rule ---------------------------------------------------------
     /* A WINDOW_UPDATE that adds nothing is a protocol error. The connection says so to its
      * peer (GOAWAY), reports that it is over, and takes nothing more. */

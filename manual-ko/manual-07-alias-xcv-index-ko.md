@@ -574,6 +574,8 @@ alias 1306개: 소문자 `xcv_` 이름 959개와 대문자 `XCV_` 이름 347개.
 | `xcv_h2_conn_send_data` | `proven_h2_conn_send_data` |
 | `xcv_h2_conn_send_room` | `proven_h2_conn_send_room` |
 | `xcv_h2_conn_send_trailers` | `proven_h2_conn_send_trailers` |
+| `xcv_h2_conn_set_initial_window` | `proven_h2_conn_set_initial_window` |
+| `xcv_h2_conn_set_max_streams` | `proven_h2_conn_set_max_streams` |
 | `xcv_h2_conn_shutdown` | `proven_h2_conn_shutdown` |
 | `xcv_h2_conn_stream_count` | `proven_h2_conn_stream_count` |
 | `xcv_h2_conn_stream_set_user` | `proven_h2_conn_stream_set_user` |
@@ -707,6 +709,7 @@ alias 1306개: 소문자 `xcv_` 이름 959개와 대문자 `XCV_` 이름 347개.
 | `xcv_http_event_server_create` | `proven_http_event_server_create` |
 | `xcv_http_event_server_destroy` | `proven_http_event_server_destroy` |
 | `xcv_http_event_server_listen` | `proven_http_event_server_listen` |
+| `xcv_http_event_server_set_max_streams` | `proven_http_event_server_set_max_streams` |
 | `xcv_http_event_server_shutdown` | `proven_http_event_server_shutdown` |
 | `xcv_http_event_server_stop_listening` | `proven_http_event_server_stop_listening` |
 | `xcv_http_event_server_t` | `proven_http_event_server_t` |

@@ -148,6 +148,29 @@ proven_err_t proven_http_event_server_adopt(proven_http_event_server_t *server, 
 /** @brief Connections open now. */
 proven_size_t proven_http_event_server_connections(const proven_http_event_server_t *server);
 
+/**
+ * @brief Change `max_concurrent_streams` while the server runs - to shed load, say, and to
+ *        take it back: for the connections open now and for those to come.
+ *
+ * `n` is 1 to the configured value, which stays the ceiling. On the loop's thread.
+ *
+ * HTTP/2: each connection says the new number to its client (proven_h2_conn_set_max_streams):
+ * requests already running go on; until the client acknowledges, it may still begin requests
+ * under the number before, and those are taken; after, one over the number is refused with
+ * REFUSED_STREAM, which a client may send again. A WebSocket on an HTTP/2 connection holds one
+ * of the streams, as before.
+ *
+ * HTTP/3: what a client was allowed already cannot be taken back (RFC 9000 section 4.6). From
+ * now on each request that ends lets the client begin another only while it is under `n`, so
+ * a lower number shows once enough requests have ended.
+ *
+ * To take no new requests at all, end the server: proven_http_event_server_shutdown.
+ *
+ * @return PROVEN_ERR_INVALID_ARG for a null server, 0, or a value above the configured one.
+ */
+[[nodiscard]]
+proven_err_t proven_http_event_server_set_max_streams(proven_http_event_server_t *server, proven_size_t n);
+
 /** @brief Stop accepting - and adopting; connections that are open go on, but an HTTP/1.1
  *         response from now on says `Connection: close` and its connection ends after it, and
  *         an HTTP/2 or HTTP/3 connection says goodbye (GOAWAY) and ends when its open streams

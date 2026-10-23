@@ -671,6 +671,36 @@ need not be each connection's**: give the configuration a `header_buffer` of
 the same memory - what is read there is what an event reports, and an event is good only
 until the next call. The server of section 6 does this.
 
+### Settings changed after the opening
+
+```c
+proven_err_t proven_h2_conn_set_max_streams(proven_h2_conn_t *conn, proven_u32 n);
+proven_err_t proven_h2_conn_set_initial_window(proven_h2_conn_t *conn, proven_u32 n);
+```
+
+Two of the settings can be changed while the connection runs (v0.79.0): how many streams the
+peer may have open at once, and the window each stream starts with. A server under load
+lowers them and raises them again later. Each call queues a SETTINGS frame; RFC 9113 says a
+setting holds once the peer acknowledges it, and the connection keeps to that:
+
+- **The values at creation are the ceilings.** What a connection may come to hold is sized by
+  them when it is made, so a change can lower a number and raise it back, never above:
+  `PROVEN_ERR_INVALID_ARG`.
+- **Until the acknowledgement, the larger number holds.** A peer may open streams, or send
+  body bytes, under the number it had before it read the change; those are taken. After the
+  acknowledgement a stream over the new number is refused with `REFUSED_STREAM` (a client may
+  send it again), and DATA beyond a stream's window is that stream's `FLOW_CONTROL_ERROR`.
+- **Nothing open is cut.** Streams already open go on, however many there are. A window
+  change moves every open stream's window by the difference (RFC 9113 section 6.9.2): a
+  lowering can leave a stream with less than nothing, and it then waits until enough is
+  consumed. A raise holds at once. The connection's own window is not a setting and does not
+  change.
+- **One change in flight.** A call made while one waits for its acknowledgement is kept, and
+  the latest values go out together when it comes - one frame, however many calls.
+- **On a client**, `max_streams` is also the most this side opens, and that holds at once.
+
+The example below lowers both on a server and shows the client keeping to the new number.
+
 ### Goodbye
 
 ```c
@@ -833,6 +863,18 @@ int main(void) {
     static const proven_byte_t opaque[8] = { 'p', 'r', 'o', 'v', 'e', 'n', '!', '!' };
     EXAMPLE_REQUIRE(proven_h2_conn_ping(client.conn, opaque) == PROVEN_OK && carry(&client, &server) && carry(&server, &client) && client.pongs == 1, "a ping is answered by the connection itself");
 
+    // ---- settings changed after the opening ------------------------------------------------
+    /* A server under load asks for fewer streams at once and smaller windows: one SETTINGS
+     * frame, in force once the client acknowledges it. The numbers given at creation stay the
+     * ceilings; streams already open are not touched. */
+    EXAMPLE_REQUIRE(proven_h2_conn_set_max_streams(server.conn, 1) == PROVEN_OK && proven_h2_conn_set_initial_window(server.conn, 16384) == PROVEN_OK, "the server lowers both");
+    EXAMPLE_REQUIRE(carry(&server, &client) && carry(&client, &server), "the change crosses, and is acknowledged");
+    EXAMPLE_REQUIRE(proven_h2_conn_submit_request(client.conn, request, 5, true, &stream) == PROVEN_OK && carry(&client, &server), "one request");
+    proven_u32 second = 0;
+    EXAMPLE_REQUIRE(proven_h2_conn_submit_request(client.conn, request, 5, true, &second) == PROVEN_ERR_BUSY, "and not a second at the same time: the client holds itself to the new number");
+    EXAMPLE_REQUIRE(proven_h2_conn_set_max_streams(server.conn, 11) == PROVEN_ERR_INVALID_ARG, "above the number given at creation: refused");
+    EXAMPLE_REQUIRE(proven_h2_conn_reset(server.conn, stream, PROVEN_H2_CANCEL) == PROVEN_OK && carry(&server, &client), "the server lets that one go");
+
     // ---- a peer that breaks a rule ---------------------------------------------------------
     /* A WINDOW_UPDATE that adds nothing is a protocol error. The connection says so to its
      * peer (GOAWAY), reports that it is over, and takes nothing more. */
@@ -889,6 +931,8 @@ int main(void) {
 | `proven_h2_conn_reset(conn, stream_id, code)` | Give up on a stream. | `proven_err_t`: `NOT_FOUND`. |
 | `proven_h2_conn_consumed(conn, stream_id, n)` | Say that DATA was dealt with. | `void`. |
 | `proven_h2_conn_ping(conn, opaque)` | Ask whether the peer is there. | `proven_err_t`: `INVALID_STATE` after the end. |
+| `proven_h2_conn_set_max_streams(conn, n)` | Change how many streams the peer may have open at once: 0 to the value at creation. Held once the peer acknowledges; streams open are not touched. | `proven_err_t`: `INVALID_ARG` (above the ceiling), `INVALID_STATE` (after a goodbye), `NOMEM`. |
+| `proven_h2_conn_set_initial_window(conn, n)` | Change each stream's window: 0 to the value at creation. Open streams move by the difference; a raise holds at once, a lowering once acknowledged. | `proven_err_t`, as above. |
 | `proven_h2_conn_shutdown(conn, code)` | Say goodbye. | `void`. |
 | `proven_h2_conn_is_closed(conn)`, `_stream_count(conn)`, `_send_room(conn, stream_id)` | Whether it is over; streams open; body bytes that may go now. | `bool`, `proven_size_t`. |
 | `proven_h2_conn_stream_set_user(conn, stream_id, user)`, `_stream_user(conn, stream_id)` | A pointer of yours on an open stream. | `void`, `void *`. |
@@ -986,6 +1030,17 @@ Both protocols are served on one port, by one handler, at the same time.
 | `http2_header_table_bytes` (0: 4,096), `http2_no_header_table` | The header compression table in each direction: what an idle connection may come to hold, against how much a repeated field costs to send |
 | `write_timeout_ms` | Output held with none of it accepted: the connection ends |
 | `idle_timeout_ms` | No stream open: the server says goodbye (GOAWAY) and closes |
+
+```c
+proven_err_t proven_http_event_server_set_max_streams(proven_http_event_server_t *server, proven_size_t n);
+```
+
+`max_concurrent_streams` can be changed while the server runs (v0.79.0), from the loop's
+thread: 1 to the configured value, which stays the ceiling. Each HTTP/2 connection says the
+new number to its client (section 5's `proven_h2_conn_set_max_streams`), and a connection
+made later opens with it. Requests already running go on; until a client acknowledges, it may
+still begin requests under the number before. HTTP/3 has its own rule (section 9). To take no
+new requests at all, shut the server down instead: 0 is `PROVEN_ERR_INVALID_ARG`.
 
 `proven_http_event_server_stop_listening` is the graceful way to end: each HTTP/2 connection
 is sent GOAWAY, finishes the streams it has, and closes. `proven_http_event_server_destroy`
@@ -1107,6 +1162,11 @@ int main(void) {
     proven_net_addr_t at;
     EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&
                     proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server that speaks both");
+    /* Under load a server may ask for fewer requests at once on each connection, and raise the
+     * number again later, up to the configured one (here the default, 100). From the loop's
+     * thread, or before it runs, as here. */
+    EXAMPLE_REQUIRE(proven_http_event_server_set_max_streams(server, 8) == PROVEN_OK && proven_http_event_server_set_max_streams(server, 0) == PROVEN_ERR_INVALID_ARG,
+                    "eight requests at once from now on, and never none");
     proven_job_sys_t *threads = NULL;
     proven_job_group_t running;
     proven_job_group_init(&running);
@@ -1597,7 +1657,7 @@ underneath:
 | Setting | For HTTP/3 |
 |---|---|
 | `max_connections` | Counts QUIC connections, with TCP ones: at the limit, a client's first packet is not answered |
-| `max_concurrent_streams` | Request streams a client may open at once on one connection |
+| `max_concurrent_streams` | Request streams a client may open at once on one connection. Changed while the server runs (`proven_http_event_server_set_max_streams`, section 6): what a client was allowed already cannot be taken back (RFC 9000 section 4.6), so a lower number shows once enough requests have ended; a higher one is given at once |
 | `max_head_bytes`, `max_headers` | The largest field section, as QPACK counts it, said to the client in SETTINGS; more fields than `max_headers` is `431` |
 | `max_body_bytes` | Per request: `413`, as on HTTP/2 |
 | `http3_window_bytes` (0: 256 KiB a stream, 1 MiB a connection, growing up to 16 MiB and 24 MiB while bodies are read) | Request-body bytes a client may send before the handler has taken them; a value set is fixed; at most 2^31-1 |

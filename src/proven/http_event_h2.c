@@ -738,6 +738,7 @@ proven_err_t proven_http_event_h2_take_(proven_http_stream_t *conn) {
         .set_header_table = true, .header_table_bytes = (proven_u32)sv->cfg.http2_header_table_bytes,
     };
     if (proven_h2_conn_create(&cfg, &d->engine) != PROVEN_OK) { sv->alloc.free_fn(sv->alloc.ctx, d); return PROVEN_ERR_NOMEM; }
+    if (sv->streams_now < cfg.max_concurrent_streams) proven_h2_conn_open_with_streams_(d->engine, sv->streams_now);
     /* No window configured: it starts at the protocol's and grows while bodies are read, to HTTP/3's caps (RFC-0019 section 10). */
     if (sv->cfg.http2_window_bytes == 0) proven_h2_conn_grow_(d->engine, 16384, 24576, h2_now_us);
     proven_h2_conn_heads_past_bound_(d->engine);
@@ -1269,6 +1270,21 @@ void proven_http_event_h2_raw_kill_(proven_http_stream_t *stream) {
     d->calls--;
     d_leave(d);
     s_leave(s);
+}
+
+void proven_http_event_h2_set_max_streams_(proven_http_event_server_t *sv, proven_u32 n) {
+    for (proven_http_stream_t *conn = sv->conns, *next; conn; conn = next) {
+        next = conn->next;                         /* a connection that ends while it is told leaves the list */
+        if (conn->h.state != EV_RAW || !conn->raw || *(const proven_http_event_raw_ops_t *const *)conn->raw != &h2_ops) continue;
+        h2d_t *d = conn->raw;
+        if (d->dead) continue;
+        d_enter(d);
+        /* After a goodbye there is nothing to change; and a connection that cannot say it keeps
+         * the number it has. */
+        (void)proven_h2_conn_set_max_streams(d->engine, n);
+        d_pump(d);
+        d_leave(d);
+    }
 }
 
 #endif

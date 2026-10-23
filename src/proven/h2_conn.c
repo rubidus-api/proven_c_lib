@@ -72,12 +72,17 @@ struct proven_h2_conn {
     proven_i64 send_win, recv_win;
     proven_u32 recv_unacked, recv_target;
     proven_u32 local_window;               /* the initial stream window in force: the default until the peer acknowledges */
+    proven_u32 adv_window;                 /* the initial window last said (proven_h2_conn_set_initial_window); `cfg_window` is the ceiling */
     proven_u32 next_id;                    /* a client: the next stream to open */
     proven_u32 last_peer_id;               /* a server: the highest stream the client began */
     proven_u32 last_acted;                 /* a server: the highest stream handed to the application */
     proven_u32 goaway_last, goaway_code, close_code;
     proven_u32 debt, empty_run;
     proven_size_t ctl_queued;
+    /* Streams changed after the opening (proven_h2_conn_set_max_streams; at most 2^20, the
+     * ceiling `cfg_streams`): what was last said, what the peer has acknowledged, and what was
+     * asked for while a change was in flight - at most one is. */
+    proven_u64 adv_streams : 21, acked_streams : 21, want_streams : 21, chg_inflight : 1;
 
     /* the reader */
     proven_h2c_rs_t rs;
@@ -87,14 +92,14 @@ struct proven_h2_conn {
     proven_u32 content_left, pad_left, settings_left;
     proven_u32 cur, expect_cont;
 
-    bool server, fin, drop, end_headers;
-    bool connect_protocol;                 /* a server that said SETTINGS_ENABLE_CONNECT_PROTOCOL: it takes `:protocol` */
-    bool peer_connect_protocol;            /* the peer said it, with 1: it may not take it back */
-    bool got_settings, settings_acked, peer_table_set;
-    bool goaway_recv, goaway_sent, closed, reported, oom;
-    bool hbuf_lent;                        /* hbuf is the caller's, and stays */
-    bool self_dep;                         /* the block being read came with a priority that names its own stream */
-    /* One bit each, with the next: the three then take the room two took. */
+    bool server, fin, drop, goaway_sent, closed, oom;
+    /* One bit each: rarely read, they make room for the settings changed after the opening. */
+    bool end_headers : 1, got_settings : 1, settings_acked : 1, goaway_recv : 1, reported : 1;
+    bool connect_protocol : 1;             /* a server that said SETTINGS_ENABLE_CONNECT_PROTOCOL: it takes `:protocol` */
+    bool peer_connect_protocol : 1;        /* the peer said it, with 1: it may not take it back */
+    bool peer_table_set : 1;
+    bool hbuf_lent : 1;                    /* hbuf is the caller's, and stays */
+    bool self_dep : 1;                     /* the block being read came with a priority that names its own stream */
     bool sweep_goaway : 1, sweep_writable : 1;
     bool heads_free : 1;                   /* proven_h2_conn_heads_past_bound_: a response head is not refused for the output bound */
     proven_u32 sweep_at;                   /* where the search for a stream that may send again goes on from: each in its turn */
@@ -104,6 +109,7 @@ struct proven_h2_conn {
      * acknowledged, the round trip (microseconds, wrapping: only differences are taken). */
     proven_u16 grow_stream_kib, grow_conn_kib;
     proven_u32 grow_mark;
+    proven_u32 want_window;                /* the initial window asked for while a change was in flight */
     proven_u64 (*grow_now)(void);
 };
 
@@ -253,7 +259,7 @@ static void h2c_stream_credit(proven_h2_conn_t *c, proven_h2c_stream_t *s, prove
     /* Half a window is the batch - and while this side's setting is on its way to the peer
      * there are two windows, the default and the one announced: whichever the peer is
      * holding to, the smaller of the two cannot leave it waiting. */
-    proven_u32 window = c->local_window < c->cfg_window ? c->local_window : c->cfg_window;
+    proven_u32 window = c->local_window < c->adv_window ? c->local_window : c->adv_window;
     if (s->win > window) window = s->win;
     if ((proven_u64)s->unacked * 2 >= window) {
         proven_u32 inc = s->unacked;
@@ -556,7 +562,8 @@ static void h2c_on_block(proven_h2_conn_t *c, proven_mem_view_t block, proven_h2
             if (!fin) h2c_ring_add(c, id, RING_OURS);
             return;
         }
-        if (c->stream_count >= c->cfg_streams) {
+        /* Until a change is acknowledged the peer may hold to the number before it: the larger holds. */
+        if (c->stream_count >= (c->acked_streams > c->adv_streams ? c->acked_streams : c->adv_streams)) {
             h2c_stream_fault(c, id, (void *)0, PROVEN_H2_REFUSED_STREAM, !fin, ev);
             return;
         }
@@ -666,19 +673,50 @@ static void h2c_apply_setting(proven_h2_conn_t *c, proven_h2_setting_t st) {
     }
 }
 
-/* The peer has acknowledged this side's settings: they are in force from this frame on. */
+/* Every open stream's receive window moves with the initial one (RFC 9113, section 6.9.2). */
+static void h2c_local_window(proven_h2_conn_t *c, proven_u32 window) {
+    const proven_i64 delta = (proven_i64)window - (proven_i64)c->local_window;
+    c->local_window = window;
+    for (proven_u32 i = 0; i < c->stream_count; i++)
+        c->streams[i].recv_win = (proven_i32)((proven_i64)c->streams[i].recv_win + delta);
+}
+
+/* Queue a SETTINGS frame with what of `want_` differs from what was last said. A raise holds
+ * for this side at once - the peer may use it before its acknowledgement arrives - and a
+ * lowering when it is acknowledged. */
+static bool h2c_settings_change(proven_h2_conn_t *c) {
+    proven_h2_setting_t st[2];
+    proven_size_t n = 0;
+    if (c->want_streams != c->adv_streams) st[n++] = (proven_h2_setting_t){ PROVEN_H2_SETTINGS_MAX_CONCURRENT_STREAMS, c->want_streams };
+    if (c->want_window != c->adv_window) st[n++] = (proven_h2_setting_t){ PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, c->want_window };
+    if (n == 0) return true;
+    if (!h2c_out_reserve(c, 9 + 6 * n)) return false;
+    (void)proven_h2_write_settings((proven_mem_mut_t){ .ptr = c->out, .size = c->out_cap }, &c->out_len, st, n);
+    c->adv_streams = c->want_streams;
+    c->adv_window = c->want_window;
+    c->chg_inflight = true;
+    if (c->settings_acked && c->adv_window > c->local_window) h2c_local_window(c, c->adv_window);
+    return true;
+}
+
+/* The peer has acknowledged a SETTINGS frame of this side: the opening's first, then the
+ * change in flight. What it carried is in force from this frame on. */
 static void h2c_settings_acked(proven_h2_conn_t *c) {
-    if (c->settings_acked) return;
+    if (c->settings_acked) {
+        if (!c->chg_inflight) return;                  /* an acknowledgement of nothing: ignored */
+        c->chg_inflight = false;
+        c->acked_streams = c->adv_streams;
+        if (c->adv_window != c->local_window) h2c_local_window(c, c->adv_window);
+        (void)h2c_settings_change(c);                  /* what was asked for meanwhile */
+        return;
+    }
     c->settings_acked = true;
     if (c->grow_now) {
         const proven_u32 rtt = (proven_u32)c->grow_now() - c->grow_mark;
         c->grow_mark = rtt > 0 ? rtt : 1;
     }
     if (c->dec) proven_hpack_decoder_set_max_table_bytes(c->dec, c->cfg_table);
-    const proven_i64 delta = (proven_i64)c->cfg_window - (proven_i64)c->local_window;
-    c->local_window = c->cfg_window;
-    for (proven_u32 i = 0; i < c->stream_count; i++)
-        c->streams[i].recv_win = (proven_i32)((proven_i64)c->streams[i].recv_win + delta);
+    h2c_local_window(c, c->cfg_window);
 }
 
 static void h2c_to_skip(proven_h2_conn_t *c, proven_u32 n) {
@@ -1108,6 +1146,7 @@ proven_err_t proven_h2_conn_create(const proven_h2_config_t *config, proven_h2_c
     *c = (proven_h2_conn_t){
         .alloc = config->alloc, .server = config->server, .connect_protocol = config->server && config->enable_connect_protocol,
         .cfg_streams = streams, .cfg_window = window, .cfg_frame = frame, .cfg_list = list, .cfg_table = table,
+        .adv_streams = streams, .adv_window = window, .acked_streams = streams, .want_streams = streams, .want_window = window,
         .cfg_debt = config->max_reset_debt ? config->max_reset_debt : 100, .cfg_out = bound,
         .peer_streams = 0xffffffffu, .peer_window = PROVEN_H2_DEFAULT_WINDOW, .peer_frame = PROVEN_H2_MIN_MAX_FRAME_SIZE,
         .peer_list = 0xffffffffu, .peer_table = (proven_u32)PROVEN_HPACK_DEFAULT_TABLE_BYTES,
@@ -1307,7 +1346,7 @@ proven_err_t proven_h2_conn_submit_request(proven_h2_conn_t *c, const proven_htt
     proven_h2_request_head_t head;
     if (!c || !stream_id || c->server || (count > 0 && !headers) || proven_h2_request_head(headers, count, &head) != PROVEN_OK) return PROVEN_ERR_INVALID_ARG;
     if (c->closed || c->goaway_recv || c->goaway_sent || c->next_id > PROVEN_H2_MAX_WINDOW) return PROVEN_ERR_INVALID_STATE;
-    if (c->stream_count >= c->cfg_streams || c->stream_count >= c->peer_streams || h2c_pending(c) >= c->cfg_out) return PROVEN_ERR_BUSY;
+    if (c->stream_count >= c->want_streams || c->stream_count >= c->peer_streams || h2c_pending(c) >= c->cfg_out) return PROVEN_ERR_BUSY;
     proven_h2c_stream_t *s = h2c_add(c, c->next_id);
     if (!s) return PROVEN_ERR_NOMEM;
     proven_err_t err = h2c_send_block(c, s->id, headers, count, end_stream, sensitive);
@@ -1433,6 +1472,32 @@ void proven_h2_conn_shutdown(proven_h2_conn_t *c, proven_h2_error_t code) {
     if (!c->goaway_sent) h2c_q_goaway(c, PROVEN_H2_NO_ERROR);
 }
 
+/* A change of this side's settings: refused above the ceiling and after a goodbye; while one is
+ * in flight, kept for when it is acknowledged. */
+static proven_err_t h2c_set(proven_h2_conn_t *c, proven_u32 streams, proven_u32 window) {
+    if (c->closed || c->goaway_sent) return PROVEN_ERR_INVALID_STATE;
+    const proven_u32 old_streams = c->want_streams, old_window = c->want_window;
+    c->want_streams = streams;
+    c->want_window = window;
+    if (c->chg_inflight) return PROVEN_OK;
+    if (!h2c_settings_change(c)) {
+        c->oom = false; c->closed = false;
+        c->want_streams = old_streams; c->want_window = old_window;
+        return PROVEN_ERR_NOMEM;
+    }
+    return PROVEN_OK;
+}
+
+proven_err_t proven_h2_conn_set_max_streams(proven_h2_conn_t *c, proven_u32 n) {
+    if (!c || n > c->cfg_streams) return PROVEN_ERR_INVALID_ARG;
+    return h2c_set(c, n, c->want_window);
+}
+
+proven_err_t proven_h2_conn_set_initial_window(proven_h2_conn_t *c, proven_u32 n) {
+    if (!c || n > c->cfg_window) return PROVEN_ERR_INVALID_ARG;
+    return h2c_set(c, c->want_streams, n);
+}
+
 bool proven_h2_conn_is_closed(const proven_h2_conn_t *c) {
     return !c || c->closed;
 }
@@ -1498,7 +1563,7 @@ proven_u32 proven_h2_conn_test_window_(const proven_h2_conn_t *c, proven_u32 id)
     if (id == 0xffffffffu) return c->grow_now ? (proven_u32)c->grow_stream_kib * 1024 : c->cfg_window;
     const proven_h2c_stream_t *s = h2c_peek(c, id);
     if (!s) return 0;
-    const proven_u32 base = c->local_window < c->cfg_window ? c->local_window : c->cfg_window;
+    const proven_u32 base = c->local_window < c->adv_window ? c->local_window : c->adv_window;
     return s->win > base ? s->win : base;
 }
 
@@ -1506,4 +1571,20 @@ proven_u32 proven_h2_conn_test_window_(const proven_h2_conn_t *c, proven_u32 id)
 void proven_h2_conn_test_next_id_(proven_h2_conn_t *c, proven_u32 next_id);
 void proven_h2_conn_test_next_id_(proven_h2_conn_t *c, proven_u32 next_id) {
     if (c && !c->server) c->next_id = next_id;
+}
+
+/* For the event server (declared in proven_internal_http_event.h; RFC-0024): the first SETTINGS
+ * says `n` streams instead of the configured number, which stays the ceiling. Called right
+ * after proven_h2_conn_create, before any output is taken: the opening's entry is rewritten. */
+void proven_h2_conn_open_with_streams_(proven_h2_conn_t *c, proven_u32 n);
+void proven_h2_conn_open_with_streams_(proven_h2_conn_t *c, proven_u32 n) {
+    if (!c || n > c->cfg_streams || c->out_off != 0 || c->settings_acked) return;
+    proven_byte_t *p = c->out + (c->server ? 0 : PROVEN_H2_PREFACE_SIZE);
+    const proven_size_t len = (proven_size_t)p[0] << 16 | (proven_size_t)p[1] << 8 | p[2];
+    for (proven_size_t at = 9; at + 6 <= 9 + len; at += 6) {
+        if (((proven_u32)p[at] << 8 | p[at + 1]) != PROVEN_H2_SETTINGS_MAX_CONCURRENT_STREAMS) continue;
+        h2c_put_u32(p + at + 2, n);
+        c->adv_streams = c->acked_streams = c->want_streams = n;
+        return;
+    }
 }

@@ -110,6 +110,10 @@ int main(void) {
     proven_net_addr_t at;
     EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&
                     proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server that speaks both");
+    /* 바쁜 서버는 연결마다 동시에 받는 요청 수를 줄였다가, 나중에 설정값(여기서는 기본값 100)까지
+     * 다시 올릴 수 있다. 루프의 스레드에서, 또는 여기처럼 루프가 돌기 전에 부른다. */
+    EXAMPLE_REQUIRE(proven_http_event_server_set_max_streams(server, 8) == PROVEN_OK && proven_http_event_server_set_max_streams(server, 0) == PROVEN_ERR_INVALID_ARG,
+                    "eight requests at once from now on, and never none");
     proven_job_sys_t *threads = NULL;
     proven_job_group_t running;
     proven_job_group_init(&running);

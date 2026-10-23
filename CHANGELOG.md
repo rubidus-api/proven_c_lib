@@ -18,6 +18,35 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+RFC-0024 piece A: HTTP/2 settings changed after the connection is made (the owner's decisions
+of 2026-10-23: both the stream count and the window, the engine and the event server).
+
+### Added
+
+- `proven_h2_conn_set_max_streams` and `proven_h2_conn_set_initial_window` change
+  SETTINGS_MAX_CONCURRENT_STREAMS and SETTINGS_INITIAL_WINDOW_SIZE after the opening. The
+  values given at creation are the ceilings (`PROVEN_ERR_INVALID_ARG` above them), so what a
+  connection may hold stays fixed when it is made. A new value holds once the peer
+  acknowledges it; until then the larger of the two is enforced, so nothing the peer sent in
+  good faith is refused. Streams already open are not touched; a window change moves every
+  open stream's window by the difference (RFC 9113 section 6.9.2), a raise at once. One change
+  is in flight at a time: calls made while it waits are sent together, with the latest values,
+  when it is acknowledged. On a client the stream number also caps this side's own opening, at
+  once. An idle connection still holds one block of at most 400 bytes.
+- `proven_http_event_server_set_max_streams` changes `max_concurrent_streams` while the server
+  runs, 1 to the configured value. HTTP/2 connections open now say the new number and those
+  made later open with it. HTTP/3 cannot take back what a client was allowed (RFC 9000 section
+  4.6): from then on credit follows the new number, so a lower one shows as requests end, and a
+  higher one is given at once. The window has no event-server call yet.
+- Aliases `xcv_h2_conn_set_max_streams`, `xcv_h2_conn_set_initial_window`,
+  `xcv_http_event_server_set_max_streams`; chapter 17 (en/ko) documents all three, and its
+  examples use them.
+
+### Fixed
+
+- Chapter 14 (en/ko) named one test file, `tests/test_docs_tls_examples.c`, where two run its
+  examples: `test_docs_tls_example_https.c` and `test_docs_tls_example_engine.c`.
+
 ## [0.78.0] - 2026-10-23
 
 Three of the owner's decisions of 2026-10-23.

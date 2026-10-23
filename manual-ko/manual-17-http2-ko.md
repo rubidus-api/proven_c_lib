@@ -645,6 +645,33 @@ void proven_h2_conn_consumed(proven_h2_conn_t *conn, proven_u32 stream_id, prove
 모는 모든 연결이 같은 메모리에 읽을 수 있다 - 거기 읽힌 것이 곧 사건이 알리는 것이고, 사건은 다음
 호출까지만 유효하다. 6절의 서버가 이렇게 한다.
 
+### 연결 뒤에 바꾸는 설정
+
+```c
+proven_err_t proven_h2_conn_set_max_streams(proven_h2_conn_t *conn, proven_u32 n);
+proven_err_t proven_h2_conn_set_initial_window(proven_h2_conn_t *conn, proven_u32 n);
+```
+
+설정 가운데 둘은 연결이 도는 동안 바꿀 수 있다(v0.79.0). 하나는 상대가 한꺼번에 열 수 있는 스트림 수이고,
+다른 하나는 스트림마다 처음 주는 창이다. 바쁜 서버는 둘을 줄였다가 나중에 다시 올린다. 호출할 때마다
+SETTINGS 프레임이 하나 쌓인다. RFC 9113에 따르면 설정은 상대가 확인한 뒤부터 유효하고, 연결도 그대로 따른다.
+
+- **만들 때 준 값이 상한이다.** 연결이 쥘 수 있는 메모리는 만들 때 그 값으로 정해진다. 그래서 값을 낮췄다가
+  다시 올릴 수는 있어도 넘을 수는 없다. 넘으면 `PROVEN_ERR_INVALID_ARG`이다.
+- **확인 전에는 큰 쪽이 유효하다.** 상대는 변경을 읽기 전의 값으로 스트림을 열거나 본문을 보낼 수 있고, 연결은
+  그것을 받는다. 확인 뒤에는 새 수를 넘는 스트림을 `REFUSED_STREAM`으로 거절하고(클라이언트는 다시 보낼 수
+  있다), 스트림 창을 넘는 DATA는 그 스트림의 `FLOW_CONTROL_ERROR`이다.
+- **열린 것은 자르지 않는다.** 이미 열린 스트림은 몇 개든 계속된다.
+  - 창을 바꾸면 열린 스트림마다 창이 그 차이만큼 움직인다(RFC 9113 6.9.2).
+  - 낮추면 어떤 스트림은 남은 창이 0보다 작아질 수 있다. 그 스트림은 충분히 소비될 때까지 기다린다.
+  - 올리면 바로 유효하다.
+  - 연결 전체의 창은 설정이 아니어서 바뀌지 않는다.
+- **진행 중인 변경은 하나다.** 확인을 기다리는 동안 들어온 호출은 기억해 두었다가, 확인이 오면 마지막 값들을
+  프레임 하나로 보낸다. 몇 번을 불러도 프레임은 하나다.
+- **클라이언트에서는** `max_streams`가 이쪽이 여는 스트림 수의 상한도 되고, 그 상한은 바로 유효하다.
+
+아래 예제는 서버에서 둘을 낮추고, 클라이언트가 새 수를 지키는 것을 보인다.
+
 ### 작별
 
 ```c
@@ -807,6 +834,17 @@ int main(void) {
     static const proven_byte_t opaque[8] = { 'p', 'r', 'o', 'v', 'e', 'n', '!', '!' };
     EXAMPLE_REQUIRE(proven_h2_conn_ping(client.conn, opaque) == PROVEN_OK && carry(&client, &server) && carry(&server, &client) && client.pongs == 1, "a ping is answered by the connection itself");
 
+    // ---- 연결 뒤에 바꾸는 설정 ----------------------------------------------------------------
+    /* 바쁜 서버가 동시 스트림 수와 창을 줄인다. SETTINGS 프레임 하나이고, 클라이언트가 확인한
+     * 뒤부터 유효하다. 만들 때 준 값이 상한이고, 이미 열린 스트림은 건드리지 않는다. */
+    EXAMPLE_REQUIRE(proven_h2_conn_set_max_streams(server.conn, 1) == PROVEN_OK && proven_h2_conn_set_initial_window(server.conn, 16384) == PROVEN_OK, "the server lowers both");
+    EXAMPLE_REQUIRE(carry(&server, &client) && carry(&client, &server), "the change crosses, and is acknowledged");
+    EXAMPLE_REQUIRE(proven_h2_conn_submit_request(client.conn, request, 5, true, &stream) == PROVEN_OK && carry(&client, &server), "one request");
+    proven_u32 second = 0;
+    EXAMPLE_REQUIRE(proven_h2_conn_submit_request(client.conn, request, 5, true, &second) == PROVEN_ERR_BUSY, "and not a second at the same time: the client holds itself to the new number");
+    EXAMPLE_REQUIRE(proven_h2_conn_set_max_streams(server.conn, 11) == PROVEN_ERR_INVALID_ARG, "above the number given at creation: refused");
+    EXAMPLE_REQUIRE(proven_h2_conn_reset(server.conn, stream, PROVEN_H2_CANCEL) == PROVEN_OK && carry(&server, &client), "the server lets that one go");
+
     // ---- 규칙을 어기는 상대 ------------------------------------------------------------------
     /* 아무것도 더하지 않는 WINDOW_UPDATE는 프로토콜 오류다. 연결은 상대에게 그렇게 말하고
      * (GOAWAY), 끝났다고 알리고, 더는 아무것도 받지 않는다. */
@@ -863,6 +901,8 @@ int main(void) {
 | `proven_h2_conn_reset(conn, stream_id, code)` | 스트림을 포기한다. | `proven_err_t`: `NOT_FOUND`. |
 | `proven_h2_conn_consumed(conn, stream_id, n)` | DATA를 처리했다고 알린다. | `void`. |
 | `proven_h2_conn_ping(conn, opaque)` | 상대가 있는지 묻는다. | `proven_err_t`: 끝난 뒤에는 `INVALID_STATE`. |
+| `proven_h2_conn_set_max_streams(conn, n)` | 상대가 한꺼번에 열 수 있는 스트림 수를 바꾼다. 0부터 만들 때의 값까지. 상대가 확인하면 유효하고, 열린 스트림은 건드리지 않는다. | `proven_err_t`: `INVALID_ARG`(상한 초과), `INVALID_STATE`(작별 뒤), `NOMEM`. |
+| `proven_h2_conn_set_initial_window(conn, n)` | 스트림마다의 창을 바꾼다. 0부터 만들 때의 값까지. 열린 스트림은 차이만큼 움직인다. 올리면 바로, 낮추면 확인 뒤 유효하다. | `proven_err_t`, 위와 같다. |
 | `proven_h2_conn_shutdown(conn, code)` | 작별한다. | `void`. |
 | `proven_h2_conn_is_closed(conn)`, `_stream_count(conn)`, `_send_room(conn, stream_id)` | 끝났는가, 열린 스트림 수, 지금 갈 수 있는 본문 바이트 수. | `bool`, `proven_size_t`. |
 | `proven_h2_conn_stream_set_user(conn, stream_id, user)`, `_stream_user(conn, stream_id)` | 열린 스트림에 붙이는 여러분의 포인터. | `void`, `void *`. |
@@ -951,6 +991,17 @@ int proven_http_stream_protocol(const proven_http_stream_t *stream);
 | `http2_header_table_bytes` (0: 4,096), `http2_no_header_table` | 방향마다의 헤더 압축 테이블: 한가한 연결이 쥐게 될 수 있는 양과, 되풀이되는 필드를 보내는 비용 사이의 선택 |
 | `write_timeout_ms` | 쥐고 있는 출력이 하나도 받아들여지지 않음: 연결이 끝난다 |
 | `idle_timeout_ms` | 열린 스트림이 없음: 서버가 작별하고(GOAWAY) 닫는다 |
+
+```c
+proven_err_t proven_http_event_server_set_max_streams(proven_http_event_server_t *server, proven_size_t n);
+```
+
+`max_concurrent_streams`는 서버가 도는 동안 바꿀 수 있다(v0.79.0).
+- 루프의 스레드에서 부르고, 값은 1부터 설정값까지다. 설정값이 상한으로 남는다.
+- HTTP/2 연결마다 클라이언트에게 새 수를 알린다(5절의 `proven_h2_conn_set_max_streams`). 나중에 생기는 연결은 새 수로 시작한다.
+- 진행 중인 요청은 계속된다. 클라이언트가 확인하기 전에는 이전 수 안에서 요청을 더 시작할 수 있다.
+- HTTP/3에는 따로 규칙이 있다(9절).
+- 새 요청을 아예 받지 않으려면 서버를 종료한다. 0은 `PROVEN_ERR_INVALID_ARG`이다.
 
 `proven_http_event_server_stop_listening`이 우아하게 끝내는 길이다: HTTP/2 연결마다 GOAWAY를 보내고, 가진
 스트림을 끝내고, 닫는다. `proven_http_event_server_destroy`는 모든 것을 즉시 끝내고, 열려 있던 스트림의
@@ -1071,6 +1122,10 @@ int main(void) {
     proven_net_addr_t at;
     EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&
                     proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server that speaks both");
+    /* 바쁜 서버는 연결마다 동시에 받는 요청 수를 줄였다가, 나중에 설정값(여기서는 기본값 100)까지
+     * 다시 올릴 수 있다. 루프의 스레드에서, 또는 여기처럼 루프가 돌기 전에 부른다. */
+    EXAMPLE_REQUIRE(proven_http_event_server_set_max_streams(server, 8) == PROVEN_OK && proven_http_event_server_set_max_streams(server, 0) == PROVEN_ERR_INVALID_ARG,
+                    "eight requests at once from now on, and never none");
     proven_job_sys_t *threads = NULL;
     proven_job_group_t running;
     proven_job_group_init(&running);
@@ -1506,7 +1561,7 @@ HTTP/2에 견주어 주는 것은 잃은 패킷이 제 스트림만 붙잡는다
 | 설정 | HTTP/3에서 |
 |---|---|
 | `max_connections` | TCP 연결과 함께 QUIC 연결을 센다. 한도에서는 클라이언트의 첫 패킷에 답하지 않는다 |
-| `max_concurrent_streams` | 클라이언트가 한 연결에서 한꺼번에 열 수 있는 요청 스트림 |
+| `max_concurrent_streams` | 클라이언트가 한 연결에서 한꺼번에 열 수 있는 요청 스트림. 서버가 도는 동안 바꿀 수 있다(`proven_http_event_server_set_max_streams`, 6절). 클라이언트에게 이미 허락한 것은 거둘 수 없어서(RFC 9000 4.6), 낮춘 수는 요청이 충분히 끝난 뒤에 드러난다. 올린 수는 바로 준다 |
 | `max_head_bytes`, `max_headers` | QPACK이 세는 가장 큰 필드 구역으로, SETTINGS로 클라이언트에 알린다. `max_headers`보다 많은 필드는 `431` |
 | `max_body_bytes` | 요청마다: HTTP/2에서처럼 `413` |
 | `http3_window_bytes` (0: 스트림 256 KiB, 연결 1 MiB에서 본문을 읽는 동안 16 MiB와 24 MiB까지 자람) | 처리기가 가져가기 전에 클라이언트가 보낼 수 있는 요청 본문 바이트. 값을 주면 고정. 최대 2^31-1 |

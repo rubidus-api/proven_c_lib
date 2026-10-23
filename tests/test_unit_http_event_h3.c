@@ -235,6 +235,9 @@ static void do_relisten(void *ctx) {
     atomic_store(&g_relisten_err, (int)proven_http_event_server_listen(g_server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, g_relisten_port), NULL));
     atomic_fetch_add(&g_ran, 1);
 }
+static proven_size_t g_set_n;
+static atomic_int g_set_err;
+static void do_set_streams(void *ctx) { (void)ctx; atomic_store(&g_set_err, (int)proven_http_event_server_set_max_streams(g_server, g_set_n)); atomic_fetch_add(&g_ran, 1); }
 static void on_loop(proven_loop_fn fn) {
     int before = atomic_load(&g_ran);
     PROVEN_TEST_ASSERT(proven_loop_post(g_loop, fn, NULL) == PROVEN_OK, "posted to the loop", "");
@@ -774,6 +777,37 @@ int main(void) {
         PROVEN_TEST_ASSERT(cl_open(c2, port), "a second client", "");
         for (const proven_u64 end = ms_now() + 400; ms_now() < end && !c2->established;) { cl_pump(c2, 10); cl_pump(c, 0); }
         PROVEN_TEST_ASSERT(!c2->established && connections() == 1, "at max_connections a client's first packet is not answered", "");
+        cl_close(c2);
+        cl_close(c);
+        free(c); free(c2);
+        server_stop();
+    }
+
+    PROVEN_TEST_SECTION("max_concurrent_streams changed while the server runs", "proven_http_event_server_set_max_streams over QUIC: what a client was allowed stands, later credit follows the new number, a raise is given at once, and a connection made after opens with it.", "Check proven_quic_conn_set_max_streams_, the grant at a stream's end in quic_conn.c, and streams_bidi_now.");
+    {
+        const proven_u16 port = server_start((proven_http_event_server_config_t){ .max_concurrent_streams = 4 });
+        cl_t *c = calloc(1, sizeof *c), *c2 = calloc(1, sizeof *c2);
+        PROVEN_TEST_ASSERT(cl_connect(c, port), "a connection, allowed four requests at once", "");
+        g_set_n = 2; on_loop(do_set_streams);
+        PROVEN_TEST_ASSERT(atomic_load(&g_set_err) == PROVEN_OK, "the server lowers its streams to 2", "");
+        for (int i = 0; i < 4; ++i) PROVEN_TEST_ASSERT(cl_request(c, "GET", "/hello", 0, NULL, 0, true) >= 0, "what the client was allowed stands: four requests begin", "");
+        PROVEN_TEST_ASSERT(cl_wait(c, 0, 4, 10000) && c->r[3].status == 200, "and are answered", "");
+        cl_run(c, 100);
+        const int from = c->n;
+        int begun = 0;
+        for (int i = 0; i < 3; ++i) if (cl_request(c, "GET", "/never", 0, NULL, 0, true) >= 0) begun++;
+        PROVEN_TEST_ASSERT(begun == 2, "once those ended, the client may have two open at once, not four", "");
+        PROVEN_TEST_ASSERT(cl_connect(c2, port), "a connection made now", "");
+        begun = 0;
+        for (int i = 0; i < 3; ++i) if (cl_request(c2, "GET", "/never", 0, NULL, 0, true) >= 0) begun++;
+        PROVEN_TEST_ASSERT(begun == 2, "opens allowed two", "");
+        g_set_n = 4; on_loop(do_set_streams);
+        PROVEN_TEST_ASSERT(atomic_load(&g_set_err) == PROVEN_OK, "raised back to 4", "");
+        cl_run(c, 100); cl_run(c2, 100);
+        PROVEN_TEST_ASSERT(cl_request(c, "GET", "/hello", 0, NULL, 0, true) >= 0 && cl_request(c2, "GET", "/hello", 0, NULL, 0, true) >= 0,
+            "a raise is given at once: each may begin a third with two still open", "");
+        PROVEN_TEST_ASSERT(cl_wait(c, c->n - 1, c->n, 10000) && cl_wait(c2, c2->n - 1, c2->n, 10000), "and it is answered", "");
+        PROVEN_TEST_ASSERT(!c->closed && !c2->closed && from >= 4, "neither connection was ended by any of it", "");
         cl_close(c2);
         cl_close(c);
         free(c); free(c2);

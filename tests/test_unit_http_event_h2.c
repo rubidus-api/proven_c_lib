@@ -317,6 +317,9 @@ static void do_shutdown(void *ctx) {
     if (proven_http_event_server_shutdown(g_server, atomic_load(&g_drain_grace), drained, NULL) != PROVEN_OK) atomic_store(&g_drained_why, -1);
     atomic_fetch_add(&g_ran, 1);
 }
+static proven_size_t g_set_n;
+static atomic_int g_set_err;
+static void do_set_streams(void *ctx) { (void)ctx; atomic_store(&g_set_err, (int)proven_http_event_server_set_max_streams(g_server, g_set_n)); atomic_fetch_add(&g_ran, 1); }
 static void on_loop(proven_loop_fn fn) {
     int before = atomic_load(&g_ran);
     PROVEN_TEST_ASSERT(proven_loop_post(g_loop, fn, NULL) == PROVEN_OK, "posted to the loop", "");
@@ -1068,6 +1071,59 @@ int main(void) {
             "one whose Host and :authority agree is served, with the one Host field", "");
         PROVEN_TEST_ASSERT(!c.closed && !c.gone && atomic_load(&g_protocol_bad) == 0, "and none of this ended the connection", "");
         cl_close(&c);
+        server_stop();
+    }
+
+    PROVEN_TEST_SECTION("max_concurrent_streams changed while the server runs", "proven_http_event_server_set_max_streams: every HTTP/2 connection says the new number, connections to come open with it, and requests running go on.", "Check proven_http_event_server_set_max_streams in http_event.c, proven_http_event_h2_set_max_streams_ and proven_h2_conn_open_with_streams_.");
+    {
+        proven_http_event_server_config_t cfg = { .max_concurrent_streams = 20 };
+        proven_u16 port = server_start(cfg);
+        cl_t c;
+        PROVEN_TEST_ASSERT(cl_open_with(&c, NULL, port, 0), "a client", "");
+        c.plain_body = true;
+        (void)cl_pump(&c, 50);
+        proven_u32 ids[10], extra = 0;
+        for (int i = 0; i < 10; i++) ids[i] = cl_ask(&c, "GET", "/never", true);
+        for (int i = 0; i < 300 && atomic_load(&g_requests) < 10; i++) (void)cl_pump(&c, 10);
+        PROVEN_TEST_ASSERT(atomic_load(&g_requests) == 10, "ten requests are with the handler", "");
+        g_set_n = 2; on_loop(do_set_streams);
+        PROVEN_TEST_ASSERT(atomic_load(&g_set_err) == PROVEN_OK, "the server lowers its streams to 2", "");
+        for (int i = 0; i < 20; i++) (void)cl_pump(&c, 10);
+        proven_http_header_t h[] = { H(":method", "GET"), H(":scheme", "http"), H(":authority", "127.0.0.1"), H(":path", "/hello") };
+        PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c.e, h, 4, true, &extra) == PROVEN_ERR_BUSY, "the client was told: with ten open it may begin none", "");
+        PROVEN_TEST_ASSERT(atomic_load(&g_done_reset) == 0 && atomic_load(&g_done_other) == 0 && !c.closed, "and the ten running are not touched", "");
+        for (int i = 0; i < 10; i++) PROVEN_TEST_ASSERT(proven_h2_conn_reset(c.e, ids[i], PROVEN_H2_CANCEL) == PROVEN_OK, "the client gives them up", "");
+        for (int i = 0; i < 300 && atomic_load(&g_done_reset) < 10; i++) (void)cl_pump(&c, 10);
+        proven_u32 two[2];
+        for (int i = 0; i < 2; i++) two[i] = cl_ask(&c, "GET", "/never", true);
+        PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c.e, h, 4, true, &extra) == PROVEN_ERR_BUSY, "then it may have two open, and not three", "");
+
+        /* A connection made now opens with the number as it is. */
+        cl_t d;
+        PROVEN_TEST_ASSERT(cl_open_with(&d, NULL, port, 0), "a second client", "");
+        d.plain_body = true;
+        for (int i = 0; i < 20 && !proven_h2_conn_has_peer_settings(d.e); i++) (void)cl_pump(&d, 10);
+        proven_u32 did[2];
+        for (int i = 0; i < 2; i++) did[i] = cl_ask(&d, "GET", "/never", true);
+        PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(d.e, h, 4, true, &extra) == PROVEN_ERR_BUSY, "a new connection is told 2 in its first settings", "");
+
+        /* Bounds, and back up. */
+        g_set_n = 0; on_loop(do_set_streams);
+        PROVEN_TEST_ASSERT(atomic_load(&g_set_err) == PROVEN_ERR_INVALID_ARG, "0 is refused: a server that wants no requests shuts down", "");
+        g_set_n = 21; on_loop(do_set_streams);
+        PROVEN_TEST_ASSERT(atomic_load(&g_set_err) == PROVEN_ERR_INVALID_ARG, "above the configured number is refused", "");
+        g_set_n = 20; on_loop(do_set_streams);
+        PROVEN_TEST_ASSERT(atomic_load(&g_set_err) == PROVEN_OK, "raised back to 20", "");
+        for (int i = 0; i < 20; i++) { (void)cl_pump(&c, 10); (void)cl_pump(&d, 10); }
+        PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(c.e, h, 4, true, &extra) == PROVEN_OK && cl_wait(&c, extra, 5000) && cl_res(&c, extra)->status == 200,
+            "the first client may begin a third, and it is answered", "");
+        PROVEN_TEST_ASSERT(proven_h2_conn_submit_request(d.e, h, 4, true, &extra) == PROVEN_OK && cl_wait(&d, extra, 5000) && cl_res(&d, extra)->status == 200,
+            "and so may the second, whose ceiling is the configured number", "");
+        for (int i = 0; i < 2; i++) { (void)proven_h2_conn_reset(c.e, two[i], PROVEN_H2_CANCEL); (void)proven_h2_conn_reset(d.e, did[i], PROVEN_H2_CANCEL); }
+        for (int i = 0; i < 20; i++) { (void)cl_pump(&c, 10); (void)cl_pump(&d, 10); }
+        PROVEN_TEST_ASSERT(!c.closed && !d.closed && !c.gone && !d.gone, "neither connection was ended by any of it", "");
+        cl_close(&c);
+        cl_close(&d);
         server_stop();
     }
 

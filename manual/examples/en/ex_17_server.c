@@ -111,6 +111,11 @@ int main(void) {
     proven_net_addr_t at;
     EXAMPLE_REQUIRE(proven_http_event_server_create(app.loop, &config, &server) == PROVEN_OK &&
                     proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server that speaks both");
+    /* Under load a server may ask for fewer requests at once on each connection, and raise the
+     * number again later, up to the configured one (here the default, 100). From the loop's
+     * thread, or before it runs, as here. */
+    EXAMPLE_REQUIRE(proven_http_event_server_set_max_streams(server, 8) == PROVEN_OK && proven_http_event_server_set_max_streams(server, 0) == PROVEN_ERR_INVALID_ARG,
+                    "eight requests at once from now on, and never none");
     proven_job_sys_t *threads = NULL;
     proven_job_group_t running;
     proven_job_group_init(&running);

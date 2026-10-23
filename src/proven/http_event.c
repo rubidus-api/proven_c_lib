@@ -591,6 +591,7 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
     if (s->cfg.idle_timeout_ms == 0) s->cfg.idle_timeout_ms = 60000;
     if (s->cfg.linger_ms == 0) s->cfg.linger_ms = EV_LINGER_MS;
     if (s->cfg.max_concurrent_streams == 0) s->cfg.max_concurrent_streams = 100;
+    s->streams_now = (proven_u32)(s->cfg.max_concurrent_streams > 100000 ? 100000 : s->cfg.max_concurrent_streams);
     if (s->cfg.http2_no_header_table) s->cfg.http2_header_table_bytes = 0;
     else if (s->cfg.http2_header_table_bytes == 0) s->cfg.http2_header_table_bytes = 4096;
     if (s->cfg.http2_header_table_bytes > ((proven_size_t)1 << 20)) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
@@ -786,6 +787,18 @@ void proven_http_event_server_destroy(proven_http_event_server_t *s) {
 }
 
 proven_size_t proven_http_event_server_connections(const proven_http_event_server_t *s) { return s ? s->conn_count + s->h3_count : 0; }
+
+proven_err_t proven_http_event_server_set_max_streams(proven_http_event_server_t *s, proven_size_t n) {
+    if (!s || n == 0 || n > s->cfg.max_concurrent_streams) return PROVEN_ERR_INVALID_ARG;
+    const proven_u32 v = (proven_u32)(n > 100000 ? 100000 : n);
+    if (v == s->streams_now) return PROVEN_OK;
+    s->streams_now = v;
+    if (s->cfg.http2) proven_http_event_h2_set_max_streams_(s, v);
+#if !defined(PROVEN_NO_HTTP3)
+    if (s->h3) proven_http_event_h3_set_max_streams_(s, v);
+#endif
+    return PROVEN_OK;
+}
 
 void proven_http_event_gone_(proven_http_event_server_t *s) {
     ev_update_listeners(s);

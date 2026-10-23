@@ -1308,4 +1308,15 @@ proven_size_t proven_http_event_h3_buffered_(const proven_http_stream_t *stream)
     return s->dead ? 0 : s_out_pending(s);
 }
 
+void proven_http_event_h3_set_max_streams_(proven_http_event_server_t *sv, proven_u32 n) {
+    struct ev_h3 *x = sv->h3;
+    if (!x) return;
+    x->qc.streams_bidi_now = n;                    /* connections to come */
+    for (h3d_t *d = x->conns; d; d = d->next) {
+        if (d->dead || !d->q) continue;
+        proven_quic_conn_set_max_streams_(d->q, n);
+        d_mark(d);                                 /* a raise is said at once */
+    }
+}
+
 #endif

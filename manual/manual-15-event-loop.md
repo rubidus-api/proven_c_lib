@@ -261,6 +261,7 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
 proven_err_t proven_http_event_server_listen(proven_http_event_server_t *server, proven_net_addr_t at, proven_net_addr_t *bound);
 void proven_http_event_server_destroy(proven_http_event_server_t *server);
 proven_size_t proven_http_event_server_connections(const proven_http_event_server_t *server);
+proven_err_t proven_http_event_server_set_max_streams(proven_http_event_server_t *server, proven_size_t n);
 void proven_http_event_server_stop_listening(proven_http_event_server_t *server);
 typedef void (*proven_http_event_drained_fn)(void *ctx, proven_err_t why);
 proven_err_t proven_http_event_server_shutdown(proven_http_event_server_t *server, proven_u32 grace_ms,
@@ -274,6 +275,7 @@ A server is made on a loop, told where to listen, and does nothing until the loo
 | `proven_http_event_server_create(loop, &config, &server)` | Make a server. | `proven_err_t`: `INVALID_ARG` for no loop, no `on_request`, or a TLS configuration with no certificate; `NOMEM`. |
 | `proven_http_event_server_listen(server, at, &bound)` | Listen at `at`; up to four addresses for one server. `bound` (optional) receives the address in use, with the port the system chose when `at` asked for port 0. | `proven_err_t`. |
 | `proven_http_event_server_connections(server)` | Connections open now. | `proven_size_t`. |
+| `proven_http_event_server_set_max_streams(server, n)` | Change `max_concurrent_streams` while the server runs: 1 to the configured value, for the connections open and those to come ([Chapter 17](manual-17-http2.md), sections 6 and 9). On the loop's thread. | `proven_err_t`: `INVALID_ARG`. |
 | `proven_http_event_server_stop_listening(server)` | Stop accepting; open connections go on, an HTTP/1.1 response from now on says `Connection: close`, HTTP/2 says goodbye. | nothing. |
 | `proven_http_event_server_shutdown(server, grace_ms, on_drained, ctx)` | End gracefully (section 10); `on_drained(ctx, why)` when it is over. | `proven_err_t`: `INVALID_STATE` when already shutting down. |
 | `proven_http_event_server_destroy(server)` | Close every connection and the listeners, and free the server. Exchanges still in progress get `on_done` with `PROVEN_ERR_RESET`. The loop is neither stopped nor freed. Null is accepted. | nothing. |
