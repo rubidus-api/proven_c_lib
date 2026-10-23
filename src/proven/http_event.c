@@ -642,6 +642,7 @@ proven_err_t proven_http_event_server_listen(proven_http_event_server_t *s, prov
     /* Port 0 is any port free for both: the UDP port with the number TCP was given can belong to
      * someone else, and then another number is tried. A port the caller named is not changed. */
     for (int tries = 0;; ++tries) {
+        (void)tries;                               /* read only with HTTP/3 */
         e = proven_net_listen(at, 1024, &l->listener, &got);
         if (e != PROVEN_OK) return e;
         l->server = s;
