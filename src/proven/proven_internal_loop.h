@@ -76,7 +76,9 @@ proven_err_t proven_loop_create_poll_(proven_allocator_t alloc, proven_loop_t **
  * sent. reserve: room for at least `min` bytes (at most PROVEN_LOOP_CHUNK_) at the end of what is
  * waiting, perhaps more; PROVEN_ERR_AGAIN past the connection's limit, and the errors of
  * proven_loop_send. commit: `n` bytes of that room were written; they go after what was waiting,
- * from the loop, in one gather write with the rest.
+ * from the loop, in one gather write with the rest. A reservation is committed before anything
+ * else is sent on the socket: proven_loop_send with nothing committed writes straight to the
+ * socket and would put its bytes ahead of the room reserved.
  */
 #define PROVEN_LOOP_CHUNK_ ((proven_size_t)16416)
 proven_err_t proven_loop_reserve_(proven_loop_t *loop, proven_loop_sock_t *sock, proven_size_t min, proven_mem_mut_t *room);

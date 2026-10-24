@@ -258,7 +258,7 @@ proven_allocator_t proven_loop_allocator(const proven_loop_t *loop);
 | `proven_loop_send_queued(&sock)` | 받아 간 바이트 가운데 아직 나가지 않은 수. | `proven_size_t`. |
 | `proven_loop_send_wait(loop, &sock, at_most)` | 기다리는 바이트가 `at_most` 이하가 되면 `writable`을 한 번 부르게 한다(0: 모두 나갔다). | `proven_err_t`. |
 | `proven_loop_close(loop, &sock)` | 끝: 진행 중인 것은 `PROVEN_ERR_CANCELLED`로 답하고, 아직 기다리던 바이트는 버리고, 그다음 `closed`. | 없음. |
-| `proven_loop_accept(loop, &acc, &listener, fn, ctx)` | 연결 하나를 받는다: `fn(ctx, err, &conn)`이 한 번, 연결 - 여러분의 것이니 복사해 가져간다 - 이나 연결이 없는 까닭과 함께 온다. `fn` 안에서 다시 건다. | `proven_err_t`: 수락이 진행 중이면 `BUSY`. |
+| `proven_loop_accept(loop, &acc, &listener, fn, ctx)` | 연결 하나를 받는다: `fn(ctx, err, &conn)`이 한 번, 연결 - 여러분의 것이니 복사해 가져간다 - 이나 연결이 없는 까닭과 함께 온다. `fn` 안에서 다시 건다. `acc`는 여러분의 것으로, 처음 쓰기 전에 0으로 초기화한다. | `proven_err_t`: 수락이 진행 중이면 `BUSY`. |
 | `proven_loop_accept_cancel(loop, &acc)` | 수락을 멈춘다: 진행 중인 것은 `PROVEN_ERR_CANCELLED`로 답하고, 리스너를 닫아도 된다. | 없음. |
 | `proven_loop_scratch(loop)` | 루프의 임시 작업용 버퍼, 64 KiB. | `proven_mem_mut_t`. |
 | `proven_loop_allocator(loop)` | 루프를 만들 때 준 할당자. | `proven_allocator_t`. |

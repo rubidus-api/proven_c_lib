@@ -119,8 +119,8 @@ typedef struct proven_loop_sock {
 typedef void (*proven_loop_accept_fn)(void *ctx, proven_err_t err, proven_net_conn_t *conn);
 
 /**
- * @brief Accepting on one listener. Yours to hold, beside the listener; do not copy or move it
- *        while an accept is in flight. Opaque. One is enough for a server: it is armed again from
+ * @brief Accepting on one listener. Yours to hold, beside the listener; zero-initialise it, and
+ *        do not copy or move it while an accept is in flight. Opaque. One is enough for a server: it is armed again from
  *        inside its own function, and the loop then takes the next connection waiting without a
  *        new round.
  */
@@ -259,8 +259,9 @@ void proven_loop_close(proven_loop_t *loop, proven_loop_sock_t *sock);
  * @brief Accept one connection on `listener`: `fn` comes once, with it or with the reason there
  *        is none. Arm it again from inside `fn` to take the next.
  *
- * The listener must stay open while an accept is in flight. Before closing it, call
- * proven_loop_accept_cancel.
+ * `acc` must have been zero-initialised before its first use. The listener must stay open while
+ * an accept is in flight. Before closing it, call proven_loop_accept_cancel; after that, and
+ * once an accept in flight has been answered, the memory of `acc` may go.
  *
  * @return PROVEN_ERR_BUSY when an accept is already in flight on `acc`; PROVEN_ERR_INVALID_ARG.
  */
