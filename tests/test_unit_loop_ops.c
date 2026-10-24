@@ -1,6 +1,8 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "../src/proven/proven_internal_loop.h"
+#include "../src/proven/proven_internal_net.h"
+#include <stdio.h>
 #include <string.h>
 
 /*
@@ -254,6 +256,71 @@ static proven_size_t fill(conn_t *c) {
     return taken;
 }
 
+/* Pieces sent together and cut by the socket at a byte inside them: the rest must be held from
+ * exactly there. The cut is made on demand with a test-only cap on what one send offers: 700
+ * bytes of three small pieces put together (one send), then 2,500 of three large ones (one
+ * gather write). */
+static void case_sendv_cut(void) {
+    conn_t c;
+    proven_net_conn_t far;
+    pair(&c, &far);
+    static proven_byte_t p6[6][1500];
+    for (int k = 0; k < 6; ++k) for (int i = 0; i < 1500; ++i) p6[k][i] = (proven_byte_t)(k * 37 + i);
+    const proven_mem_view_t small_parts[3] = { { p6[0], 500 }, { p6[1], 500 }, { p6[2], 500 } };
+    const proven_mem_view_t big_parts[3] = { { p6[3], 1500 }, { p6[4], 1500 }, { p6[5], 1500 } };
+    proven_net_write_cap_for_test_(700);
+    proven_result_size_t s = proven_loop_sendv_(g_loop, &c.sock, small_parts, 3);
+    const proven_size_t held_small = proven_loop_send_queued(&c.sock);
+    proven_loop_close(g_loop, &c.sock);              /* nothing of it is sent: what was held is dropped */
+    proven_net_write_cap_for_test_(0);
+    PROVEN_TEST_ASSERT(s.err == PROVEN_OK && s.value == 1500 && held_small == 800, "small pieces put together: 700 went at once, 800 held", g_kind);
+    (void)until_moves(&c.closed, 0);
+    static proven_byte_t got[6000];
+    proven_result_size_t r = proven_net_read(&far, (proven_mem_mut_t){ got, sizeof got }, proven_net_deadline_in(1000));
+    bool same = r.err == PROVEN_OK && r.value == 700 && memcmp(got, p6[0], 500) == 0 && memcmp(got + 500, p6[1], 200) == 0;
+    PROVEN_TEST_ASSERT(same, "and the 700 are the first 700 bytes of the pieces", g_kind);
+    (void)proven_net_close(&far);
+
+    /* Now kept open: the rest follows from the right byte, for both kinds of send. */
+    pair(&c, &far);
+    proven_net_write_cap_for_test_(700);
+    s = proven_loop_sendv_(g_loop, &c.sock, small_parts, 3);
+    proven_net_write_cap_for_test_(0);
+    proven_result_size_t s2 = proven_loop_sendv_(g_loop, &c.sock, big_parts, 3);   /* behind what is held: held too */
+    PROVEN_TEST_ASSERT(s.value == 1500 && s2.value == 4500 && proven_loop_send_queued(&c.sock) == 800 + 4500, "the rest held, and the large pieces behind it", g_kind);
+    proven_size_t n = 0;
+    while (n < 6000) {
+        rounds(1);
+        r = proven_net_read(&far, (proven_mem_mut_t){ got + n, sizeof got - n }, proven_net_deadline_in(1000));
+        if (r.err != PROVEN_OK) break;
+        n += r.value;
+    }
+    same = n == 6000;
+    for (int k = 0; k < 3 && same; ++k) same = memcmp(got + k * 500, p6[k], 500) == 0 && memcmp(got + 1500 + k * 1500, p6[3 + k], 1500) == 0;
+    PROVEN_TEST_ASSERT(same, "everything arrives once, in order", g_kind);
+    close_and_wait(&c);
+    (void)proven_net_close(&far);
+
+    /* A gather write cut inside its second piece. */
+    pair(&c, &far);
+    proven_net_write_cap_for_test_(2500);
+    s2 = proven_loop_sendv_(g_loop, &c.sock, big_parts, 3);
+    proven_net_write_cap_for_test_(0);
+    PROVEN_TEST_ASSERT(s2.value == 4500 && proven_loop_send_queued(&c.sock) == 2000, "large pieces in one gather write: 2,500 went, 2,000 held", g_kind);
+    n = 0;
+    while (n < 4500) {
+        rounds(1);
+        r = proven_net_read(&far, (proven_mem_mut_t){ got + n, sizeof got - n }, proven_net_deadline_in(1000));
+        if (r.err != PROVEN_OK) break;
+        n += r.value;
+    }
+    same = n == 4500;
+    for (int k = 0; k < 3 && same; ++k) same = memcmp(got + k * 1500, p6[3 + k], 1500) == 0;
+    PROVEN_TEST_ASSERT(same, "and the rest follows from the byte where it was cut", g_kind);
+    close_and_wait(&c);
+    (void)proven_net_close(&far);
+}
+
 /* Close with everything in flight; a send that fails in the loop. */
 static void case_close_and_fail(void) {
     conn_t c;
@@ -412,6 +479,8 @@ static void run_all(proven_allocator_t heap, bool poll_kind) {
     case_receive();
     PROVEN_TEST_SECTION("sends", "Straight to the socket, the rest held up to the limit, the wait, in place, in order.", g_kind);
     case_send();
+    PROVEN_TEST_SECTION("pieces cut by the socket", "Several pieces sent at once, cut inside them: the rest is held from the right byte, small pieces put together and large ones in a gather write.", g_kind);
+    case_sendv_cut();
     PROVEN_TEST_SECTION("close and failure", "Close with a receive, a wait and bytes in flight; a send that fails in the loop.", g_kind);
     case_close_and_fail();
     PROVEN_TEST_SECTION("accepts and connects", "Accepts re-armed from inside, cancelled; a connect that succeeds and one that is refused.", g_kind);

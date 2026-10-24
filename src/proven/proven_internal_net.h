@@ -16,6 +16,9 @@ proven_err_t proven_net_write_vec_(proven_net_conn_t *conn, const proven_mem_vie
 /* How a connect begun by proven_net_connect_start stands, as proven_net_connect_finish says,
  * except that a failed one is not closed: the loop closes nothing of its caller's. */
 proven_err_t proven_net_connect_result_(const proven_net_conn_t *conn);
+/* Tests only: every send offers at most `cap` bytes (0: no cap), so that a send cut at a chosen
+ * byte can be made on demand. Not thread-safe; set it around a test's own sends. */
+void proven_net_write_cap_for_test_(proven_size_t cap);
 #endif
 
 #endif /* PROVEN_INTERNAL_NET_H */

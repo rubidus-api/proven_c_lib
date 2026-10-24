@@ -623,15 +623,19 @@ proven_result_size_t proven_net_read(proven_net_conn_t *conn, proven_mem_mut_t d
     }
 }
 
+static proven_size_t g_write_cap;
+void proven_net_write_cap_for_test_(proven_size_t cap) { g_write_cap = cap; }
+
 static proven_result_size_t internal_write(proven_net_conn_t *conn, proven_mem_view_t src,
                                            proven_net_deadline_t until, bool all) {
     proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
     if (!conn || (src.size > 0 && !src.ptr)) { res.err = PROVEN_ERR_INVALID_ARG; return res; }
     if (!conn->internal.open) { res.err = PROVEN_ERR_INVALID_STATE; return res; }
     while (res.value < src.size) {
-        proven_size_t n = 0;
+        proven_size_t n = 0, offer = src.size - res.value;
+        if (g_write_cap > 0 && offer > g_write_cap) offer = g_write_cap;
         proven_sys_net_result_t r = proven_sys_net_send((proven_sys_socket_t)conn->internal.handle,
-                                                        src.ptr + res.value, src.size - res.value, &n);
+                                                        src.ptr + res.value, offer, &n);
         if (r == PROVEN_SYS_NET_OK) {
             res.value += n;
             if (!all && n > 0) return res;
@@ -661,7 +665,12 @@ proven_err_t proven_net_write_vec_(proven_net_conn_t *conn, const proven_mem_vie
     if (!conn->internal.open) return PROVEN_ERR_INVALID_STATE;
     if (count > PROVEN_NET_VEC_MAX) count = PROVEN_NET_VEC_MAX;
     proven_sys_net_vec_t vec[PROVEN_NET_VEC_MAX];
-    for (proven_size_t i = 0; i < count; ++i) vec[i] = (proven_sys_net_vec_t){ .ptr = bufs[i].ptr, .len = bufs[i].size };
+    proven_size_t room = g_write_cap > 0 ? g_write_cap : (proven_size_t)-1;
+    for (proven_size_t i = 0; i < count; ++i) {
+        proven_size_t n = bufs[i].size < room ? bufs[i].size : room;
+        room -= n;
+        vec[i] = (proven_sys_net_vec_t){ .ptr = bufs[i].ptr, .len = n };
+    }
     proven_sys_net_result_t r = proven_sys_net_send_vec((proven_sys_socket_t)conn->internal.handle, vec, count, sent);
     if (r == PROVEN_SYS_NET_OK) return PROVEN_OK;
     if (r == PROVEN_SYS_NET_WOULD_BLOCK) return PROVEN_ERR_TIMEOUT;
