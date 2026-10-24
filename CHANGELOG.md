@@ -64,6 +64,11 @@ decisions of 2026-10-24: one release with everything). Work in progress.
   `ws_event.h` is unchanged. `proven_http_event_client_destroy`, like the server's: connections
   the loop has not answered `closed` for keep their memory, and the client's struct, until the
   loop's next round or `proven_loop_destroy`.
+- **HTTP/3 (server and client) runs on the loop's operations** (RFC-0025 step 5): each UDP socket
+  receives into a buffer of its own while a receive is in flight - 64 KiB for each HTTP/3 server
+  socket and each HTTP/3 client connection, where one buffer was shared before. The internal
+  readiness calls the drivers used until now are gone: nothing in the library watches a socket for
+  readiness through the loop any more.
 - `proven_http_event_server_destroy`: what the loop has not answered yet - a listener's accept,
   a connection's socket - keeps its memory, and the server's struct, until the loop's next round
   or `proven_loop_destroy`. A program that counts its allocator to zero right after the destroy

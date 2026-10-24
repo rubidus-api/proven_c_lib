@@ -261,6 +261,9 @@ proven_size_t proven_http_event_h2_buffered_(const proven_http_stream_t *stream)
 /* The count of connections has changed (one came or went, outside http_event.c): the listeners
  * may take connections again, or must stop at `max_connections`, and a shutdown may be over. */
 void proven_http_event_gone_(proven_http_event_server_t *server);
+/* Something of the server's (an HTTP/3 socket) that waited for the loop's last answer has had it
+ * and given its memory back: the server's struct goes with the last such once destroy returned. */
+void proven_http_event_ended_(proven_http_event_server_t *server);
 
 // -----------------------------------------------------------------------------
 // HTTP/3 (http_event_h3.c): UDP sockets, QUIC connections, and their streams

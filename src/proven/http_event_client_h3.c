@@ -73,7 +73,9 @@ struct c3conn {
     proven_http_event_client_t *client;
     c3conn_t *prev, *next;
     proven_net_udp_t udp;
-    proven_loop_io_t io;
+    proven_loop_udp_t lu;              /* the socket as the loop knows it (RFC-0025) */
+    proven_byte_t *rbuf;               /* what one receive takes: the loop's while a receive is in flight */
+    proven_net_addr_t from;            /* and where it came from */
     proven_loop_timer_t timer;
     proven_loop_after_t after;
     proven_quic_conn_t *q;
@@ -87,8 +89,9 @@ struct c3conn {
     proven_time_t born, idle_since, write_since;
     proven_u32 depth, calls;
     proven_u16 port;
-    proven_u8 host_len, want;
-    bool dead, up, closed, over, registered, client_going, bye;
+    proven_u8 host_len;
+    bool attached, sock_closed, sock_gone, waiting;   /* given to the loop; closed; `closed` come; a send wait asked for */
+    bool dead, up, closed, over, client_going, bye;
     bool early;                        /* 0-RTT is open: requests that are safe to repeat may go before the handshake (RFC-0021) */
     proven_err_t closed_why;           /* what the close means for a request that was never answered */
     proven_size_t pend_len;            /* datagrams the socket would not take */
@@ -132,10 +135,16 @@ static void r_place(proven_c3req_t *r);
 
 static void c_enter(c3conn_t *c) { c->depth++; }
 
+static void c_free(c3conn_t *c) {
+    proven_allocator_t a = c->client->alloc;
+    if (c->rbuf) a.free_fn(a.ctx, c->rbuf);
+    a.free_fn(a.ctx, c);
+}
+
 static void c_leave(c3conn_t *c) {
     if (--c->depth > 0 || !c->dead) return;
-    proven_allocator_t a = c->client->alloc;
-    a.free_fn(a.ctx, c);
+    if (c->attached && !c->sock_gone) return;     /* c_sock_closed frees it */
+    c_free(c);
 }
 
 static void r_enter(proven_c3req_t *r) { r->h.depth++; }
@@ -287,7 +296,11 @@ static void c_close_socket(c3conn_t *c) {
     proven_http_event_client_t *cl = c->client;
     proven_loop_timer_cancel(cl->loop, &c->timer);
     proven_loop_after_cancel_(cl->loop, &c->after);
-    if (c->registered) { proven_loop_io_remove(cl->loop, &c->io); c->registered = false; }
+    if (c->attached && !c->sock_closed) {          /* the loop stops watching before the close */
+        c->sock_closed = true;
+        cl->ending++;
+        proven_loop_udp_close_(cl->loop, &c->lu);
+    }
     (void)proven_net_udp_close(&c->udp);
 }
 
@@ -317,10 +330,11 @@ static void c_kill(c3conn_t *c, proven_err_t why) {
 // Datagrams
 // -----------------------------------------------------------------------------
 
+/* Datagrams are always being received; when the socket would not take some, the loop is asked
+ * to say when it will. */
 static void c_watch(c3conn_t *c) {
-    if (c->dead || !c->registered) return;
-    const proven_u8 want = (proven_u8)(PROVEN_NET_READABLE | (c->pend_len > 0 ? PROVEN_NET_WRITABLE : 0));
-    if (want != c->want && proven_loop_io_set(c->client->loop, &c->io, want) == PROVEN_OK) c->want = want;
+    if (c->dead || !c->attached || c->sock_closed || c->pend_len == 0 || c->waiting) return;
+    if (proven_loop_udp_send_wait_(c->client->loop, &c->lu) == PROVEN_OK) c->waiting = true;
 }
 
 static void c_after(void *ctx) {
@@ -797,37 +811,51 @@ static void c_round(c3conn_t *c) {
     c_leave(c);
 }
 
-static void c_on_io(void *ctx, proven_u8 got) {
+static void c_sock_received(void *ctx, proven_err_t err, proven_size_t n, proven_size_t seg) {
     c3conn_t *c = ctx;
+    if (err != PROVEN_OK || c->dead) return;
     proven_http_event_client_t *cl = c->client;
     c_enter(c);
-    if ((got & PROVEN_NET_WRITABLE) && c->pend_len > 0) {
+    const proven_quic_addr_t qa = proven_quic_addr_of_(&c->from);
+    /* Several datagrams of one sender coalesced by the kernel (GRO): each as if alone. */
+    const proven_size_t step = seg ? seg : n;
+    bool failed = false;
+    for (proven_size_t off = 0; off < n && !c->dead; off += step) {
+        const proven_size_t k = n - off < step ? n - off : step;
+        if (proven_quic_conn_receive(c->q, (proven_mem_view_t){ .ptr = c->rbuf + off, .size = k }, &qa, c3_now_us()) != PROVEN_OK) { failed = true; break; }
+    }
+    if (failed) c_kill(c, PROVEN_ERR_NOMEM);
+    /* The next receive, armed from here: what waits already is taken without a new round. The
+     * connection's round comes when the datagrams that came together are in. */
+    if (!c->dead) (void)proven_loop_udp_recv_(cl->loop, &c->lu, (proven_mem_mut_t){ .ptr = c->rbuf, .size = CL_READ_BYTES }, &c->from);
+    c_call_back(c);
+    c_leave(c);
+}
+
+static void c_sock_writable(void *ctx, proven_err_t err) {
+    c3conn_t *c = ctx;
+    c->waiting = false;
+    if (err != PROVEN_OK || c->dead) return;
+    c_enter(c);
+    if (c->pend_len > 0) {
         proven_size_t sent = 0;
         const proven_err_t e = proven_net_udp_send_segments_(&c->udp, c->to, (proven_mem_view_t){ .ptr = c->pend, .size = c->pend_len }, c->pend_seg, &sent);
         if (e != PROVEN_ERR_TIMEOUT) c->pend_len = 0;
         else if (sent > 0) { proven_sys_mem_move(c->pend, c->pend + sent, c->pend_len - sent); c->pend_len -= sent; }
     }
-    if (got & (PROVEN_NET_READABLE | PROVEN_NET_FAILED)) {
-        for (int i = 0; i < C3_READS && !c->dead; ++i) {
-            proven_net_addr_t from;
-            proven_size_t seg = 0;
-            const proven_result_size_t r = proven_net_udp_recv_segments_(&c->udp, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES }, &seg, &from);
-            if (r.err == PROVEN_ERR_OUT_OF_BOUNDS) continue;
-            if (r.err != PROVEN_OK) break;
-            const proven_quic_addr_t qa = proven_quic_addr_of_(&from);
-            /* Several datagrams of one sender coalesced by the kernel (GRO): each as if alone. */
-            const proven_size_t step = seg ? seg : r.value;
-            bool failed = false;
-            for (proven_size_t off = 0; off < r.value && !c->dead; off += step) {
-                const proven_size_t n = r.value - off < step ? r.value - off : step;
-                if (proven_quic_conn_receive(c->q, (proven_mem_view_t){ .ptr = cl->rbuf + off, .size = n }, &qa, c3_now_us()) != PROVEN_OK) { failed = true; break; }
-            }
-            if (failed) { c_kill(c, PROVEN_ERR_NOMEM); break; }
-        }
-    }
     c_round(c);
     c_leave(c);
 }
+
+static void c_sock_closed(void *ctx) {
+    c3conn_t *c = ctx;
+    proven_http_event_client_t *cl = c->client;
+    c->sock_gone = true;
+    if (c->dead && c->depth == 0) c_free(c);
+    proven_http_event_client_ended_(cl);
+}
+
+static const proven_loop_udp_fns_t c_udp_fns = { .received = c_sock_received, .writable = c_sock_writable, .closed = c_sock_closed };
 
 // -----------------------------------------------------------------------------
 // Connections, and placing a request
@@ -882,17 +910,32 @@ static proven_err_t c_open(proven_http_event_client_t *cl, proven_u8str_view_t h
             const proven_h3_config_t hc = { .alloc = cl->alloc, .server = false, .max_field_section_bytes = list };
             e = proven_h3_conn_create(&hc, c->q, &c->h3);
         }
-        if (e == PROVEN_OK) e = proven_loop_io_add(cl->loop, &c->io, proven_net_udp_handle(&c->udp), PROVEN_NET_READABLE, c_on_io, c);
+        if (e == PROVEN_OK) {
+            c->rbuf = c3_alloc(cl->alloc, CL_READ_BYTES);
+            if (!c->rbuf) e = PROVEN_ERR_NOMEM;
+        }
+        if (e == PROVEN_OK) e = proven_loop_udp_attach_(cl->loop, &c->lu, &c->udp, &c_udp_fns, c);
+        if (e == PROVEN_OK) {
+            c->attached = true;
+            e = proven_loop_udp_recv_(cl->loop, &c->lu, (proven_mem_mut_t){ .ptr = c->rbuf, .size = CL_READ_BYTES }, &c->from);
+        }
     }
     if (e != PROVEN_OK) {
         proven_h3_conn_destroy(c->h3);
         proven_quic_conn_destroy(c->q);
-        (void)proven_net_udp_close(&c->udp);
-        cl->alloc.free_fn(cl->alloc.ctx, c);
+        c->h3 = (void *)0; c->q = (void *)0;
+        if (c->attached) {                         /* the loop's `closed` frees it */
+            c->sock_closed = true;
+            cl->ending++;
+            proven_loop_udp_close_(cl->loop, &c->lu);
+            (void)proven_net_udp_close(&c->udp);
+            c->dead = true;
+        } else {
+            (void)proven_net_udp_close(&c->udp);
+            c_free(c);
+        }
         return e == PROVEN_ERR_NOMEM ? e : PROVEN_ERR_UNREACHABLE;
     }
-    c->registered = true;
-    c->want = PROVEN_NET_READABLE;
     c->next = cl->h3;
     if (c->next) c->next->prev = c;
     cl->h3 = c;

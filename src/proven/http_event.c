@@ -995,6 +995,8 @@ proven_err_t proven_http_event_server_set_max_streams(proven_http_event_server_t
     return PROVEN_OK;
 }
 
+void proven_http_event_ended_(proven_http_event_server_t *s) { ev_ended(s); }
+
 void proven_http_event_gone_(proven_http_event_server_t *s) {
     ev_update_listeners(s);
     ev_drain_check(s);

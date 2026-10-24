@@ -437,6 +437,82 @@ static void case_accept_connect(void) {
     (void)proven_net_listener_close(&a.listener);
 }
 
+/* UDP (internal, for HTTP/3): receives into a buffer, re-armed from inside, closed with one in
+ * flight; a send wait. */
+typedef struct {
+    proven_loop_udp_t lu;
+    proven_net_udp_t udp;
+    proven_byte_t buf[2048];
+    proven_net_addr_t from;
+    int received, writable, closed, rearm, order[8], order_n;
+    proven_err_t err;
+    proven_size_t total;
+} udp_case_t;
+
+static void u_received(void *ctx, proven_err_t err, proven_size_t n, proven_size_t seg) {
+    udp_case_t *u = ctx;
+    (void)seg;
+    PROVEN_TEST_ASSERT(!g_inside, "a UDP receive is never answered inside the call that started it", g_kind);
+    u->received++; u->err = err;
+    if (u->order_n < 8) u->order[u->order_n++] = 1;
+    if (err != PROVEN_OK) return;
+    u->total += n;
+    if (u->rearm > 0) {
+        u->rearm--;
+        g_inside = true;
+        proven_err_t e = proven_loop_udp_recv_(g_loop, &u->lu, (proven_mem_mut_t){ u->buf, sizeof u->buf }, &u->from);
+        g_inside = false;
+        PROVEN_TEST_ASSERT(e == PROVEN_OK, "armed again from inside", g_kind);
+    }
+}
+static void u_writable(void *ctx, proven_err_t err) {
+    udp_case_t *u = ctx;
+    PROVEN_TEST_ASSERT(!g_inside, "a UDP wait is never answered inside the call", g_kind);
+    u->writable++; u->err = err;
+    if (u->order_n < 8) u->order[u->order_n++] = 2;
+}
+static void u_closed(void *ctx) {
+    udp_case_t *u = ctx;
+    u->closed++;
+    if (u->order_n < 8) u->order[u->order_n++] = 4;
+}
+static const proven_loop_udp_fns_t g_ufns = { u_received, u_writable, u_closed };
+
+static void case_udp(void) {
+    static udp_case_t u;
+    memset(&u, 0, sizeof u);
+    proven_net_udp_t peer;
+    proven_net_addr_t at, peer_at;
+    PROVEN_TEST_ASSERT(proven_net_udp_open(proven_net_addr_ipv4(127, 0, 0, 1, 0), &u.udp, &at) == PROVEN_OK &&
+                       proven_net_udp_open(proven_net_addr_ipv4(127, 0, 0, 1, 0), &peer, &peer_at) == PROVEN_OK, "two UDP sockets", g_kind);
+    PROVEN_TEST_ASSERT(proven_loop_udp_attach_(g_loop, &u.lu, &u.udp, &g_ufns, &u) == PROVEN_OK, "attached", g_kind);
+    proven_err_t e;
+    INSIDE(e = proven_loop_udp_recv_(g_loop, &u.lu, (proven_mem_mut_t){ u.buf, sizeof u.buf }, &u.from));
+    PROVEN_TEST_ASSERT(e == PROVEN_OK && proven_loop_udp_recv_(g_loop, &u.lu, (proven_mem_mut_t){ u.buf, sizeof u.buf }, &u.from) == PROVEN_ERR_BUSY,
+        "a receive in flight; a second is PROVEN_ERR_BUSY", g_kind);
+    rounds(3);
+    PROVEN_TEST_ASSERT(u.received == 0, "with nothing sent, it waits", g_kind);
+    /* Five datagrams at once: the first answers the receive, the rest are taken by receives armed
+     * again from inside, each still answered from the loop. */
+    for (int i = 0; i < 5; ++i) PROVEN_TEST_ASSERT(proven_net_udp_send_to(&peer, at, (proven_mem_view_t){ (const proven_byte_t *)"datagram", 8 }, proven_net_deadline_in(1000)) == PROVEN_OK, "a datagram sent", g_kind);
+    u.rearm = 4;
+    (void)until_moves(&u.received, 0);
+    for (int i = 0; i < 50 && u.received < 5; ++i) rounds(1);
+    PROVEN_TEST_ASSERT(u.received == 5 && u.err == PROVEN_OK && u.total == 40 && u.from.port == peer_at.port, "five datagrams, five answers, from the sender", g_kind);
+    /* A send wait: the socket can take datagrams, so writable comes - from the loop. */
+    INSIDE(e = proven_loop_udp_send_wait_(g_loop, &u.lu));
+    PROVEN_TEST_ASSERT(e == PROVEN_OK && u.writable == 0 && until_moves(&u.writable, 0) && u.err == PROVEN_OK, "a send wait is answered from the loop", g_kind);
+    /* Closed with a receive in flight: CANCELLED, then closed last. */
+    u.order_n = 0;
+    PROVEN_TEST_ASSERT(proven_loop_udp_recv_(g_loop, &u.lu, (proven_mem_mut_t){ u.buf, sizeof u.buf }, &u.from) == PROVEN_OK, "another receive", g_kind);
+    INSIDE(proven_loop_udp_close_(g_loop, &u.lu));
+    PROVEN_TEST_ASSERT(u.closed == 0 && until_moves(&u.closed, 0), "closed comes, from the loop", g_kind);
+    PROVEN_TEST_ASSERT(u.order_n == 2 && u.order[0] == 1 && u.err == PROVEN_ERR_CANCELLED && u.order[1] == 4, "the receive cancelled, then closed", g_kind);
+    PROVEN_TEST_ASSERT(proven_loop_udp_recv_(g_loop, &u.lu, (proven_mem_mut_t){ u.buf, sizeof u.buf }, &u.from) == PROVEN_ERR_INVALID_STATE, "no receive after close", g_kind);
+    (void)proven_net_udp_close(&u.udp);
+    (void)proven_net_udp_close(&peer);
+}
+
 /* Destroyed with things in flight: nothing is called, and nothing leaks (the sanitizer runs
  * say so). */
 static void case_destroy(proven_allocator_t heap, bool poll_kind) {
@@ -485,7 +561,9 @@ static void run_all(proven_allocator_t heap, bool poll_kind) {
     case_close_and_fail();
     PROVEN_TEST_SECTION("accepts and connects", "Accepts re-armed from inside, cancelled; a connect that succeeds and one that is refused.", g_kind);
     case_accept_connect();
-    PROVEN_TEST_SECTION("destroy", "A loop destroyed with a receive and bytes in flight calls nothing.", g_kind);
+    PROVEN_TEST_SECTION("UDP", "Receives into a buffer, re-armed from inside, closed with one in flight; a send wait (internal, for HTTP/3).", g_kind);
+    case_udp();
+        PROVEN_TEST_SECTION("destroy", "A loop destroyed with a receive and bytes in flight calls nothing.", g_kind);
     case_destroy(heap, poll_kind);
 
     proven_loop_destroy(g_loop);

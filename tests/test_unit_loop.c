@@ -37,36 +37,6 @@ static void tick_again(void *ctx) {
     if (++g_ticks < 3) proven_loop_timer_set(g_loop, &g_tick, 20, tick_again, NULL);
 }
 
-/* Sockets. */
-typedef struct {
-    proven_loop_io_t io;
-    proven_net_conn_t sock;
-    int readable, writable;
-    proven_byte_t got[64];
-    proven_size_t got_len;
-    proven_loop_io_t *also_remove;
-    bool eof;
-} peer_t;
-
-static void peer_ready(void *ctx, proven_u8 got) {
-    peer_t *p = ctx;
-    if (got & PROVEN_NET_WRITABLE) p->writable++;
-    if (got & PROVEN_NET_READABLE) {
-        p->readable++;
-        proven_result_size_t r = proven_net_read(&p->sock, (proven_mem_mut_t){ .ptr = p->got + p->got_len, .size = sizeof p->got - p->got_len }, PROVEN_NET_DONT_WAIT);
-        if (r.err == PROVEN_OK) p->got_len += r.value;
-        if (r.err == PROVEN_ERR_EOF) { p->eof = true; proven_loop_io_remove(g_loop, &p->io); }
-    }
-    if (p->also_remove) { proven_loop_io_remove(g_loop, p->also_remove); p->also_remove = NULL; }
-}
-
-typedef struct { proven_loop_io_t io; proven_net_listener_t listener; proven_net_conn_t accepted[4]; int count; } acceptor_t;
-static void acceptor_ready(void *ctx, proven_u8 got) {
-    acceptor_t *a = ctx;
-    (void)got;
-    while (a->count < 4 && proven_net_accept(&a->listener, PROVEN_NET_DONT_WAIT, &a->accepted[a->count], NULL) == PROVEN_OK) a->count++;
-}
-
 /* Posting from other threads. */
 static atomic_int g_posted_ran;
 static atomic_int g_wrong_thread;
@@ -102,7 +72,7 @@ static void many_fire(void *ctx) {
 }
 static int g_forgotten_calls;
 static void forgotten(void *ctx) { (void)ctx; g_forgotten_calls++; }
-static void forgotten_io(void *ctx, proven_u8 got) { (void)ctx; (void)got; g_forgotten_calls++; }
+static void forgotten_acc(void *ctx, proven_err_t err, proven_net_conn_t *conn) { (void)ctx; (void)err; (void)conn; g_forgotten_calls++; }
 /* "After this round": what each one does when it runs. */
 static proven_loop_after_t g_after[5];
 static int g_after_log[16], g_after_n;
@@ -117,8 +87,8 @@ static void stopper(void *arg) { (void)arg; proven_time_sleep(60); proven_loop_s
 
 int main(void) {
     PROVEN_TEST_SUITE("the event loop",
-        "Timers that fire in order and survive being cancelled from each other's callbacks, sockets watched and unwatched mid-round, and work posted from other threads.",
-        "Inspect src/proven/loop.c: loop_timers_advance for timers, proven_loop_io_remove for the batch, proven_loop_post and loop_run_tasks for posting.");
+        "Timers that fire in order and survive being cancelled from each other's callbacks, and work posted from other threads. (The operations on sockets: test_unit_loop_ops.)",
+        "Inspect src/proven/loop.c: loop_timers_advance for timers, proven_loop_post and loop_run_tasks for posting.");
 
     proven_allocator_t heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(proven_loop_create(heap, &g_loop) == PROVEN_OK && g_loop != NULL, "a loop", "");
@@ -126,7 +96,7 @@ int main(void) {
     PROVEN_TEST_ASSERT(proven_loop_create(heap, NULL) == PROVEN_ERR_INVALID_ARG && proven_loop_create((proven_allocator_t){ 0 }, &none) == PROVEN_ERR_INVALID_ARG && none == NULL,
         "no out pointer, and no allocator, are PROVEN_ERR_INVALID_ARG", "");
     proven_mem_mut_t scratch = proven_loop_scratch(g_loop);
-    PROVEN_TEST_ASSERT(scratch.ptr != NULL && scratch.size == 65536 && proven_loop_io_count(g_loop) == 0, "a 64 KiB scratch buffer, and nothing watched", "");
+    PROVEN_TEST_ASSERT(scratch.ptr != NULL && scratch.size == 65536, "a 64 KiB scratch buffer", "");
     memset(scratch.ptr, 0xa5, scratch.size);
 
     // ---------------------------------------------------------------
@@ -265,73 +235,6 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
-    PROVEN_TEST_SECTION("sockets",
-        "A watched socket's function is called when it is ready and not otherwise; removing a socket silences events already collected for it.",
-        "Check proven_loop_io_add/_set/_remove and the batch handling in proven_loop_poll.");
-    {
-        acceptor_t acc;
-        memset(&acc, 0, sizeof acc);
-        proven_net_addr_t at;
-        PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &acc.listener, &at) == PROVEN_OK, "a listener", "");
-        PROVEN_TEST_ASSERT(proven_loop_io_add(g_loop, &acc.io, proven_net_listener_handle(&acc.listener), PROVEN_NET_READABLE, acceptor_ready, &acc) == PROVEN_OK &&
-                           proven_loop_io_count(g_loop) == 1, "watched", "");
-        PROVEN_TEST_ASSERT(proven_loop_io_add(g_loop, &acc.io, proven_net_listener_handle(&acc.listener), PROVEN_NET_READABLE, acceptor_ready, &acc) == PROVEN_ERR_INVALID_STATE,
-            "registering the same record twice is PROVEN_ERR_INVALID_STATE", "");
-        proven_net_conn_t out1, out2;
-        PROVEN_TEST_ASSERT(proven_net_connect(at, proven_net_deadline_in(3000), &out1) == PROVEN_OK && proven_net_connect(at, proven_net_deadline_in(3000), &out2) == PROVEN_OK, "two connections", "");
-        spin(60);
-        PROVEN_TEST_ASSERT(acc.count == 2, "the listener's function accepted both", "");
-
-        peer_t a, b;
-        memset(&a, 0, sizeof a); memset(&b, 0, sizeof b);
-        a.sock = acc.accepted[0]; b.sock = acc.accepted[1];
-        PROVEN_TEST_ASSERT(proven_loop_io_add(g_loop, &a.io, proven_net_conn_handle(&a.sock), PROVEN_NET_READABLE, peer_ready, &a) == PROVEN_OK &&
-                           proven_loop_io_add(g_loop, &b.io, proven_net_conn_handle(&b.sock), 0, peer_ready, &b) == PROVEN_OK && proven_loop_io_count(g_loop) == 3, "both watched, the second for nothing yet", "");
-        spin(40);
-        PROVEN_TEST_ASSERT(a.readable == 0 && b.readable == 0 && a.writable == 0, "nothing is ready, so nothing is called", "");
-        PROVEN_TEST_ASSERT(proven_net_write_all(&out1, (proven_mem_view_t){ (const proven_byte_t *)"first", 5 }, proven_net_deadline_in(2000)).err == PROVEN_OK &&
-                           proven_net_write_all(&out2, (proven_mem_view_t){ (const proven_byte_t *)"second", 6 }, proven_net_deadline_in(2000)).err == PROVEN_OK, "something is sent to each", "");
-        spin(60);
-        PROVEN_TEST_ASSERT(a.readable >= 1 && a.got_len == 5 && memcmp(a.got, "first", 5) == 0 && b.readable == 0, "the one watched for reading reads; the one watched for nothing is left alone", "");
-        PROVEN_TEST_ASSERT(proven_loop_io_set(g_loop, &b.io, PROVEN_NET_READABLE | PROVEN_NET_WRITABLE) == PROVEN_OK, "now watch the second for both", "");
-        spin(40);
-        PROVEN_TEST_ASSERT(b.got_len == 6 && b.writable >= 1, "it reads what was waiting and is told it may write", "");
-        PROVEN_TEST_ASSERT(proven_loop_io_set(g_loop, &b.io, PROVEN_NET_READABLE) == PROVEN_OK, "back to reading only", "");
-        int writable_before = b.writable;
-        spin(40);
-        PROVEN_TEST_ASSERT(b.writable == writable_before, "no longer told it may write", "");
-
-        /* Both become readable before the next round; whichever is delivered first removes the
-         * other. The other must then not be called in that round, although its event was
-         * already collected. */
-        a.also_remove = &b.io; b.also_remove = &a.io;
-        int ra = a.readable, rb = b.readable;
-        PROVEN_TEST_ASSERT(proven_net_write_all(&out1, (proven_mem_view_t){ (const proven_byte_t *)"x", 1 }, proven_net_deadline_in(2000)).err == PROVEN_OK &&
-                           proven_net_write_all(&out2, (proven_mem_view_t){ (const proven_byte_t *)"y", 1 }, proven_net_deadline_in(2000)).err == PROVEN_OK, "both are sent to", "");
-        proven_time_sleep(50);
-        spin(60);
-        PROVEN_TEST_ASSERT((a.readable - ra) + (b.readable - rb) == 1 && proven_loop_io_count(g_loop) == 2, "exactly one was delivered: the removed one's collected event was dropped", "");
-        proven_loop_io_remove(g_loop, &a.io); proven_loop_io_remove(g_loop, &b.io);
-        proven_loop_io_remove(g_loop, &a.io);
-        PROVEN_TEST_ASSERT(proven_loop_io_count(g_loop) == 1, "removing what is not registered is harmless", "");
-
-        /* The peer closing is readable, and reads as the end. */
-        memset(&a, 0, sizeof a);
-        a.sock = acc.accepted[0];
-        PROVEN_TEST_ASSERT(proven_loop_io_add(g_loop, &a.io, proven_net_conn_handle(&a.sock), PROVEN_NET_READABLE, peer_ready, &a) == PROVEN_OK, "watched again", "");
-        (void)proven_net_close(&out1);
-        spin(80);
-        PROVEN_TEST_ASSERT(a.eof && !a.io.registered, "a closed peer is delivered as readable, and the function unwatched itself on the end of stream", "");
-
-        proven_loop_io_remove(g_loop, &acc.io);
-        (void)proven_net_close(&out2); (void)proven_net_close(&acc.accepted[0]); (void)proven_net_close(&acc.accepted[1]);
-        (void)proven_net_listener_close(&acc.listener);
-        proven_loop_io_t bad = { 0 };
-        PROVEN_TEST_ASSERT(proven_loop_io_add(g_loop, &bad, (proven_net_handle_t){ 0 }, PROVEN_NET_READABLE, peer_ready, &a) == PROVEN_ERR_INVALID_ARG &&
-                           proven_loop_io_set(g_loop, &bad, PROVEN_NET_READABLE) == PROVEN_ERR_INVALID_ARG, "a handle that is not one, and a record that is not registered, are PROVEN_ERR_INVALID_ARG", "");
-    }
-
-    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("posting and stopping",
         "Functions posted from any thread run on the loop's thread, in order; a stop from outside ends a waiting loop.",
         "Check proven_loop_post, loop_run_tasks and proven_loop_stop.");
@@ -425,17 +328,16 @@ int main(void) {
         proven_loop_destroy(far);
     }
 
-    /* Destroying a loop with a timer set and a socket watched calls neither. */
+    /* Destroying a loop with a timer set and an accept in flight calls neither. */
     {
         proven_loop_t *other = NULL;
         proven_loop_timer_t t = { 0 };
-        proven_loop_io_t io = { 0 };
+        static proven_loop_accept_t acc;
         proven_net_listener_t listener;
         PROVEN_TEST_ASSERT(proven_loop_create(heap, &other) == PROVEN_OK &&
                            proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &listener, NULL) == PROVEN_OK, "a second loop and a listener", "");
         proven_loop_timer_set(other, &t, 10, forgotten, NULL);
-        PROVEN_TEST_ASSERT(proven_loop_io_add(other, &io, proven_net_listener_handle(&listener), PROVEN_NET_READABLE, forgotten_io, NULL) == PROVEN_OK &&
-                           proven_loop_io_count(other) == 1, "with a timer set and a socket watched", "");
+        PROVEN_TEST_ASSERT(proven_loop_accept(other, &acc, &listener, forgotten_acc, NULL) == PROVEN_OK, "with a timer set and an accept in flight", "");
         proven_time_sleep(40);
         proven_loop_destroy(other);
         PROVEN_TEST_ASSERT(g_forgotten_calls == 0, "destroying it calls nothing, though the timer was due", "");
@@ -446,7 +348,6 @@ int main(void) {
         "An internal hook for a connection that wants a round from the loop: no post, no change of a socket's watch.",
         "Check proven_loop_after_, proven_loop_after_cancel_ and loop_run_after in src/proven/loop.c, and where proven_loop_poll calls it.");
     {
-        const proven_size_t io_before = proven_loop_io_count(g_loop);
         /* Asked for between rounds: they run at the next poll, in the order asked, once each -
          * and a poll that would have slept for ever does not sleep on them. */
         g_after_n = 0;
@@ -490,7 +391,6 @@ int main(void) {
         proven_loop_after_(g_loop, &g_after[0], after_note, (void *)(proven_size_t)70);
         for (int i = 0; i < 50 && g_after_n < 2; ++i) (void)proven_loop_poll(g_loop, PROVEN_NET_DONT_WAIT);
         PROVEN_TEST_ASSERT(g_after_n == 2 && g_after_log[0] == 70 && g_after_log[1] == 71, "one asked for between rounds runs first in the next poll, before a timer that was due", "");
-        PROVEN_TEST_ASSERT(proven_loop_io_count(g_loop) == io_before, "and none of it touched a socket's watch", "");
         /* One left waiting when the loop is destroyed is simply not run. */
         g_after_n = 0;
         proven_loop_after_(g_loop, &g_after[0], after_note, (void *)(proven_size_t)60);
@@ -499,6 +399,6 @@ int main(void) {
     proven_loop_destroy(g_loop);
     proven_loop_destroy(NULL);
     PROVEN_TEST_ASSERT(g_after_n == 0, "one left waiting when its loop is destroyed is not run", "");
-    PROVEN_TEST_PASS("timers, sockets and posted work behave, also when callbacks act on each other.");
+    PROVEN_TEST_PASS("timers and posted work behave, also when callbacks act on each other.");
     return 0;
 }

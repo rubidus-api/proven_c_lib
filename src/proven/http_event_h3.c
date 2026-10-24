@@ -69,12 +69,17 @@ typedef struct h3s {
 
 struct h3e {
     struct ev_h3 *x;
+    proven_http_event_server_t *server;
     proven_net_udp_t udp;
-    proven_loop_io_t io;
+    proven_loop_udp_t lu;              /* the socket as the loop knows it (RFC-0025) */
+    proven_byte_t *rbuf;               /* what one receive takes: the loop's while a receive is in flight */
+    proven_net_addr_t from;            /* and where it came from */
     proven_net_addr_t bound;
     proven_size_t users;               /* connections that send from here */
     bool open, closing;                /* closing: stop_listening - no new connection, and closed when its last is over */
-    proven_u8 want;                    /* what the loop watches it for */
+    bool sock_closing;                 /* closed, the loop's `closed` not come yet: the slot is not used again before */
+    bool orphan;                       /* the server's HTTP/3 is gone: `closed` frees this */
+    bool waiting;                      /* a send wait is asked for */
     proven_size_t pend_len;            /* datagrams the socket would not take: nothing more goes until it has */
     proven_size_t pend_seg;            /* their size (the last may be shorter) */
     proven_net_addr_t pend_to;
@@ -91,7 +96,7 @@ struct ev_h3 {
     h3d_t *dirty, *work;               /* connections owed a round: asked for, and being given one */
     proven_h3key_t *keys;
     proven_size_t key_cap, key_used;   /* slots, and slots not free (deleted ones too) */
-    proven_byte_t *dg;
+    proven_loop_after_t after;         /* a round for the connections owed one, from the loop */
     proven_byte_t *batch;              /* a connection's datagrams gathered for one send: H3_BATCH bytes */
     proven_byte_t out[H3_OUT];
     bool stopped;                      /* stop_listening: no new connection */
@@ -249,32 +254,30 @@ static void d_key_drop(h3d_t *d, const proven_quic_cid_t *cid) {
 // Sockets
 // -----------------------------------------------------------------------------
 
-static void e_on_io(void *ctx, proven_u8 got);
 
-static h3e_t *x_first_open(const struct ev_h3 *x) {
-    for (proven_size_t i = 0; i < H3_ENDS; ++i) if (x->ends[i] && x->ends[i]->open) return x->ends[i];
-    return (void *)0;
-}
+static void x_rounds(struct ev_h3 *x);
+static void x_after(void *ctx) { x_rounds(ctx); }
 
-/* What each socket is watched for: datagrams always; writability while a datagram waits for
- * room, and - on one of them - while connections are owed a round. */
+/* What is asked of the loop: to be told when a socket takes datagrams again, for each that holds
+ * some it would not take; and a round for the connections owed one. */
 static void x_rearm(struct ev_h3 *x) {
-    const h3e_t *first = x_first_open(x);
     for (proven_size_t i = 0; i < H3_ENDS; ++i) {
         h3e_t *e = x->ends[i];
-        if (!e || !e->open) continue;
-        const proven_u8 want = (proven_u8)(PROVEN_NET_READABLE | (e->pend_len > 0 || (x->dirty && e == first) ? PROVEN_NET_WRITABLE : 0));
-        if (want != e->want && proven_loop_io_set(x->server->loop, &e->io, want) == PROVEN_OK) e->want = want;
+        if (!e || !e->open || e->pend_len == 0 || e->waiting) continue;
+        if (proven_loop_udp_send_wait_(x->server->loop, &e->lu) == PROVEN_OK) e->waiting = true;
     }
+    if (x->dirty) proven_loop_after_(x->server->loop, &x->after, x_after, x);
 }
 
 static void e_close(h3e_t *e) {
     if (!e->open) return;
-    proven_loop_io_remove(e->x->server->loop, &e->io);
+    proven_loop_udp_close_(e->x->server->loop, &e->lu);   /* the loop stops watching before the close */
     (void)proven_net_udp_close(&e->udp);
     e->open = false;
     e->pend_len = 0;
-    e->want = 0;
+    e->waiting = false;
+    e->sock_closing = true;
+    e->server->ending++;
 }
 
 /* Datagrams of `seg` bytes (the last may be shorter) out in one call where the platform can. What
@@ -854,30 +857,45 @@ static void x_datagram(struct ev_h3 *x, h3e_t *e, proven_mem_view_t dg, const pr
     if (n > 0) e_send(e, *from, x->out, n);
 }
 
-static void e_on_io(void *ctx, proven_u8 got) {
+static void e_received(void *ctx, proven_err_t err, proven_size_t n, proven_size_t seg) {
     h3e_t *e = ctx;
+    if (err != PROVEN_OK || !e->open) return;
     struct ev_h3 *x = e->x;
-    if ((got & PROVEN_NET_WRITABLE) && e->pend_len > 0) {
+    /* Several datagrams of one sender coalesced by the system (GRO): each as if alone. */
+    const proven_size_t step = seg ? seg : n;
+    for (proven_size_t off = 0; off < n && e->open; off += step)
+        x_datagram(x, e, (proven_mem_view_t){ .ptr = e->rbuf + off, .size = n - off < step ? n - off : step }, &e->from);
+    /* The next receive: armed from here, the loop takes what waits already without a new round.
+     * The connections it touched get their round once the datagrams that came together are in. */
+    if (e->open) (void)proven_loop_udp_recv_(x->server->loop, &e->lu, (proven_mem_mut_t){ .ptr = e->rbuf, .size = H3_DATAGRAM }, &e->from);
+    proven_loop_after_(x->server->loop, &x->after, x_after, x);
+}
+
+static void e_writable(void *ctx, proven_err_t err) {
+    h3e_t *e = ctx;
+    e->waiting = false;
+    if (err != PROVEN_OK || !e->open) return;
+    if (e->pend_len > 0) {
         proven_size_t sent = 0;
         const proven_err_t r = proven_net_udp_send_segments_(&e->udp, e->pend_to, (proven_mem_view_t){ .ptr = e->pend, .size = e->pend_len }, e->pend_seg, &sent);
         if (r != PROVEN_ERR_TIMEOUT) e->pend_len = 0;
         else if (sent > 0) { proven_sys_mem_move(e->pend, e->pend + sent, e->pend_len - sent); e->pend_len -= sent; }
     }
-    if (got & (PROVEN_NET_READABLE | PROVEN_NET_FAILED)) {
-        for (int i = 0; i < H3_READS && e->open; ++i) {
-            proven_net_addr_t from;
-            proven_size_t seg = 0;
-            const proven_result_size_t r = proven_net_udp_recv_segments_(&e->udp, (proven_mem_mut_t){ .ptr = x->dg, .size = H3_DATAGRAM }, &seg, &from);
-            if (r.err == PROVEN_ERR_OUT_OF_BOUNDS) continue;          /* larger than QUIC sends: not one of its */
-            if (r.err != PROVEN_OK) break;
-            /* Several datagrams of one sender coalesced by the kernel (GRO): each as if alone. */
-            const proven_size_t step = seg ? seg : r.value;
-            for (proven_size_t off = 0; off < r.value && e->open; off += step)
-                x_datagram(x, e, (proven_mem_view_t){ .ptr = x->dg + off, .size = r.value - off < step ? r.value - off : step }, &from);
-        }
-    }
-    x_rounds(x);
+    x_rounds(e->x);
 }
+
+static void e_closed(void *ctx) {
+    h3e_t *e = ctx;
+    proven_http_event_server_t *sv = e->server;
+    e->sock_closing = false;
+    if (e->orphan) {
+        sv->alloc.free_fn(sv->alloc.ctx, e->rbuf);
+        sv->alloc.free_fn(sv->alloc.ctx, e);
+    }
+    proven_http_event_ended_(sv);
+}
+
+static const proven_loop_udp_fns_t e_fns = { .received = e_received, .writable = e_writable, .closed = e_closed };
 
 // -----------------------------------------------------------------------------
 // What http_event.c asks of HTTP/3
@@ -886,9 +904,8 @@ static void e_on_io(void *ctx, proven_u8 got) {
 proven_err_t proven_http_event_h3_create_(proven_http_event_server_t *sv) {
     struct ev_h3 *x = h3_alloc(sv->alloc, sizeof *x);
     if (!x) return PROVEN_ERR_NOMEM;
-    x->dg = h3_alloc(sv->alloc, H3_DATAGRAM);
-    x->batch = x->dg ? h3_alloc(sv->alloc, H3_BATCH) : NULL;
-    if (!x->batch) { if (x->dg) sv->alloc.free_fn(sv->alloc.ctx, x->dg); sv->alloc.free_fn(sv->alloc.ctx, x); return PROVEN_ERR_NOMEM; }
+    x->batch = h3_alloc(sv->alloc, H3_BATCH);
+    if (!x->batch) { sv->alloc.free_fn(sv->alloc.ctx, x); return PROVEN_ERR_NOMEM; }
     x->server = sv;
     const proven_u32 streams = sv->cfg.max_concurrent_streams > 100000 ? 100000 : (proven_u32)sv->cfg.max_concurrent_streams;
     x->qc = (proven_quic_config_t){
@@ -926,25 +943,34 @@ proven_err_t proven_http_event_h3_listen_(proven_http_event_server_t *sv, proven
         return PROVEN_OK;
     }
     proven_size_t slot = H3_ENDS;
-    for (proven_size_t i = 0; i < H3_ENDS && slot == H3_ENDS; ++i) if (!x->ends[i] || !x->ends[i]->open) slot = i;
+    /* (Not a slot whose socket the loop has not finished with: its receive buffer may still be
+     * the loop's.) */
+    for (proven_size_t i = 0; i < H3_ENDS && slot == H3_ENDS; ++i) if (!x->ends[i] || (!x->ends[i]->open && !x->ends[i]->sock_closing)) slot = i;
     if (slot == H3_ENDS) return PROVEN_ERR_OUT_OF_BOUNDS;
     h3e_t *e = x->ends[slot];
     if (!e) {
         e = h3_alloc(sv->alloc, sizeof *e);
         if (!e) return PROVEN_ERR_NOMEM;
+        e->rbuf = h3_alloc(sv->alloc, H3_DATAGRAM);
+        if (!e->rbuf) { sv->alloc.free_fn(sv->alloc.ctx, e); return PROVEN_ERR_NOMEM; }
         x->ends[slot] = e;
     }
-    *e = (h3e_t){ .x = x };
+    proven_byte_t *rbuf = e->rbuf;
+    *e = (h3e_t){ .x = x, .server = sv, .rbuf = rbuf };
     proven_net_addr_t got;
     proven_err_t r = proven_net_udp_open(at, &e->udp, &got);
     if (r != PROVEN_OK) return r;
     (void)proven_net_udp_gro_(&e->udp);
     (void)proven_net_udp_dontfrag_(&e->udp);
-    r = proven_loop_io_add(sv->loop, &e->io, proven_net_udp_handle(&e->udp), PROVEN_NET_READABLE, e_on_io, e);
-    if (r != PROVEN_OK) { (void)proven_net_udp_close(&e->udp); return r; }
+    r = proven_loop_udp_attach_(sv->loop, &e->lu, &e->udp, &e_fns, e);
+    if (r == PROVEN_OK) r = proven_loop_udp_recv_(sv->loop, &e->lu, (proven_mem_mut_t){ .ptr = e->rbuf, .size = H3_DATAGRAM }, &e->from);
+    if (r != PROVEN_OK) {
+        if (r != PROVEN_ERR_INVALID_ARG) { e->open = true; e_close(e); }       /* attached: the loop answers `closed` */
+        else (void)proven_net_udp_close(&e->udp);
+        return r;
+    }
     e->bound = got;
     e->open = true;
-    e->want = PROVEN_NET_READABLE;
     x->stopped = false;
     x_rearm(x);
     return PROVEN_OK;
@@ -985,13 +1011,16 @@ void proven_http_event_h3_destroy_(proven_http_event_server_t *sv) {
     if (!x) return;
     proven_http_event_h3_end_all_(sv);
     proven_allocator_t a = sv->alloc;
+    proven_loop_after_cancel_(sv->loop, &x->after);
     for (proven_size_t i = 0; i < H3_ENDS; ++i) {
-        if (!x->ends[i]) continue;
-        e_close(x->ends[i]);
-        a.free_fn(a.ctx, x->ends[i]);
+        h3e_t *e = x->ends[i];
+        if (!e) continue;
+        e_close(e);
+        if (e->sock_closing) { e->orphan = true; continue; }     /* the loop's `closed` frees it */
+        a.free_fn(a.ctx, e->rbuf);
+        a.free_fn(a.ctx, e);
     }
     if (x->keys) a.free_fn(a.ctx, x->keys);
-    a.free_fn(a.ctx, x->dg);
     a.free_fn(a.ctx, x->batch);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = x->qc.static_key, .size = sizeof x->qc.static_key });
     a.free_fn(a.ctx, x);
