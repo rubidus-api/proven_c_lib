@@ -1488,6 +1488,9 @@ proven_size_t proven_http_event_raw_offer_(proven_http_stream_t *c, proven_mem_v
                 else taken = w.value;
                 if (!c->dead) (void)ev_flush(c);
             }
+            /* What was sealed leaves now: an owner that offers a last frame and then lets go of
+             * the connection in the same callback still has it delivered. */
+            if (!c->dead) proven_loop_flush_(c->h.server->loop, &c->lsock);
         } else if (ev_put(c, data.ptr, n)) {
             taken = n;
         }

@@ -3434,7 +3434,7 @@ proven_err_t proven_tls_feed(proven_tls_conn_t *c, proven_mem_view_t in, proven_
         if (!c->error_reported) { c->error_reported = true; return c->error; }
         return PROVEN_ERR_INVALID_STATE;
     }
-    if (in.size > 0 && !keys_live(c)) { c->error_reported = true; return c->error; }
+    if ((in.size > 0 || c->in.len > 0) && !keys_live(c)) { c->error_reported = true; return c->error; }
     proven_size_t used = 0;
     while (!c->dead) {
         if (c->plain_len > c->plain_off) break;                   /* application data is waiting to be read */
