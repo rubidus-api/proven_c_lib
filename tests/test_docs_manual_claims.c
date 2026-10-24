@@ -221,8 +221,9 @@ int main(void) {
             "a certificate that is itself an anchor is a path of one", "");
         proven_cert_store_destroy(store);
 
-        /* CLAIM (ch 1): PROVEN_ERR_LAST is the last code, and the four added here are in order. */
-        PROVEN_TEST_ASSERT(PROVEN_ERR_LAST == PROVEN_ERR_PROTOCOL && PROVEN_ERR_EXPIRED == PROVEN_ERR_UNTRUSTED + 1 &&
+        /* CLAIM (ch 1): PROVEN_ERR_LAST is the last code, and the four added here are in order,
+         * followed by the event loop's PROVEN_ERR_CANCELLED. */
+        PROVEN_TEST_ASSERT(PROVEN_ERR_LAST == PROVEN_ERR_CANCELLED && PROVEN_ERR_CANCELLED == PROVEN_ERR_PROTOCOL + 1 && PROVEN_ERR_EXPIRED == PROVEN_ERR_UNTRUSTED + 1 &&
                            PROVEN_ERR_NOT_YET_VALID == PROVEN_ERR_EXPIRED + 1 && PROVEN_ERR_NAME_MISMATCH == PROVEN_ERR_NOT_YET_VALID + 1 &&
                            PROVEN_ERR_PROTOCOL == PROVEN_ERR_NAME_MISMATCH + 1 && PROVEN_ERR_PROTOCOL < PROVEN_ERR_RESERVED_END,
             "the four codes follow PROVEN_ERR_UNTRUSTED in the order the table lists them", "");

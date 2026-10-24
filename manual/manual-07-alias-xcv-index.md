@@ -111,6 +111,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_DEFLATE_ZLIB` | `PROVEN_DEFLATE_ZLIB` |
 | `XCV_ERR_AGAIN` | `PROVEN_ERR_AGAIN` |
 | `XCV_ERR_BUSY` | `PROVEN_ERR_BUSY` |
+| `XCV_ERR_CANCELLED` | `PROVEN_ERR_CANCELLED` |
 | `XCV_ERR_EOF` | `PROVEN_ERR_EOF` |
 | `XCV_ERR_EXISTS` | `PROVEN_ERR_EXISTS` |
 | `XCV_ERR_EXPIRED` | `PROVEN_ERR_EXPIRED` |

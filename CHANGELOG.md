@@ -18,6 +18,15 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+RFC-0025: the event loop becomes a completion model, and Windows gets IOCP (the owner's
+decisions of 2026-10-24: one release with everything). Work in progress.
+
+### Added
+
+- **`PROVEN_ERR_CANCELLED`**, after `PROVEN_ERR_PROTOCOL`: an operation started on an event loop
+  was cancelled before it finished. **`PROVEN_ERR_LAST` moves to it**; an exhaustive `switch`
+  over `proven_err_t` needs the new case. Alias `XCV_ERR_CANCELLED`. Nothing returns it yet.
+
 ## [0.80.0] - 2026-10-24
 
 RFC-0024 piece B: WebSocket context takeover (the owner's decisions of 2026-10-24: on whenever

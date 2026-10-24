@@ -114,10 +114,11 @@ typedef enum {
     PROVEN_ERR_EXPIRED,
     PROVEN_ERR_NOT_YET_VALID,
     PROVEN_ERR_NAME_MISMATCH,
-    PROVEN_ERR_PROTOCOL
+    PROVEN_ERR_PROTOCOL,
+    PROVEN_ERR_CANCELLED
 } proven_err_t;
 
-#define PROVEN_ERR_LAST         PROVEN_ERR_PROTOCOL         /* moves when a code is added */
+#define PROVEN_ERR_LAST         PROVEN_ERR_CANCELLED        /* moves when a code is added */
 #define PROVEN_ERR_RESERVED_END 0x1000                      /* never reached, in any version */
 ```
 
@@ -149,6 +150,7 @@ typedef enum {
 | `PROVEN_ERR_NOT_YET_VALID` | 인증서의 유효 기간이 아직 시작되지 않았다. | 거부한다. 대개 시계가 범인이다. |
 | `PROVEN_ERR_NAME_MISMATCH` | 인증서는 유효하지만, 닿으려던 이름이 아닌 다른 이름을 위한 것이다. | 거부한다. 잘못 이끌렸거나 가로채인 연결이 이렇게 보인다. |
 | `PROVEN_ERR_PROTOCOL` | 상대가 보안 프로토콜의 규칙을 어겼거나, 양쪽이 함께 쓸 수 있는 것이 없다. TLS 단위가, 상대가 잘못한 것 가운데 인증서에 관한 것이 아닌 모든 것에 이것을 돌려준다. | 연결을 닫는다. |
+| `PROVEN_ERR_CANCELLED` | 이벤트 루프에서 시작한 작업이 끝나기 전에 취소되었다: `proven_loop_cancel`, 또는 그 소켓에 대한 `proven_loop_close`(15장). 작업 자신의 콜백으로 한 번 온다. | 작업이 쥐고 있던 것을 해제한다 - 그때부터 루프는 그것을 건드리지 않는다. |
 
 **여러분 자신의 코드를 위한 자리.** 모든 `proven_err_t` 값은 `PROVEN_ERR_RESERVED_END`(0x1000)보다
 작다. 이것은 이번 판의 모습이 아니라 이후 모든 판에 대한 약속이다: proven은 그 이상의 코드를 결코 정의하지

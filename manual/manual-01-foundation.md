@@ -113,10 +113,11 @@ typedef enum {
     PROVEN_ERR_EXPIRED,
     PROVEN_ERR_NOT_YET_VALID,
     PROVEN_ERR_NAME_MISMATCH,
-    PROVEN_ERR_PROTOCOL
+    PROVEN_ERR_PROTOCOL,
+    PROVEN_ERR_CANCELLED
 } proven_err_t;
 
-#define PROVEN_ERR_LAST         PROVEN_ERR_PROTOCOL         /* moves when a code is added */
+#define PROVEN_ERR_LAST         PROVEN_ERR_CANCELLED        /* moves when a code is added */
 #define PROVEN_ERR_RESERVED_END 0x1000                      /* never reached, in any version */
 ```
 
@@ -148,6 +149,7 @@ typedef enum {
 | `PROVEN_ERR_NOT_YET_VALID` | A certificate's validity period has not begun. | Refusing; the clock is the usual culprit. |
 | `PROVEN_ERR_NAME_MISMATCH` | A certificate is valid, and is for another name than the one you meant to reach. | Refusing: this is what a misdirected or intercepted connection looks like. |
 | `PROVEN_ERR_PROTOCOL` | A peer broke the rules of a security protocol, or the two sides have nothing in common to speak. The TLS unit returns it for everything a peer does wrong that is not about its certificate. | Closing the connection. |
+| `PROVEN_ERR_CANCELLED` | An operation started on an event loop was cancelled before it finished: `proven_loop_cancel`, or `proven_loop_close` on its socket (Chapter 15). It comes once, through the operation's own callback. | Freeing what the operation held - from then on the loop no longer touches it. |
 
 **Room for your own codes.** Every `proven_err_t` value is below `PROVEN_ERR_RESERVED_END`
 (0x1000), and that is a promise for every later version, not a description of this one: proven
