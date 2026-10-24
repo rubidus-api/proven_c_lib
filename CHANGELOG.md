@@ -58,6 +58,12 @@ decisions of 2026-10-24: one release with everything). Work in progress.
 - **AES key schedule on the processor's instructions** (x86 with AES-NI): a key is expanded in
   about 0.12 microseconds where it took 5.9 (AES-128; 0.14 against 7.7 for AES-256), which also
   shortens every TLS handshake's key installs. Other processors keep the portable schedule.
+- **The event-driven client (HTTP/1.1 and HTTP/2) and the WebSocket event client run on the
+  loop's operations** (RFC-0025 step 4): connections are made by the loop, read with a receive of
+  zero bytes and written through the loop. Behaviour seen through `http_event_client.h` and
+  `ws_event.h` is unchanged. `proven_http_event_client_destroy`, like the server's: connections
+  the loop has not answered `closed` for keep their memory, and the client's struct, until the
+  loop's next round or `proven_loop_destroy`.
 - `proven_http_event_server_destroy`: what the loop has not answered yet - a listener's accept,
   a connection's socket - keeps its memory, and the server's struct, until the loop's next round
   or `proven_loop_destroy`. A program that counts its allocator to zero right after the destroy

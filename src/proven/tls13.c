@@ -243,7 +243,6 @@ struct proven_tls_conn {
 };
 
 static void tls_wipe(void *p, proven_size_t n) { proven_mem_wipe((proven_mem_mut_t){ .ptr = p, .size = n }); }
-static void seed_give(const proven_tls_key_seed_t *seed, proven_tls_keys_t *k);
 
 static bool buf_reserve(proven_tls_conn_t *c, proven_tls_buf_t *b, proven_size_t need) {
     if (need <= b->cap) return true;
@@ -3192,7 +3191,7 @@ bool proven_tls_test_send_handshake(proven_tls_conn_t *conn, proven_byte_t type)
 
 void proven_tls_test_peek_write(const proven_tls_conn_t *conn, proven_tls_keys_t *keys, proven_byte_t secret[48]) {
     if (conn->live) *keys = conn->live->write;
-    else seed_give(&conn->seed[1], keys);
+    else proven_tls_seed_give_(&conn->seed[1], keys);
     for (int i = 0; i < 48; ++i) secret[i] = conn->write_secret[i];
 }
 
@@ -3354,7 +3353,7 @@ void proven_tls_session_token_keep_(proven_tls_session_t *session, proven_mem_vi
 
 /* Keep what remakes one direction's keys: for AES the key the schedule began from (the first
  * round keys are the key itself), for ChaCha20 the key it keeps where AES keeps its round keys. */
-static void seed_take(proven_tls_key_seed_t *seed, const proven_tls_keys_t *k) {
+void proven_tls_seed_take_(proven_tls_key_seed_t *seed, const proven_tls_keys_t *k) {
     seed->active = k->active;
     seed->chacha = k->chacha;
     seed->key_len = (proven_u8)(k->chacha || k->aes.rounds == 14 ? 32 : 16);
@@ -3363,7 +3362,7 @@ static void seed_take(proven_tls_key_seed_t *seed, const proven_tls_keys_t *k) {
     seed->seq = k->seq;
 }
 
-static void seed_give(const proven_tls_key_seed_t *seed, proven_tls_keys_t *k) {
+void proven_tls_seed_give_(const proven_tls_key_seed_t *seed, proven_tls_keys_t *k) {
     k->active = seed->active;
     k->chacha = seed->chacha;
     if (seed->chacha) for (int i = 0; i < 32; ++i) k->aes.rk[i] = seed->key[i];
@@ -3383,8 +3382,8 @@ static bool keys_live(proven_tls_conn_t *c) {
     }
     c->live = (proven_tls_live_keys_t *)m.value.ptr;
     for (proven_size_t i = 0; i < sizeof *c->live; ++i) ((proven_byte_t *)c->live)[i] = 0;
-    seed_give(&c->seed[0], &c->live->read);
-    seed_give(&c->seed[1], &c->live->write);
+    proven_tls_seed_give_(&c->seed[0], &c->live->read);
+    proven_tls_seed_give_(&c->seed[1], &c->live->write);
     tls_wipe(c->seed, 2 * sizeof *c->seed);
     c->alloc.free_fn(c->alloc.ctx, c->seed);
     c->seed = NULL;
@@ -3396,8 +3395,8 @@ bool proven_tls_compact_(proven_tls_conn_t *c) {
     proven_result_mem_mut_t m = c->alloc.alloc_fn(c->alloc.ctx, 2 * sizeof(proven_tls_key_seed_t), 16);
     if (m.err != PROVEN_OK) return false;          /* no memory to keep the seeds in: stays as it is */
     c->seed = (proven_tls_key_seed_t *)m.value.ptr;
-    seed_take(&c->seed[0], &c->live->read);
-    seed_take(&c->seed[1], &c->live->write);
+    proven_tls_seed_take_(&c->seed[0], &c->live->read);
+    proven_tls_seed_take_(&c->seed[1], &c->live->write);
     tls_wipe(c->live, sizeof *c->live);
     c->alloc.free_fn(c->alloc.ctx, c->live);
     c->live = NULL;

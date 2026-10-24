@@ -453,6 +453,10 @@ void proven_tls_test_peek_write(const proven_tls_conn_t *conn, proven_tls_keys_t
  * compact already. For a driver that knows its connection is quiet (the event server, after a
  * second). SECRET: what is kept is key material, wiped when remade and at destroy. */
 bool proven_tls_compact_(proven_tls_conn_t *conn);
+/* The two halves of it, for the constant-time check: what remakes one direction's keys, and
+ * the keys remade from it. SECRET: both. */
+void proven_tls_seed_take_(proven_tls_key_seed_t *seed, const proven_tls_keys_t *keys);
+void proven_tls_seed_give_(const proven_tls_key_seed_t *seed, proven_tls_keys_t *keys);
 bool proven_tls_is_compact_(const proven_tls_conn_t *conn);
 
 /* RFC-0025 step 3: application data sealed into records straight into `out` - a driver's send

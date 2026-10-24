@@ -72,7 +72,7 @@ struct c2conn {
     proven_http_event_client_t *client;
     c2conn_t *prev, *next;
     proven_net_conn_t sock;
-    proven_loop_io_t io;
+    proven_loop_sock_t ls;             /* the connection as the loop knows it (RFC-0025) */
     proven_loop_timer_t timer;
     proven_loop_after_t after;         /* "call me back": a round, from the loop, when its present round is delivered */
     proven_tls_conn_t *tls;
@@ -91,7 +91,11 @@ struct c2conn {
     proven_u32 depth, round, calls;
     proven_u16 port;
     proven_u8 state, host_len;
-    bool https, connected_at_start, dead, pumping, reading, over, peer_eof, more_out, registered;
+    bool https, dead, pumping, reading, over, peer_eof, more_out;
+    bool attached;                     /* given to the loop: freed only after its `closed` */
+    bool sock_closed;                  /* proven_loop_close was called */
+    bool sock_gone;                    /* and `closed` has come */
+    bool recv_armed;                   /* a receive of zero bytes is in flight */
     bool client_going;                 /* ended by proven_http_event_client_destroy, not by anything the server did */
     proven_byte_t host[256];
 };
@@ -141,8 +145,10 @@ static void c_enter(c2conn_t *c) { c->depth++; }
 
 static void c_leave(c2conn_t *c) {
     if (--c->depth > 0 || !c->dead) return;
+    if (c->attached && !c->sock_gone) return;     /* c_sock_closed frees it */
     proven_allocator_t a = c->client->alloc;
     proven_h2_conn_destroy(c->engine);
+    c->engine = (void *)0;
     a.free_fn(a.ctx, c);
 }
 
@@ -224,7 +230,11 @@ static void c_close_socket(c2conn_t *c) {
     proven_http_event_client_t *cl = c->client;
     proven_loop_timer_cancel(cl->loop, &c->timer);
     proven_loop_after_cancel_(cl->loop, &c->after);
-    if (c->registered) { proven_loop_io_remove(cl->loop, &c->io); c->registered = false; }      /* before the close */
+    if (c->attached && !c->sock_closed) {          /* the loop stops watching before the close */
+        c->sock_closed = true;
+        cl->ending++;
+        proven_loop_close(cl->loop, &c->ls);
+    }
     const bool established = c->tls && proven_tls_is_established(c->tls), resumed = established && proven_tls_resumed(c->tls);
     if (c->tls) { proven_tls_conn_destroy(c->tls); c->tls = (void *)0; }
     if (c->https) {
@@ -254,21 +264,32 @@ static void c_kill(c2conn_t *c, proven_err_t why) {
 // The transport
 // -----------------------------------------------------------------------------
 
-static proven_size_t c_held(const c2conn_t *c) { return c->tls ? proven_tls_pending_output(c->tls).size : 0; }
+/* What the transport holds for the server: the loop's queue (TLS records go there at once). */
+static proven_size_t c_held(const c2conn_t *c) {
+    return (c->attached && !c->sock_closed ? proven_loop_send_queued(&c->ls) : 0) + (c->tls ? proven_tls_pending_output(c->tls).size : 0);
+}
 
 static proven_size_t c_queued(const c2conn_t *c) {
     return (c->engine ? proven_h2_conn_pending_output(c->engine).size : 0) + c_held(c);
 }
 
+/* How much the loop may hold for a connection before an offer takes nothing more. */
+#define C2_OFFER_HOLD ((proven_size_t)32 * 1024)
+
+static void c_kill(c2conn_t *c, proven_err_t why);
+
+/* Ask the loop for input (a receive of zero bytes, left in flight once armed), and to be told
+ * when what it holds has gone - or, with more to offer, when half the hold has. */
 static void c_watch(c2conn_t *c) {
-    if (c->dead || !c->registered) return;
-    proven_u8 want = 0;
-    if (c->state == C2_CONNECTING) want = PROVEN_NET_WRITABLE;
-    else {
-        if (!c->peer_eof) want |= PROVEN_NET_READABLE;      /* read whatever the requests are doing: the windows bound it */
-        if (c_held(c) > 0 || c->more_out) want |= PROVEN_NET_WRITABLE;
+    if (c->dead || !c->attached || c->sock_closed || c->state == C2_CONNECTING) return;
+    proven_loop_t *loop = c->client->loop;
+    if (!c->peer_eof && !c->recv_armed) {          /* read whatever the requests are doing: the windows bound it */
+        if (proven_loop_recv(loop, &c->ls, (proven_mem_mut_t){ .ptr = (void *)0, .size = 0 }) != PROVEN_OK) { c_kill(c, PROVEN_ERR_RESET); return; }
+        c->recv_armed = true;
     }
-    (void)proven_loop_io_set(c->client->loop, &c->io, want);
+    const proven_size_t held = proven_loop_send_queued(&c->ls);
+    if (held == 0 && !c->more_out) return;
+    if (proven_loop_send_wait(loop, &c->ls, c->more_out ? C2_OFFER_HOLD / 2 : 0) != PROVEN_OK) c_kill(c, PROVEN_ERR_RESET);
 }
 
 static void c_pump(c2conn_t *c);
@@ -280,7 +301,7 @@ static void c_after(void *ctx) {
 }
 
 /* "Call me back": a round for this connection, run from the loop and never from where the
- * caller stands. Inside the connection's own read nothing is asked for - c_on_io pumps when
+ * caller stands. Inside the connection's own read nothing is asked for - c_sock_received pumps when
  * the read has been worked through. Otherwise the loop runs the round when it has delivered
  * the one it is in, or before it next sleeps: no change of the socket's watch, no system call. */
 static void c_call_back(c2conn_t *c) {
@@ -288,36 +309,39 @@ static void c_call_back(c2conn_t *c) {
     proven_loop_after_(c->client->loop, &c->after, c_after, c);
 }
 
-/* What TLS holds, towards the socket. False when the connection ended. */
+/* What TLS holds, to the loop. False when the connection ended. */
 static bool c_flush_tls(c2conn_t *c) {
-    while (c->tls) {
+    while (c->tls && !c->dead) {
         proven_mem_view_t pending = proven_tls_pending_output(c->tls);
         if (pending.size == 0) break;
-        proven_result_size_t w = proven_net_write(&c->sock, pending, PROVEN_NET_DONT_WAIT);
-        if (w.err == PROVEN_ERR_TIMEOUT || w.err == PROVEN_ERR_AGAIN) break;
-        if (w.err != PROVEN_OK) { c_kill(c, PROVEN_ERR_RESET); return false; }
+        proven_result_size_t w = proven_loop_send(c->client->loop, &c->ls, pending);
+        if (w.err != PROVEN_OK || w.value != pending.size) { c_kill(c, w.err == PROVEN_ERR_NOMEM ? PROVEN_ERR_NOMEM : PROVEN_ERR_RESET); return false; }
         proven_tls_output_sent(c->tls, w.value);
-        if (w.value == 0) break;
     }
-    return true;
+    return !c->dead;
 }
 
-/* Write `data` straight to TLS or the socket and say how much went: nothing is held here. */
+/* Give `data` to the transport and say how much it took: while the loop holds less than
+ * C2_OFFER_HOLD for the connection - straight to the socket when nothing waits there, the rest
+ * held by the loop - and nothing more after. */
 static proven_size_t c_offer(c2conn_t *c, proven_mem_view_t data) {
     if (c->dead) return 0;
     proven_size_t taken = 0;
-    if (c->tls) {
-        if (proven_tls_pending_output(c->tls).size == 0 && data.size > 0) {
-            proven_mem_view_t piece = { .ptr = data.ptr, .size = data.size < 16384 ? data.size : 16384 };
+    const proven_size_t held = c_held(c);
+    if (data.size > 0 && held < C2_OFFER_HOLD) {
+        proven_size_t n = C2_OFFER_HOLD - held;
+        if (n > data.size) n = data.size;
+        if (c->tls) {
+            proven_mem_view_t piece = { .ptr = data.ptr, .size = n < 16384 ? n : 16384 };
             proven_result_size_t w = proven_tls_write(c->tls, piece);
             if (w.err != PROVEN_OK) { c_kill(c, PROVEN_ERR_RESET); return 0; }
             taken = w.value;
+            if (!c_flush_tls(c)) return 0;
+        } else {
+            proven_result_size_t w = proven_loop_send(c->client->loop, &c->ls, (proven_mem_view_t){ .ptr = data.ptr, .size = n });
+            if (w.err != PROVEN_OK || w.value != n) { c_kill(c, w.err == PROVEN_ERR_NOMEM ? PROVEN_ERR_NOMEM : PROVEN_ERR_RESET); return 0; }
+            taken = n;
         }
-        if (!c_flush_tls(c)) return 0;
-    } else if (data.size > 0) {
-        proven_result_size_t w = proven_net_write(&c->sock, data, PROVEN_NET_DONT_WAIT);
-        if (w.err == PROVEN_OK) taken = w.value;
-        else if (w.err != PROVEN_ERR_TIMEOUT && w.err != PROVEN_ERR_AGAIN) { c_kill(c, PROVEN_ERR_RESET); return 0; }
     }
     c->more_out = taken < data.size;
     c_watch(c);
@@ -674,7 +698,7 @@ static void c_event(c2conn_t *c, const proven_h2_event_t *ev) {
 
 static void c_pump(c2conn_t *c) {
     /* While a read is being worked through nothing is written: the requests that its answers
-     * set off leave in one write. c_on_io pumps when the read is done. */
+     * set off leave in one write. c_sock_received pumps when the read is done. */
     if (c->pumping || c->dead || c->reading || c->state != C2_UP) return;
     c->pumping = true;
     c_enter(c);
@@ -879,29 +903,60 @@ static void c_readable(c2conn_t *c) {
     }
 }
 
-static void c_on_io(void *ctx, proven_u8 got) {
+static void c_sock_connected(void *ctx, proven_err_t err) {
     c2conn_t *c = ctx;
+    if (err == PROVEN_ERR_CANCELLED || c->dead || c->state != C2_CONNECTING) return;
     c_enter(c);
-    if (!c->dead && c->state == C2_CONNECTING) {
-        proven_err_t e = c->connected_at_start ? PROVEN_OK : proven_net_connect_finish(&c->sock);
-        if (e == PROVEN_OK) {
-            (void)proven_net_conn_set_nodelay(&c->sock, true);
-            if (c->tls) { c->state = C2_HANDSHAKE; if (c_flush_tls(c)) c_watch(c); }
-            else c_up(c);                          /* in the clear: by prior knowledge */
-        } else if (e != PROVEN_ERR_AGAIN) {
-            c_kill(c, e);
-        }
-    } else if (!c->dead && c->state != C2_H1) {
-        if (got & PROVEN_NET_WRITABLE) {
-            c->more_out = false;
-            if (c_flush_tls(c) && c->state == C2_HANDSHAKE) c_watch(c);
-        }
-        if (!c->dead && c->state != C2_H1 && (got & (PROVEN_NET_READABLE | PROVEN_NET_FAILED))) { c->reading = true; c_readable(c); c->reading = false; }
-        if (!c->dead && c->state == C2_UP) c_pump(c);
-        else if (!c->dead && c->state == C2_HANDSHAKE) { (void)c_flush_tls(c); c_watch(c); }
+    if (err == PROVEN_OK) {
+        (void)proven_net_conn_set_nodelay(&c->sock, true);
+        if (c->tls) { c->state = C2_HANDSHAKE; if (c_flush_tls(c)) c_watch(c); }
+        else c_up(c);                              /* in the clear: by prior knowledge */
+    } else {
+        c_kill(c, err);
     }
     c_leave(c);
 }
+
+static void c_sock_received(void *ctx, proven_err_t err, proven_size_t n) {
+    c2conn_t *c = ctx;
+    (void)n;
+    c->recv_armed = false;
+    if (err == PROVEN_ERR_CANCELLED || c->dead || c->state == C2_H1 || c->state == C2_CONNECTING) return;
+    c_enter(c);
+    c->reading = true; c_readable(c); c->reading = false;
+    if (!c->dead && c->state == C2_UP) c_pump(c);
+    else if (!c->dead && c->state == C2_HANDSHAKE) (void)c_flush_tls(c);
+    if (!c->dead) c_watch(c);
+    c_leave(c);
+}
+
+static void c_sock_writable(void *ctx, proven_err_t err) {
+    c2conn_t *c = ctx;
+    if (err == PROVEN_ERR_CANCELLED || c->dead || c->state == C2_H1) return;
+    c_enter(c);
+    if (err != PROVEN_OK) c_kill(c, PROVEN_ERR_RESET);
+    else {
+        c->more_out = false;
+        if (c_flush_tls(c)) {
+            if (c->state == C2_UP) c_pump(c);
+            else c_watch(c);
+        }
+    }
+    c_leave(c);
+}
+
+static void c_sock_closed(void *ctx) {
+    c2conn_t *c = ctx;
+    proven_http_event_client_t *cl = c->client;
+    c->sock_gone = true;
+    if (c->dead && c->depth == 0) {
+        proven_h2_conn_destroy(c->engine);
+        cl->alloc.free_fn(cl->alloc.ctx, c);
+    }
+    proven_http_event_client_ended_(cl);
+}
+
+static const proven_loop_sock_fns_t c_sock_fns = { .received = c_sock_received, .writable = c_sock_writable, .connected = c_sock_connected, .closed = c_sock_closed };
 
 static void c_on_timer(void *ctx) {
     c2conn_t *c = ctx;
@@ -976,21 +1031,17 @@ static proven_err_t c_open(proven_http_event_client_t *cl, bool https, proven_u8
         c->session_stored = c->session_mark;
         e = proven_tls_client_create(cl->cfg.tls, host, &c->session, &c->tls);
     }
-    if (e == PROVEN_OK) {
-        e = proven_net_connect_start(c->to, &c->sock);
-        if (e == PROVEN_OK) c->connected_at_start = true;
-        else if (e == PROVEN_ERR_AGAIN) e = PROVEN_OK;
-    }
-    /* The socket is watched for writing either way: what follows happens from the loop, so
-     * that nothing is reported from inside the call that began it. */
-    if (e == PROVEN_OK) e = proven_loop_io_add(cl->loop, &c->io, proven_net_conn_handle(&c->sock), PROVEN_NET_WRITABLE, c_on_io, c);
+    /* The loop makes the connection and says how it went from the loop, so that nothing is
+     * reported from inside the call that began it. */
+    if (e == PROVEN_OK) e = proven_loop_connect(cl->loop, &c->ls, c->to, &c->sock, &c_sock_fns, c);
+    if (e == PROVEN_OK) proven_loop_send_limit_(&c->ls, (proven_size_t)-1);     /* the engine and C2_OFFER_HOLD bound what it gives */
     if (e != PROVEN_OK) {
         if (c->tls) proven_tls_conn_destroy(c->tls);
         if (proven_net_conn_is_open(&c->sock)) (void)proven_net_close(&c->sock);
         cl->alloc.free_fn(cl->alloc.ctx, c);
         return e;
     }
-    c->registered = true;
+    c->attached = true;
     c->next = cl->h2;
     if (c->next) c->next->prev = c;
     cl->h2 = c;

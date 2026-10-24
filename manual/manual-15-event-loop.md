@@ -1714,7 +1714,7 @@ request with `PROVEN_ERR_INVALID_FORMAT`.
 |---|---|
 | `proven_http_event_client_create(loop, &config, &client)` | `proven_err_t`: `INVALID_ARG` for no loop; `NOMEM`. `config` may be null. |
 | `proven_http_event_client_requests(client)` | `proven_size_t`: requests started and not ended - those waiting for a connection among them. |
-| `proven_http_event_client_destroy(client)` | nothing. Every request, in flight or waiting, gets `on_done(PROVEN_ERR_RESET)`, and the kept connections are closed. Null is accepted. |
+| `proven_http_event_client_destroy(client)` | nothing. Every request, in flight or waiting, gets `on_done(PROVEN_ERR_RESET)`, and the kept connections are closed. Connections whose sockets the loop may still use keep their memory until the loop's next round or `proven_loop_destroy` (section 5, rule 3). Null is accepted. |
 | `proven_http_event_request_write(request, data)` | `proven_result_size_t`: the bytes taken. `INVALID_STATE` when the request has no body to write or it was ended; `OUT_OF_BOUNDS` for more than the length promised. |
 | `proven_http_event_request_end(request)` | `proven_err_t`: `INVALID_STATE` when there was nothing to end; `INVALID_FORMAT` when fewer bytes were written than promised - `on_done` is then called inside the call. |
 | `proven_http_event_request_abort(request)` | nothing. `on_done(PROVEN_ERR_RESET)` is called inside the call. |

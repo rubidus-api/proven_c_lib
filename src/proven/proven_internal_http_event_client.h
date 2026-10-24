@@ -65,7 +65,7 @@ typedef struct cl_conn {
     struct cl_conn *prev, *next;
     proven_http_event_request_t *owner;
     proven_net_conn_t sock;
-    proven_loop_io_t io;
+    proven_loop_sock_t ls;             /* the connection as the loop knows it (RFC-0025) */
     proven_loop_timer_t timer;         /* how long it may sit idle */
     proven_tls_conn_t *tls;
     proven_net_addr_t to;              /* the origin: where it leads, */
@@ -75,7 +75,8 @@ typedef struct cl_conn {
     proven_u16 port;                   /* the URL's port, */
     proven_u8 host_len;                /* the URL's host, */
     bool https;                        /* and the scheme */
-    bool connected_at_start;
+    bool recv_armed;                   /* a receive of zero bytes is in flight */
+    bool gone;                         /* closed: its memory goes with the loop's `closed` */
     bool idle;                         /* counted in the client's idle_count */
     proven_byte_t host[256];
     proven_tls_session_t session;      /* this connection's copy of the origin's session (RFC-0020) */
@@ -130,6 +131,8 @@ struct proven_http_event_client {
     proven_http_event_request_t *wait_head, *wait_tail;       /* requests waiting for a connection to their origin */
     proven_size_t wait_count;
     bool closing;                      /* being destroyed: nothing new is begun */
+    bool destroyed;                    /* destroy has returned: the struct goes when `ending` is 0 */
+    proven_size_t ending;              /* connections closed whose `closed` has not come from the loop */
     proven_http_header_t *headers;
     proven_byte_t *rbuf, *pbuf, *hbuf;
     void *h2;                          /* http_event_client_h2.c: its connections, its origins */
@@ -178,6 +181,9 @@ bool proven_http_event_client_room_(proven_http_event_client_t *client);
  * beyond its first: retry_delay_ms, doubled so many times, and at most retry_delay_max_ms. */
 proven_u32 proven_http_event_client_retry_delay_(const proven_http_event_client_t *client, proven_u32 tries);
 void proven_http_event_client_freed_(proven_http_event_client_t *client);
+/* A connection of either protocol whose `closed` has come from the loop and whose memory has
+ * been given back: the client's struct goes with the last of them once destroy has returned. */
+void proven_http_event_client_ended_(proven_http_event_client_t *client);
 /* RFC-0020: TLS session reuse. `start` gives a new connection to an origin a copy of what the
  * client has learned for it on that transport (zero when nothing) and returns its mark (a hash;
  * 0 for nothing). `keep` stores what the connection learned - its copy, when it differs from

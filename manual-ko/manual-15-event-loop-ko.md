@@ -1660,7 +1660,7 @@ HTTP/2에서는 이 설정이 더 많은 경우를 다룬다: 17장.)
 |---|---|
 | `proven_http_event_client_create(loop, &config, &client)` | `proven_err_t`: 루프가 없으면 `INVALID_ARG`. `NOMEM`. `config`는 널이어도 된다. |
 | `proven_http_event_client_requests(client)` | `proven_size_t`: 시작되어 아직 끝나지 않은 요청 수 - 연결을 기다리는 것 포함. |
-| `proven_http_event_client_destroy(client)` | 없음. 진행 중이든 기다리는 중이든 모든 요청이 `on_done(PROVEN_ERR_RESET)`을 받고, 보관된 연결은 닫힌다. 널을 받는다. |
+| `proven_http_event_client_destroy(client)` | 없음. 진행 중이든 기다리는 중이든 모든 요청이 `on_done(PROVEN_ERR_RESET)`을 받고, 보관된 연결은 닫힌다. 루프가 아직 소켓을 쓸 수 있는 연결은 루프의 다음 바퀴나 `proven_loop_destroy`까지 메모리를 쥔다(5절 규칙 3). 널을 받는다. |
 | `proven_http_event_request_write(request, data)` | `proven_result_size_t`: 받은 바이트 수. 쓸 본문이 없는 요청이거나 끝낸 뒤면 `INVALID_STATE`. 약속한 길이를 넘으면 `OUT_OF_BOUNDS`. |
 | `proven_http_event_request_end(request)` | `proven_err_t`: 끝낼 것이 없었으면 `INVALID_STATE`. 약속보다 적게 썼으면 `INVALID_FORMAT` - 그때 `on_done`이 호출 안에서 불린다. |
 | `proven_http_event_request_abort(request)` | 없음. `on_done(PROVEN_ERR_RESET)`이 호출 안에서 불린다. |

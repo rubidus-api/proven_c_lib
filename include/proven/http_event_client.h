@@ -128,7 +128,9 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
                                              proven_http_event_client_t **out);
 
 /** @brief End every request still in flight or waiting - each gets `on_done` with
- *         PROVEN_ERR_RESET - close the connections it kept, and free the client. The loop is not stopped or freed. Null is accepted. */
+ *         PROVEN_ERR_RESET - close the connections it kept, and free the client. The loop is not stopped or freed. Null is accepted.
+ *         Connections whose sockets the loop may still use keep their memory, and the client's struct, until the loop's next
+ *         round or proven_loop_destroy (chapter 15, section 5, rule 3). */
 void proven_http_event_client_destroy(proven_http_event_client_t *client);
 
 /** @brief Requests started and not ended: those in flight, and those waiting for a connection. */
