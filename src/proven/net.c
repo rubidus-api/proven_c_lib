@@ -4,6 +4,7 @@
 
 #include "../../platform/proven_sys_net.h"
 #include "proven_internal_quic_net.h"
+#include "proven_internal_net.h"
 
 /*
  * The portable half of the socket layer. Everything the operating system does is in
@@ -598,6 +599,15 @@ proven_err_t proven_net_connect_finish(proven_net_conn_t *conn) {
     return internal_err_from_reason(r);
 }
 
+proven_err_t proven_net_connect_result_(const proven_net_conn_t *conn) {
+    if (!conn) return PROVEN_ERR_INVALID_ARG;
+    if (!conn->internal.open) return PROVEN_ERR_INVALID_STATE;
+    proven_sys_net_result_t r = proven_sys_net_connect_result((proven_sys_socket_t)conn->internal.handle);
+    if (r == PROVEN_SYS_NET_OK) return PROVEN_OK;
+    if (r == PROVEN_SYS_NET_IN_PROGRESS) return PROVEN_ERR_AGAIN;
+    return internal_err_from_reason(r);
+}
+
 proven_result_size_t proven_net_read(proven_net_conn_t *conn, proven_mem_mut_t dest, proven_net_deadline_t until) {
     proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
     if (!conn || (dest.size > 0 && !dest.ptr)) { res.err = PROVEN_ERR_INVALID_ARG; return res; }
@@ -641,6 +651,21 @@ proven_result_size_t proven_net_write(proven_net_conn_t *conn, proven_mem_view_t
 
 proven_result_size_t proven_net_write_all(proven_net_conn_t *conn, proven_mem_view_t src, proven_net_deadline_t until) {
     return internal_write(conn, src, until, true);
+}
+
+_Static_assert(PROVEN_NET_VEC_MAX == PROVEN_SYS_NET_VEC_MAX, "one limit for the gather write");
+
+proven_err_t proven_net_write_vec_(proven_net_conn_t *conn, const proven_mem_view_t *bufs, proven_size_t count, proven_size_t *sent) {
+    *sent = 0;
+    if (!conn || (count > 0 && !bufs)) return PROVEN_ERR_INVALID_ARG;
+    if (!conn->internal.open) return PROVEN_ERR_INVALID_STATE;
+    if (count > PROVEN_NET_VEC_MAX) count = PROVEN_NET_VEC_MAX;
+    proven_sys_net_vec_t vec[PROVEN_NET_VEC_MAX];
+    for (proven_size_t i = 0; i < count; ++i) vec[i] = (proven_sys_net_vec_t){ .ptr = bufs[i].ptr, .len = bufs[i].size };
+    proven_sys_net_result_t r = proven_sys_net_send_vec((proven_sys_socket_t)conn->internal.handle, vec, count, sent);
+    if (r == PROVEN_SYS_NET_OK) return PROVEN_OK;
+    if (r == PROVEN_SYS_NET_WOULD_BLOCK) return PROVEN_ERR_TIMEOUT;
+    return internal_err_from_reason(r);
 }
 
 proven_err_t proven_net_shutdown_write(proven_net_conn_t *conn) {

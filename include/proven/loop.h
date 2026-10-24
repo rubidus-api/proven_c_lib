@@ -13,14 +13,16 @@
  *
  * The blocking calls of net.h give each connection a thread, or make every connection wait
  * its turn. That is the right tool for a hundred connections and the wrong one for tens of
- * thousands, most of which are doing nothing at any moment. A loop turns it around: the thread
- * asks the kernel once which sockets have something, handles those without ever waiting on
- * any one of them, and asks again.
+ * thousands, most of which are doing nothing at any moment. A loop turns it around: one thread
+ * starts what each connection needs - a receive, a send, an accept - and is told when each has
+ * finished, handling those without ever waiting on any one of them.
  *
  * A `proven_loop_t` is four things in one:
  *
- *   - a **selector** (net.h): sockets registered once, with a function called when one is
- *     readable or writable;
+ *   - **operations that complete** on sockets given to it: a receive, a send, an accept, a
+ *     connect, each finishing with one call of a function of yours. On Windows they are I/O
+ *     completion port operations; elsewhere the loop does the same over the selector of net.h
+ *     (epoll, kqueue). The program sees the same calls and the same order either way;
  *   - **timers** that cost nothing while they wait - arming, cancelling and firing are
  *     constant-time, and an idle timer is never looked at;
  *   - a **waker** and a queue of **posted functions**, so that another thread can hand work
@@ -30,6 +32,17 @@
  * The rule that makes it work: **a callback must not wait.** Not on a socket, not on a file,
  * not on a lock that someone may hold for long. Whatever takes time goes to another thread
  * (job.h) and comes back through proven_loop_post.
+ *
+ * The rules of the operations:
+ *
+ *   1. **Every operation started is answered exactly once**, by a call of its function on the
+ *      loop's thread - never from inside the call that started it, even when it could finish at
+ *      once. Success, failure and cancellation all come this way.
+ *   2. **One receive at a time per socket**, and one accept at a time per acceptor. Sends are
+ *      not operations of yours: proven_loop_send takes the bytes, and the loop holds what the
+ *      socket could not take yet.
+ *   3. **A socket's end is proven_loop_close**, and its `closed` function after everything
+ *      still in flight has been answered. Free the memory of the socket no earlier.
  *
  * Everything but proven_loop_stop and proven_loop_post must be called from the loop's own
  * thread - the one inside proven_loop_run - or before it starts.
@@ -43,23 +56,6 @@ typedef struct proven_loop proven_loop_t;
 /** @brief A function the loop calls on its thread. */
 typedef void (*proven_loop_fn)(void *ctx);
 
-/** @brief Called when a watched socket is ready; `got` is PROVEN_NET_READABLE,
- *         PROVEN_NET_WRITABLE and/or PROVEN_NET_FAILED. */
-typedef void (*proven_loop_io_fn)(void *ctx, proven_u8 got);
-
-/**
- * @brief One socket's registration. Yours to hold - inside your connection struct, say - for
- *        as long as the socket is watched. Zero-initialise it; do not copy or move it while
- *        it is registered.
- */
-typedef struct proven_loop_io {
-    proven_loop_io_fn fn;
-    void *ctx;
-    proven_net_handle_t handle;
-    proven_u8 want;
-    bool registered;
-} proven_loop_io_t;
-
 /**
  * @brief One timer. Yours to hold; zero-initialise it; do not copy or move it while it is set.
  *        A timer fires once.
@@ -72,12 +68,72 @@ typedef struct proven_loop_timer {
     proven_u8 state;
 } proven_loop_timer_t;
 
+/**
+ * @brief What the loop calls for one socket. Usually one `static const` table per kind of
+ *        connection, shared by all of them; a member left null is never called (and an operation
+ *        that would need it is refused).
+ */
+typedef struct proven_loop_sock_fns {
+    /**
+     * A receive has finished. For a receive of zero bytes, `err` PROVEN_OK and `n` 0 say that
+     * data has arrived (or the connection has ended): read it now with proven_net_read and
+     * PROVEN_NET_DONT_WAIT. For a receive into a buffer: PROVEN_OK and `n` bytes in it, or
+     * PROVEN_ERR_EOF, PROVEN_ERR_RESET, and the other errors of proven_net_read. And
+     * PROVEN_ERR_CANCELLED after proven_loop_recv_cancel or proven_loop_close.
+     */
+    void (*received)(void *ctx, proven_err_t err, proven_size_t n);
+    /**
+     * The bytes waiting to be sent have come down to what proven_loop_send_wait asked for
+     * (`err` PROVEN_OK), or sending them failed (`err` the failure, also when no wait was asked
+     * for; what was waiting is dropped and every later send returns it), or the socket was
+     * closed while a wait was asked for (PROVEN_ERR_CANCELLED).
+     */
+    void (*writable)(void *ctx, proven_err_t err);
+    /** A connect begun by proven_loop_connect has ended: PROVEN_OK, or as
+     *  proven_net_connect_finish fails; PROVEN_ERR_CANCELLED after proven_loop_close. */
+    void (*connected)(void *ctx, proven_err_t err);
+    /** Last: proven_loop_close was called and nothing of this socket is in flight any more.
+     *  Close the connection itself (proven_net_close) and free the memory now. */
+    void (*closed)(void *ctx);
+} proven_loop_sock_fns_t;
+
+#if defined(_WIN32) || defined(_WIN64)
+#define PROVEN_LOOP_SOCK_WORDS_ 15
+#else
+#define PROVEN_LOOP_SOCK_WORDS_ 11
+#endif
+
+/**
+ * @brief A connection given to a loop. Yours to hold - inside your connection struct, say -
+ *        from proven_loop_attach (or proven_loop_connect) until its `closed`. Do not copy or move
+ *        it in between. Opaque: 88 bytes, 120 on Windows, which hold everything the loop needs for
+ *        the connection, its receive included; the loop allocates nothing per connection except
+ *        the buffers of bytes waiting to be sent.
+ */
+typedef struct proven_loop_sock {
+    proven_u64 internal_[PROVEN_LOOP_SOCK_WORDS_];
+} proven_loop_sock_t;
+
+/** @brief An accept's answer: `conn` is a new connection, yours from now on - copy it out
+ *         before returning - or `err` says why there is none (`conn` then is not open). */
+typedef void (*proven_loop_accept_fn)(void *ctx, proven_err_t err, proven_net_conn_t *conn);
+
+/**
+ * @brief Accepting on one listener. Yours to hold, beside the listener; do not copy or move it
+ *        while an accept is in flight. Opaque. One is enough for a server: it is armed again from
+ *        inside its own function, and the loop then takes the next connection waiting without a
+ *        new round.
+ */
+typedef struct proven_loop_accept {
+    proven_u64 internal_[48];
+} proven_loop_accept_t;
+
 /** @return PROVEN_ERR_INVALID_ARG, PROVEN_ERR_NOMEM, or what opening the selector returned. */
 [[nodiscard]]
 proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out);
 
-/** @brief Free the loop. Whatever is still registered or set is simply forgotten: nothing is
- *         called. Null is accepted. */
+/** @brief Free the loop. Whatever is still attached, in flight or set is simply forgotten:
+ *         nothing is called, and the bytes waiting to be sent are freed. Null is accepted. */
 void proven_loop_destroy(proven_loop_t *loop);
 
 /**
@@ -111,29 +167,111 @@ void proven_loop_stop(proven_loop_t *loop);
 proven_err_t proven_loop_post(proven_loop_t *loop, proven_loop_fn fn, void *ctx);
 
 /**
- * @brief Watch a socket. `fn(ctx, got)` is called whenever it is ready for what `want` asks
- *        (PROVEN_NET_READABLE and/or PROVEN_NET_WRITABLE; 0 watches for nothing yet).
+ * @brief Give a connection to the loop. Nothing is started: the connection is the loop's to
+ *        watch from now until proven_loop_close and its `closed`. `fns` must stay valid as long.
  *
- * Readiness is level-triggered: as long as there is something to read, the function is called
- * each round. Read until the call says it would wait (PROVEN_NET_DONT_WAIT), or stop asking.
+ * Reading and writing the connection yourself stays allowed - proven_net_read with
+ * PROVEN_NET_DONT_WAIT after a receive of zero bytes is the usual way - but a send must go
+ * through proven_loop_send once the connection is attached, so that bytes keep their order.
+ * A connection is given to one loop, once: on Windows the socket is bound to the loop's
+ * completion port for its life.
  *
- * @return PROVEN_ERR_INVALID_ARG, PROVEN_ERR_INVALID_STATE if `io` is already registered, or
- *         what the selector returned.
+ * @return PROVEN_ERR_INVALID_ARG for a null pointer or a connection that is not open.
  */
 [[nodiscard]]
-proven_err_t proven_loop_io_add(proven_loop_t *loop, proven_loop_io_t *io, proven_net_handle_t handle,
-                                proven_u8 want, proven_loop_io_fn fn, void *ctx);
-
-/** @brief Change what a registered socket is watched for. */
-[[nodiscard]]
-proven_err_t proven_loop_io_set(proven_loop_t *loop, proven_loop_io_t *io, proven_u8 want);
+proven_err_t proven_loop_attach(proven_loop_t *loop, proven_loop_sock_t *sock, const proven_net_conn_t *conn,
+                                const proven_loop_sock_fns_t *fns, void *ctx);
 
 /**
- * @brief Stop watching. **Do this before closing the socket.** Safe inside any callback,
- *        the socket's own included: nothing more is delivered for it, not even an event
- *        already collected in this round. Harmless when `io` is not registered.
+ * @brief Begin connecting to `to`, with the new connection in `*out` attached to `sock`; its
+ *        `connected` comes when the connect has ended.
+ *
+ * The socket is attached whatever the outcome: after a failed connect, as after any other end,
+ * call proven_loop_close and close `*out` in `closed`. No receive or send may start before
+ * `connected` has said PROVEN_OK (PROVEN_ERR_INVALID_STATE).
+ *
+ * @return as proven_net_connect_start for a connect that failed at once (nothing is attached
+ *         and `*out` is not open); PROVEN_ERR_INVALID_ARG for a null pointer or a table without
+ *         `connected`.
  */
-void proven_loop_io_remove(proven_loop_t *loop, proven_loop_io_t *io);
+[[nodiscard]]
+proven_err_t proven_loop_connect(proven_loop_t *loop, proven_loop_sock_t *sock, proven_net_addr_t to, proven_net_conn_t *out,
+                                 const proven_loop_sock_fns_t *fns, void *ctx);
+
+/**
+ * @brief Receive: `received` comes once, when data has arrived.
+ *
+ * With `buf.size` 0 nothing is taken: the call is "tell me when there is something to read",
+ * and the connection holds no buffer while it waits - how ten thousand idle connections cost
+ * no memory for their reads. Then read into proven_loop_scratch and keep only what cannot be
+ * used yet. With a buffer, what arrived is in it; the buffer is the loop's until `received`.
+ *
+ * @return PROVEN_ERR_BUSY when a receive is already in flight; PROVEN_ERR_INVALID_STATE after
+ *         proven_loop_close or before a connect has ended; PROVEN_ERR_INVALID_ARG.
+ */
+[[nodiscard]]
+proven_err_t proven_loop_recv(proven_loop_t *loop, proven_loop_sock_t *sock, proven_mem_mut_t buf);
+
+/** @brief Stop a receive in flight: `received` comes with PROVEN_ERR_CANCELLED. Harmless when
+ *         there is none. */
+void proven_loop_recv_cancel(proven_loop_t *loop, proven_loop_sock_t *sock);
+
+/**
+ * @brief Send `bytes`: the loop takes what it can and the caller's bytes are free again when
+ *        the call returns.
+ *
+ * With nothing waiting, the bytes go straight to the socket, and only what it does not take at
+ * once is copied - into buffers of the loop's, given back when sent. Bytes keep their order.
+ * The loop holds up to 64 KiB waiting per connection: past that, it takes nothing more.
+ *
+ * @return `.value` the bytes taken; `.err` PROVEN_OK when all were, PROVEN_ERR_AGAIN when the
+ *         rest did not fit - ask proven_loop_send_wait to be told when to give it again.
+ *         After a send has failed, that failure (and nothing is taken). PROVEN_ERR_INVALID_STATE
+ *         after proven_loop_close or before a connect has ended; PROVEN_ERR_NOMEM.
+ */
+[[nodiscard]]
+proven_result_size_t proven_loop_send(proven_loop_t *loop, proven_loop_sock_t *sock, proven_mem_view_t bytes);
+
+/** @brief How many bytes taken by proven_loop_send have not left yet. */
+[[nodiscard]]
+proven_size_t proven_loop_send_queued(const proven_loop_sock_t *sock);
+
+/**
+ * @brief Have `writable` called once when no more than `at_most` bytes are waiting: 0 asks to
+ *        be told when everything has left (before a graceful close, say). Called from the loop,
+ *        also when it is true already. Asking again replaces the earlier wait.
+ * @return PROVEN_ERR_INVALID_STATE after proven_loop_close; PROVEN_ERR_INVALID_ARG for a
+ *         table without `writable`.
+ */
+[[nodiscard]]
+proven_err_t proven_loop_send_wait(proven_loop_t *loop, proven_loop_sock_t *sock, proven_size_t at_most);
+
+/**
+ * @brief The end of an attached socket. A receive in flight is answered with
+ *        PROVEN_ERR_CANCELLED, so are a connect under way and a send wait; bytes still waiting
+ *        to be sent are dropped. Then `closed`. The loop stops watching the connection before
+ *        this returns, so the connection itself may be closed from now on. Harmless when the
+ *        socket is already closing.
+ */
+void proven_loop_close(proven_loop_t *loop, proven_loop_sock_t *sock);
+
+/**
+ * @brief Accept one connection on `listener`: `fn` comes once, with it or with the reason there
+ *        is none. Arm it again from inside `fn` to take the next.
+ *
+ * The listener must stay open while an accept is in flight. Before closing it, call
+ * proven_loop_accept_cancel.
+ *
+ * @return PROVEN_ERR_BUSY when an accept is already in flight on `acc`; PROVEN_ERR_INVALID_ARG.
+ */
+[[nodiscard]]
+proven_err_t proven_loop_accept(proven_loop_t *loop, proven_loop_accept_t *acc, proven_net_listener_t *listener,
+                                proven_loop_accept_fn fn, void *ctx);
+
+/** @brief Stop accepting: an accept in flight is answered with PROVEN_ERR_CANCELLED, and the
+ *         loop forgets the listener, which may be closed when this returns. Harmless when
+ *         nothing is in flight. */
+void proven_loop_accept_cancel(proven_loop_t *loop, proven_loop_accept_t *acc);
 
 /**
  * @brief Call `fn(ctx)` once, `ms` milliseconds from now: never earlier, and on POSIX within
@@ -161,7 +299,5 @@ proven_mem_mut_t proven_loop_scratch(proven_loop_t *loop);
 /** @brief The allocator the loop was made with. */
 proven_allocator_t proven_loop_allocator(const proven_loop_t *loop);
 
-/** @brief How many sockets are being watched. */
-proven_size_t proven_loop_io_count(const proven_loop_t *loop);
 
 #endif /* PROVEN_LOOP_H */

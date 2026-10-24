@@ -150,6 +150,7 @@ static void native_datagram_options(proven_native_socket_t s) {
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <sys/uio.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #if defined(__linux__)
@@ -606,6 +607,55 @@ proven_sys_net_result_t proven_sys_net_send(proven_sys_socket_t sock, const void
         if (net_interrupted(e)) continue;
         return net_reason(e);
     }
+}
+
+/* Several buffers in one call, in order: writev's sendmsg on POSIX (with the same no-SIGPIPE
+ * flag as send), WSASend on Windows. Offered up to PROVEN_SYS_NET_VEC_MAX buffers and, as
+ * clamp_send says, at most 64 KiB in all on Windows. */
+proven_sys_net_result_t proven_sys_net_send_vec(proven_sys_socket_t sock, const proven_sys_net_vec_t *vec, proven_size_t count,
+                                                proven_size_t *sent) {
+    *sent = 0;
+    if (count > PROVEN_SYS_NET_VEC_MAX) count = PROVEN_SYS_NET_VEC_MAX;
+    proven_size_t total = 0, used = 0;
+#if defined(_WIN32) || defined(_WIN64)
+    WSABUF bufs[PROVEN_SYS_NET_VEC_MAX];
+    for (; used < count && total < 65536u; ++used) {
+        proven_size_t n = vec[used].len;
+        if (n > 65536u - total) n = 65536u - total;
+        bufs[used].buf = (char *)vec[used].ptr;
+        bufs[used].len = (ULONG)n;
+        total += n;
+    }
+    if (total == 0) return PROVEN_SYS_NET_OK;
+    for (;;) {
+        DWORD n = 0;
+        if (WSASend((proven_native_socket_t)sock, bufs, (DWORD)used, &n, 0, NULL, NULL) == 0) { *sent = (proven_size_t)n; return PROVEN_SYS_NET_OK; }
+        int e = net_last_error();
+        if (net_interrupted(e)) continue;
+        return net_reason(e);
+    }
+#else
+    struct iovec iov[PROVEN_SYS_NET_VEC_MAX];
+    for (; used < count && total < 0x40000000u; ++used) {
+        proven_size_t n = vec[used].len;
+        if (n > 0x40000000u - total) n = 0x40000000u - total;
+        iov[used].iov_base = (void *)vec[used].ptr;
+        iov[used].iov_len = (size_t)n;
+        total += n;
+    }
+    if (total == 0) return PROVEN_SYS_NET_OK;
+    struct msghdr msg;
+    memset(&msg, 0, sizeof msg);
+    msg.msg_iov = iov;
+    msg.msg_iovlen = (typeof(msg.msg_iovlen))used;
+    for (;;) {
+        ssize_t n = sendmsg((proven_native_socket_t)sock, &msg, NATIVE_SEND_FLAGS);
+        if (n >= 0) { *sent = (proven_size_t)n; return PROVEN_SYS_NET_OK; }
+        int e = net_last_error();
+        if (net_interrupted(e)) continue;
+        return net_reason(e);
+    }
+#endif
 }
 
 proven_sys_net_result_t proven_sys_net_recv_from(proven_sys_socket_t sock, void *buf, proven_size_t cap,

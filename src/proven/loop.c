@@ -4,6 +4,7 @@
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
 #include "proven/time.h"
+#include "proven_internal_net.h"
 #include <stdatomic.h>
 
 /*
@@ -18,6 +19,22 @@
  *
  * The post queue. Posting is a push onto a lock-free stack from any thread; the loop takes the
  * whole stack at once and reverses it, which gives the order of posting back.
+ *
+ * The operations (RFC-0025). Here they are done over the selector: a receive waits for
+ * readable, a send writes what goes and waits for writable for the rest, an accept waits for
+ * readable on the listener. Interest is dropped lazily - a socket stays asked for readable after
+ * its receive is answered, because the next receive usually follows at once, and is dropped only
+ * when the selector reports it with nothing in flight - so a connection that is read and armed
+ * again costs no change of its watch. What must not be answered inside the call that started it
+ * (rule 1 of loop.h) goes on the "done" list, a list of sockets with the bits of what is waiting
+ * to be delivered; the list is taken whole and delivered after each part of a round, and a round
+ * with anything on it does not sleep. A socket's memory is the caller's again only after
+ * `closed`, which is always delivered from that list, after the batch of events being delivered
+ * - so an event already collected for a closing socket still points at valid memory.
+ *
+ * Bytes waiting to be sent are in chunks of PROVEN_LOOP_CHUNK_ bytes from a pool of the loop's,
+ * a whole TLS record each; a socket holds chunks only while bytes wait, and one gather write
+ * sends a socket's chain.
  */
 
 #define LOOP_WHEEL_SLOTS 1024u
@@ -28,6 +45,76 @@
 #define TIMER_IDLE 0
 #define TIMER_WHEEL 1
 #define TIMER_DUE 2
+
+/* What the selector's tags, and the done list, point at: the first byte tells which. A
+ * proven_loop_io_t (internal readiness) has a zero there. */
+#define KIND_IO 0
+#define KIND_SOCK 1
+#define KIND_ACCEPT 2
+
+/* A socket's state. */
+#define S_NONE 0
+#define S_OPEN 1
+#define S_CONNECTING 2
+#define S_DEAD 3            /* a connect that failed: only proven_loop_close remains */
+#define S_CLOSING 4
+
+/* flags */
+#define F_QUEUED 0x01       /* on the done list */
+#define F_REG 0x02          /* registered with the selector */
+#define F_RECV 0x04         /* a receive (an accept) is in flight */
+#define F_WAIT 0x08         /* a send wait is asked for */
+
+/* done: what is waiting to be delivered */
+#define D_CONNECTED 0x01
+#define D_RECEIVED 0x02
+#define D_WRITABLE 0x04
+#define D_FLUSH 0x08        /* not a callback: committed bytes to be written */
+#define D_ACCEPT 0x10
+#define D_CLOSED 0x20
+
+#define LOOP_SEND_LIMIT ((proven_u32)65536)
+#define LOOP_POOL_KEEP 32u
+
+typedef struct loop_node {
+    proven_u8 kind, flags, want, done, state, family;
+    proven_u16 err;                       /* the receive's answer, or the accept's */
+    struct loop_node *next;               /* on the done list */
+} loop_node_t;
+
+typedef struct loop_chunk {
+    struct loop_chunk *next;              /* in its socket's chain, or in the pool */
+    struct loop_chunk *all_prev, *all_next;    /* every chunk out of the pool, for destroy */
+    proven_u32 used, sent;
+    proven_byte_t data[PROVEN_LOOP_CHUNK_];
+} loop_chunk_t;
+
+typedef struct loop_sock {
+    loop_node_t node;
+    proven_u16 send_err, conn_err;        /* send_err stays once a send failed */
+    proven_u32 recv_n, recv_cap;
+    proven_u32 queued, wait_at, limit;
+    proven_uintptr_t handle;
+    const proven_loop_sock_fns_t *fns;
+    void *ctx;
+    proven_byte_t *recv_buf;
+    loop_chunk_t *head, *tail;
+} loop_sock_t;
+
+typedef struct loop_acc {
+    loop_node_t node;
+    proven_uintptr_t handle;
+    proven_net_listener_t *listener;
+    proven_loop_accept_fn fn;
+    void *ctx;
+    proven_net_conn_t conn;               /* the accepted connection, until delivered */
+} loop_acc_t;
+
+_Static_assert(sizeof(loop_sock_t) <= sizeof(proven_loop_sock_t), "proven_loop_sock_t holds the loop's socket");
+_Static_assert(_Alignof(loop_sock_t) <= _Alignof(proven_loop_sock_t), "and is aligned for it");
+_Static_assert(sizeof(loop_acc_t) <= sizeof(proven_loop_accept_t), "proven_loop_accept_t holds the loop's acceptor");
+_Static_assert(_Alignof(loop_acc_t) <= _Alignof(proven_loop_accept_t), "and is aligned for it");
+_Static_assert(PROVEN_LOOP_CHUNK_ >= 16384 + 5 + 16 + 1, "a chunk holds a whole TLS record");
 
 typedef struct loop_task {
     struct loop_task *next;
@@ -55,6 +142,11 @@ struct proven_loop {
     proven_size_t after_count;
     proven_loop_clock_fn clock;                   /* tests only: null is the monotonic clock */
     void *clock_ctx;
+    loop_node_t *done_first, *done_last;          /* what waits to be delivered */
+    loop_chunk_t *pool;                           /* free chunks, at most LOOP_POOL_KEEP */
+    proven_size_t pool_count;
+    loop_chunk_t *chunks;                         /* every chunk out of the pool */
+    loop_acc_t *delivering;                       /* the acceptor whose function runs now */
 };
 
 /* The one place the loop reads the time. */
@@ -72,7 +164,7 @@ static void loop_waker_ready(void *ctx, proven_u8 got) {
     proven_net_waker_drain(&((proven_loop_t *)ctx)->waker);
 }
 
-proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out) {
+static proven_err_t loop_create(proven_allocator_t alloc, proven_loop_t **out, bool poll_kind) {
     if (out) *out = (void *)0;
     if (!out || !proven_alloc_is_valid(alloc)) return PROVEN_ERR_INVALID_ARG;
     proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, sizeof(proven_loop_t), 16);
@@ -83,7 +175,7 @@ proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out) {
     atomic_init(&l->tasks, (proven_loop_task_t *)0);
     atomic_init(&l->stop, false);
     l->wheel_tick = (proven_u64)loop_now(l) / LOOP_TICK_NS;
-    proven_err_t e = proven_net_selector_create(alloc, &l->selector);
+    proven_err_t e = poll_kind ? proven_net_selector_create_poll(alloc, &l->selector) : proven_net_selector_create(alloc, &l->selector);
     if (e == PROVEN_OK) {
         m = alloc.alloc_fn(alloc.ctx, LOOP_SCRATCH, 16);
         if (m.err != PROVEN_OK) e = m.err;
@@ -100,6 +192,9 @@ proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out) {
     return PROVEN_OK;
 }
 
+proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out) { return loop_create(alloc, out, false); }
+proven_err_t proven_loop_create_poll_(proven_allocator_t alloc, proven_loop_t **out) { return loop_create(alloc, out, true); }
+
 void proven_loop_destroy(proven_loop_t *l) {
     if (!l) return;
     proven_allocator_t a = l->alloc;
@@ -111,6 +206,8 @@ void proven_loop_destroy(proven_loop_t *l) {
     }
     if (l->selector) proven_net_selector_destroy(l->selector);
     if (l->scratch) a.free_fn(a.ctx, l->scratch);
+    while (l->pool) { loop_chunk_t *next = l->pool->next; a.free_fn(a.ctx, l->pool); l->pool = next; }
+    while (l->chunks) { loop_chunk_t *next = l->chunks->all_next; a.free_fn(a.ctx, l->chunks); l->chunks = next; }
     a.free_fn(a.ctx, l);
 }
 
@@ -155,6 +252,457 @@ void proven_loop_io_remove(proven_loop_t *l, proven_loop_io_t *io) {
     for (proven_size_t i = l->batch_pos; i < l->batch_count; ++i) {
         if (l->batch[i].tag == io) l->batch[i].tag = (void *)0;
     }
+}
+
+// -----------------------------------------------------------------------------
+// Operations (RFC-0025), over the selector
+// -----------------------------------------------------------------------------
+
+static loop_sock_t *sock_of(proven_loop_sock_t *s) { return (loop_sock_t *)(void *)s; }
+static loop_acc_t *acc_of(proven_loop_accept_t *a) { return (loop_acc_t *)(void *)a; }
+
+static proven_net_conn_t sock_conn(const loop_sock_t *s) {
+    proven_net_conn_t c = { 0 };
+    c.internal.handle = s->handle;
+    c.internal.open = true;
+    c.internal.family = s->node.family;
+    return c;
+}
+
+/* Ask the selector for `want` of a node's socket, registering it on first need. */
+static proven_err_t node_watch(proven_loop_t *l, loop_node_t *n, proven_uintptr_t handle, proven_u8 want) {
+    proven_net_handle_t h = { .raw = handle, .valid = true };
+    proven_err_t e = PROVEN_OK;
+    if (n->flags & F_REG) {
+        if (n->want == want) return PROVEN_OK;
+        e = proven_net_selector_modify(l->selector, h, want, n);
+    } else {
+        if (want == 0) return PROVEN_OK;
+        e = proven_net_selector_add(l->selector, h, want, n);
+        if (e == PROVEN_OK) n->flags |= F_REG;
+    }
+    if (e == PROVEN_OK) n->want = want;
+    return e;
+}
+
+/* Forget a node's socket: nothing more from the selector, not even an event of this batch. */
+static void node_unwatch(proven_loop_t *l, loop_node_t *n, proven_uintptr_t handle) {
+    if (n->flags & F_REG) (void)proven_net_selector_remove(l->selector, (proven_net_handle_t){ .raw = handle, .valid = true });
+    n->flags &= (proven_u8)~F_REG;
+    n->want = 0;
+    for (proven_size_t i = l->batch_pos; i < l->batch_count; ++i) {
+        if (l->batch[i].tag == n) l->batch[i].tag = (void *)0;
+    }
+}
+
+static void node_queue(proven_loop_t *l, loop_node_t *n, proven_u8 bits) {
+    n->done |= bits;
+    if (n->flags & F_QUEUED) return;
+    n->flags |= F_QUEUED;
+    n->next = (void *)0;
+    if (l->done_last) l->done_last->next = n; else l->done_first = n;
+    l->done_last = n;
+}
+
+// --- chunks
+
+static loop_chunk_t *chunk_take(proven_loop_t *l) {
+    loop_chunk_t *c = l->pool;
+    if (c) { l->pool = c->next; l->pool_count--; }
+    else {
+        proven_result_mem_mut_t m = l->alloc.alloc_fn(l->alloc.ctx, sizeof(loop_chunk_t), 16);
+        if (m.err != PROVEN_OK) return (void *)0;
+        c = (loop_chunk_t *)m.value.ptr;
+    }
+    c->next = (void *)0;
+    c->used = c->sent = 0;
+    c->all_prev = (void *)0;
+    c->all_next = l->chunks;
+    if (l->chunks) l->chunks->all_prev = c;
+    l->chunks = c;
+    return c;
+}
+
+static void chunk_give(proven_loop_t *l, loop_chunk_t *c) {
+    if (c->all_prev) c->all_prev->all_next = c->all_next; else l->chunks = c->all_next;
+    if (c->all_next) c->all_next->all_prev = c->all_prev;
+    if (l->pool_count >= LOOP_POOL_KEEP) { l->alloc.free_fn(l->alloc.ctx, c); return; }
+    c->next = l->pool;
+    l->pool = c;
+    l->pool_count++;
+}
+
+static void sock_drop_chunks(proven_loop_t *l, loop_sock_t *s) {
+    while (s->head) { loop_chunk_t *next = s->head->next; chunk_give(l, s->head); s->head = next; }
+    s->tail = (void *)0;
+    s->queued = 0;
+}
+
+/* Room for `min` bytes at the end of the socket's chain. */
+static proven_err_t sock_room(proven_loop_t *l, loop_sock_t *s, proven_size_t min, proven_mem_mut_t *room) {
+    if (min == 0) min = 1;
+    if (!s->tail || PROVEN_LOOP_CHUNK_ - s->tail->used < min) {
+        loop_chunk_t *c = chunk_take(l);
+        if (!c) return PROVEN_ERR_NOMEM;
+        if (s->tail) s->tail->next = c; else s->head = c;
+        s->tail = c;
+    }
+    *room = (proven_mem_mut_t){ .ptr = s->tail->data + s->tail->used, .size = PROVEN_LOOP_CHUNK_ - s->tail->used };
+    return PROVEN_OK;
+}
+
+// --- delivery
+
+static void sock_deliver_writable(loop_sock_t *s, proven_err_t err) {
+    if (s->fns->writable) s->fns->writable(s->ctx, err);
+}
+
+/* Write what waits; answer a wait that has come true, or the failure. Only ever from the loop. */
+static void sock_flush(proven_loop_t *l, loop_sock_t *s) {
+    proven_err_t e = PROVEN_OK;
+    for (int pass = 0; pass < 4 && s->head; ++pass) {
+        proven_mem_view_t vec[PROVEN_NET_VEC_MAX];
+        proven_size_t count = 0, offered = 0;
+        for (loop_chunk_t *c = s->head; c && count < PROVEN_NET_VEC_MAX; c = c->next) {
+            if (c->used == c->sent) continue;
+            vec[count++] = (proven_mem_view_t){ .ptr = c->data + c->sent, .size = c->used - c->sent };
+            offered += c->used - c->sent;
+        }
+        proven_size_t sent = 0;
+        proven_net_conn_t conn = sock_conn(s);
+        if (offered > 0) e = proven_net_write_vec_(&conn, vec, count, &sent);
+        s->queued -= (proven_u32)sent;
+        while (s->head) {
+            loop_chunk_t *c = s->head;
+            proven_size_t here = c->used - c->sent;
+            if (sent < here) { c->sent += (proven_u32)sent; break; }
+            sent -= here;
+            s->head = c->next;
+            if (!s->head) s->tail = (void *)0;
+            chunk_give(l, c);
+        }
+        if (e != PROVEN_OK || offered == 0 || s->queued > 0) break;
+    }
+    if (e != PROVEN_OK && e != PROVEN_ERR_TIMEOUT) {
+        s->send_err = (proven_u16)e;
+        sock_drop_chunks(l, s);
+        (void)node_watch(l, &s->node, s->handle, (proven_u8)(s->node.want & ~PROVEN_NET_WRITABLE));
+        s->node.flags &= (proven_u8)~F_WAIT;
+        sock_deliver_writable(s, e);
+        return;
+    }
+    proven_u8 want = s->queued > 0 ? (proven_u8)(s->node.want | PROVEN_NET_WRITABLE) : (proven_u8)(s->node.want & ~PROVEN_NET_WRITABLE);
+    (void)node_watch(l, &s->node, s->handle, want);
+    if ((s->node.flags & F_WAIT) && s->queued <= s->wait_at) {
+        s->node.flags &= (proven_u8)~F_WAIT;
+        sock_deliver_writable(s, PROVEN_OK);
+    }
+}
+
+static void sock_connected(loop_sock_t *s, proven_err_t err) {
+    if (s->node.state == S_CONNECTING) s->node.state = err == PROVEN_OK ? S_OPEN : S_DEAD;
+    s->fns->connected(s->ctx, err);
+}
+
+/* What the done list holds for a socket, in this order; bits set meanwhile wait for the next
+ * time. `closed` comes alone at the end: after it the memory is the caller's. */
+static void sock_deliver(proven_loop_t *l, loop_sock_t *s) {
+    proven_u8 bits = s->node.done;
+    s->node.done = 0;
+    if (bits & D_CONNECTED) sock_connected(s, (proven_err_t)s->conn_err);
+    if (bits & D_RECEIVED) s->fns->received(s->ctx, (proven_err_t)s->node.err, s->recv_n);
+    if (bits & D_WRITABLE) {
+        proven_err_t e = s->node.state == S_CLOSING ? PROVEN_ERR_CANCELLED : (proven_err_t)s->send_err;
+        sock_deliver_writable(s, e);
+    }
+    if ((bits & D_FLUSH) && s->node.state == S_OPEN && s->head && !(s->node.want & PROVEN_NET_WRITABLE)) sock_flush(l, s);
+    if ((bits & D_CLOSED) && s->node.state == S_CLOSING) {
+        s->node.state = S_NONE;
+        if (s->fns->closed) s->fns->closed(s->ctx);
+    }
+}
+
+static void acc_deliver(proven_loop_t *l, loop_acc_t *a) {
+    a->node.done = 0;
+    a->node.flags &= (proven_u8)~F_RECV;
+    proven_err_t err = (proven_err_t)a->node.err;
+    proven_net_conn_t conn = a->conn;
+    a->conn = (proven_net_conn_t){ 0 };
+    l->delivering = a;
+    a->fn(a->ctx, err, &conn);
+    if (l->delivering == a) l->delivering = (void *)0;
+}
+
+/* Deliver what is on the done list now; what is queued meanwhile waits for the next call. */
+static void loop_run_done(proven_loop_t *l) {
+    loop_node_t *n = l->done_first;
+    l->done_first = l->done_last = (void *)0;
+    while (n) {
+        loop_node_t *next = n->next;
+        n->flags &= (proven_u8)~F_QUEUED;
+        if (n->kind == KIND_SOCK) sock_deliver(l, (loop_sock_t *)n);
+        else if (n->kind == KIND_ACCEPT && (n->done & D_ACCEPT)) acc_deliver(l, (loop_acc_t *)n);
+        n = next;
+    }
+}
+
+// --- what the selector reports
+
+static void sock_event(proven_loop_t *l, loop_sock_t *s, proven_u8 got) {
+    if (s->node.state == S_CONNECTING) {
+        if (!(got & (PROVEN_NET_WRITABLE | PROVEN_NET_FAILED)) || (s->node.done & D_CONNECTED)) return;
+        proven_net_conn_t conn = sock_conn(s);
+        proven_err_t e = proven_net_connect_result_(&conn);
+        if (e == PROVEN_ERR_AGAIN) return;
+        (void)node_watch(l, &s->node, s->handle, 0);
+        sock_connected(s, e);
+        return;
+    }
+    if (s->node.state != S_OPEN) return;
+    if (got & (PROVEN_NET_READABLE | PROVEN_NET_FAILED)) {
+        if (s->node.flags & F_RECV) {
+            proven_err_t e = PROVEN_OK;
+            proven_size_t n = 0;
+            if (s->recv_cap > 0) {
+                proven_net_conn_t conn = sock_conn(s);
+                proven_result_size_t r = proven_net_read(&conn, (proven_mem_mut_t){ .ptr = s->recv_buf, .size = s->recv_cap }, PROVEN_NET_DONT_WAIT);
+                e = r.err;
+                n = r.value;
+            }
+            if (e != PROVEN_ERR_TIMEOUT) {
+                s->node.flags &= (proven_u8)~F_RECV;
+                s->fns->received(s->ctx, e, n);
+            }
+        } else if (s->node.want & PROVEN_NET_READABLE) {
+            (void)node_watch(l, &s->node, s->handle, (proven_u8)(s->node.want & ~PROVEN_NET_READABLE));
+        }
+    }
+    if (s->node.state != S_OPEN) return;
+    if (got & (PROVEN_NET_WRITABLE | PROVEN_NET_FAILED)) {
+        if (s->head) sock_flush(l, s);
+        else if (s->node.want & PROVEN_NET_WRITABLE) (void)node_watch(l, &s->node, s->handle, (proven_u8)(s->node.want & ~PROVEN_NET_WRITABLE));
+    }
+}
+
+/* Take one connection now. True when there is an answer to deliver: a connection, or a failure
+ * worth reporting; a connection the peer aborted before it was taken is not. */
+static bool acc_try(loop_acc_t *a) {
+    proven_err_t e = proven_net_accept(a->listener, PROVEN_NET_DONT_WAIT, &a->conn, (void *)0);
+    if (e == PROVEN_ERR_TIMEOUT || e == PROVEN_ERR_RESET) return false;
+    a->node.err = (proven_u16)e;
+    return true;
+}
+
+static void acc_event(proven_loop_t *l, loop_acc_t *a, proven_u8 got) {
+    (void)got;
+    if (!(a->node.flags & F_RECV)) {
+        (void)node_watch(l, &a->node, a->handle, 0);
+        return;
+    }
+    if ((a->node.done & D_ACCEPT) || !acc_try(a)) return;
+    acc_deliver(l, a);
+}
+
+// --- the calls
+
+proven_err_t proven_loop_attach(proven_loop_t *l, proven_loop_sock_t *sock, const proven_net_conn_t *conn,
+                                const proven_loop_sock_fns_t *fns, void *ctx) {
+    if (!l || !sock || !conn || !fns || !conn->internal.open) return PROVEN_ERR_INVALID_ARG;
+    loop_sock_t *s = sock_of(sock);
+    for (proven_size_t i = 0; i < sizeof *s; ++i) ((proven_byte_t *)s)[i] = 0;
+    s->node.kind = KIND_SOCK;
+    s->node.state = S_OPEN;
+    s->node.family = conn->internal.family;
+    s->handle = conn->internal.handle;
+    s->fns = fns;
+    s->ctx = ctx;
+    s->limit = LOOP_SEND_LIMIT;
+    return PROVEN_OK;
+}
+
+proven_err_t proven_loop_connect(proven_loop_t *l, proven_loop_sock_t *sock, proven_net_addr_t to, proven_net_conn_t *out,
+                                 const proven_loop_sock_fns_t *fns, void *ctx) {
+    if (!l || !sock || !out || !fns || !fns->connected) return PROVEN_ERR_INVALID_ARG;
+    proven_err_t e = proven_net_connect_start(to, out);
+    if (e != PROVEN_OK && e != PROVEN_ERR_AGAIN) return e;
+    (void)proven_loop_attach(l, sock, out, fns, ctx);
+    loop_sock_t *s = sock_of(sock);
+    s->node.state = S_CONNECTING;
+    if (e == PROVEN_OK) {                         /* connected already: answered from the loop */
+        s->conn_err = PROVEN_OK;
+        node_queue(l, &s->node, D_CONNECTED);
+        return PROVEN_OK;
+    }
+    e = node_watch(l, &s->node, s->handle, PROVEN_NET_WRITABLE);
+    if (e != PROVEN_OK) {
+        s->node.state = S_NONE;
+        (void)proven_net_close(out);
+        return e;
+    }
+    return PROVEN_OK;
+}
+
+proven_err_t proven_loop_recv(proven_loop_t *l, proven_loop_sock_t *sock, proven_mem_mut_t buf) {
+    if (!l || !sock || (buf.size > 0 && !buf.ptr)) return PROVEN_ERR_INVALID_ARG;
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN) return PROVEN_ERR_INVALID_STATE;
+    if (!s->fns->received) return PROVEN_ERR_INVALID_ARG;
+    if (s->node.flags & F_RECV) return PROVEN_ERR_BUSY;
+    proven_err_t e = node_watch(l, &s->node, s->handle, (proven_u8)(s->node.want | PROVEN_NET_READABLE));
+    if (e != PROVEN_OK) return e;
+    s->recv_buf = buf.ptr;
+    s->recv_cap = buf.size > 0x7fffffffu ? 0x7fffffffu : (proven_u32)buf.size;
+    s->node.flags |= F_RECV;
+    return PROVEN_OK;
+}
+
+void proven_loop_recv_cancel(proven_loop_t *l, proven_loop_sock_t *sock) {
+    if (!l || !sock) return;
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK || !(s->node.flags & F_RECV)) return;
+    s->node.flags &= (proven_u8)~F_RECV;
+    s->node.err = (proven_u16)PROVEN_ERR_CANCELLED;
+    s->recv_n = 0;
+    node_queue(l, &s->node, D_RECEIVED);
+}
+
+proven_result_size_t proven_loop_send(proven_loop_t *l, proven_loop_sock_t *sock, proven_mem_view_t bytes) {
+    proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
+    if (!l || !sock || (bytes.size > 0 && !bytes.ptr)) { res.err = PROVEN_ERR_INVALID_ARG; return res; }
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN) { res.err = PROVEN_ERR_INVALID_STATE; return res; }
+    if (s->send_err != PROVEN_OK) { res.err = (proven_err_t)s->send_err; return res; }
+    if (s->queued == 0 && bytes.size > 0) {
+        proven_net_conn_t conn = sock_conn(s);
+        proven_result_size_t w = proven_net_write(&conn, bytes, PROVEN_NET_DONT_WAIT);
+        if (w.err == PROVEN_OK || w.err == PROVEN_ERR_TIMEOUT) res.value = w.value;
+        else {
+            s->send_err = (proven_u16)w.err;
+            sock_drop_chunks(l, s);
+            res.value = w.value;
+            res.err = w.err;
+            return res;
+        }
+    }
+    while (res.value < bytes.size) {
+        if (s->queued >= s->limit) { res.err = PROVEN_ERR_AGAIN; break; }
+        proven_mem_mut_t room;
+        proven_err_t e = sock_room(l, s, 1, &room);
+        if (e != PROVEN_OK) { res.err = e; break; }
+        proven_size_t n = bytes.size - res.value;
+        if (n > room.size) n = room.size;
+        if (n > s->limit - s->queued) n = s->limit - s->queued;
+        for (proven_size_t i = 0; i < n; ++i) room.ptr[i] = bytes.ptr[res.value + i];
+        s->tail->used += (proven_u32)n;
+        s->queued += (proven_u32)n;
+        res.value += n;
+    }
+    /* What waits was offered to the socket just now (or waits behind bytes that were): the
+     * next try is when it is writable. */
+    if (s->queued > 0) {
+        proven_err_t e = node_watch(l, &s->node, s->handle, (proven_u8)(s->node.want | PROVEN_NET_WRITABLE));
+        if (e != PROVEN_OK && res.err == PROVEN_OK) res.err = e;
+    }
+    return res;
+}
+
+proven_size_t proven_loop_send_queued(const proven_loop_sock_t *sock) {
+    if (!sock) return 0;
+    const loop_sock_t *s = (const loop_sock_t *)(const void *)sock;
+    return s->node.kind == KIND_SOCK ? s->queued : 0;
+}
+
+proven_err_t proven_loop_send_wait(proven_loop_t *l, proven_loop_sock_t *sock, proven_size_t at_most) {
+    if (!l || !sock) return PROVEN_ERR_INVALID_ARG;
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN) return PROVEN_ERR_INVALID_STATE;
+    if (!s->fns->writable) return PROVEN_ERR_INVALID_ARG;
+    if (s->queued <= at_most) {
+        s->node.flags &= (proven_u8)~F_WAIT;
+        node_queue(l, &s->node, D_WRITABLE);
+        return PROVEN_OK;
+    }
+    s->wait_at = at_most > 0xffffffffu ? 0xffffffffu : (proven_u32)at_most;
+    s->node.flags |= F_WAIT;
+    return PROVEN_OK;
+}
+
+proven_err_t proven_loop_reserve_(proven_loop_t *l, proven_loop_sock_t *sock, proven_size_t min, proven_mem_mut_t *room) {
+    if (!l || !sock || !room || min > PROVEN_LOOP_CHUNK_) return PROVEN_ERR_INVALID_ARG;
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN) return PROVEN_ERR_INVALID_STATE;
+    if (s->send_err != PROVEN_OK) return (proven_err_t)s->send_err;
+    if (s->queued >= s->limit) return PROVEN_ERR_AGAIN;
+    return sock_room(l, s, min, room);
+}
+
+void proven_loop_commit_(proven_loop_t *l, proven_loop_sock_t *sock, proven_size_t n) {
+    if (!l || !sock || n == 0) return;
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN || !s->tail || n > PROVEN_LOOP_CHUNK_ - s->tail->used) return;
+    s->tail->used += (proven_u32)n;
+    s->queued += (proven_u32)n;
+    node_queue(l, &s->node, D_FLUSH);
+}
+
+void proven_loop_close(proven_loop_t *l, proven_loop_sock_t *sock) {
+    if (!l || !sock) return;
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK) return;
+    proven_u8 state = s->node.state;
+    if (state != S_OPEN && state != S_CONNECTING && state != S_DEAD) return;
+    proven_u8 bits = D_CLOSED;
+    if (s->node.flags & F_RECV) {
+        s->node.flags &= (proven_u8)~F_RECV;
+        s->node.err = (proven_u16)PROVEN_ERR_CANCELLED;
+        s->recv_n = 0;
+        bits |= D_RECEIVED;
+    }
+    if (state == S_CONNECTING) { s->conn_err = (proven_u16)PROVEN_ERR_CANCELLED; bits |= D_CONNECTED; }
+    if (s->node.flags & F_WAIT) { s->node.flags &= (proven_u8)~F_WAIT; bits |= D_WRITABLE; }
+    sock_drop_chunks(l, s);
+    node_unwatch(l, &s->node, s->handle);
+    s->node.state = S_CLOSING;
+    node_queue(l, &s->node, bits);
+}
+
+proven_err_t proven_loop_accept(proven_loop_t *l, proven_loop_accept_t *acc, proven_net_listener_t *listener,
+                                proven_loop_accept_fn fn, void *ctx) {
+    if (!l || !acc || !listener || !fn || !proven_net_listener_is_open(listener)) return PROVEN_ERR_INVALID_ARG;
+    loop_acc_t *a = acc_of(acc);
+    if (a->node.kind != KIND_ACCEPT || a->listener != listener) {
+        if (a->node.kind == KIND_ACCEPT && (a->node.flags & F_RECV)) return PROVEN_ERR_BUSY;
+        if (a->node.kind == KIND_ACCEPT) node_unwatch(l, &a->node, a->handle);
+        for (proven_size_t i = 0; i < sizeof *a; ++i) ((proven_byte_t *)a)[i] = 0;
+        a->node.kind = KIND_ACCEPT;
+        a->listener = listener;
+        a->handle = listener->internal.handle;
+    }
+    if (a->node.flags & F_RECV) return PROVEN_ERR_BUSY;
+    a->fn = fn;
+    a->ctx = ctx;
+    /* Armed again from inside its own function: there is often another connection waiting
+     * already, and taking it now saves a round. It is still answered from the loop. */
+    if (l->delivering == a && acc_try(a)) {
+        a->node.flags |= F_RECV;
+        node_queue(l, &a->node, D_ACCEPT);
+        return PROVEN_OK;
+    }
+    proven_err_t e = node_watch(l, &a->node, a->handle, PROVEN_NET_READABLE);
+    if (e != PROVEN_OK) return e;
+    a->node.flags |= F_RECV;
+    return PROVEN_OK;
+}
+
+void proven_loop_accept_cancel(proven_loop_t *l, proven_loop_accept_t *acc) {
+    if (!l || !acc) return;
+    loop_acc_t *a = acc_of(acc);
+    if (a->node.kind != KIND_ACCEPT) return;
+    node_unwatch(l, &a->node, a->handle);
+    if (!(a->node.flags & F_RECV)) return;
+    (void)proven_net_close(&a->conn);             /* one taken and not yet delivered */
+    a->node.err = (proven_u16)PROVEN_ERR_CANCELLED;
+    node_queue(l, &a->node, D_ACCEPT);
 }
 
 // -----------------------------------------------------------------------------
@@ -342,7 +890,8 @@ proven_err_t proven_loop_poll(proven_loop_t *l, proven_net_deadline_t until) {
     /* What was asked for between rounds runs before the loop sleeps; what that asks for in
      * its turn must not wait behind the sleep either. */
     loop_run_after(l);
-    if (l->after_first) until = PROVEN_NET_DONT_WAIT;
+    loop_run_done(l);
+    if (l->after_first || l->done_first) until = PROVEN_NET_DONT_WAIT;
     /* Work posted before this round must not wait behind a sleep. */
     if (loop_run_tasks(l)) until = PROVEN_NET_DONT_WAIT;
     proven_net_deadline_t next = loop_next_timer(l);
@@ -353,14 +902,27 @@ proven_err_t proven_loop_poll(proven_loop_t *l, proven_net_deadline_t until) {
     l->batch_count = count;
     for (l->batch_pos = 0; l->batch_pos < l->batch_count; ) {
         proven_net_ready_t ev = l->batch[l->batch_pos++];
-        proven_loop_io_t *io = (proven_loop_io_t *)ev.tag;
-        if (io && io->registered) io->fn(io->ctx, ev.got);
+        if (!ev.tag) continue;
+        switch (*(const proven_u8 *)ev.tag) {
+        case KIND_IO: {
+            proven_loop_io_t *io = (proven_loop_io_t *)ev.tag;
+            if (io->registered) io->fn(io->ctx, ev.got);
+            break;
+        }
+        case KIND_SOCK: sock_event(l, (loop_sock_t *)ev.tag, ev.got); break;
+        case KIND_ACCEPT: acc_event(l, (loop_acc_t *)ev.tag, ev.got); break;
+        default: break;
+        }
     }
     l->batch_count = 0; l->batch_pos = 0;
+    loop_run_done(l);
     loop_timers_advance(l);
+    loop_run_done(l);
     (void)loop_run_tasks(l);
+    loop_run_done(l);
     loop_run_after(l);
     loop_run_after(l);
+    loop_run_done(l);
     return PROVEN_OK;
 }
 

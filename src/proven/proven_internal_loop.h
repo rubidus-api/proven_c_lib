@@ -42,4 +42,44 @@ typedef struct proven_loop_after {
 void proven_loop_after_(proven_loop_t *loop, proven_loop_after_t *after, proven_loop_fn fn, void *ctx);
 void proven_loop_after_cancel_(proven_loop_t *loop, proven_loop_after_t *after);
 
+/*
+ * Internal: the readiness calls the drivers used before RFC-0025, kept under their old names
+ * only until each driver has moved to the operations of loop.h (RFC-0025 section 12, steps 2 to
+ * 5, all in one release). Not public API.
+ *
+ * `fn(ctx, got)` is called whenever the socket is ready for what `want` asks (level-triggered).
+ * proven_loop_io_remove before closing the socket; it is safe inside any callback, and nothing
+ * more is delivered for it, not even an event already collected in this round.
+ */
+typedef void (*proven_loop_io_fn)(void *ctx, proven_u8 got);
+typedef struct proven_loop_io {
+    proven_u8 kind_;            /* 0: what the loop's selector tags tell apart; leave it 0 */
+    proven_loop_io_fn fn;
+    void *ctx;
+    proven_net_handle_t handle;
+    proven_u8 want;
+    bool registered;
+} proven_loop_io_t;
+proven_err_t proven_loop_io_add(proven_loop_t *loop, proven_loop_io_t *io, proven_net_handle_t handle,
+                                proven_u8 want, proven_loop_io_fn fn, void *ctx);
+proven_err_t proven_loop_io_set(proven_loop_t *loop, proven_loop_io_t *io, proven_u8 want);
+void proven_loop_io_remove(proven_loop_t *loop, proven_loop_io_t *io);
+proven_size_t proven_loop_io_count(const proven_loop_t *loop);
+
+/* Internal, for tests: a loop over the poll kind of selector, so that Linux runs the code the
+ * Windows build runs over WSAPoll. */
+proven_err_t proven_loop_create_poll_(proven_allocator_t alloc, proven_loop_t **out);
+
+/*
+ * Internal: writing in place into the loop's send buffers (RFC-0025 section 12, D-2). For the
+ * drivers, which format a response head or seal a TLS record straight into the buffer that is
+ * sent. reserve: room for at least `min` bytes (at most PROVEN_LOOP_CHUNK_) at the end of what is
+ * waiting, perhaps more; PROVEN_ERR_AGAIN past the connection's limit, and the errors of
+ * proven_loop_send. commit: `n` bytes of that room were written; they go after what was waiting,
+ * from the loop, in one gather write with the rest.
+ */
+#define PROVEN_LOOP_CHUNK_ ((proven_size_t)16416)
+proven_err_t proven_loop_reserve_(proven_loop_t *loop, proven_loop_sock_t *sock, proven_size_t min, proven_mem_mut_t *room);
+void proven_loop_commit_(proven_loop_t *loop, proven_loop_sock_t *sock, proven_size_t n);
+
 #endif /* PROVEN_INTERNAL_LOOP_H */

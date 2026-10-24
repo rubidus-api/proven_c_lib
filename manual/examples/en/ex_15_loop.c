@@ -50,7 +50,7 @@ int main(void) {
     ex_app_t app = { 0 };
 
     // ---- a loop -------------------------------------------------------------------
-    /* A loop is a selector, a set of timers, and a queue other threads can post to. */
+    /* A loop is operations on sockets that complete, a set of timers, and a queue other threads can post to. */
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
 
     // ---- timers --------------------------------------------------------------------

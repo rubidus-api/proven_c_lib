@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 127 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 128 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -348,7 +348,7 @@ Last run, 2026-10-24, Windows 11 test VM (v0.80.0): x86-64 363 PASS, 0 FAIL, 10 
 ## Test catalog
 
 
-The hosted full run builds and executes 195 registered tests plus the 178 runnable manual examples - 373 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 208 test files: the 191 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 196 registered tests plus the 180 runnable manual examples - 376 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 209 test files: the 192 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1010,7 +1010,7 @@ Failure tip: inspect `src/proven/tls_transport.c` and the `tls` branches of `src
 
 ### `tests/test_unit_loop` - the event loop
 
-Intent: verify the loop of `loop.h` by itself - timers, functions posted from other threads, socket interest, stopping - before anything is built on it.
+Intent: verify the loop of `loop.h` by itself - timers, functions posted from other threads, stopping, and the internal readiness calls the drivers use until they move to the operations of RFC-0025 - before anything is built on it.
 
 Sub-checks:
 
@@ -1018,11 +1018,26 @@ Sub-checks:
 - Precision (RFC-0019 T-1, v0.70.0): a 3 ms timer, five times, never fires before 3 ms and on POSIX fires within 12 ms at least four times in five (the wheel alone fired it 16 to 32 ms late; Windows checks only "not early"); two timers in one 16 ms slot, set earliest first and both due by the time the loop looks, fire earliest first. A timer 16,385 ms away - a whole turn of the wheel, landing in the slot it stands in - and one 32,769 ms away (two turns) do not wake the loop: at most ten returns in 200 ms of polling with a 50 ms deadline.
 - Posts: five functions posted from the loop's thread run in the order posted; two other threads post a hundred each, and all two hundred run on the loop's thread, each thread's hundred in the order that thread posted them; no function and no loop are `PROVEN_ERR_INVALID_ARG`.
 - Stopping: `proven_loop_stop` from a posted function and from another thread makes `proven_loop_run` return `PROVEN_OK`; a loop with nothing to do sleeps until then.
-- Sockets: interest added, changed and removed, with a socket watched for nothing left alone; a registration added twice is `PROVEN_ERR_INVALID_STATE`; of two sockets ready in one round, the one the other's function removes is not delivered; removing what is not registered is harmless; a closed peer is delivered as readable; a handle that is not one is `PROVEN_ERR_INVALID_ARG`; `proven_loop_io_count`; the scratch buffer is 64 KiB and the loop itself writes nothing to it.
+- Sockets (the internal readiness calls, `proven_internal_loop.h`): interest added, changed and removed, with a socket watched for nothing left alone; a registration added twice is `PROVEN_ERR_INVALID_STATE`; of two sockets ready in one round, the one the other's function removes is not delivered; removing what is not registered is harmless; a closed peer is delivered as readable; a handle that is not one is `PROVEN_ERR_INVALID_ARG`; `proven_loop_io_count`; the scratch buffer is 64 KiB and the loop itself writes nothing to it.
 - `proven_loop_destroy` with a due timer set and a socket watched calls neither; null is accepted.
 - "After this round", an internal hook: asked for between rounds it runs first in the next poll, before a timer that was due, in the order asked and once however often asked; one asked for from inside another runs in the same poll; one cancelled by another before its turn does not run; one that asks for itself each time does not keep a poll, and a poll that could sleep does not while one waits; none of it touches a socket's watch; one left waiting when its loop is destroyed is not run.
 
 Failure tip: inspect `src/proven/loop.c` - `loop_timers_advance` for the wheel, `loop_run_tasks` for posts, `proven_loop_poll` for the order of one round. A timer that fires early is a defect; one that fires late on a loaded machine is not.
+
+### `tests/test_unit_loop_ops` - the event loop's operations
+
+Intent: verify the operations of `loop.h` that complete (RFC-0025) - receives, sends, accepts and connects - on a loop over the system's selector and again on one over the poll kind, the code the Windows build runs until its completion port. Every callback fails the test if it is called from inside the call that started its operation.
+
+Sub-checks:
+
+- Size: a `proven_loop_sock_t` is 88 bytes (120 on Windows).
+- Receives: a zero-byte receive is not answered inside the call, waits while nothing is sent, is answered once with `PROVEN_OK` and nothing taken when data arrives and not again while the data stays unread; a second receive in flight is `PROVEN_ERR_BUSY`; a receive into a buffer brings what arrived; a cancelled receive is answered once with `PROVEN_ERR_CANCELLED`, and cancelling with nothing in flight is harmless; after the far end closes, a receive into a buffer is `PROVEN_ERR_EOF` and a zero-byte one is answered; no receive after close (`PROVEN_ERR_INVALID_STATE`).
+- Sends: a small send goes straight to the socket; a wait that is already true is answered from the loop; three MiB sent to a far end that reads less per turn than is sent arrive whole and in order, a send was refused with `PROVEN_ERR_AGAIN`, `writable` came when the bytes waiting were down to what was asked, the loop never held more than its limit plus one send, and nothing after; bytes written in place (`proven_loop_reserve_`, `proven_loop_commit_`) and a send behind them arrive in order; no reservation larger than a chunk; no send or wait after close.
+- Close and failure: close with a receive, a wait and bytes in flight answers nothing inside the call, then the receive and the wait with `PROVEN_ERR_CANCELLED` once each and `closed` last, once though close was called twice, with what waited dropped; a far end that closes with bytes unread makes the loop's send fail, answered once through `writable` with no wait asked, and every later send returns that failure and takes nothing.
+- Accepts and connects: an accept is not answered inside the call; a second in flight is `PROVEN_ERR_BUSY`; three connections are each answered once, re-armed from inside the function; a cancelled accept is answered once with `PROVEN_ERR_CANCELLED` from the loop; a connect through the loop is answered `PROVEN_OK`, refuses a receive before then, and carries bytes; a connect to a port with no listener is answered `PROVEN_ERR_REFUSED`, or refused at once with nothing to close.
+- A loop destroyed with a receive and bytes in flight calls nothing (and the sanitizer runs find no leak).
+
+Failure tip: inspect `src/proven/loop.c` - `loop_run_done` and `sock_deliver` for delivery, `sock_flush` for sends, `sock_event` and `acc_event` for what the selector reports. Not covered here: the Windows completion port (RFC-0025 steps 6 and 8 run it on the Windows VM), and the kqueue path.
 
 ### `tests/test_unit_http_event` - the event-driven HTTP server
 

@@ -52,7 +52,7 @@ int main(void) {
         proven_loop_timer_cancel(loop, &t);
         PROVEN_TEST_ASSERT(!proven_loop_timer_is_set(&t), "a zeroed timer is not set, and cancelling it does nothing", "");
         /* CLAIM (s2 table): poll with PROVEN_NET_DONT_WAIT "handles only what is ready now". */
-        PROVEN_TEST_ASSERT(proven_loop_poll(loop, PROVEN_NET_DONT_WAIT) == PROVEN_OK && proven_loop_io_count(loop) == 0, "a round with nothing to do returns at once", "");
+        PROVEN_TEST_ASSERT(proven_loop_poll(loop, PROVEN_NET_DONT_WAIT) == PROVEN_OK, "a round with nothing to do returns at once", "");
         /* CLAIM (s4): post returns PROVEN_ERR_INVALID_ARG (no function). */
         PROVEN_TEST_ASSERT(proven_loop_post(loop, NULL, NULL) == PROVEN_ERR_INVALID_ARG, "posting no function is refused", "");
         /* CLAIM (s6 table): create is INVALID_ARG "for no loop, no on_request"; "A server is

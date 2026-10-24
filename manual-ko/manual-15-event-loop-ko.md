@@ -18,7 +18,7 @@
 2. [루프](#2-루프)
 3. [타이머](#3-타이머)
 4. [다른 곳에서 하는 일](#4-다른-곳에서-하는-일)
-5. [여러분 자신의 소켓 지켜보기](#5-여러분-자신의-소켓-지켜보기)
+5. [여러분 자신의 소켓](#5-여러분-자신의-소켓)
 6. [이벤트 구동 서버](#6-이벤트-구동-서버)
 7. [답하기](#7-답하기)
 8. [요청 본문](#8-요청-본문)
@@ -65,8 +65,8 @@ proven_err_t proven_loop_poll(proven_loop_t *loop, proven_net_deadline_t until);
 void proven_loop_stop(proven_loop_t *loop);
 ```
 
-`proven_loop_t`는 셀렉터([9장](manual-09-networking-ko.md) 9절), 타이머 묶음, 다른 스레드가 게시할
-수 있는 큐, 그리고 임시 작업용(scratch) 버퍼다. 만들 때 할당자(allocator)를 하나 받는다.
+`proven_loop_t`는 완료되는 소켓 작업들(5절), 타이머 묶음, 다른 스레드가 게시할 수 있는 큐, 그리고
+임시 작업용(scratch) 버퍼다. 만들 때 할당자(allocator)를 하나 받는다.
 
 | 호출 | 하는 일 | 반환 |
 |---|---|---|
@@ -74,7 +74,7 @@ void proven_loop_stop(proven_loop_t *loop);
 | `proven_loop_run(loop)` | 기다리고, 준비된 것을 부르고, 때가 된 것을 울리고, 반복한다 - `proven_loop_stop`까지. | 멈춘 뒤 `PROVEN_OK`. 기다리는 일 자체가 실패하면 오류. |
 | `proven_loop_poll(loop, until)` | 한 바퀴: 무언가 준비되거나 `until`이 지날 때까지 기다리고 처리한다. `PROVEN_NET_DONT_WAIT`는 지금 준비된 것만 처리한다. | `proven_err_t`. |
 | `proven_loop_stop(loop)` | `proven_loop_run`이 돌아오게 한다. 어느 스레드에서든, 콜백 안에서든 안전하다. | 없음. |
-| `proven_loop_destroy(loop)` | 루프를 해제한다. 아직 등록되었거나 맞춰진 것은 잊힌다. 아무것도 불리지 않는다. 널을 받는다. | 없음. |
+| `proven_loop_destroy(loop)` | 루프를 해제한다. 아직 붙어 있거나, 진행 중이거나, 맞춰진 것은 잊힌다. 아무것도 불리지 않고, 보내려고 기다리던 바이트는 해제된다. 널을 받는다. | 없음. |
 
 `proven_loop_run`은 다른 일을 하지 않는 스레드를 위한 것이다. `proven_loop_poll`은 이미 자신의 메인
 루프가 있어서 그 안에서 이 루프에 차례를 주는 프로그램을 위한 것이다.
@@ -176,7 +176,7 @@ int main(void) {
     ex_app_t app = { 0 };
 
     // ---- 루프 ---------------------------------------------------------------------
-    /* 루프는 셀렉터, 타이머 묶음, 그리고 다른 스레드가 게시할 수 있는 큐다. */
+    /* 루프는 완료되는 소켓 작업들, 타이머 묶음, 그리고 다른 스레드가 게시할 수 있는 큐다. */
     EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "루프");
 
     // ---- 타이머 --------------------------------------------------------------------
@@ -209,43 +209,270 @@ int main(void) {
 }
 ```
 
-## 5. 여러분 자신의 소켓 지켜보기
+## 5. 여러분 자신의 소켓
 
 다음 절의 서버는 이것을 대신 해 준다. 이 절은 HTTP가 아닌 프로토콜을 위한 것이다.
 
+루프는 소켓이 준비되었다고 알려 주고 나머지를 여러분에게 맡기지 않는다. 여러분이 **작업** - 수신,
+수락, 연결 - 을 시작하면, 그것이 **끝났을 때** 그 함수가 불린다. 보낼 바이트를 루프에 주면 루프가
+보낸다. Windows에서는 이것들이 I/O 완료 포트의 작업이다. Linux, BSD, macOS에서는 루프가
+[9장](manual-09-networking-ko.md)의 셀렉터(epoll, kqueue) 위에서 같은 일을 한다. 프로그램은 어디서나
+같은 호출을 보고, 같은 순서로 답을 받는다.
+
 ```c
-proven_err_t proven_loop_io_add(proven_loop_t *loop, proven_loop_io_t *io, proven_net_handle_t handle,
-                                proven_u8 want, proven_loop_io_fn fn, void *ctx);
-proven_err_t proven_loop_io_set(proven_loop_t *loop, proven_loop_io_t *io, proven_u8 want);
-void proven_loop_io_remove(proven_loop_t *loop, proven_loop_io_t *io);
+proven_err_t proven_loop_attach(proven_loop_t *loop, proven_loop_sock_t *sock, const proven_net_conn_t *conn,
+                                const proven_loop_sock_fns_t *fns, void *ctx);
+proven_err_t proven_loop_connect(proven_loop_t *loop, proven_loop_sock_t *sock, proven_net_addr_t to, proven_net_conn_t *out,
+                                 const proven_loop_sock_fns_t *fns, void *ctx);
+proven_err_t proven_loop_recv(proven_loop_t *loop, proven_loop_sock_t *sock, proven_mem_mut_t buf);
+void proven_loop_recv_cancel(proven_loop_t *loop, proven_loop_sock_t *sock);
+proven_result_size_t proven_loop_send(proven_loop_t *loop, proven_loop_sock_t *sock, proven_mem_view_t bytes);
+proven_size_t proven_loop_send_queued(const proven_loop_sock_t *sock);
+proven_err_t proven_loop_send_wait(proven_loop_t *loop, proven_loop_sock_t *sock, proven_size_t at_most);
+void proven_loop_close(proven_loop_t *loop, proven_loop_sock_t *sock);
+proven_err_t proven_loop_accept(proven_loop_t *loop, proven_loop_accept_t *acc, proven_net_listener_t *listener,
+                                proven_loop_accept_fn fn, void *ctx);
+void proven_loop_accept_cancel(proven_loop_t *loop, proven_loop_accept_t *acc);
 proven_mem_mut_t proven_loop_scratch(proven_loop_t *loop);
 proven_allocator_t proven_loop_allocator(const proven_loop_t *loop);
-proven_size_t proven_loop_io_count(const proven_loop_t *loop);
 ```
+
+루프에 준 연결은 `proven_loop_sock_t` - 여러분의 것으로, 여러분의 연결 구조체 안에 두고,
+`proven_loop_attach`부터 그 `closed`까지 옮기지 않는다 - 와 함수 네 개의 표 `proven_loop_sock_fns_t`다.
+표는 보통 같은 종류의 연결 모두가 함께 쓰는 `static const` 하나다:
+
+| 함수 | 불리는 때 |
+|---|---|
+| `received(ctx, err, n)` | 수신이 끝났다: 데이터가 왔다(0바이트 수신: `PROVEN_OK`, `n`은 0), 또는 여러분의 버퍼에 `n`바이트가 있다. `PROVEN_ERR_EOF`, `PROVEN_ERR_RESET`. `PROVEN_ERR_CANCELLED`. |
+| `writable(ctx, err)` | 보내려고 기다리는 바이트가 `proven_loop_send_wait`가 물은 만큼으로 줄었다. 또는 보내기가 실패했다(이때는 대기를 묻지 않았어도). 또는 닫기 때문에 `PROVEN_ERR_CANCELLED`. |
+| `connected(ctx, err)` | `proven_loop_connect`로 시작한 연결이 끝났다. |
+| `closed(ctx)` | 마지막: `proven_loop_close` 뒤, 그 소켓의 어떤 것도 진행 중이지 않을 때. 여기서 연결을 닫고 메모리를 해제한다. |
 
 | 호출 | 하는 일 | 반환 |
 |---|---|---|
-| `proven_loop_io_add(loop, &io, handle, want, fn, ctx)` | 소켓을 지켜본다: `want`가 묻는 것(`PROVEN_NET_READABLE`, `PROVEN_NET_WRITABLE`, 둘 다, 또는 아직 아무것도 아닌 0)에 준비되면 `fn(ctx, got)`가 불린다. | `proven_err_t`: `INVALID_ARG`. `io`가 이미 등록되어 있으면 `INVALID_STATE`. 셀렉터가 돌려준 것. |
-| `proven_loop_io_set(loop, &io, want)` | 무엇을 지켜볼지 바꾼다. | `proven_err_t`. |
-| `proven_loop_io_remove(loop, &io)` | 지켜보기를 그만둔다. | 없음. |
+| `proven_loop_attach(loop, &sock, &conn, &fns, ctx)` | 연결을 루프에 준다. 아무것도 시작하지 않는다. | `proven_err_t`: `INVALID_ARG`. |
+| `proven_loop_connect(loop, &sock, to, &conn, &fns, ctx)` | 연결을 시작한다. 새 연결은 결과와 상관없이 붙고, 어떻게 끝났는지는 `connected`가 말한다. | `proven_err_t`: 곧바로 실패한 연결. 이때는 아무것도 붙지 않는다. |
+| `proven_loop_recv(loop, &sock, buf)` | 받는다. `buf.size`가 0이면 "읽을 것이 생기면 알려 달라"다: 아무것도 가져오지 않고, 기다리는 동안 버퍼를 쥐지 않는다. 버퍼를 주면 온 것이 거기 들어 있다. | `proven_err_t`: 수신이 진행 중이면 `BUSY`. 닫은 뒤나 연결이 끝나기 전이면 `INVALID_STATE`. |
+| `proven_loop_recv_cancel(loop, &sock)` | 진행 중인 수신을 멈춘다. `PROVEN_ERR_CANCELLED`로 답이 온다. | 없음. |
+| `proven_loop_send(loop, &sock, bytes)` | 보낸다. 기다리는 것이 없으면 바이트는 곧장 소켓으로 간다. 소켓이 바로 받지 않은 것은 루프가 복사해 맡아 두며, 연결마다 64 KiB까지다. 호출이 돌아오면 여러분의 바이트는 다시 자유롭다. | `proven_result_size_t`: 받아 간 바이트 수. 나머지가 들어가지 않았으면 `.err`는 `AGAIN`. 보내기가 실패한 뒤에는 그 실패. |
+| `proven_loop_send_queued(&sock)` | 받아 간 바이트 가운데 아직 나가지 않은 수. | `proven_size_t`. |
+| `proven_loop_send_wait(loop, &sock, at_most)` | 기다리는 바이트가 `at_most` 이하가 되면 `writable`을 한 번 부르게 한다(0: 모두 나갔다). | `proven_err_t`. |
+| `proven_loop_close(loop, &sock)` | 끝: 진행 중인 것은 `PROVEN_ERR_CANCELLED`로 답하고, 아직 기다리던 바이트는 버리고, 그다음 `closed`. | 없음. |
+| `proven_loop_accept(loop, &acc, &listener, fn, ctx)` | 연결 하나를 받는다: `fn(ctx, err, &conn)`이 한 번, 연결 - 여러분의 것이니 복사해 가져간다 - 이나 연결이 없는 까닭과 함께 온다. `fn` 안에서 다시 건다. | `proven_err_t`: 수락이 진행 중이면 `BUSY`. |
+| `proven_loop_accept_cancel(loop, &acc)` | 수락을 멈춘다: 진행 중인 것은 `PROVEN_ERR_CANCELLED`로 답하고, 리스너를 닫아도 된다. | 없음. |
 | `proven_loop_scratch(loop)` | 루프의 임시 작업용 버퍼, 64 KiB. | `proven_mem_mut_t`. |
 | `proven_loop_allocator(loop)` | 루프를 만들 때 준 할당자. | `proven_allocator_t`. |
-| `proven_loop_io_count(loop)` | 지켜보는 소켓의 수. | `proven_size_t`. |
 
-`proven_loop_io_t`는 타이머와 같은 뜻에서 여러분의 것이다: 여러분의 연결 구조체 안에, 0으로
-초기화해서, 등록되어 있는 동안 옮기지 않는다. 알아 둘 것 네 가지:
+이것을 지탱하는 규칙:
 
-- **준비 상태는 레벨 트리거다.** 읽을 것이 있는 동안 함수는 바퀴마다 불린다.
-  `PROVEN_NET_DONT_WAIT`로 호출이 기다려야 한다고 할 때까지 읽거나, `PROVEN_NET_READABLE`을 그만
-  묻는다.
-- **쓸 것이 있는 동안에만 `PROVEN_NET_WRITABLE`을 묻는다.** 자리가 있는 소켓은 언제나 쓸 수 있고,
-  바퀴마다 그 말을 듣는 루프는 다른 일을 하지 못한다.
-- **닫기 전에 뺀다.** `proven_loop_io_remove`는 어느 콜백 안에서든, 그 소켓 자신의 콜백 안에서도
-  안전하고, 그 뒤로는 그 소켓에 대해 아무것도 전달되지 않는다 - 같은 바퀴에서 이미 거둔
-  이벤트조차도.
-- **임시 작업용 버퍼는 수천 개의 연결이 읽기 버퍼 하나를 나눠 쓰는 방법이다.** 거기에 읽어 들이고,
-  도착한 것을 쓰고, 아직 쓸 수 없는 것만 간직한다. 콜백이 돌아오거나, 그 버퍼를 쓸 수도 있는 다른
-  것을 부르고 나면 내용은 아무 뜻이 없다.
+- **시작한 작업은 모두 정확히 한 번 답을 받는다.** 그 함수가 루프의 스레드에서 불린다 - 그리고
+  곧바로 끝날 수 있었더라도, 그것을 시작한 호출 안에서는 결코 불리지 않는다. 성공, 실패, 취소가 모두
+  이 길로 오므로, 여러분의 함수는 여러분이 루프를 부르는 호출 안에서 돌지 않는다.
+- **소켓마다 수신은 한 번에 하나, 수락기마다 수락은 한 번에 하나.** 송신은 여러분의 작업이 아니다:
+  루프가 바이트를 받아 간다.
+- **끝은 `proven_loop_close`, 그다음 `closed`다.** `closed`까지는 루프가 소켓의 메모리를 아직 쓸 수
+  있다. 그 뒤로는 결코 건드리지 않는다. 연결 자체는 `closed`에서 닫는다. 점잖게 끝내려면 - 모두 먼저
+  보내고 - `proven_loop_send_wait(loop, &sock, 0)`으로 기다렸다가 `writable`에서 닫는다.
+- **0바이트 수신은 쉬는 연결 만 개가 읽기 버퍼를 하나도 쓰지 않는 방법이다.** 답이 오면
+  `PROVEN_NET_DONT_WAIT`로 임시 작업용 버퍼에 읽어 들이고, 온 것을 쓰고, 아직 쓸 수 없는 것만
+  간직한다. 함수가 돌아오거나, 그 버퍼를 쓸 수도 있는 다른 것을 부르고 나면 내용은 아무 뜻이 없다.
+- **느린 상대를 위해 루프가 맡아 두는 것에 한도를 둔다.** `proven_loop_send_queued`가 많이
+  기다린다고 하면, 읽기를 멈추고 `proven_loop_send_wait`에 언제 다시 가면 되는지 묻는다 - 예제가
+  그렇게 한다.
+- 연결을 직접 읽는 것은 여전히 괜찮다. 하지만 붙인 뒤로는 바이트가 순서를 지키도록
+  `proven_loop_send`로 보낸다. 연결은 한 루프에, 한 번만 준다.
+
+아래 프로그램은 루프 하나 위의 에코 서버와 그 클라이언트다. 테스트 묶음이 컴파일하고 실행한다:
+
+<!-- example: manual/examples/ko/ex_15_echo.c -->
+```c
+#include <string.h>
+
+/*
+ * 루프 하나 위의 에코 서버와 그 클라이언트. 루프의 작업만 쓴다.
+ *
+ * 서버는 자기 함수 안에서 다시 거는 수락으로 연결을 받고, 연결마다 0바이트 수신으로 데이터를
+ * 기다린다: 쉬는 연결은 읽기 버퍼를 쥐지 않는다. 데이터가 오면 루프의 scratch 버퍼로 읽어 되돌려
+ * 보낸다. 소켓이 바로 받지 않은 것은 루프가 맡아 둔다. 클라이언트도 루프를 통해 연결하고, 타이머
+ * 아래에서 자기 버퍼로 받는 수신으로 읽는다.
+ */
+
+#define MESSAGE "every operation is answered exactly once"
+#define ROUNDS 3
+
+typedef struct ex_app ex_app_t;
+
+typedef struct {                /* 서버의 연결 하나 */
+    ex_app_t *app;
+    proven_loop_sock_t sock;
+    proven_net_conn_t conn;
+    bool ending, used;
+} ex_peer_t;
+
+struct ex_app {
+    proven_loop_t *loop;
+    proven_net_listener_t listener;
+    proven_loop_accept_t acc;
+    ex_peer_t peers[4];
+    int peers_closed;
+    /* 클라이언트 */
+    proven_loop_sock_t sock;
+    proven_net_conn_t conn;
+    proven_loop_timer_t deadline;
+    proven_byte_t buf[64];
+    proven_size_t have;
+    int rounds;
+    bool echoed, client_closed, accepting_ended;
+};
+
+// ---- 서버의 연결 ---------------------------------------------------------------------
+
+static void peer_end(ex_peer_t *p) {
+    /* 클라이언트가 할 말을 다 했다: 보낼 것이 모두 나간 뒤에 닫는다. */
+    p->ending = true;
+    if (proven_loop_send_wait(p->app->loop, &p->sock, 0) != PROVEN_OK) proven_loop_close(p->app->loop, &p->sock);
+}
+
+/* 온 것을 읽어 되돌려 보낸다. 읽는 것보다 빨리 보내는 클라이언트는 루프가 맡아 둘 것을 끝없이
+ * 늘리므로, 기다리는 것이 32 KiB를 넘으면 서버는 그것이 따라잡을 때까지 읽기를 멈춘다: 송신 대기를
+ * 걸고, 읽기는 `writable`에서 다시 시작한다. */
+static void peer_read(ex_peer_t *p) {
+    proven_loop_t *loop = p->app->loop;
+    proven_mem_mut_t scratch = proven_loop_scratch(loop);
+    scratch.size = 16384;
+    for (;;) {
+        if (proven_loop_send_queued(&p->sock) > 32768) {
+            if (proven_loop_send_wait(loop, &p->sock, 0) != PROVEN_OK) proven_loop_close(loop, &p->sock);
+            return;
+        }
+        proven_result_size_t r = proven_net_read(&p->conn, scratch, PROVEN_NET_DONT_WAIT);
+        if (r.err == PROVEN_ERR_TIMEOUT) break;                 /* 다 읽었다: 더 오기를 기다린다 */
+        if (r.err != PROVEN_OK) { peer_end(p); return; }        /* PROVEN_ERR_EOF: 클라이언트가 끝냈다 */
+        proven_result_size_t s = proven_loop_send(loop, &p->sock, (proven_mem_view_t){ scratch.ptr, r.value });
+        if (s.err != PROVEN_OK) { proven_loop_close(loop, &p->sock); return; }
+    }
+    /* 이 연결은 기다리는 동안 아무것도 쥐지 않는다: 0바이트 수신은 버퍼를 받지 않는다. */
+    if (proven_loop_recv(loop, &p->sock, (proven_mem_mut_t){ 0 }) != PROVEN_OK) proven_loop_close(loop, &p->sock);
+}
+
+static void peer_received(void *ctx, proven_err_t err, proven_size_t n) {
+    ex_peer_t *p = ctx;
+    (void)n;                                                    /* 0바이트 수신은 아무것도 가져오지 않는다 */
+    if (err != PROVEN_OK) return;                               /* PROVEN_ERR_CANCELLED: 닫히는 중이다 */
+    peer_read(p);
+}
+
+static void peer_writable(void *ctx, proven_err_t err) {
+    ex_peer_t *p = ctx;
+    if (err == PROVEN_ERR_CANCELLED) return;
+    if (err != PROVEN_OK || p->ending) proven_loop_close(p->app->loop, &p->sock);
+    else peer_read(p);
+}
+
+static void peer_closed(void *ctx) {
+    ex_peer_t *p = ctx;
+    (void)proven_net_close(&p->conn);                           /* 연결 자체는 여기서, 마지막으로 닫는다 */
+    p->used = false;
+    /* 이 프로그램의 단 하나뿐인 클라이언트가 갔다: 연결 받기를 멈춘다. */
+    if (++p->app->peers_closed == 1) proven_loop_accept_cancel(p->app->loop, &p->app->acc);
+}
+
+static const proven_loop_sock_fns_t peer_fns = { .received = peer_received, .writable = peer_writable, .closed = peer_closed };
+
+static void on_accept(void *ctx, proven_err_t err, proven_net_conn_t *conn) {
+    ex_app_t *app = ctx;
+    if (err != PROVEN_OK) {                                     /* PROVEN_ERR_CANCELLED: 이제 리스너를 닫아도 된다 */
+        (void)proven_net_listener_close(&app->listener);
+        app->accepting_ended = true;
+        return;
+    }
+    ex_peer_t *p = NULL;
+    for (int i = 0; i < 4 && !p; ++i) if (!app->peers[i].used) p = &app->peers[i];
+    if (!p) { (void)proven_net_close(conn); }
+    else {
+        *p = (ex_peer_t){ .app = app, .conn = *conn, .used = true };    /* 이제 이 연결은 우리 것이다 */
+        if (proven_loop_attach(app->loop, &p->sock, &p->conn, &peer_fns, p) != PROVEN_OK ||
+            proven_loop_recv(app->loop, &p->sock, (proven_mem_mut_t){ 0 }) != PROVEN_OK) { (void)proven_net_close(&p->conn); p->used = false; }
+    }
+    /* 안에서 다시 건다: 이미 기다리는 연결은 한 바퀴를 더 돌지 않고 받는다. */
+    if (proven_loop_accept(app->loop, &app->acc, &app->listener, on_accept, app) != PROVEN_OK) app->accepting_ended = true;
+}
+
+// ---- 클라이언트 ----------------------------------------------------------------------
+
+static void client_deadline(void *ctx) {
+    ex_app_t *app = ctx;
+    proven_loop_recv_cancel(app->loop, &app->sock);             /* 그 `received`가 PROVEN_ERR_CANCELLED로 온다 */
+}
+
+static void client_send(ex_app_t *app) {
+    app->have = 0;
+    proven_result_size_t s = proven_loop_send(app->loop, &app->sock, (proven_mem_view_t){ (const proven_byte_t *)MESSAGE, strlen(MESSAGE) });
+    /* 클라이언트 자신의 버퍼로 받는 수신. 버퍼는 `received`까지 루프의 것이다. */
+    if (s.err != PROVEN_OK || proven_loop_recv(app->loop, &app->sock, (proven_mem_mut_t){ app->buf, sizeof app->buf }) != PROVEN_OK) {
+        proven_loop_close(app->loop, &app->sock);
+        return;
+    }
+    proven_loop_timer_set(app->loop, &app->deadline, 5000, client_deadline, app);
+}
+
+static void client_received(void *ctx, proven_err_t err, proven_size_t n) {
+    ex_app_t *app = ctx;
+    if (err != PROVEN_OK) { proven_loop_close(app->loop, &app->sock); return; }    /* 기한이 지났거나 서버가 갔다 */
+    app->have += n;
+    if (app->have < strlen(MESSAGE)) {                          /* 스트림이다: 메아리가 조각으로 올 수 있다 */
+        if (proven_loop_recv(app->loop, &app->sock, (proven_mem_mut_t){ app->buf + app->have, sizeof app->buf - app->have }) != PROVEN_OK)
+            proven_loop_close(app->loop, &app->sock);
+        return;
+    }
+    proven_loop_timer_cancel(app->loop, &app->deadline);
+    if (memcmp(app->buf, MESSAGE, strlen(MESSAGE)) != 0) { proven_loop_close(app->loop, &app->sock); return; }
+    if (++app->rounds < ROUNDS) { client_send(app); return; }
+    app->echoed = true;
+    proven_loop_close(app->loop, &app->sock);                   /* 서버가 끝을 읽고 자기 쪽을 닫는다 */
+}
+
+static void client_connected(void *ctx, proven_err_t err) {
+    ex_app_t *app = ctx;
+    if (err != PROVEN_OK) { proven_loop_close(app->loop, &app->sock); return; }
+    client_send(app);
+}
+
+static void client_closed(void *ctx) {
+    ex_app_t *app = ctx;
+    (void)proven_net_close(&app->conn);
+    app->client_closed = true;
+}
+
+static const proven_loop_sock_fns_t client_fns = {
+    .received = client_received, .connected = client_connected, .closed = client_closed
+};
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    static ex_app_t app;
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "루프");
+
+    // ---- 서버 ----------------------------------------------------------------------
+    proven_net_addr_t bound;
+    EXAMPLE_REQUIRE(proven_net_listen(proven_net_addr_ipv4(127, 0, 0, 1, 0), 16, &app.listener, &bound) == PROVEN_OK, "빈 포트의 리스너");
+    EXAMPLE_REQUIRE(proven_loop_accept(app.loop, &app.acc, &app.listener, on_accept, &app) == PROVEN_OK, "수락 시작");
+
+    // ---- 클라이언트 ------------------------------------------------------------------
+    EXAMPLE_REQUIRE(proven_loop_connect(app.loop, &app.sock, bound, &app.conn, &client_fns, &app) == PROVEN_OK, "연결 시작");
+
+    // ---- 모든 것이 끝날 때까지 돈다 ----------------------------------------------------
+    proven_net_deadline_t end = proven_net_deadline_in(10000);
+    while (!(app.client_closed && app.accepting_ended) && proven_time_monotonic_now() < end) {
+        EXAMPLE_REQUIRE(proven_loop_poll(app.loop, proven_net_deadline_in(100)) == PROVEN_OK, "한 바퀴");
+    }
+    EXAMPLE_REQUIRE(app.echoed && app.rounds == ROUNDS, "메시지가 세 번 되돌아왔다");
+    EXAMPLE_REQUIRE(app.peers_closed == 1 && app.accepting_ended && !proven_net_listener_is_open(&app.listener),
+                    "서버는 클라이언트 다음에 자기 쪽을 닫고 수락을 멈췄다");
+    proven_loop_destroy(app.loop);
+    return EXAMPLE_OK();
+}
+```
 
 ## 6. 이벤트 구동 서버
 
@@ -1885,8 +2112,10 @@ Linux에서 등록된 테스트는 한가한 평문 HTTP 연결 하나에 힙 44
   `decompress` - Zstandard는 `decompress_zstd`, Brotli는 `decompress_brotli` - 다.)
 - 루프로 **파일, 시그널, 자식 프로세스 지켜보기**. 루프는 소켓을 지켜본다.
 
-**어떻게 시험했나.** 등록된 테스트는 루프의 타이머, 게시, 소켓 관심을 한 스레드에서, 그리고 여러
-스레드에서 몬다 - 해당 콜백 안에서의 제거와 취소를 포함해서. 그리고 서버를 루프백 위에서, 평문과
+**어떻게 시험했나.** 등록된 테스트는 루프의 타이머와 게시를 한 스레드에서, 그리고 여러 스레드에서
+몬다 - 해당 콜백 안에서의 취소를 포함해서. 5절의 모든 작업을 시스템의 셀렉터에서, 그리고 poll 종류에서
+다시 몬다 - 각각 한 번 답을 받고, 그것을 시작한 호출 안에서는 결코 받지 않음을, 취소, 모든 것이 진행
+중일 때의 닫기, 실패하는 송신, 느린 독자에게 가는 3 MiB를 거쳐 확인한다. 그리고 서버를 루프백 위에서, 평문과
 TLS로, 7절과 9절 표의 모든 행에 걸쳐 돌린다: 즉시 하는 답, 타이머에서 하는 답, 다른 스레드에서 하는
 답, pause와 resume이 있는 업로드, 쓰기가 한 번 거절될 때까지 읽지 않는 클라이언트로의 16 MB 다운로드,
 파이프라이닝, 각 거절, 각 타임아웃, 사라지는 클라이언트, 답하지 않은 요청을 둔 채 해제되는 서버 -

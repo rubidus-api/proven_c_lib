@@ -5,6 +5,7 @@
 #include "proven/http_event_client.h"
 #include "proven/url.h"
 #include "proven_internal_http_coding.h"
+#include "proven_internal_loop.h"
 
 /*
  * Internal: the event-driven client's own types, for the two files that are it -

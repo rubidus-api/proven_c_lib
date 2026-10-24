@@ -131,6 +131,16 @@ proven_sys_net_result_t proven_sys_net_recv(proven_sys_socket_t sock, void *buf,
 proven_sys_net_result_t proven_sys_net_send(proven_sys_socket_t sock, const void *buf, proven_size_t len,
                                             proven_size_t *sent);
 
+/** One buffer of proven_sys_net_send_vec. */
+typedef struct { const void *ptr; proven_size_t len; } proven_sys_net_vec_t;
+/** The most buffers one proven_sys_net_send_vec offers; the rest wait for the next call. */
+#define PROVEN_SYS_NET_VEC_MAX 16
+
+/** Send from up to PROVEN_SYS_NET_VEC_MAX buffers in order, in one call; `sent` says how many
+ *  bytes went, which may end inside any of them. */
+proven_sys_net_result_t proven_sys_net_send_vec(proven_sys_socket_t sock, const proven_sys_net_vec_t *vec, proven_size_t count,
+                                                proven_size_t *sent);
+
 /** Receive one datagram. TRUNCATED when it did not fit: `received` bytes are in `buf`, the rest is lost. */
 proven_sys_net_result_t proven_sys_net_recv_from(proven_sys_socket_t sock, void *buf, proven_size_t cap,
                                                  proven_size_t *received, proven_sys_net_addr_t *from);

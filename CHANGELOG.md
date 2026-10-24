@@ -25,7 +25,28 @@ decisions of 2026-10-24: one release with everything). Work in progress.
 
 - **`PROVEN_ERR_CANCELLED`**, after `PROVEN_ERR_PROTOCOL`: an operation started on an event loop
   was cancelled before it finished. **`PROVEN_ERR_LAST` moves to it**; an exhaustive `switch`
-  over `proven_err_t` needs the new case. Alias `XCV_ERR_CANCELLED`. Nothing returns it yet.
+  over `proven_err_t` needs the new case. Alias `XCV_ERR_CANCELLED`.
+- **The loop's operations that complete** (`loop.h`, chapter 15 section 5): a connection given
+  to the loop (`proven_loop_sock_t`, `proven_loop_attach`, or `proven_loop_connect`) with a table
+  of functions (`proven_loop_sock_fns_t`: `received`, `writable`, `connected`, `closed`);
+  `proven_loop_recv` (a receive of zero bytes holds no buffer while it waits, or a receive into a
+  buffer) and `proven_loop_recv_cancel`; `proven_loop_send` (straight to the socket, the rest
+  copied into the loop's buffers, up to 64 KiB per connection), `proven_loop_send_queued` and
+  `proven_loop_send_wait`; `proven_loop_close`, after which `closed` comes last; and
+  `proven_loop_accept` with `proven_loop_accept_cancel`. Every operation is answered exactly
+  once, on the loop's thread, never from inside the call that started it; a cancelled one with
+  `PROVEN_ERR_CANCELLED`. A `proven_loop_sock_t` is 88 bytes (120 on Windows). Aliases for each.
+  A new manual example, `ex_15_echo.c`, uses every one; `tests/test_unit_loop_ops` runs every
+  operation on the system's selector and on the poll kind.
+
+### Removed
+
+- **`proven_loop_io_add`, `proven_loop_io_set`, `proven_loop_io_remove`, `proven_loop_io_count`,
+  `proven_loop_io_t` and `proven_loop_io_fn`** (the owner's decision of 2026-10-23: removed in the
+  release that brings the operations, with no deprecation period), and their six `xcv_` aliases.
+  A program that watched a socket of its own with them now starts a receive of zero bytes
+  (`proven_loop_recv` with an empty buffer) where it asked for readable, and sends with
+  `proven_loop_send` instead of asking for writable.
 
 ## [0.80.0] - 2026-10-24
 

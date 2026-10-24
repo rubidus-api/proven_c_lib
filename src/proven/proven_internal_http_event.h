@@ -4,6 +4,7 @@
 #include "proven/http_event.h"
 #include "proven/deflate.h"
 #include "proven_internal_http_coding.h"
+#include "proven_internal_loop.h"
 
 /*
  * Internal: a connection of the event-driven server taken over by another protocol.
