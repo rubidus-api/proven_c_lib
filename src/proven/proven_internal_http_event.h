@@ -85,6 +85,7 @@ proven_size_t proven_http_event_raw_held_(const proven_http_stream_t *stream);
 
 #define EV_MAX_LISTENERS 4
 #define EV_LINGER_MS 1000u
+#define EV_COMPACT_MS 1000u        /* a TLS connection quiet this long gives its record keys' memory back (RFC-0025) */
 #define EV_READ_BYTES ((proven_size_t)64 * 1024)
 #define EV_PLAIN_BYTES ((proven_size_t)16 * 1024 + 512)
 
@@ -146,6 +147,7 @@ struct proven_http_stream {
     bool attached;                     /* given to the loop: freed only after its `closed` */
     bool recv_armed;                   /* a receive of zero bytes is in flight */
     bool sock_gone;                    /* `closed` has come */
+    bool compact_due;                  /* the timer is set for compacting the TLS keys, not for the idle timeout */
     proven_u16 local_port;             /* the port the connection came in on: the one `Alt-Svc` names */
 };
 

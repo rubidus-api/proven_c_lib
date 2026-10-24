@@ -1632,6 +1632,56 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a quiet connection gives its keys back",
+        "RFC-0025 step 3: proven_tls_compact_ wipes and frees the expanded record keys and keeps what remakes them; the next call that needs them remakes them, for every AEAD suite of both versions.",
+        "Check proven_tls_compact_, keys_live, seed_take and seed_give in src/proven/tls13.c.");
+    {
+        proven_tls_options_t o12 = base_options(), o13 = base_options();
+        o12.max_version = PROVEN_TLS_VERSION_1_2;
+        o13.min_version = PROVEN_TLS_VERSION_1_3;
+        proven_tls_config_t *c12 = client_config(&o12), *c13 = client_config(&o13), *sc = server_config(TP_SERVER_ED, TP_SERVER_ED_KEY, NULL);
+        static const proven_u16 suites13[3] = { PROVEN_TLS_AES_128_GCM_SHA256, PROVEN_TLS_AES_256_GCM_SHA384, PROVEN_TLS_CHACHA20_POLY1305_SHA256 };
+        static const proven_u16 suites12[3] = { 0xc02b, 0xc02c, 0xcca9 };
+        bool all = true;
+        proven_size_t freed_min = (proven_size_t)-1;
+        for (int k = 0; k < 6; ++k) {
+            const bool v13 = k < 3;
+            const proven_size_t before = g_count.live;
+            if (v13) proven_tls_test_knobs(suites13[k], false); else proven_tls_test_only_suite12(suites12[k - 3]);
+            proven_tls_conn_t *fresh = NULL;
+            PROVEN_TEST_ASSERT(proven_tls_server_create(sc, &fresh) == PROVEN_OK, "a server connection", "");
+            all = all && !proven_tls_compact_(fresh);                     /* no keys yet: nothing to give back */
+            proven_tls_conn_destroy(fresh);
+            pair_t p = connect_pair(v13 ? c13 : c12, sc, "example.test", NULL, NULL, NULL);
+            if (v13) proven_tls_test_knobs(0, false); else proven_tls_test_only_suite12(0);
+            const proven_u16 want = v13 ? suites13[k] : suites12[k - 3];
+            bool ok = both_up(&p) && proven_tls_cipher_suite(p.c) == want && transfer(p.c, p.s, 30000, 1) && transfer(p.s, p.c, 30000, 2);
+            const proven_size_t live = g_count.live;
+            ok = ok && proven_tls_compact_(p.c) && proven_tls_compact_(p.s) && proven_tls_is_compact_(p.c) && proven_tls_is_compact_(p.s);
+            ok = ok && !proven_tls_compact_(p.c);                          /* compact already */
+            if (live - g_count.live < freed_min) freed_min = live - g_count.live;
+            /* Remade on use, both directions, and the sequence numbers carried on. */
+            ok = ok && transfer(p.c, p.s, 20000, 3) && transfer(p.s, p.c, 20000, 4) && !proven_tls_is_compact_(p.c) && !proven_tls_is_compact_(p.s);
+            ok = ok && g_count.live == live;
+            /* Again, and a key update from the compact state (TLS 1.3). */
+            ok = ok && proven_tls_compact_(p.c) && proven_tls_compact_(p.s);
+            if (v13) ok = ok && proven_tls_key_update(p.c) == PROVEN_OK;
+            ok = ok && transfer(p.c, p.s, 5000, 5) && transfer(p.s, p.c, 5000, 6);
+            /* Destroyed while compact: nothing left behind. */
+            ok = ok && proven_tls_compact_(p.c) && proven_tls_compact_(p.s);
+            close_pair(&p);
+            ok = ok && g_count.live == before;
+            if (!ok) PROVEN_TEST_INFO("suite {} failed", PROVEN_ARG((int)want));
+            all = all && ok;
+        }
+        fprintf(stderr, "[PROVEN][TEST][INFO] compacting a client and a server connection gives back at least %u bytes\n", (unsigned)freed_min);
+        PROVEN_TEST_ASSERT(all, "for the three suites of TLS 1.3 and three of TLS 1.2: compacted, data both ways, a key update, and a destroy while compact, with nothing lost", "");
+        const proven_size_t each = sizeof(proven_tls_live_keys_t) - 2 * sizeof(proven_tls_key_seed_t);
+        PROVEN_TEST_ASSERT(freed_min == 2 * each && each >= 600, "each connection gives back its two expanded contexts less the seeds it keeps (over 600 bytes)", "");
+        proven_tls_config_destroy(sc); proven_tls_config_destroy(c13); proven_tls_config_destroy(c12);
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a wire that lies",
         "One changed bit anywhere in either direction never produces two established connections; input that is not TLS is refused at once.",
         "Check record_process, handshake_bytes and the transcript handling.");

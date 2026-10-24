@@ -182,6 +182,13 @@ static void ev_arm(proven_http_stream_t *c) {
     else if (c->h.state == EV_HEAD) ms = c->head_started ? s->cfg.head_timeout_ms : s->cfg.idle_timeout_ms;
     else if (c->h.state == EV_BODY && !c->paused) ms = s->cfg.body_timeout_ms;
     /* EV_RESPOND with nothing held: the handler is thinking. That is its business. */
+    /* A TLS connection between requests: after a quiet second its keys are compacted, and then
+     * the rest of the idle timeout runs (ev_on_timer). */
+    c->compact_due = false;
+    if (c->tls && c->h.state == EV_HEAD && !c->head_started && ms > EV_COMPACT_MS && ev_buffered(c) == 0 && !proven_tls_is_compact_(c->tls)) {
+        ms = EV_COMPACT_MS;
+        c->compact_due = true;
+    }
     if (ms == 0) proven_loop_timer_cancel(s->loop, &c->timer);
     else proven_loop_timer_set(s->loop, &c->timer, ms, ev_on_timer, c);
 }
@@ -247,23 +254,70 @@ static bool ev_putv(proven_http_stream_t *c, const proven_mem_view_t *parts, pro
 
 #define EV_V(p, n) ((proven_mem_view_t){ .ptr = (const proven_byte_t *)(p), .size = (n) })
 
+_Static_assert(PROVEN_LOOP_CHUNK_ >= PROVEN_TLS_MAX_PLAINTEXT + PROVEN_TLS_AEAD_MAX_RECORD_EXTRA, "a whole TLS record fits a send chunk");
+
+/* Seal application data straight into the loop's send chunks (RFC-0025 step 3): no copy of the
+ * records, and no output buffer in the engine. The engine's own records - an alert, a KeyUpdate -
+ * leave first. `*taken` is the plaintext sealed; `*fallback` says that this suite cannot be
+ * sealed this way (CBC) and proven_tls_write is the way. False when the connection died. */
+static bool ev_seal(proven_http_stream_t *c, const proven_byte_t *p, proven_size_t n, proven_size_t *taken, bool *fallback) {
+    proven_loop_t *loop = c->h.server->loop;
+    *taken = 0;
+    *fallback = false;
+    while (*taken < n) {
+        proven_mem_view_t own = proven_tls_pending_output(c->tls);
+        if (own.size > 0) {
+            if (!ev_put(c, own.ptr, own.size)) return false;
+            proven_tls_output_sent(c->tls, own.size);
+        }
+        proven_size_t want = n - *taken < PROVEN_TLS_MAX_PLAINTEXT ? n - *taken : PROVEN_TLS_MAX_PLAINTEXT;
+        want += PROVEN_TLS_AEAD_MAX_RECORD_EXTRA;
+        proven_mem_mut_t room;
+        proven_err_t e = proven_loop_reserve_(loop, &c->lsock, want, &room);
+        if (e != PROVEN_OK) { ev_kill(c, e == PROVEN_ERR_NOMEM || e == PROVEN_ERR_AGAIN ? PROVEN_ERR_NOMEM : PROVEN_ERR_RESET); return false; }
+        proven_size_t written = 0;
+        proven_result_size_t r = proven_tls_seal_into_(c->tls, (proven_mem_view_t){ .ptr = p + *taken, .size = n - *taken }, room, &written);
+        if (r.err == PROVEN_ERR_UNSUPPORTED) { *fallback = true; return true; }
+        if (r.err != PROVEN_OK) { ev_kill(c, r.err == PROVEN_ERR_NOMEM ? PROVEN_ERR_NOMEM : PROVEN_ERR_RESET); return false; }
+        if (written > 0) proven_loop_commit_(loop, &c->lsock, written);
+        *taken += r.value;
+        if (r.value == 0 && proven_tls_pending_output(c->tls).size == 0) break;
+    }
+    proven_mem_view_t own = proven_tls_pending_output(c->tls);
+    if (own.size > 0) {
+        if (!ev_put(c, own.ptr, own.size)) return false;
+        proven_tls_output_sent(c->tls, own.size);
+    }
+    return true;
+}
+
 /* Move what waits for the TLS engine through it and on to the loop. (In the clear the loop
  * has everything already.) False when the connection died. */
 static bool ev_flush(proven_http_stream_t *c) {
     if (c->dead) return false;
     if (!c->tls) return true;
     for (;;) {
-        if (buf_pending(&c->out) > 0 && proven_tls_is_established(c->tls)) {
+        proven_mem_view_t pending = proven_tls_pending_output(c->tls);
+        if (pending.size > 0) {
+            if (!ev_put(c, pending.ptr, pending.size)) return false;
+            proven_tls_output_sent(c->tls, pending.size);
+        }
+        if (buf_pending(&c->out) == 0 || !proven_tls_is_established(c->tls)) break;
+        proven_size_t taken = 0;
+        bool fallback = false;
+        if (!ev_seal(c, c->out.ptr + c->out.off, buf_pending(&c->out), &taken, &fallback)) return false;
+        if (fallback) {
             proven_result_size_t w = proven_tls_write(c->tls, (proven_mem_view_t){ .ptr = c->out.ptr + c->out.off, .size = buf_pending(&c->out) });
             if (w.err != PROVEN_OK) { ev_kill(c, PROVEN_ERR_RESET); return false; }
-            c->out.off += w.value;
+            taken = w.value;
         }
-        proven_mem_view_t pending = proven_tls_pending_output(c->tls);
-        if (pending.size == 0) break;
-        if (!ev_put(c, pending.ptr, pending.size)) return false;
-        proven_tls_output_sent(c->tls, pending.size);
+        c->out.off += taken;
+        if (taken == 0 && proven_tls_pending_output(c->tls).size == 0) break;
     }
     if (buf_pending(&c->out) == 0) buf_release(c->h.server, &c->out);
+    /* The records sealed in place leave now, as written: a connection ended a moment later
+     * still delivers what was written before. */
+    proven_loop_flush_(c->h.server->loop, &c->lsock);
     return true;
 }
 
@@ -576,6 +630,16 @@ static void ev_sock_closed(void *ctx) {
 
 static void ev_on_timer(void *ctx) {
     proven_http_stream_t *c = ctx;
+    if (c->compact_due) {
+        c->compact_due = false;
+        if (!c->dead && c->tls && c->h.state == EV_HEAD && !c->head_started) {
+            (void)proven_tls_compact_(c->tls);
+            proven_loop_timer_set(c->h.server->loop, &c->timer, c->h.server->cfg.idle_timeout_ms - EV_COMPACT_MS, ev_on_timer, c);
+        } else {
+            ev_arm(c);                             /* what it waits for changed without a new timer: set the right one */
+        }
+        return;
+    }
     ev_enter(c);
     if (c->h.state == EV_RAW) { if (c->raw) (*(const proven_http_event_raw_ops_t *const *)c->raw)->on_timer(c->raw); }
     else if (c->h.state == EV_HEAD && c->head_started && ev_buffered(c) == 0) ev_reject(c, 408, PROVEN_ERR_TIMEOUT);
@@ -1415,12 +1479,15 @@ proven_size_t proven_http_event_raw_offer_(proven_http_stream_t *c, proven_mem_v
         proven_size_t n = EV_OFFER_HOLD - held;
         if (n > data.size) n = data.size;
         if (c->tls) {
-            /* A record's worth at a time. */
-            proven_mem_view_t piece = { .ptr = data.ptr, .size = n < 16384 ? n : 16384 };
-            proven_result_size_t w = proven_tls_write(c->tls, piece);
-            if (w.err != PROVEN_OK) ev_kill(c, PROVEN_ERR_RESET);
-            else taken = w.value;
-            if (!c->dead) (void)ev_flush(c);
+            /* Sealed into the loop's chunks; a CBC suite through the engine, a record's worth at a time. */
+            bool fallback = false;
+            if (ev_flush(c) && ev_seal(c, data.ptr, n, &taken, &fallback) && fallback) {
+                proven_mem_view_t piece = { .ptr = data.ptr, .size = n < 16384 ? n : 16384 };
+                proven_result_size_t w = proven_tls_write(c->tls, piece);
+                if (w.err != PROVEN_OK) ev_kill(c, PROVEN_ERR_RESET);
+                else taken = w.value;
+                if (!c->dead) (void)ev_flush(c);
+            }
         } else if (ev_put(c, data.ptr, n)) {
             taken = n;
         }

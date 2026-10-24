@@ -575,6 +575,18 @@ static void memory_case_tls(void) {
     const proven_size_t each = (atomic_load(&count.live) - base) / N;
     fprintf(stderr, "[PROVEN][TEST][INFO] an idle TLS connection holds %u bytes\n", (unsigned)each);
     PROVEN_TEST_ASSERT(each < 2048, "an idle TLS connection holds less than 2 KiB: the connection's struct and the engine's keys, no buffer", "");
+    /* Quiet for more than a second, its record keys are compacted (RFC-0025 step 3). */
+    proven_time_sleep(1200);
+    const proven_size_t quiet = (atomic_load(&count.live) - base) / N;
+    fprintf(stderr, "[PROVEN][TEST][INFO] an idle TLS connection quiet for a second holds %u bytes\n", (unsigned)quiet);
+    /* (Most were quiet that long already at the first count: forty handshakes in turn take more
+     * than a second. What compacting gives back is measured exactly in test_unit_tls.) */
+    PROVEN_TEST_ASSERT(quiet < 1152 && quiet <= each, "quiet for a second, it holds under 1,152 bytes: its keys' expanded contexts are given back", "");
+    for (int i = 0; i < N; ++i) {
+        proven_err_t end = PROVEN_OK;
+        PROVEN_TEST_ASSERT(raw_send(&socks[i], "GET / HTTP/1.1\r\nHost: x\r\n\r\n") && raw_read(&socks[i], text, sizeof text, 200, &end) > 0 && strstr(text, "\r\n\r\nok") != NULL,
+            "and a request after the quiet second is answered: the keys are remade", "");
+    }
     for (int i = 0; i < N; ++i) raw_close(&socks[i]);
     for (int i = 0; i < 3000 && connections() > 0; ++i) proven_time_sleep(2);
     PROVEN_TEST_ASSERT(connections() == 0 && atomic_load(&count.live) == base, "closed by their clients, they have given everything back", "");

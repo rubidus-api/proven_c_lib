@@ -76,6 +76,17 @@ typedef struct {
     proven_u64 seq;
 } proven_tls_keys_t;
 
+/* A connection's two directions, in an allocation of their own; and what remakes one while a
+ * quiet connection has given that allocation back (proven_tls_compact_). */
+typedef struct { proven_tls_keys_t read, write; } proven_tls_live_keys_t;
+typedef struct {
+    proven_byte_t key[32];
+    proven_byte_t iv[12];
+    proven_u64 seq;
+    proven_u8 key_len;
+    bool active, chacha;
+} proven_tls_key_seed_t;
+
 /* Install the key and IV derived from a traffic secret, and start the sequence at zero. */
 void proven_tls13_set_keys(proven_tls_keys_t *keys, const proven_tls_suite_t *suite, const proven_byte_t *traffic_secret);
 
@@ -434,6 +445,26 @@ bool proven_tls_test_send_handshake(proven_tls_conn_t *conn, proven_byte_t type)
 /* A copy of a connection's sending keys and application secret, for a test that must forge the
  * next record a peer would send. */
 void proven_tls_test_peek_write(const proven_tls_conn_t *conn, proven_tls_keys_t *keys, proven_byte_t secret[48]);
+
+/* RFC-0025 step 3: a quiet connection gives back its record keys' memory - the two expanded
+ * contexts, about 850 bytes, wiped - and keeps the keys they were made from; the next call that
+ * needs them remakes them (on AES-NI in about a tenth of a microsecond each). False when it
+ * cannot: no keys yet, a handshake in progress, QUIC mode, a CBC suite, a dead connection, or
+ * compact already. For a driver that knows its connection is quiet (the event server, after a
+ * second). SECRET: what is kept is key material, wiped when remade and at destroy. */
+bool proven_tls_compact_(proven_tls_conn_t *conn);
+bool proven_tls_is_compact_(const proven_tls_conn_t *conn);
+
+/* RFC-0025 step 3: application data sealed into records straight into `out` - a driver's send
+ * buffer - instead of the engine's own output. As many whole records as fit (a record is cut to
+ * the room left only when at least 256 bytes of it fit); `.value` is the plaintext taken and
+ * `*written` the bytes of records written. Takes nothing while the engine holds records of its own
+ * (proven_tls_pending_output: a KeyUpdate, an alert, a handshake message), which must leave first.
+ * PROVEN_ERR_UNSUPPORTED on a CBC suite (proven_tls_write instead); otherwise the errors of
+ * proven_tls_write. A record needs PROVEN_TLS_AEAD_MAX_RECORD_EXTRA bytes
+ * beyond its plaintext. */
+#define PROVEN_TLS_AEAD_MAX_RECORD_EXTRA (PROVEN_TLS_RECORD_HEADER + 8 + 16)
+proven_result_size_t proven_tls_seal_into_(proven_tls_conn_t *conn, proven_mem_view_t src, proven_mem_mut_t out, proven_size_t *written);
 /* A client whose first message and X25519 key are given, to replay a published handshake. */
 proven_err_t proven_tls_client_create_replay(const proven_tls_config_t *config, proven_u8str_view_t server_name,
                                              proven_mem_view_t hello, const proven_byte_t x25519_private[32], proven_tls_conn_t **out);

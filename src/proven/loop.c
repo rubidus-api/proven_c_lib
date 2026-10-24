@@ -379,8 +379,9 @@ static void sock_deliver_writable(loop_sock_t *s, proven_err_t err) {
     if (s->fns->writable) s->fns->writable(s->ctx, err);
 }
 
-/* Write what waits; answer a wait that has come true, or the failure. Only ever from the loop. */
-static void sock_flush(proven_loop_t *l, loop_sock_t *s) {
+/* Write what waits; answer a wait that has come true, or the failure - from the loop. With
+ * `answer` false (a driver's own call) the answer is queued to come from the loop instead. */
+static void sock_flush(proven_loop_t *l, loop_sock_t *s, bool answer) {
     proven_err_t e = PROVEN_OK;
     for (int pass = 0; pass < 4 && s->head; ++pass) {
         proven_mem_view_t vec[PROVEN_NET_VEC_MAX];
@@ -392,7 +393,13 @@ static void sock_flush(proven_loop_t *l, loop_sock_t *s) {
         }
         proven_size_t sent = 0;
         proven_net_conn_t conn = sock_conn(s);
-        if (offered > 0) e = proven_net_write_vec_(&conn, vec, count, &sent);
+        if (offered > 0 && count == 1) {                /* one piece: a plain send is cheaper than a gather write */
+            proven_result_size_t w = proven_net_write(&conn, vec[0], PROVEN_NET_DONT_WAIT);
+            e = w.err;
+            sent = w.value;
+        } else if (offered > 0) {
+            e = proven_net_write_vec_(&conn, vec, count, &sent);
+        }
         s->queued -= (proven_u32)sent;
         while (s->head) {
             loop_chunk_t *c = s->head;
@@ -410,14 +417,14 @@ static void sock_flush(proven_loop_t *l, loop_sock_t *s) {
         sock_drop_chunks(l, s);
         (void)node_watch(l, &s->node, s->handle, (proven_u8)(s->node.want & ~PROVEN_NET_WRITABLE));
         s->node.flags &= (proven_u8)~F_WAIT;
-        sock_deliver_writable(s, e);
+        if (answer) sock_deliver_writable(s, e); else node_queue(l, &s->node, D_WRITABLE);
         return;
     }
     proven_u8 want = s->queued > 0 ? (proven_u8)(s->node.want | PROVEN_NET_WRITABLE) : (proven_u8)(s->node.want & ~PROVEN_NET_WRITABLE);
     (void)node_watch(l, &s->node, s->handle, want);
     if ((s->node.flags & F_WAIT) && s->queued <= s->wait_at) {
         s->node.flags &= (proven_u8)~F_WAIT;
-        sock_deliver_writable(s, PROVEN_OK);
+        if (answer) sock_deliver_writable(s, PROVEN_OK); else node_queue(l, &s->node, D_WRITABLE);
     }
 }
 
@@ -438,7 +445,7 @@ static void sock_deliver(proven_loop_t *l, loop_sock_t *s) {
         proven_err_t e = s->node.state == S_CLOSING ? PROVEN_ERR_CANCELLED : (proven_err_t)s->send_err;
         sock_deliver_writable(s, e);
     }
-    if ((bits & D_FLUSH) && s->node.state == S_OPEN && s->head && !(s->node.want & PROVEN_NET_WRITABLE)) sock_flush(l, s);
+    if ((bits & D_FLUSH) && s->node.state == S_OPEN && s->head && !(s->node.want & PROVEN_NET_WRITABLE)) sock_flush(l, s, true);
     if ((bits & D_CLOSED) && s->node.state == S_CLOSING) {
         s->node.state = S_NONE;
         if (s->fns->closed) s->fns->closed(s->ctx);
@@ -502,7 +509,7 @@ static void sock_event(proven_loop_t *l, loop_sock_t *s, proven_u8 got) {
     }
     if (s->node.state != S_OPEN) return;
     if (got & (PROVEN_NET_WRITABLE | PROVEN_NET_FAILED)) {
-        if (s->head) sock_flush(l, s);
+        if (s->head) sock_flush(l, s, true);
         else if (s->node.want & PROVEN_NET_WRITABLE) (void)node_watch(l, &s->node, s->handle, (proven_u8)(s->node.want & ~PROVEN_NET_WRITABLE));
     }
 }
@@ -720,6 +727,13 @@ void proven_loop_commit_(proven_loop_t *l, proven_loop_sock_t *sock, proven_size
     tail->used += (proven_u32)n;
     s->queued += (proven_u32)n;
     node_queue(l, &s->node, D_FLUSH);
+}
+
+void proven_loop_flush_(proven_loop_t *l, proven_loop_sock_t *sock) {
+    if (!l || !sock) return;
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN || !s->head || (s->node.want & PROVEN_NET_WRITABLE)) return;
+    sock_flush(l, s, false);
 }
 
 void proven_loop_close(proven_loop_t *l, proven_loop_sock_t *sock) {

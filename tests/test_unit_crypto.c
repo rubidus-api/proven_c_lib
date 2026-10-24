@@ -139,6 +139,22 @@ int main(void) {
             }
             PROVEN_TEST_ASSERT(same, "the two implementations agree on 24 further messages", "");
 
+            /* The key schedule itself (RFC-0025 step 3: AESKEYGENASSIST where the processor has
+             * it): the round keys, byte for byte, against the portable schedule, for 200 keys of
+             * each length. */
+            bool keys_same = true;
+            for (int round = 0; round < 400; ++round) {
+                const proven_size_t klen = round % 2 ? 32 : 16;
+                for (proven_size_t i = 0; i < sizeof key; ++i) key[i] = (proven_byte_t)(i * 97 + round * 211 + (round >> 3));
+                PROVEN_TEST_ASSERT(proven_crypto_aes_gcm_init(&hw, key, klen), "init", "");
+                proven_crypto_aes_force_portable(true);
+                PROVEN_TEST_ASSERT(proven_crypto_aes_gcm_init(&sw, key, klen), "init", "");
+                proven_crypto_aes_force_portable(false);
+                keys_same = keys_same && hw.rounds == sw.rounds && memcmp(hw.rk, sw.rk, (proven_size_t)(16 * (hw.rounds + 1))) == 0 && memcmp(hw.h, sw.h, 16) == 0;
+            }
+            PROVEN_TEST_ASSERT(keys_same, "the processor's key schedule makes the portable one's round keys for 200 keys of 16 bytes and 200 of 32",
+                "Inspect proven_sys_aes_expand in platform/proven_sys_aes.c: the round constants, and AES-256's odd round keys.");
+
             /* Every length: the hardware path takes eight blocks at a time and folds eight
              * into one reduction, so each count of whole blocks and each length of tail is a
              * different way through it - for the text, and for the associated data, which

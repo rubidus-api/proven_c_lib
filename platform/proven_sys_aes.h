@@ -13,6 +13,11 @@
 /* True when the calls below may be used on this processor. */
 bool proven_sys_aes_available(void);
 
+/* The key schedule (FIPS 197 section 5.2) into (rounds + 1) * 16 bytes of round keys, the same
+ * bytes the portable schedule makes. `key_len` 16 (rounds 10) or 32 (rounds 14). False when this
+ * build has no instruction path for it (AArch64 has none yet), and nothing was written. */
+bool proven_sys_aes_expand(uint8_t *rk, int rounds, const uint8_t *key, size_t key_len);
+
 /* Encrypt one block. `rk` is (rounds + 1) * 16 bytes of round keys in the standard order. */
 void proven_sys_aes_encrypt_block(const uint8_t *rk, int rounds, const uint8_t in[16], uint8_t out[16]);
 

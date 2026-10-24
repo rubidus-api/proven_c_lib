@@ -256,11 +256,22 @@ static void aes_block(const proven_byte_t *rk, int rounds, bool hw, const proven
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&bk, .size = sizeof bk });
 }
 
+/* The key schedule: the processor's instructions where the context will use them for the
+ * cipher too, else the portable, bitsliced S-box. */
+static void aes_schedule(proven_byte_t rk[240], int rounds, bool hw, const proven_byte_t *key, proven_size_t key_len) {
+#ifndef PROVEN_FREESTANDING
+    if (hw && proven_sys_aes_expand(rk, rounds, key, key_len)) return;
+#else
+    (void)hw;
+#endif
+    aes_expand(rk, rounds, key, key_len);
+}
+
 bool proven_crypto_aes_init(proven_crypto_aes_t *ctx, const proven_byte_t *key, proven_size_t key_len) {
     if (!ctx || !key || (key_len != 16 && key_len != 32)) return false;
     ctx->rounds = key_len == 16 ? 10 : 14;
     ctx->hw = proven_crypto_aes_hw_available();
-    aes_expand(ctx->rk, ctx->rounds, key, key_len);
+    aes_schedule(ctx->rk, ctx->rounds, ctx->hw, key, key_len);
     return true;
 }
 
@@ -272,7 +283,7 @@ bool proven_crypto_aes_gcm_init(proven_crypto_aes_gcm_t *ctx, const proven_byte_
     if (!ctx || !key || (key_len != 16 && key_len != 32)) return false;
     ctx->rounds = key_len == 16 ? 10 : 14;
     ctx->hw = proven_crypto_aes_hw_available();
-    aes_expand(ctx->rk, ctx->rounds, key, key_len);
+    aes_schedule(ctx->rk, ctx->rounds, ctx->hw, key, key_len);
     proven_byte_t zero[16] = { 0 };
     aes_block(ctx->rk, ctx->rounds, ctx->hw, zero, ctx->h);
     ctx->one_pass = false;

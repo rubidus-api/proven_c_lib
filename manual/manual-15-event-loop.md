@@ -2097,8 +2097,11 @@ request is incomplete. (A compressor exists only while a compressed response is 
 written.) On x86-64 Linux the registered tests measure 488 bytes of heap for an
 idle plain HTTP connection, failing above 512, and 984 bytes for an idle plain WebSocket
 connection, failing above 1 KiB. A TLS connection adds the engine's state, about 1.25 KiB while
-idle (Chapter 14, section 9): an idle TLS connection measures 1,736 bytes in all, and the test
-fails at 2 KiB - the target for TLS, where a plain connection's is 1 KiB. **An HTTP/2 connection is another size**: 2,368 bytes idle after
+idle (Chapter 14, section 9). After a quiet second between requests the server gives back the
+expanded form of its record keys (wiped) and keeps the keys they were made from; the next
+request remakes them, which takes about a tenth of a microsecond per direction on a processor
+with AES instructions. An idle TLS connection quiet for a second measures 1,080 bytes in all,
+and the test fails at 2 KiB - the target for TLS, where a plain connection's is 1 KiB. **An HTTP/2 connection is another size**: 2,368 bytes idle after
 one small request, failing above 3 KiB, and growing with the header fields it is made to
 remember to about 12.8 KiB when both of its compression tables are full ([Chapter 17, section 6](manual-17-http2.md#6-http2-in-the-event-driven-server)).
 The numbers below are HTTP/1.1's; HTTP/2's, under the same load, are in

@@ -90,5 +90,9 @@ void proven_loop_send_limit_(proven_loop_sock_t *sock, proven_size_t bytes);
 proven_result_size_t proven_loop_sendv_(proven_loop_t *loop, proven_loop_sock_t *sock, const proven_mem_view_t *parts, proven_size_t count);
 proven_err_t proven_loop_reserve_(proven_loop_t *loop, proven_loop_sock_t *sock, proven_size_t min, proven_mem_mut_t *room);
 void proven_loop_commit_(proven_loop_t *loop, proven_loop_sock_t *sock, proven_size_t n);
+/* Write what is committed now, not after the current callback: for a driver that has put a
+ * response's records in place and wants them on their way before anything else can happen to
+ * the connection. Nothing is answered from inside it (a failure is kept for `writable`). */
+void proven_loop_flush_(proven_loop_t *loop, proven_loop_sock_t *sock);
 
 #endif /* PROVEN_INTERNAL_LOOP_H */

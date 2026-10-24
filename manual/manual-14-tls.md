@@ -817,8 +817,11 @@ safer, only disconnected - and a great many servers and devices still speak noth
 **Held per connection.** During the handshake, a few kilobytes that are freed when it
 completes. After it, **about 1.25 KiB** per connection when nothing is in flight: the keys
 (with the powers of the GHASH key that AES-GCM's one-pass code keeps, since v0.77.0) and the
-counters. Record buffers exist only while a record is being received, is waiting to be
-read, or is waiting to be sent, and are freed when it is done - so ten thousand idle TLS
+counters. (The event-driven server of Chapter 15 also gives back the keys' expanded form - about
+700 bytes - once a connection has been quiet for a second, keeping only the keys it was made
+from, and makes it again for the next record: see Chapter 15, section 14.) Record buffers exist
+only while a record is being received, is waiting to be read, or is waiting to be sent, and are
+freed when it is done - so ten thousand idle TLS
 connections hold about twelve megabytes, not the three hundred that two 16 KiB buffers each would
 cost. That is this layer's share: the transport wrapper adds a few dozen bytes, and an HTTP
 server's own per-connection request buffer is Chapter 11's and is separate. (A TLS 1.2

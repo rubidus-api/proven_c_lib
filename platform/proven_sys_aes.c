@@ -51,6 +51,59 @@ AES_TARGET static void aes_forget(void *p, size_t n) {
     __asm__ __volatile__("" : : "r"(p) : "memory");
 }
 
+/* The key schedule with AESKEYGENASSIST, as in Intel's AES-NI white paper (section 5.2): the
+ * instruction gives SubWord and RotWord of the last word with the round constant, and the
+ * shifts and XORs spread it over the four words of the next round key. Its constant must be an
+ * immediate, so the rounds are written out. */
+AES_TARGET static __m128i key_step(__m128i k, __m128i assist) {
+    assist = _mm_shuffle_epi32(assist, 0xff);
+    __m128i t = _mm_slli_si128(k, 4);
+    k = _mm_xor_si128(k, t); t = _mm_slli_si128(t, 4);
+    k = _mm_xor_si128(k, t); t = _mm_slli_si128(t, 4);
+    k = _mm_xor_si128(k, t);
+    return _mm_xor_si128(k, assist);
+}
+
+/* AES-256's odd round keys: SubWord of the last word, no rotation and no constant. */
+AES_TARGET static __m128i key_step_odd(__m128i prev_even, __m128i k) {
+    __m128i assist = _mm_shuffle_epi32(_mm_aeskeygenassist_si128(prev_even, 0x00), 0xaa);
+    __m128i t = _mm_slli_si128(k, 4);
+    k = _mm_xor_si128(k, t); t = _mm_slli_si128(t, 4);
+    k = _mm_xor_si128(k, t); t = _mm_slli_si128(t, 4);
+    k = _mm_xor_si128(k, t);
+    return _mm_xor_si128(k, assist);
+}
+
+#define KEY128(i, rcon) do { k = key_step(k, _mm_aeskeygenassist_si128(k, rcon)); _mm_storeu_si128((__m128i *)(rk + 16 * (i)), k); } while (0)
+#define KEY256(i, rcon) do { \
+        a = key_step(a, _mm_aeskeygenassist_si128(b, rcon)); _mm_storeu_si128((__m128i *)(rk + 16 * (i)), a); \
+        if ((i) < 14) { b = key_step_odd(a, b); _mm_storeu_si128((__m128i *)(rk + 16 * ((i) + 1)), b); } \
+    } while (0)
+
+AES_TARGET bool proven_sys_aes_expand(uint8_t *rk, int rounds, const uint8_t *key, size_t key_len) {
+    if (key_len == 16 && rounds == 10) {
+        __m128i k = _mm_loadu_si128((const __m128i *)key);
+        _mm_storeu_si128((__m128i *)rk, k);
+        KEY128(1, 0x01); KEY128(2, 0x02); KEY128(3, 0x04); KEY128(4, 0x08); KEY128(5, 0x10);
+        KEY128(6, 0x20); KEY128(7, 0x40); KEY128(8, 0x80); KEY128(9, 0x1b); KEY128(10, 0x36);
+        aes_forget(&k, sizeof k);
+        return true;
+    }
+    if (key_len == 32 && rounds == 14) {
+        __m128i a = _mm_loadu_si128((const __m128i *)key), b = _mm_loadu_si128((const __m128i *)(key + 16));
+        _mm_storeu_si128((__m128i *)rk, a);
+        _mm_storeu_si128((__m128i *)(rk + 16), b);
+        KEY256(2, 0x01); KEY256(4, 0x02); KEY256(6, 0x04); KEY256(8, 0x08); KEY256(10, 0x10); KEY256(12, 0x20); KEY256(14, 0x40);
+        aes_forget(&a, sizeof a);
+        aes_forget(&b, sizeof b);
+        return true;
+    }
+    return false;
+}
+
+#undef KEY128
+#undef KEY256
+
 /* Counter blocks in flight, and blocks folded into one reduction: no block waits for another,
  * and a round takes several cycles. Eight where there are sixteen registers to hold them and
  * the round key; four on 32-bit x86, which has eight. (PROVEN_SYS_AES_WIDE is for a test
@@ -465,6 +518,11 @@ AES_TARGET void proven_sys_aes_ghash(uint8_t y[16], const uint8_t h[16], const u
     vst1q_u8(y, vrbitq_u8(yv));
 }
 
+bool proven_sys_aes_expand(uint8_t *rk, int rounds, const uint8_t *key, size_t key_len) {
+    (void)rk; (void)rounds; (void)key; (void)key_len;
+    return false;                                  /* the portable schedule: no AArch64 code yet */
+}
+
 bool proven_sys_aes_cbc_decrypt(const uint8_t *rk, int rounds, uint8_t iv[16], uint8_t *data, size_t len) {
     (void)rk; (void)rounds; (void)iv; (void)data; (void)len;
     return false;
@@ -484,6 +542,11 @@ bool proven_sys_aes_gcm(const uint8_t *rk, int rounds, const uint8_t h[16], cons
 #else
 
 bool proven_sys_aes_available(void) { return false; }
+
+bool proven_sys_aes_expand(uint8_t *rk, int rounds, const uint8_t *key, size_t key_len) {
+    (void)rk; (void)rounds; (void)key; (void)key_len;
+    return false;
+}
 
 bool proven_sys_aes_cbc_decrypt(const uint8_t *rk, int rounds, uint8_t iv[16], uint8_t *data, size_t len) {
     (void)rk; (void)rounds; (void)iv; (void)data; (void)len;

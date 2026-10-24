@@ -49,6 +49,15 @@ decisions of 2026-10-24: one release with everything). Work in progress.
   512), an idle TLS connection 1,736 (1,704), an idle HTTP/2 connection 2,368. On one Linux machine,
   with 50,000 connections held and 500 active, requests per second are as before (medians of
   four runs each, 179,800 against 178,900).
+- **TLS on the event-driven server costs less memory and fewer copies** (RFC-0025 step 3): an
+  HTTP/1 TLS connection quiet for a second between requests gives back the expanded form of its
+  record keys (wiped) and keeps the keys they were made from; the next request remakes them. An
+  idle TLS connection quiet for a second now holds 1,080 bytes (1,704 in v0.80.0). Records are
+  sealed straight into the loop's send buffers - the engine keeps no output buffer for them and
+  nothing the socket does not take is copied again. The CBC suites keep the former path.
+- **AES key schedule on the processor's instructions** (x86 with AES-NI): a key is expanded in
+  about 0.12 microseconds where it took 5.9 (AES-128; 0.14 against 7.7 for AES-256), which also
+  shortens every TLS handshake's key installs. Other processors keep the portable schedule.
 - `proven_http_event_server_destroy`: what the loop has not answered yet - a listener's accept,
   a connection's socket - keeps its memory, and the server's struct, until the loop's next round
   or `proven_loop_destroy`. A program that counts its allocator to zero right after the destroy
