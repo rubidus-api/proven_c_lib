@@ -98,15 +98,15 @@ typedef struct proven_loop_sock_fns {
 } proven_loop_sock_fns_t;
 
 #if defined(_WIN32) || defined(_WIN64)
-#define PROVEN_LOOP_SOCK_WORDS_ 15
+#define PROVEN_LOOP_SOCK_WORDS_ 13
 #else
-#define PROVEN_LOOP_SOCK_WORDS_ 11
+#define PROVEN_LOOP_SOCK_WORDS_ 9
 #endif
 
 /**
  * @brief A connection given to a loop. Yours to hold - inside your connection struct, say -
  *        from proven_loop_attach (or proven_loop_connect) until its `closed`. Do not copy or move
- *        it in between. Opaque: 88 bytes, 120 on Windows, which hold everything the loop needs for
+ *        it in between. Opaque: 72 bytes, 104 on Windows, which hold everything the loop needs for
  *        the connection, its receive included; the loop allocates nothing per connection except
  *        the buffers of bytes waiting to be sent.
  */
@@ -132,8 +132,13 @@ typedef struct proven_loop_accept {
 [[nodiscard]]
 proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out);
 
-/** @brief Free the loop. Whatever is still attached, in flight or set is simply forgotten:
- *         nothing is called, and the bytes waiting to be sent are freed. Null is accepted. */
+/**
+ * @brief Free the loop. What has already ended gets its last answer now, so that its memory can
+ *        go: `closed` of a socket given to proven_loop_close, and the PROVEN_ERR_CANCELLED of an
+ *        accept that was cancelled - those functions must only free, not start anything on the
+ *        loop. Whatever else is still attached, in flight or set is simply forgotten: nothing is
+ *        called, and the bytes waiting to be sent are freed. Null is accepted.
+ */
 void proven_loop_destroy(proven_loop_t *loop);
 
 /**

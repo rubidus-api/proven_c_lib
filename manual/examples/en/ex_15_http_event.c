@@ -26,6 +26,7 @@ typedef struct {
     proven_http_stream_t *stream;
     proven_loop_timer_t timer;
     proven_size_t sent, total;         /* /count: how far the body has got */
+    proven_size_t part;                /* /count: how much of the current line has gone */
     proven_size_t received;            /* /size: body bytes seen */
 } ex_exchange_t;
 
@@ -35,9 +36,11 @@ static void count_pump(ex_exchange_t *x) {
     while (x->sent < x->total) {
         char line[32];
         int n = snprintf(line, sizeof line, "%u\n", (unsigned)x->sent);
-        proven_result_size_t w = proven_http_stream_write(x->stream, (proven_mem_view_t){ (const proven_byte_t *)line, (proven_size_t)n });
+        proven_result_size_t w = proven_http_stream_write(x->stream, (proven_mem_view_t){ (const proven_byte_t *)line + x->part, (proven_size_t)n - x->part });
         if (w.err != PROVEN_OK) return;                   /* the client left */
-        if (w.value < (proven_size_t)n) return;           /* held back: on_writable will say when */
+        x->part += w.value;                              /* a write may take part of what it is given */
+        if (x->part < (proven_size_t)n) return;           /* held back: on_writable will say when */
+        x->part = 0;
         x->sent++;
     }
     (void)proven_http_stream_end(x->stream);

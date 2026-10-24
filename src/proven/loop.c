@@ -73,7 +73,7 @@
 #define D_ACCEPT 0x10
 #define D_CLOSED 0x20
 
-#define LOOP_SEND_LIMIT ((proven_u32)65536)
+#define LOOP_SEND_LIMIT_K 64u
 #define LOOP_POOL_KEEP 32u
 
 typedef struct loop_node {
@@ -85,21 +85,27 @@ typedef struct loop_node {
 typedef struct loop_chunk {
     struct loop_chunk *next;              /* in its socket's chain, or in the pool */
     struct loop_chunk *all_prev, *all_next;    /* every chunk out of the pool, for destroy */
+    struct loop_chunk *last;              /* in the first chunk of a socket's chain: its last */
     proven_u32 used, sent;
     proven_byte_t data[PROVEN_LOOP_CHUNK_];
 } loop_chunk_t;
 
 typedef struct loop_sock {
-    loop_node_t node;
-    proven_u16 send_err, conn_err;        /* send_err stays once a send failed */
-    proven_u32 recv_n, recv_cap;
-    proven_u32 queued, wait_at, limit;
+    loop_node_t node;                     /* node.err: the answer of a receive, or of a connect */
+    proven_u16 send_err;                  /* stays once a send failed */
+    proven_u16 limit_k;                   /* what proven_loop_send holds at most, in KiB; LIMIT_NONE: no bound */
+    proven_u32 recv_cap;
+    proven_u32 queued, wait_at;
     proven_uintptr_t handle;
     const proven_loop_sock_fns_t *fns;
     void *ctx;
     proven_byte_t *recv_buf;
-    loop_chunk_t *head, *tail;
+    loop_chunk_t *head;                   /* bytes waiting to be sent; head->last is the chain's end */
 } loop_sock_t;
+
+#define LIMIT_NONE 0xffffu
+static proven_u32 sock_limit(const loop_sock_t *s) { return s->limit_k == LIMIT_NONE ? 0xffffffffu : (proven_u32)s->limit_k * 1024u; }
+static loop_chunk_t *sock_tail(const loop_sock_t *s) { return s->head ? s->head->last : (void *)0; }
 
 typedef struct loop_acc {
     loop_node_t node;
@@ -198,6 +204,22 @@ proven_err_t proven_loop_create_poll_(proven_allocator_t alloc, proven_loop_t **
 void proven_loop_destroy(proven_loop_t *l) {
     if (!l) return;
     proven_allocator_t a = l->alloc;
+    /* What has already ended gets its last answer, so that its owner can free it: `closed` of a
+     * socket that was closed, and an accept that was cancelled. Nothing else is called. */
+    for (loop_node_t *n = l->done_first, *next; n; n = next) {
+        next = n->next;
+        if (n->kind == KIND_SOCK && (n->done & D_CLOSED) && n->state == S_CLOSING) {
+            loop_sock_t *s = (loop_sock_t *)n;
+            s->node.state = S_NONE;
+            if (s->fns->closed) s->fns->closed(s->ctx);
+        } else if (n->kind == KIND_ACCEPT && (n->done & D_ACCEPT) && n->err == (proven_u16)PROVEN_ERR_CANCELLED) {
+            loop_acc_t *acc = (loop_acc_t *)n;
+            acc->node.flags &= (proven_u8)~F_RECV;
+            proven_net_conn_t none = { 0 };
+            acc->fn(acc->ctx, PROVEN_ERR_CANCELLED, &none);
+        }
+    }
+    l->done_first = l->done_last = (void *)0;
     proven_loop_task_t *t = atomic_exchange_explicit(&l->tasks, (proven_loop_task_t *)0, memory_order_acquire);
     while (t) { proven_loop_task_t *next = t->next; a.free_fn(a.ctx, t); t = next; }
     if (l->waker_open) {
@@ -334,20 +356,20 @@ static void chunk_give(proven_loop_t *l, loop_chunk_t *c) {
 
 static void sock_drop_chunks(proven_loop_t *l, loop_sock_t *s) {
     while (s->head) { loop_chunk_t *next = s->head->next; chunk_give(l, s->head); s->head = next; }
-    s->tail = (void *)0;
     s->queued = 0;
 }
 
 /* Room for `min` bytes at the end of the socket's chain. */
 static proven_err_t sock_room(proven_loop_t *l, loop_sock_t *s, proven_size_t min, proven_mem_mut_t *room) {
     if (min == 0) min = 1;
-    if (!s->tail || PROVEN_LOOP_CHUNK_ - s->tail->used < min) {
+    loop_chunk_t *tail = sock_tail(s);
+    if (!tail || PROVEN_LOOP_CHUNK_ - tail->used < min) {
         loop_chunk_t *c = chunk_take(l);
         if (!c) return PROVEN_ERR_NOMEM;
-        if (s->tail) s->tail->next = c; else s->head = c;
-        s->tail = c;
+        if (tail) tail->next = c; else s->head = c;
+        s->head->last = tail = c;
     }
-    *room = (proven_mem_mut_t){ .ptr = s->tail->data + s->tail->used, .size = PROVEN_LOOP_CHUNK_ - s->tail->used };
+    *room = (proven_mem_mut_t){ .ptr = tail->data + tail->used, .size = PROVEN_LOOP_CHUNK_ - tail->used };
     return PROVEN_OK;
 }
 
@@ -378,7 +400,7 @@ static void sock_flush(proven_loop_t *l, loop_sock_t *s) {
             if (sent < here) { c->sent += (proven_u32)sent; break; }
             sent -= here;
             s->head = c->next;
-            if (!s->head) s->tail = (void *)0;
+            if (s->head) s->head->last = c->last;
             chunk_give(l, c);
         }
         if (e != PROVEN_OK || offered == 0 || s->queued > 0) break;
@@ -409,8 +431,9 @@ static void sock_connected(loop_sock_t *s, proven_err_t err) {
 static void sock_deliver(proven_loop_t *l, loop_sock_t *s) {
     proven_u8 bits = s->node.done;
     s->node.done = 0;
-    if (bits & D_CONNECTED) sock_connected(s, (proven_err_t)s->conn_err);
-    if (bits & D_RECEIVED) s->fns->received(s->ctx, (proven_err_t)s->node.err, s->recv_n);
+    /* Deferred, a receive is answered only when cancelled: nothing taken. */
+    if (bits & D_CONNECTED) sock_connected(s, (proven_err_t)s->node.err);
+    if (bits & D_RECEIVED) s->fns->received(s->ctx, (proven_err_t)s->node.err, 0);
     if (bits & D_WRITABLE) {
         proven_err_t e = s->node.state == S_CLOSING ? PROVEN_ERR_CANCELLED : (proven_err_t)s->send_err;
         sock_deliver_writable(s, e);
@@ -516,7 +539,7 @@ proven_err_t proven_loop_attach(proven_loop_t *l, proven_loop_sock_t *sock, cons
     s->handle = conn->internal.handle;
     s->fns = fns;
     s->ctx = ctx;
-    s->limit = LOOP_SEND_LIMIT;
+    s->limit_k = LOOP_SEND_LIMIT_K;
     return PROVEN_OK;
 }
 
@@ -529,7 +552,7 @@ proven_err_t proven_loop_connect(proven_loop_t *l, proven_loop_sock_t *sock, pro
     loop_sock_t *s = sock_of(sock);
     s->node.state = S_CONNECTING;
     if (e == PROVEN_OK) {                         /* connected already: answered from the loop */
-        s->conn_err = PROVEN_OK;
+        s->node.err = PROVEN_OK;
         node_queue(l, &s->node, D_CONNECTED);
         return PROVEN_OK;
     }
@@ -562,40 +585,80 @@ void proven_loop_recv_cancel(proven_loop_t *l, proven_loop_sock_t *sock) {
     if (s->node.kind != KIND_SOCK || !(s->node.flags & F_RECV)) return;
     s->node.flags &= (proven_u8)~F_RECV;
     s->node.err = (proven_u16)PROVEN_ERR_CANCELLED;
-    s->recv_n = 0;
     node_queue(l, &s->node, D_RECEIVED);
 }
 
-proven_result_size_t proven_loop_send(proven_loop_t *l, proven_loop_sock_t *sock, proven_mem_view_t bytes) {
+/* Copy what the socket did not take into the chain, up to the limit. */
+static proven_err_t sock_hold(proven_loop_t *l, loop_sock_t *s, const proven_byte_t *p, proven_size_t n, proven_size_t *taken) {
+    *taken = 0;
+    while (*taken < n) {
+        const proven_u32 limit = sock_limit(s);
+        if (s->queued >= limit) return PROVEN_ERR_AGAIN;
+        proven_mem_mut_t room;
+        proven_err_t e = sock_room(l, s, 1, &room);
+        if (e != PROVEN_OK) return e;
+        proven_size_t k = n - *taken;
+        if (k > room.size) k = room.size;
+        if (k > limit - s->queued) k = limit - s->queued;
+        for (proven_size_t i = 0; i < k; ++i) room.ptr[i] = p[*taken + i];
+        sock_tail(s)->used += (proven_u32)k;
+        s->queued += (proven_u32)k;
+        *taken += k;
+    }
+    return PROVEN_OK;
+}
+
+proven_result_size_t proven_loop_sendv_(proven_loop_t *l, proven_loop_sock_t *sock, const proven_mem_view_t *parts, proven_size_t count) {
     proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
-    if (!l || !sock || (bytes.size > 0 && !bytes.ptr)) { res.err = PROVEN_ERR_INVALID_ARG; return res; }
+    if (!l || !sock || (count > 0 && !parts) || count > PROVEN_NET_VEC_MAX) { res.err = PROVEN_ERR_INVALID_ARG; return res; }
+    proven_size_t total = 0;
+    for (proven_size_t i = 0; i < count; ++i) {
+        if (parts[i].size > 0 && !parts[i].ptr) { res.err = PROVEN_ERR_INVALID_ARG; return res; }
+        total += parts[i].size;
+    }
     loop_sock_t *s = sock_of(sock);
     if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN) { res.err = PROVEN_ERR_INVALID_STATE; return res; }
     if (s->send_err != PROVEN_OK) { res.err = (proven_err_t)s->send_err; return res; }
-    if (s->queued == 0 && bytes.size > 0) {
+    proven_size_t gone = 0;
+    if (s->queued == 0 && total > 0) {
         proven_net_conn_t conn = sock_conn(s);
-        proven_result_size_t w = proven_net_write(&conn, bytes, PROVEN_NET_DONT_WAIT);
-        if (w.err == PROVEN_OK || w.err == PROVEN_ERR_TIMEOUT) res.value = w.value;
-        else {
-            s->send_err = (proven_u16)w.err;
+        proven_err_t e;
+        /* Small pieces are put together and sent with one plain send: cheaper than a gather
+         * write's message header for the usual response of a few hundred bytes. */
+        proven_byte_t small[2048];
+        if (count > 1 && total <= sizeof small) {
+            proven_size_t at = 0;
+            for (proven_size_t i = 0; i < count; ++i) { for (proven_size_t k = 0; k < parts[i].size; ++k) small[at + k] = parts[i].ptr[k]; at += parts[i].size; }
+            proven_result_size_t w = proven_net_write(&conn, (proven_mem_view_t){ .ptr = small, .size = total }, PROVEN_NET_DONT_WAIT);
+            e = w.err;
+            gone = w.value;
+        } else if (count == 1) {
+            proven_result_size_t w = proven_net_write(&conn, parts[0], PROVEN_NET_DONT_WAIT);
+            e = w.err;
+            gone = w.value;
+        } else {
+            e = proven_net_write_vec_(&conn, parts, count, &gone);
+        }
+        if (e != PROVEN_OK && e != PROVEN_ERR_TIMEOUT) {
+            s->send_err = (proven_u16)e;
             sock_drop_chunks(l, s);
-            res.value = w.value;
-            res.err = w.err;
+            res.value = gone;
+            res.err = e;
             return res;
         }
     }
-    while (res.value < bytes.size) {
-        if (s->queued >= s->limit) { res.err = PROVEN_ERR_AGAIN; break; }
-        proven_mem_mut_t room;
-        proven_err_t e = sock_room(l, s, 1, &room);
-        if (e != PROVEN_OK) { res.err = e; break; }
-        proven_size_t n = bytes.size - res.value;
-        if (n > room.size) n = room.size;
-        if (n > s->limit - s->queued) n = s->limit - s->queued;
-        for (proven_size_t i = 0; i < n; ++i) room.ptr[i] = bytes.ptr[res.value + i];
-        s->tail->used += (proven_u32)n;
-        s->queued += (proven_u32)n;
-        res.value += n;
+    res.value = gone;
+    /* The rest, piece by piece from where the socket stopped. */
+    proven_size_t at = 0;
+    for (proven_size_t i = 0; i < count && res.err == PROVEN_OK; ++i) {
+        const proven_size_t size = parts[i].size;
+        if (at + size <= gone) { at += size; continue; }
+        const proven_size_t skip = gone > at ? gone - at : 0;
+        proven_size_t taken = 0;
+        proven_err_t e = sock_hold(l, s, parts[i].ptr + skip, size - skip, &taken);
+        res.value += taken;
+        at += size;
+        if (e != PROVEN_OK) res.err = e;
     }
     /* What waits was offered to the socket just now (or waits behind bytes that were): the
      * next try is when it is writable. */
@@ -604,6 +667,11 @@ proven_result_size_t proven_loop_send(proven_loop_t *l, proven_loop_sock_t *sock
         if (e != PROVEN_OK && res.err == PROVEN_OK) res.err = e;
     }
     return res;
+}
+
+proven_result_size_t proven_loop_send(proven_loop_t *l, proven_loop_sock_t *sock, proven_mem_view_t bytes) {
+    if (bytes.size > 0 && !bytes.ptr) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
+    return proven_loop_sendv_(l, sock, &bytes, 1);
 }
 
 proven_size_t proven_loop_send_queued(const proven_loop_sock_t *sock) {
@@ -627,20 +695,29 @@ proven_err_t proven_loop_send_wait(proven_loop_t *l, proven_loop_sock_t *sock, p
     return PROVEN_OK;
 }
 
+void proven_loop_send_limit_(proven_loop_sock_t *sock, proven_size_t bytes) {
+    if (!sock) return;
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK) return;
+    const proven_size_t k = (bytes + 1023u) / 1024u;            /* bytes of (proven_size_t)-1 wrap to 0: no bound either */
+    s->limit_k = bytes == (proven_size_t)-1 || k >= LIMIT_NONE ? (proven_u16)LIMIT_NONE : (proven_u16)k;
+}
+
 proven_err_t proven_loop_reserve_(proven_loop_t *l, proven_loop_sock_t *sock, proven_size_t min, proven_mem_mut_t *room) {
     if (!l || !sock || !room || min > PROVEN_LOOP_CHUNK_) return PROVEN_ERR_INVALID_ARG;
     loop_sock_t *s = sock_of(sock);
     if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN) return PROVEN_ERR_INVALID_STATE;
     if (s->send_err != PROVEN_OK) return (proven_err_t)s->send_err;
-    if (s->queued >= s->limit) return PROVEN_ERR_AGAIN;
+    if (s->queued >= sock_limit(s)) return PROVEN_ERR_AGAIN;
     return sock_room(l, s, min, room);
 }
 
 void proven_loop_commit_(proven_loop_t *l, proven_loop_sock_t *sock, proven_size_t n) {
     if (!l || !sock || n == 0) return;
     loop_sock_t *s = sock_of(sock);
-    if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN || !s->tail || n > PROVEN_LOOP_CHUNK_ - s->tail->used) return;
-    s->tail->used += (proven_u32)n;
+    loop_chunk_t *tail = sock_tail(s);
+    if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN || !tail || n > PROVEN_LOOP_CHUNK_ - tail->used) return;
+    tail->used += (proven_u32)n;
     s->queued += (proven_u32)n;
     node_queue(l, &s->node, D_FLUSH);
 }
@@ -655,10 +732,9 @@ void proven_loop_close(proven_loop_t *l, proven_loop_sock_t *sock) {
     if (s->node.flags & F_RECV) {
         s->node.flags &= (proven_u8)~F_RECV;
         s->node.err = (proven_u16)PROVEN_ERR_CANCELLED;
-        s->recv_n = 0;
         bits |= D_RECEIVED;
     }
-    if (state == S_CONNECTING) { s->conn_err = (proven_u16)PROVEN_ERR_CANCELLED; bits |= D_CONNECTED; }
+    if (state == S_CONNECTING) { s->node.err = (proven_u16)PROVEN_ERR_CANCELLED; bits |= D_CONNECTED; }
     if (s->node.flags & F_WAIT) { s->node.flags &= (proven_u8)~F_WAIT; bits |= D_WRITABLE; }
     sock_drop_chunks(l, s);
     node_unwatch(l, &s->node, s->handle);

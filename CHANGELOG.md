@@ -35,9 +35,30 @@ decisions of 2026-10-24: one release with everything). Work in progress.
   `proven_loop_send_wait`; `proven_loop_close`, after which `closed` comes last; and
   `proven_loop_accept` with `proven_loop_accept_cancel`. Every operation is answered exactly
   once, on the loop's thread, never from inside the call that started it; a cancelled one with
-  `PROVEN_ERR_CANCELLED`. A `proven_loop_sock_t` is 88 bytes (120 on Windows). Aliases for each.
+  `PROVEN_ERR_CANCELLED`. A `proven_loop_sock_t` is 72 bytes (104 on Windows). Aliases for each.
   A new manual example, `ex_15_echo.c`, uses every one; `tests/test_unit_loop_ops` runs every
   operation on the system's selector and on the poll kind.
+
+### Changed
+
+- **The event-driven server runs on the loop's operations** (RFC-0025 step 2): each connection
+  waits for input with a receive of zero bytes and sends through the loop - straight to the
+  socket when nothing waits, the rest held in the loop's chunks; a response's head and body go
+  in one write. Behaviour seen through `http_event.h`, HTTP/2 and WebSocket included, is
+  unchanged. An idle plain connection now holds 488 bytes (448 before; the test still fails above
+  512), an idle TLS connection 1,736 (1,704), an idle HTTP/2 connection 2,368. On one Linux machine,
+  with 50,000 connections held and 500 active, requests per second are as before (medians of
+  four runs each, 179,800 against 178,900).
+- `proven_http_event_server_destroy`: what the loop has not answered yet - a listener's accept,
+  a connection's socket - keeps its memory, and the server's struct, until the loop's next round
+  or `proven_loop_destroy`. A program that counts its allocator to zero right after the destroy
+  now gives the loop one round first.
+- `proven_loop_destroy` now gives what has already ended its last answer - `closed` of a socket
+  given to `proven_loop_close`, `PROVEN_ERR_CANCELLED` of a cancelled accept - so that its owner
+  can free it; nothing else is called.
+- `proven_http_stream_write` may take part of a short piece more often than before, as its
+  contract always allowed: the chapter 15 example's pump, which assumed all or nothing for one
+  line, now keeps its place within the line.
 
 ### Removed
 

@@ -74,7 +74,7 @@ void proven_loop_stop(proven_loop_t *loop);
 | `proven_loop_run(loop)` | 기다리고, 준비된 것을 부르고, 때가 된 것을 울리고, 반복한다 - `proven_loop_stop`까지. | 멈춘 뒤 `PROVEN_OK`. 기다리는 일 자체가 실패하면 오류. |
 | `proven_loop_poll(loop, until)` | 한 바퀴: 무언가 준비되거나 `until`이 지날 때까지 기다리고 처리한다. `PROVEN_NET_DONT_WAIT`는 지금 준비된 것만 처리한다. | `proven_err_t`. |
 | `proven_loop_stop(loop)` | `proven_loop_run`이 돌아오게 한다. 어느 스레드에서든, 콜백 안에서든 안전하다. | 없음. |
-| `proven_loop_destroy(loop)` | 루프를 해제한다. 아직 붙어 있거나, 진행 중이거나, 맞춰진 것은 잊힌다. 아무것도 불리지 않고, 보내려고 기다리던 바이트는 해제된다. 널을 받는다. | 없음. |
+| `proven_loop_destroy(loop)` | 루프를 해제한다. 이미 끝난 것은 메모리를 놓을 수 있도록 지금 마지막 답을 받는다 - `proven_loop_close`에 준 소켓의 `closed`, 취소된 수락의 `PROVEN_ERR_CANCELLED`. 그 함수들은 해제만 한다. 그 밖에 아직 붙어 있거나, 진행 중이거나, 맞춰진 것은 잊히고 아무것도 불리지 않는다. 보내려고 기다리던 바이트는 해제된다. 널을 받는다. | 없음. |
 
 `proven_loop_run`은 다른 일을 하지 않는 스레드를 위한 것이다. `proven_loop_poll`은 이미 자신의 메인
 루프가 있어서 그 안에서 이 루프에 차례를 주는 프로그램을 위한 것이다.
@@ -499,7 +499,7 @@ proven_err_t proven_http_event_server_shutdown(proven_http_event_server_t *serve
 | `proven_http_event_server_set_max_streams(server, n)` | 서버가 도는 동안 `max_concurrent_streams`를 바꾼다: 1부터 설정값까지, 열린 연결과 앞으로 올 연결에 ([17장](manual-17-http2-ko.md) 6절과 9절). 루프의 스레드에서. | `proven_err_t`: `INVALID_ARG`. |
 | `proven_http_event_server_stop_listening(server)` | 받아들이기를 멈춘다. 열린 연결은 계속되지만, 이제부터 HTTP/1.1 응답은 `Connection: close`를 말하고 HTTP/2는 작별한다. | 없음. |
 | `proven_http_event_server_shutdown(server, grace_ms, on_drained, ctx)` | 부드럽게 끝낸다(10절). 끝나면 `on_drained(ctx, why)`. | `proven_err_t`: 이미 종료 중이면 `INVALID_STATE`. |
-| `proven_http_event_server_destroy(server)` | 모든 연결과 리스너를 닫고 서버를 해제한다. 진행 중인 교환은 `PROVEN_ERR_RESET`과 함께 `on_done`을 받는다. 루프는 멈추지도 해제되지도 않는다. 널을 받는다. | 없음. |
+| `proven_http_event_server_destroy(server)` | 모든 연결과 리스너를 닫고 서버를 해제한다. 진행 중인 교환은 `PROVEN_ERR_RESET`과 함께 `on_done`을 받는다. 루프는 멈추지도 해제되지도 않는다. 루프가 아직 답하지 않은 것 - 진행 중인 수락, 연결의 소켓 - 은 루프의 다음 바퀴나 `proven_loop_destroy`까지 메모리를 쥔다(5절 규칙 3). 널을 받는다. | 없음. |
 
 **함수 넷.** 설정이 `on` 안에 싣고, `ctx`가 각각에 전달된다:
 
@@ -606,6 +606,7 @@ typedef struct {
     proven_http_stream_t *stream;
     proven_loop_timer_t timer;
     proven_size_t sent, total;         /* /count: how far the body has got */
+    proven_size_t part;                /* /count: 지금 줄에서 이미 나간 만큼 */
     proven_size_t received;            /* /size: body bytes seen */
 } ex_exchange_t;
 
@@ -615,9 +616,11 @@ static void count_pump(ex_exchange_t *x) {
     while (x->sent < x->total) {
         char line[32];
         int n = snprintf(line, sizeof line, "%u\n", (unsigned)x->sent);
-        proven_result_size_t w = proven_http_stream_write(x->stream, (proven_mem_view_t){ (const proven_byte_t *)line, (proven_size_t)n });
+        proven_result_size_t w = proven_http_stream_write(x->stream, (proven_mem_view_t){ (const proven_byte_t *)line + x->part, (proven_size_t)n - x->part });
         if (w.err != PROVEN_OK) return;                   /* 클라이언트가 떠났다 */
-        if (w.value < (proven_size_t)n) return;           /* 보류됨: 언제 되는지는 on_writable이 알려 준다 */
+        x->part += w.value;                              /* 쓰기는 받은 것의 일부만 가져갈 수 있다 */
+        if (x->part < (proven_size_t)n) return;           /* 보류됨: 언제 되는지는 on_writable이 알려 준다 */
+        x->part = 0;
         x->sent++;
     }
     (void)proven_http_stream_end(x->stream);
@@ -2031,10 +2034,10 @@ int main(void) {
 
 **연결 하나가 붙드는 것.** 요청이 없는 연결은 자기 구조체를 붙들 뿐 버퍼는 붙들지 않는다: 요청은
 루프의 임시 작업용 버퍼로 읽히고, 바이트는 요청이 아직 완전하지 않을 때에만 따로 복사된다. x86-64
-Linux에서 등록된 테스트는 한가한 평문 HTTP 연결 하나에 힙 448바이트를 재고 512를 넘으면 실패하며,
-한가한 평문 WebSocket 연결 하나에 944바이트를 재고 1 KiB를 넘으면 실패한다. TLS 연결은 엔진의 상태를
-더한다. 한가할 때 약 1.25 KiB다(14장 9절). 한가한 TLS 연결은 모두 합쳐 1,704바이트를 재고, 테스트는
-2 KiB에서 실패한다 - 평문 연결의 목표가 1 KiB인 것과 달리 TLS의 목표다. **HTTP/2 연결은 크기가 다르다**: 작은 요청 하나 뒤 한가할 때 2,312바이트를 재고
+Linux에서 등록된 테스트는 한가한 평문 HTTP 연결 하나에 힙 488바이트를 재고 512를 넘으면 실패하며,
+한가한 평문 WebSocket 연결 하나에 984바이트를 재고 1 KiB를 넘으면 실패한다. TLS 연결은 엔진의 상태를
+더한다. 한가할 때 약 1.25 KiB다(14장 9절). 한가한 TLS 연결은 모두 합쳐 1,736바이트를 재고, 테스트는
+2 KiB에서 실패한다 - 평문 연결의 목표가 1 KiB인 것과 달리 TLS의 목표다. **HTTP/2 연결은 크기가 다르다**: 작은 요청 하나 뒤 한가할 때 2,368바이트를 재고
 3 KiB를 넘으면 실패하며, 기억하게 된 헤더 필드만큼 자라 두 압축 테이블이 가득 차면 약 12.8 KiB가 된다
 ([17장 6절](manual-17-http2-ko.md#6-이벤트-구동-서버의-http2)). 아래 수치는 HTTP/1.1의 것이다.
 같은 부하 아래 HTTP/2의 수치는 [17장 8절](manual-17-http2-ko.md#8-무엇을-받아들이고-무엇이-없으며-어떻게-시험했는가)에 있다.

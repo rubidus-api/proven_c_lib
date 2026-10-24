@@ -118,11 +118,11 @@ struct proven_http_stream {
     struct proven_http_stream *prev, *next;
     proven_net_conn_t sock;
     proven_net_addr_t peer;
-    proven_loop_io_t io;
+    proven_loop_sock_t lsock;                 /* the connection as the loop knows it (RFC-0025) */
     proven_loop_timer_t timer;
     proven_tls_conn_t *tls;
     proven_ev_buf_t stash;                    /* input not consumed yet */
-    proven_ev_buf_t out;                      /* output the transport has not taken yet */
+    proven_ev_buf_t out;                      /* with TLS: plaintext the engine has not taken yet (the loop holds the rest) */
     proven_http_body_t body;
     proven_u64 response_left;          /* body bytes still promised; LENGTH_UNKNOWN when chunked or not counted */
     void *user;
@@ -143,22 +143,36 @@ struct proven_http_stream {
     bool raw_more;                     /* EV_RAW: the owner has output the transport would not take yet */
     bool told_stop;                    /* EV_RAW: the owner has been told that the server stopped listening */
     bool told_drain;                   /* EV_RAW: and that it is shutting down (on_drain) */
+    bool attached;                     /* given to the loop: freed only after its `closed` */
+    bool recv_armed;                   /* a receive of zero bytes is in flight */
+    bool sock_gone;                    /* `closed` has come */
     proven_u16 local_port;             /* the port the connection came in on: the one `Alt-Svc` names */
 };
 
-typedef struct { proven_http_event_server_t *server; proven_net_listener_t listener; proven_loop_io_t io; } proven_ev_listener_t;
+/* One listener, allocated on its own: after stop_listening its accept may still be answered
+ * (PROVEN_ERR_CANCELLED), and then it frees itself. */
+typedef struct {
+    proven_http_event_server_t *server;
+    proven_net_listener_t listener;
+    proven_loop_accept_t acc;
+    bool armed;                        /* an accept is in flight */
+    bool cancelling;                   /* it was cancelled; its answer has not come */
+    bool orphan;                       /* stop_listening let go of it: it frees itself when answered */
+} proven_ev_listener_t;
 
 struct proven_http_event_server {
     proven_loop_t *loop;
     proven_allocator_t alloc;
     proven_http_event_server_config_t cfg;
-    proven_ev_listener_t listeners[EV_MAX_LISTENERS];
+    proven_ev_listener_t *listeners[EV_MAX_LISTENERS];
     proven_size_t listener_count;
     bool accepting;                    /* the listeners are being watched */
     bool closed_to_new;                /* stop_listening was called: nothing is adopted either */
     bool stopped;
     proven_http_stream_t *conns;
     proven_size_t conn_count;
+    proven_size_t ending;              /* connections and listeners ended, waiting for the loop's last answer */
+    bool destroyed;                    /* destroy was called: the struct goes when `ending` is 0 */
     proven_http_header_t *headers;
     proven_byte_t *rbuf, *pbuf, *hbuf;
     proven_byte_t *zbuf;               /* what a compressor gives out, on its way to a connection's output; made when first needed */

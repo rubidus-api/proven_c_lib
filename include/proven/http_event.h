@@ -122,6 +122,10 @@ proven_err_t proven_http_event_server_listen(proven_http_event_server_t *server,
  * @brief Close every connection and the listeners, and free the server. Exchanges still in
  *        progress get `on_done` with PROVEN_ERR_RESET. The loop is not stopped or freed.
  *        Null is accepted.
+ *
+ * What the loop has not yet answered - a listener's accept in flight, a connection whose
+ * socket it may still use - keeps its memory, and the server's own struct, until the loop's
+ * next round, or until proven_loop_destroy: from then on nothing of the server is left.
  */
 void proven_http_event_server_destroy(proven_http_event_server_t *server);
 

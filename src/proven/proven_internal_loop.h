@@ -81,6 +81,13 @@ proven_err_t proven_loop_create_poll_(proven_allocator_t alloc, proven_loop_t **
  * socket and would put its bytes ahead of the room reserved.
  */
 #define PROVEN_LOOP_CHUNK_ ((proven_size_t)16416)
+/* How much the loop holds for the socket before proven_loop_send takes no more (64 KiB unless
+ * set; at most 0xffffffff). For a driver that bounds what it queues by its own rule. */
+void proven_loop_send_limit_(proven_loop_sock_t *sock, proven_size_t bytes);
+/* proven_loop_send of several pieces in order (at most PROVEN_NET_VEC_MAX): with nothing waiting
+ * they go to the socket in one gather write, and only what it does not take is copied - a
+ * response head and its body, a frame's header and payload, leave together without a copy. */
+proven_result_size_t proven_loop_sendv_(proven_loop_t *loop, proven_loop_sock_t *sock, const proven_mem_view_t *parts, proven_size_t count);
 proven_err_t proven_loop_reserve_(proven_loop_t *loop, proven_loop_sock_t *sock, proven_size_t min, proven_mem_mut_t *room);
 void proven_loop_commit_(proven_loop_t *loop, proven_loop_sock_t *sock, proven_size_t n);
 

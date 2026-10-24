@@ -214,6 +214,27 @@ static void case_send(void) {
     if (have < 9) { r = proven_net_read(&far, (proven_mem_mut_t){ whole + have, sizeof whole - have }, proven_net_deadline_in(1000)); if (r.err == PROVEN_OK) have += r.value; }
     PROVEN_TEST_ASSERT(have == 9 && memcmp(whole, "head:body", 9) == 0, "they arrive in order", g_kind);
 
+    /* Several pieces at once (the drivers' head and body): small ones put together, large ones
+     * in one gather write; in order either way. */
+    static proven_byte_t big[3][3000];
+    for (int k = 0; k < 3; ++k) memset(big[k], 'a' + k, sizeof big[k]);
+    const proven_mem_view_t small_parts[3] = { { (const proven_byte_t *)"one,", 4 }, { (const proven_byte_t *)"two,", 4 }, { (const proven_byte_t *)"three", 5 } };
+    const proven_mem_view_t big_parts[3] = { { big[0], sizeof big[0] }, { big[1], sizeof big[1] }, { big[2], sizeof big[2] } };
+    s = proven_loop_sendv_(g_loop, &c.sock, small_parts, 3);
+    proven_result_size_t s2 = proven_loop_sendv_(g_loop, &c.sock, big_parts, 3);
+    PROVEN_TEST_ASSERT(s.err == PROVEN_OK && s.value == 13 && s2.err == PROVEN_OK && s2.value == 9000, "pieces taken whole", g_kind);
+    static proven_byte_t back[9013];
+    proven_size_t back_n = 0;
+    while (back_n < sizeof back) {
+        rounds(1);
+        r = proven_net_read(&far, (proven_mem_mut_t){ back + back_n, sizeof back - back_n }, proven_net_deadline_in(1000));
+        if (r.err != PROVEN_OK) break;
+        back_n += r.value;
+    }
+    bool pieces_in_order = back_n == sizeof back && memcmp(back, "one,two,three", 13) == 0;
+    for (proven_size_t i = 0; i < 9000 && pieces_in_order; ++i) pieces_in_order = back[13 + i] == (proven_byte_t)('a' + i / 3000);
+    PROVEN_TEST_ASSERT(pieces_in_order, "and arrive in order, small and large", g_kind);
+
     close_and_wait(&c);
     s = proven_loop_send(g_loop, &c.sock, (proven_mem_view_t){ (const proven_byte_t *)"x", 1 });
     PROVEN_TEST_ASSERT(s.err == PROVEN_ERR_INVALID_STATE && s.value == 0, "no send after close", g_kind);
@@ -361,11 +382,26 @@ static void case_destroy(proven_allocator_t heap, bool poll_kind) {
     pair(&c, &far);
     (void)fill(&c);
     PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &c.sock, (proven_mem_mut_t){ 0 }) == PROVEN_OK, "a receive in flight", g_kind);
+    /* And two things that have ended but not been answered yet: a socket closed, an accept
+     * cancelled. Their last answers come from the destroy, so that their memory can go. */
+    conn_t gone;
+    proven_net_conn_t gone_far;
+    pair(&gone, &gone_far);
+    proven_loop_close(g_loop, &gone.sock);
+    acceptor_t a;
+    memset(&a, 0, sizeof a);
+    PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_ipv4(127, 0, 0, 1, 0), 4, &a.listener, NULL) == PROVEN_OK &&
+                       proven_loop_accept(g_loop, &a.acc, &a.listener, on_accept, &a) == PROVEN_OK, "an accept in flight", g_kind);
+    proven_loop_accept_cancel(g_loop, &a.acc);
+    (void)proven_net_listener_close(&a.listener);
     proven_loop_destroy(l);
     g_loop = saved;
-    PROVEN_TEST_ASSERT(c.received == 0 && c.writable == 0 && c.closed == 0, "a destroyed loop calls nothing", g_kind);
+    PROVEN_TEST_ASSERT(c.received == 0 && c.writable == 0 && c.closed == 0, "a destroyed loop calls nothing for what is still open", g_kind);
+    PROVEN_TEST_ASSERT(gone.closed == 1 && gone.received == 0 && a.calls == 1 && a.last == PROVEN_ERR_CANCELLED,
+        "but gives a closed socket its closed, and a cancelled accept its PROVEN_ERR_CANCELLED", g_kind);
     (void)proven_net_close(&c.conn);
     (void)proven_net_close(&far);
+    (void)proven_net_close(&gone_far);
 }
 
 static void run_all(proven_allocator_t heap, bool poll_kind) {
@@ -394,9 +430,9 @@ int main(void) {
 
     /* RFC-0025 section 12: the socket holds what the loop needs per connection. */
 #if defined(_WIN32) || defined(_WIN64)
-    PROVEN_TEST_ASSERT(sizeof(proven_loop_sock_t) == 120, "a socket of the loop is 120 bytes on Windows", "");
+    PROVEN_TEST_ASSERT(sizeof(proven_loop_sock_t) == 104, "a socket of the loop is 104 bytes on Windows", "");
 #else
-    PROVEN_TEST_ASSERT(sizeof(proven_loop_sock_t) == 88, "a socket of the loop is 88 bytes", "");
+    PROVEN_TEST_ASSERT(sizeof(proven_loop_sock_t) == 72, "a socket of the loop is 72 bytes", "");
 #endif
 
     proven_allocator_t heap = proven_heap_allocator();

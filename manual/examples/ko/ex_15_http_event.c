@@ -26,6 +26,7 @@ typedef struct {
     proven_http_stream_t *stream;
     proven_loop_timer_t timer;
     proven_size_t sent, total;         /* /count: how far the body has got */
+    proven_size_t part;                /* /count: 지금 줄에서 이미 나간 만큼 */
     proven_size_t received;            /* /size: body bytes seen */
 } ex_exchange_t;
 
@@ -35,9 +36,11 @@ static void count_pump(ex_exchange_t *x) {
     while (x->sent < x->total) {
         char line[32];
         int n = snprintf(line, sizeof line, "%u\n", (unsigned)x->sent);
-        proven_result_size_t w = proven_http_stream_write(x->stream, (proven_mem_view_t){ (const proven_byte_t *)line, (proven_size_t)n });
+        proven_result_size_t w = proven_http_stream_write(x->stream, (proven_mem_view_t){ (const proven_byte_t *)line + x->part, (proven_size_t)n - x->part });
         if (w.err != PROVEN_OK) return;                   /* 클라이언트가 떠났다 */
-        if (w.value < (proven_size_t)n) return;           /* 보류됨: 언제 되는지는 on_writable이 알려 준다 */
+        x->part += w.value;                              /* 쓰기는 받은 것의 일부만 가져갈 수 있다 */
+        if (x->part < (proven_size_t)n) return;           /* 보류됨: 언제 되는지는 on_writable이 알려 준다 */
+        x->part = 0;
         x->sent++;
     }
     (void)proven_http_stream_end(x->stream);

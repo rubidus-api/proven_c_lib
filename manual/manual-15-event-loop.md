@@ -76,7 +76,7 @@ a queue that other threads can post to, and a scratch buffer.
 | `proven_loop_run(loop)` | Wait, call what is ready, fire what is due, repeat - until `proven_loop_stop`. | `PROVEN_OK` after a stop; an error if waiting itself failed. |
 | `proven_loop_poll(loop, until)` | One round: wait until something is ready or `until` passes, and handle it. `PROVEN_NET_DONT_WAIT` handles only what is ready now. | `proven_err_t`. |
 | `proven_loop_stop(loop)` | Make `proven_loop_run` return. Safe from any thread and from a callback. | nothing. |
-| `proven_loop_destroy(loop)` | Free the loop. Whatever is still attached, in flight or set is forgotten; nothing is called, and the bytes waiting to be sent are freed. Null is accepted. | nothing. |
+| `proven_loop_destroy(loop)` | Free the loop. What has already ended gets its last answer now - `closed` of a socket given to `proven_loop_close`, the `PROVEN_ERR_CANCELLED` of a cancelled accept - so that its memory can go; those functions only free. Anything else still attached, in flight or set is forgotten and nothing is called; the bytes waiting to be sent are freed. Null is accepted. | nothing. |
 
 `proven_loop_run` is for a thread that does nothing else. `proven_loop_poll` is for a program
 that already has a main loop of its own and gives this one a turn in it.
@@ -510,7 +510,7 @@ A server is made on a loop, told where to listen, and does nothing until the loo
 | `proven_http_event_server_set_max_streams(server, n)` | Change `max_concurrent_streams` while the server runs: 1 to the configured value, for the connections open and those to come ([Chapter 17](manual-17-http2.md), sections 6 and 9). On the loop's thread. | `proven_err_t`: `INVALID_ARG`. |
 | `proven_http_event_server_stop_listening(server)` | Stop accepting; open connections go on, an HTTP/1.1 response from now on says `Connection: close`, HTTP/2 says goodbye. | nothing. |
 | `proven_http_event_server_shutdown(server, grace_ms, on_drained, ctx)` | End gracefully (section 10); `on_drained(ctx, why)` when it is over. | `proven_err_t`: `INVALID_STATE` when already shutting down. |
-| `proven_http_event_server_destroy(server)` | Close every connection and the listeners, and free the server. Exchanges still in progress get `on_done` with `PROVEN_ERR_RESET`. The loop is neither stopped nor freed. Null is accepted. | nothing. |
+| `proven_http_event_server_destroy(server)` | Close every connection and the listeners, and free the server. Exchanges still in progress get `on_done` with `PROVEN_ERR_RESET`. The loop is neither stopped nor freed. What the loop has not answered yet - an accept in flight, a connection's socket - keeps its memory until the loop's next round or `proven_loop_destroy` (section 5, rule 3). Null is accepted. | nothing. |
 
 **Four functions.** The configuration carries them in `on`, and `ctx` is passed to each:
 
@@ -622,6 +622,7 @@ typedef struct {
     proven_http_stream_t *stream;
     proven_loop_timer_t timer;
     proven_size_t sent, total;         /* /count: how far the body has got */
+    proven_size_t part;                /* /count: how much of the current line has gone */
     proven_size_t received;            /* /size: body bytes seen */
 } ex_exchange_t;
 
@@ -631,9 +632,11 @@ static void count_pump(ex_exchange_t *x) {
     while (x->sent < x->total) {
         char line[32];
         int n = snprintf(line, sizeof line, "%u\n", (unsigned)x->sent);
-        proven_result_size_t w = proven_http_stream_write(x->stream, (proven_mem_view_t){ (const proven_byte_t *)line, (proven_size_t)n });
+        proven_result_size_t w = proven_http_stream_write(x->stream, (proven_mem_view_t){ (const proven_byte_t *)line + x->part, (proven_size_t)n - x->part });
         if (w.err != PROVEN_OK) return;                   /* the client left */
-        if (w.value < (proven_size_t)n) return;           /* held back: on_writable will say when */
+        x->part += w.value;                              /* a write may take part of what it is given */
+        if (x->part < (proven_size_t)n) return;           /* held back: on_writable will say when */
+        x->part = 0;
         x->sent++;
     }
     (void)proven_http_stream_end(x->stream);
@@ -2091,11 +2094,11 @@ int main(void) {
 **What a connection holds.** A connection with no request on it holds its struct and no buffer:
 requests are read into the loop's scratch buffer, and bytes are copied aside only when a
 request is incomplete. (A compressor exists only while a compressed response is being
-written.) On x86-64 Linux the registered tests measure 448 bytes of heap for an
-idle plain HTTP connection, failing above 512, and 944 bytes for an idle plain WebSocket
+written.) On x86-64 Linux the registered tests measure 488 bytes of heap for an
+idle plain HTTP connection, failing above 512, and 984 bytes for an idle plain WebSocket
 connection, failing above 1 KiB. A TLS connection adds the engine's state, about 1.25 KiB while
-idle (Chapter 14, section 9): an idle TLS connection measures 1,704 bytes in all, and the test
-fails at 2 KiB - the target for TLS, where a plain connection's is 1 KiB. **An HTTP/2 connection is another size**: 2,312 bytes idle after
+idle (Chapter 14, section 9): an idle TLS connection measures 1,736 bytes in all, and the test
+fails at 2 KiB - the target for TLS, where a plain connection's is 1 KiB. **An HTTP/2 connection is another size**: 2,368 bytes idle after
 one small request, failing above 3 KiB, and growing with the header fields it is made to
 remember to about 12.8 KiB when both of its compression tables are full ([Chapter 17, section 6](manual-17-http2.md#6-http2-in-the-event-driven-server)).
 The numbers below are HTTP/1.1's; HTTP/2's, under the same load, are in

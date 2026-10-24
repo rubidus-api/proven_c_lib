@@ -1227,7 +1227,7 @@ int main(void) {
   `max_concurrent_streams` of them, each the size its handler made it. A client that uploads
   without reading its other responses therefore stops being read, and resumes when it reads.
 - **An idle HTTP/2 connection is larger than an HTTP/1.1 one, by what it has been sent.**
-  HTTP/1.1's is 448 bytes. HTTP/2's is 2,312 bytes after one small request, and grows with
+  HTTP/1.1's is 488 bytes. HTTP/2's is 2,368 bytes after one small request, and grows with
   the header fields its client has made it remember, to about 12.8 KiB when both compression
   tables are full: ten thousand idle connections are between 22 and 128 MiB.
   `http2_header_table_bytes` lowers the ceiling and `http2_no_header_table` removes it (under

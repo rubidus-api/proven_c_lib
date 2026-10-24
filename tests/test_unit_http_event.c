@@ -538,7 +538,9 @@ static void memory_case(void) {
     while (proven_time_monotonic_now() < until) PROVEN_TEST_ASSERT(proven_loop_poll(loop, until) == PROVEN_OK, "a round", "");
     PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == 0 && count.live == base, "closed by their clients, they have given everything back", "");
     proven_http_event_server_destroy(server);
-    PROVEN_TEST_ASSERT(count.live == 0, "and so has the server, destroyed", "");
+    /* Its listener's accept was in flight: the server's last bytes go when the loop has
+     * answered that it was cancelled (RFC-0025), in the next round. */
+    PROVEN_TEST_ASSERT(proven_loop_poll(loop, PROVEN_NET_DONT_WAIT) == PROVEN_OK && count.live == 0, "and so has the server, destroyed, once the loop has had a round", "");
     proven_loop_destroy(loop);
 }
 
