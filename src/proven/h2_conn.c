@@ -305,8 +305,11 @@ static void h2c_stream_credit(proven_h2_conn_t *c, proven_h2c_stream_t *s, prove
         if (c->cap_window) {
             /* Under a ceiling (RFC-0026), room is given back only up to it - what the peer may
              * still send on the stream and what is held here together - and the stream does not
-             * grow past it (above). Room withheld is not owed later. */
-            const proven_i64 room = (proven_i64)c->cap_window - ((proven_i64)s->recv_win + (proven_i64)s->held);
+             * grow past it (above). Room withheld is not owed later. A lowering of the initial
+             * window said and not yet acknowledged will take its difference from the stream at
+             * the acknowledgement (h2c_local_window): counted now, so that it is not taken twice. */
+            const proven_i64 pending = c->local_window > c->adv_window ? (proven_i64)c->local_window - (proven_i64)c->adv_window : 0;
+            const proven_i64 room = (proven_i64)c->cap_window - ((proven_i64)s->recv_win - pending + (proven_i64)s->held);
             if (room <= 0) return;
             if ((proven_i64)inc > room) inc = (proven_u32)room;
         }

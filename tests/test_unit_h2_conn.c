@@ -1939,6 +1939,49 @@ int main(void) {
         PROVEN_TEST_ASSERT(g_most_s <= 65535 && g_most_c <= 65535, "and room is given back only up to it: the sender's allowance shrinks from the first window, never grows", "");
         proven_h2_conn_destroy(c);
         g_cap = 0;
+        /* A ceiling below the initial window, set while a stream holds the whole first window:
+         * the lowering it says is applied to the stream at the acknowledgement, so credit
+         * returned before then must be counted as it will be after - or the stream is left
+         * with less than nothing and nothing to consume (found before release). */
+        {
+            static proven_byte_t piece[16384];
+            const proven_h2_config_t cfg = { .alloc = g_alloc, .server = true };
+            proven_h2_conn_t *k = conn_new(&cfg);
+            buf_t *b = &g_rec;
+            log_t log = { 0 };
+            seen_t seen = { 0 };
+            b->n = 0;
+            memcpy(b->b, PROVEN_H2_PREFACE, 24); b->n = 24;
+            put_frame(b, PROVEN_H2_SETTINGS, 0, 0, (void *)0, 0);
+            put_frame(b, PROVEN_H2_SETTINGS, PROVEN_H2_FLAG_ACK, 0, (void *)0, 0);
+            put_headers(b, 1, EH, POST, 4);
+            feed(k, b->b, b->n, b->n, &log);
+            const bool consume = g_consume;
+            g_consume = false;
+            for (proven_size_t sent = 0; sent < 65535; ) {
+                const proven_size_t n = 65535 - sent < sizeof piece ? 65535 - sent : sizeof piece;
+                b->n = 0;
+                put_frame(b, PROVEN_H2_DATA, 0, 1, piece, n);
+                feed(k, b->b, b->n, b->n, &log);
+                sent += n;
+            }
+            drain(k, &seen);
+            const proven_u64 before = seen.window_streams;
+            proven_h2_conn_cap_window_(k, 30000);
+            proven_h2_conn_consumed(k, 1, 40000);
+            b->n = 0;
+            put_frame(b, PROVEN_H2_SETTINGS, PROVEN_H2_FLAG_ACK, 0, (void *)0, 0);
+            feed(k, b->b, b->n, b->n, &log);
+            proven_h2_conn_consumed(k, 1, 25535);
+            drain(k, &seen);
+            g_consume = consume;
+            /* The client's window on the stream: the first 65,535, all of it sent, what was
+             * given back, and the change of initial window (30,000 - 65,535) it applied. */
+            const proven_i64 client = 65535 - 65535 + (proven_i64)(seen.window_streams - before) + (30000 - 65535);
+            PROVEN_TEST_ASSERT(log.err == PROVEN_OK && log.closed == 0 && client == 30000,
+                "a stream that held the whole first window, capped at 30,000 before the acknowledgement, ends with exactly 30,000 to send once all is read", "Check the pending lowering in h2c_stream_credit.");
+            proven_h2_conn_destroy(k);
+        }
     }
 
     PROVEN_TEST_SECTION("settings changed after the opening", "proven_h2_conn_set_max_streams and proven_h2_conn_set_initial_window: one frame in flight, the larger value enforced until the peer acknowledges, the values at creation as ceilings.", "Check h2c_settings_change, h2c_settings_acked and the enforced number in h2c_on_block.");
