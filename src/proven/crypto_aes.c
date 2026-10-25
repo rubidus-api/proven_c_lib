@@ -235,6 +235,7 @@ void proven_crypto_aes_force_portable(bool on) { g_aes_force_portable = on; }
 
 bool proven_crypto_aes_hw_available(void) {
 #ifdef PROVEN_FREESTANDING
+    (void)g_aes_force_portable;                  /* read, or clang's -Wunused-but-set-global fails the build */
     return false;
 #else
     return !g_aes_force_portable && proven_sys_aes_available();

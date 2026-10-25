@@ -132,6 +132,12 @@ decisions of 2026-10-24: one release with everything). Work in progress.
   (`proven_loop_recv` with an empty buffer) where it asked for readable, and sends with
   `proven_loop_send` instead of asking for writable.
 
+### Fixed
+
+- **The freestanding build compiles with clang 23**, whose `-Wunused-but-set-global` (an error
+  under the build's `-Werror`) stopped the wasm32 target at `crypto_aes.c`: the portable-AES
+  switch, set but never read where there is no hardware path, is now read there.
+
 ## [0.80.0] - 2026-10-24
 
 RFC-0024 piece B: WebSocket context takeover (the owner's decisions of 2026-10-24: on whenever
