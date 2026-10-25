@@ -45,13 +45,17 @@ decisions of 2026-10-24: one release with everything). Work in progress.
   with `WSAPoll` before: receives (of zero bytes, or into a buffer), sends of a connection's
   buffers in one `WSASend`, accepts (`AcceptEx`), connects (`ConnectEx`), UDP receives
   (`WSARecvMsg`, segment sizes included), and a post to the port as the waker. Nothing it calls
-  is undocumented. Built with mingw-w64 for x86-64 and i686; not yet run on Windows - the release runs the
-  suite there before it is published. What it changes for a program: the system writes into a
+  is undocumented. A round looks at the port again without waiting, up to 64 times, while it
+  reports something, so that many connections waiting are accepted in one round as the
+  selector's drain did. The loop and event tests (ten programs) pass on Windows 11 built for
+  x86-64 and for i686; the whole suite runs there before the release. What it changes for a program: the system writes into a
   receive's buffer until the receive is answered, so on Windows a receive into a buffer that is
   cancelled after data reached it is answered with that data rather than `PROVEN_ERR_CANCELLED`;
   `proven_loop_destroy` cancels what the system still holds and waits for it (up to two seconds)
   before it frees anything; a `proven_loop_sock_t` is 120 bytes there and a
-  `proven_loop_accept_t` 400. A Unix-domain connect through the loop is made at once (it is not
+  `proven_loop_accept_t` 400, and an idle connection holds 48 bytes more than on Linux (plain
+  536, WebSocket 1,032, HTTP/2 without header tables 2,064 bytes measured on x86-64): the tests
+  bound them there at 576, 1,088 and 2,112. A Unix-domain connect through the loop is made at once (it is not
   an operation of the port).
 - **The event-driven server runs on the loop's operations** (RFC-0025 step 2): each connection
   waits for input with a receive of zero bytes and sends through the loop - straight to the

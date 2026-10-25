@@ -1786,6 +1786,14 @@ proven_err_t proven_loop_poll(proven_loop_t *l, proven_net_deadline_t until) {
     const proven_sys_net_result_t r = proven_sys_net_port_wait(l->port, l->batch, LOOP_EVENTS, proven_net_remaining_ms_(until), &count);
     if (r != PROVEN_SYS_NET_OK) return proven_net_err_from_sys_(r);
     for (proven_size_t i = 0; i < count; ++i) loop_report(l, &l->batch[i]);
+    /* An accept or a receive armed again from its own function is answered by the port, not
+     * the done list: look at the port again without waiting, up to LOOP_DONE_PASSES times, so
+     * many connections waiting are taken in one round as the selector's drain would. */
+    for (int pass = 1; pass < LOOP_DONE_PASSES && count > 0; ++pass) {
+        loop_run_done(l);
+        if (proven_sys_net_port_wait(l->port, l->batch, LOOP_EVENTS, 0, &count) != PROVEN_SYS_NET_OK) break;
+        for (proven_size_t i = 0; i < count; ++i) loop_report(l, &l->batch[i]);
+    }
 #else
     proven_err_t e = proven_net_selector_wait(l->selector, l->batch, LOOP_EVENTS, until, &count);
     if (e != PROVEN_OK && e != PROVEN_ERR_TIMEOUT) return e;

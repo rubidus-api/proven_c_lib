@@ -945,7 +945,12 @@ static void memory_case(bool no_tables) {
     const proven_size_t each = (count.live - base - shared) / N;
     fprintf(stderr, "[PROVEN][TEST][INFO] an idle HTTP/2 connection %s holds %u bytes; one buffer of %u bytes for reading header lists is shared by all\n",
             no_tables ? "with no header tables" : "with the default header tables", (unsigned)each, (unsigned)shared);
+#if defined(_WIN32) || defined(_WIN64)
+    /* The loop's socket holds an OVERLAPPED and a link for destroy there: 48 bytes more. */
+    if (no_tables) PROVEN_TEST_ASSERT(each < 2112, "with http2_no_header_table an idle HTTP/2 connection holds under 2,112 bytes on Windows", "");
+#else
     if (no_tables) PROVEN_TEST_ASSERT(each < 2048, "with http2_no_header_table an idle HTTP/2 connection holds under 2 KiB", "");
+#endif
     PROVEN_TEST_ASSERT(count.live - base > shared && each < 3072,
         "an idle HTTP/2 connection that has carried one small request holds under 3 KiB: the record, the driver, the engine, and header tables that have grown only as far as they were used - and no buffer of its own for reading header lists", "");
     for (int i = 0; i < N; ++i) (void)proven_net_close(&socks[i]);

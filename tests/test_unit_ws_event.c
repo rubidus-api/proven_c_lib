@@ -19,6 +19,13 @@ static proven_mem_view_t mv(const char *s) { return (proven_mem_view_t){ .ptr = 
 static proven_u8str_view_t sv(const char *s) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = strlen(s) }; }
 
 static proven_allocator_t g_heap;
+/* What an idle connection may hold: less than 1 KiB, and 64 bytes more on Windows, where the
+ * loop's socket holds an OVERLAPPED and a link for destroy. */
+#if defined(_WIN32) || defined(_WIN64)
+#define IDLE_BOUND 1088
+#else
+#define IDLE_BOUND 1024
+#endif
 static proven_loop_t *g_loop;
 static proven_http_event_server_t *g_server;
 static proven_job_sys_t *g_threads;
@@ -589,7 +596,7 @@ static void memory_compressed_case(bool takeover) {
     proven_size_t each = (count.live - base) / N;
     fprintf(stderr, "[PROVEN][TEST][INFO] an idle compressed WebSocket connection (%s) holds %u bytes\n", takeover ? "takeover" : "no takeover", (unsigned)each);
     if (takeover) PROVEN_TEST_ASSERT(each > 60 * 1024 && each < 66 * 1024, "with takeover it keeps its compressor (window 11) and decompressor: under 66 KiB", "Check ws_z_agree and PROVEN_WS_DEFLATE_TAKEOVER_BITS.");
-    else PROVEN_TEST_ASSERT(each < 1024, "without takeover it holds less than 1 KiB, as a plain one: nothing between messages", "Check that a compressor and decompressor are freed at each message's end.");
+    else PROVEN_TEST_ASSERT(each < IDLE_BOUND, "without takeover it holds less than 1 KiB (1,088 bytes on Windows), as a plain one: nothing between messages", "Check that a compressor and decompressor are freed at each message's end.");
     for (int i = 0; i < N; ++i) (void)proven_net_close(&socks[i]);
     until = proven_net_deadline_in(300);
     while (proven_time_monotonic_now() < until) PROVEN_TEST_ASSERT(proven_loop_poll(loop, until) == PROVEN_OK, "a round", "");
@@ -626,7 +633,7 @@ static void memory_case(void) {
     PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == N, "three hundred WebSocket connections, each echoed once, all idle", "");
     proven_size_t each = (count.live - base) / N;
     fprintf(stderr, "[PROVEN][TEST][INFO] an idle plain WebSocket connection holds %u bytes\n", (unsigned)each);
-    PROVEN_TEST_ASSERT(each < 1024, "an idle WebSocket connection holds less than 1 KiB: its two structs, and no buffer", "");
+    PROVEN_TEST_ASSERT(each < IDLE_BOUND, "an idle WebSocket connection holds less than 1 KiB (1,088 bytes on Windows): its two structs, and no buffer", "");
     for (int i = 0; i < N; ++i) (void)proven_net_close(&socks[i]);
     until = proven_net_deadline_in(300);
     while (proven_time_monotonic_now() < until) PROVEN_TEST_ASSERT(proven_loop_poll(loop, until) == PROVEN_OK, "a round", "");
