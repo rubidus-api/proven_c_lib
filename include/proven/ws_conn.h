@@ -59,6 +59,7 @@ typedef struct {
     int compress_level;                 /**< 1 (fastest) to 9 (smallest); -1 stores without compressing. 0: 6 */
     int compress_window_bits;           /**< how far back the compressor looks, 9 to 15: about 11 KiB of memory at 9, 28 KiB at 11, 325 KiB at 15 (without takeover only during one send, and less for a message smaller than the window). 0: 11 with takeover, 15 without */
     bool compress_no_takeover;          /**< with `compress`: compress each message on its own, keeping nothing between messages (no context takeover), as before v0.80.0. Short, similar messages then shrink far less, and an idle connection holds no compression state. false: each side may keep its window (see proven_ws_conn_compressed) */
+    bool compress_peer_no_takeover;     /**< with `compress` and takeover: this side keeps its own window, and the other side must compress each message on its own - so this side needs no decompressor between messages (about 35 KiB less), and the other side's short, similar messages shrink far less. proven_ws_conn_accept answers `client_no_context_takeover` unasked; proven_ws_conn_connect offers `server_no_context_takeover`, and a server that will not honour it leaves the connection uncompressed. proven_ws_conn_open refuses it (nothing is negotiated there). false: the other side may keep its window too */
 } proven_ws_conn_config_t;
 
 /** @brief A received message. `data` is memory the connection owns, good until the next
@@ -135,9 +136,10 @@ proven_err_t proven_ws_conn_accept(proven_http_exchange_t *exchange, proven_u8st
  * No handshake is made here, so nothing is negotiated: `config->compress` says that
  * `permessage-deflate` **was** agreed - with context takeover in both directions, or with none
  * under `compress_no_takeover` - and both ends must say the same. (An end before v0.80.0
- * always means none: give the other end `compress_no_takeover`.)
+ * always means none: give the other end `compress_no_takeover`.) `compress_peer_no_takeover`
+ * is refused here: it is an agreement only a handshake can make.
  *
- * @return PROVEN_ERR_INVALID_ARG (also for a compression level or window outside its range);
+ * @return PROVEN_ERR_INVALID_ARG (also for a compression level or window outside its range, and for `compress_peer_no_takeover` with takeover);
  *         PROVEN_ERR_NOMEM; PROVEN_ERR_OUT_OF_BOUNDS when `early` is larger than the
  *         connection's read buffer (16 KiB); PROVEN_ERR_IO when a client could not draw random
  *         bytes for its masks.

@@ -537,11 +537,12 @@ static void quiet_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_m
     if (last) (void)proven_ws_stream_send(ws, text, piece);
 }
 static void quiet_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) { (void)ctx; (void)ws; (void)code; (void)why; g_quiet_closed++; }
-static int g_quiet_compress;            /* 0: off; 1: on, with takeover; 2: on, compress_no_takeover */
+static int g_quiet_compress;            /* 0: off; 1: on, with takeover; 2: on, compress_no_takeover; 3: on, compress_peer_no_takeover */
 static void quiet_request(void *ctx, proven_http_stream_t *s, const proven_http_request_t *req) {
     (void)ctx;
     proven_ws_event_config_t cfg = { .on = { .on_message = quiet_message, .on_closed = quiet_closed },
-                                     .compress = g_quiet_compress != 0, .compress_no_takeover = g_quiet_compress == 2 };
+                                     .compress = g_quiet_compress != 0, .compress_no_takeover = g_quiet_compress == 2,
+                                     .compress_peer_no_takeover = g_quiet_compress == 3 };
     proven_ws_stream_t *ws = NULL;
     if (proven_ws_event_accept(s, req, &cfg, &ws) != PROVEN_OK) (void)proven_http_stream_respond(s, 400, NULL, 0, mv(""));
 }
@@ -556,15 +557,17 @@ static proven_size_t masked(proven_byte_t *out, proven_byte_t op, const proven_b
 }
 
 /* What an idle compressed connection holds, after a compressed message each way: with
- * takeover, the compressor and decompressor it keeps; without, nothing more than its structs. */
-static void memory_compressed_case(bool takeover) {
+ * takeover, the compressor and decompressor it keeps; without, nothing more than its structs;
+ * with the client's takeover forbidden (mode 3), the compressor alone. */
+static void memory_compressed_case(int mode) {
+    const bool takeover = mode == 1;
     counting_t count = { .heap = g_heap, .live = 0 };
     proven_allocator_t alloc = { .ctx = &count, .alloc_fn = count_alloc, .realloc_fn = count_realloc, .free_fn = count_free };
     proven_loop_t *loop = NULL;
     proven_http_event_server_t *server = NULL;
     proven_http_event_server_config_t cfg = { .alloc = alloc, .on = { .on_request = quiet_request } };
     proven_net_addr_t at;
-    g_quiet_compress = takeover ? 1 : 2;
+    g_quiet_compress = mode;
     g_quiet_closed = 0;
     PROVEN_TEST_ASSERT(proven_loop_create(g_heap, &loop) == PROVEN_OK && proven_http_event_server_create(loop, &cfg, &server) == PROVEN_OK &&
                        proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server with a counting allocator, compression on", "");
@@ -590,17 +593,65 @@ static void memory_compressed_case(bool takeover) {
     while (proven_time_monotonic_now() < until) PROVEN_TEST_ASSERT(proven_loop_poll(loop, until) == PROVEN_OK, "a round", "");
     PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == N, "a hundred compressed WebSocket connections, all idle", "");
     /* The last answer each received is compressed: the thirty bytes went through a compressor. */
-    proven_byte_t got[256];
+    proven_byte_t got[1024];
     proven_result_size_t r = proven_net_read(&socks[N - 1], (proven_mem_mut_t){ got, sizeof got }, proven_net_deadline_in(2000));
     PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.value > 0, "and one of them has its answers", "");
+    bool forbids = false;
+    for (proven_size_t i = 0; i + 26 <= r.value && !forbids; ++i) forbids = memcmp(got + i, "client_no_context_takeover", 26) == 0;
+    PROVEN_TEST_ASSERT(forbids == (mode != 1), "the answer forbids the client's takeover unasked exactly when this side keeps no decompressor", "");
     proven_size_t each = (count.live - base) / N;
-    fprintf(stderr, "[PROVEN][TEST][INFO] an idle compressed WebSocket connection (%s) holds %u bytes\n", takeover ? "takeover" : "no takeover", (unsigned)each);
-    if (takeover) PROVEN_TEST_ASSERT(each > 60 * 1024 && each < 66 * 1024, "with takeover it keeps its compressor (window 11) and decompressor: under 66 KiB", "Check ws_z_agree and PROVEN_WS_DEFLATE_TAKEOVER_BITS.");
+    fprintf(stderr, "[PROVEN][TEST][INFO] an idle compressed WebSocket connection (%s) holds %u bytes\n",
+            mode == 1 ? "takeover" : mode == 2 ? "no takeover" : "the client's takeover forbidden", (unsigned)each);
+    if (mode == 3) PROVEN_TEST_ASSERT(each > 24 * 1024 && each < 32 * 1024, "with the client's takeover forbidden it keeps its compressor alone: under 32 KiB", "Check proven_ws_deflate_accept_peer_no_takeover and that the decompressor is freed at each message's end.");
+    else if (takeover) PROVEN_TEST_ASSERT(each > 60 * 1024 && each < 66 * 1024, "with takeover it keeps its compressor (window 11) and decompressor: under 66 KiB", "Check ws_z_agree and PROVEN_WS_DEFLATE_TAKEOVER_BITS.");
     else PROVEN_TEST_ASSERT(each < IDLE_BOUND, "without takeover it holds less than 1 KiB (1,088 bytes on Windows), as a plain one: nothing between messages", "Check that a compressor and decompressor are freed at each message's end.");
     for (int i = 0; i < N; ++i) (void)proven_net_close(&socks[i]);
     until = proven_net_deadline_in(300);
     while (proven_time_monotonic_now() < until) PROVEN_TEST_ASSERT(proven_loop_poll(loop, until) == PROVEN_OK, "a round", "");
     PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == 0 && count.live == base && g_quiet_closed == N, "closed by their clients, each gave everything back - the kept compressor and decompressor too", "");
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(loop);
+    g_quiet_compress = 0;
+}
+
+/* A client told it may not take over that does so anyway: its second message refers back into
+ * the first (RFC 7692 7.2.3.2's "Hello" twice), which a fresh decompressor cannot resolve - the
+ * server ends the connection with 1007. */
+static void peer_takes_over_case(void) {
+    proven_loop_t *loop = NULL;
+    proven_http_event_server_t *server = NULL;
+    proven_http_event_server_config_t cfg = { .alloc = g_heap, .on = { .on_request = quiet_request } };
+    proven_net_addr_t at;
+    g_quiet_compress = 3;
+    g_quiet_closed = 0;
+    PROVEN_TEST_ASSERT(proven_loop_create(g_heap, &loop) == PROVEN_OK && proven_http_event_server_create(loop, &cfg, &server) == PROVEN_OK &&
+                       proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server that forbids the client's takeover", "");
+    static const char req[] = "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                              "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Extensions: permessage-deflate\r\n\r\n";
+    static const proven_byte_t hello[] = { 0xf2, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00 }, again[] = { 0xf2, 0x00, 0x11, 0x00, 0x00 };
+    proven_byte_t frames[64];
+    proven_size_t fl = masked(frames, 0xc1, hello, sizeof hello);
+    fl += masked(frames + fl, 0xc1, again, sizeof again);
+    proven_net_conn_t sock;
+    PROVEN_TEST_ASSERT(proven_net_connect(at, proven_net_deadline_in(5000), &sock) == PROVEN_OK &&
+                       proven_net_write_all(&sock, (proven_mem_view_t){ .ptr = (const proven_byte_t *)req, .size = sizeof req - 1 }, proven_net_deadline_in(5000)).err == PROVEN_OK &&
+                       proven_net_write_all(&sock, (proven_mem_view_t){ .ptr = frames, .size = fl }, proven_net_deadline_in(5000)).err == PROVEN_OK,
+        "a client that upgrades and sends 'Hello' twice, the second referring back to the first", "");
+    proven_byte_t got[1024];
+    proven_size_t have = 0;
+    bool closed_1007 = false;
+    proven_net_deadline_t until = proven_net_deadline_in(3000);
+    while (!closed_1007 && proven_time_monotonic_now() < until && have < sizeof got) {
+        PROVEN_TEST_ASSERT(proven_loop_poll(loop, proven_net_deadline_in(20)) == PROVEN_OK, "a round", "");
+        proven_result_size_t r = proven_net_read(&sock, (proven_mem_mut_t){ got + have, sizeof got - have }, PROVEN_NET_DONT_WAIT);
+        if (r.err == PROVEN_OK) have += r.value;
+        else if (r.err != PROVEN_ERR_TIMEOUT && r.err != PROVEN_ERR_AGAIN) break;
+        for (proven_size_t i = 0; i + 4 <= have && !closed_1007; ++i) closed_1007 = got[i] == 0x88 && got[i + 1] >= 2 && got[i + 2] == 0x03 && got[i + 3] == 0xef;
+    }
+    PROVEN_TEST_ASSERT(closed_1007, "the server closes with 1007: what it was sent does not inflate on its own", "Check that the decompressor is not kept when the client's takeover was forbidden.");
+    (void)proven_net_close(&sock);
+    until = proven_net_deadline_in(300);
+    while (proven_time_monotonic_now() < until) PROVEN_TEST_ASSERT(proven_loop_poll(loop, until) == PROVEN_OK, "a round", "");
     proven_http_event_server_destroy(server);
     proven_loop_destroy(loop);
     g_quiet_compress = 0;
@@ -679,8 +730,10 @@ int main(void) {
     drain_case();
     PROVEN_TEST_SECTION("what an idle connection holds", "Three hundred WebSocket connections that have each echoed a message and now say nothing.", "Check the size of struct proven_ws_stream and of the connection struct in http_event.c.");
     memory_case();
-    memory_compressed_case(true);
-    memory_compressed_case(false);
+    memory_compressed_case(1);
+    memory_compressed_case(2);
+    memory_compressed_case(3);
+    peer_takes_over_case();
 
     proven_tls_config_destroy(g_client_tls); proven_tls_config_destroy(g_server_tls); proven_cert_store_destroy(anchors);
     proven_job_system_close(g_threads); proven_job_system_destroy(g_threads);

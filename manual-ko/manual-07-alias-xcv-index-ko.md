@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1314개: 소문자 `xcv_` 이름 971개와 대문자 `XCV_` 이름 343개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1332개: 소문자 `xcv_` 이름 981개와 대문자 `XCV_` 이름 351개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -365,6 +365,7 @@ alias 1314개: 소문자 `xcv_` 이름 971개와 대문자 `XCV_` 이름 343개.
 | `XCV_WS_CONTINUATION` | `PROVEN_WS_CONTINUATION` |
 | `XCV_WS_DEFLATE_ANSWER_MAX` | `PROVEN_WS_DEFLATE_ANSWER_MAX` |
 | `XCV_WS_DEFLATE_OFFER` | `PROVEN_WS_DEFLATE_OFFER` |
+| `XCV_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER` | `PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER` |
 | `XCV_WS_DEFLATE_OFFER_TAKEOVER` | `PROVEN_WS_DEFLATE_OFFER_TAKEOVER` |
 | `XCV_WS_EVENT_CLOSE` | `PROVEN_WS_EVENT_CLOSE` |
 | `XCV_WS_EVENT_DATA` | `PROVEN_WS_EVENT_DATA` |
@@ -1283,6 +1284,7 @@ alias 1314개: 소문자 `xcv_` 이름 971개와 대문자 `XCV_` 이름 343개.
 | `xcv_ws_check_request` | `proven_ws_check_request` |
 | `xcv_ws_check_response` | `proven_ws_check_response` |
 | `xcv_ws_check_response_deflate` | `proven_ws_check_response_deflate` |
+| `xcv_ws_check_response_peer_no_takeover` | `proven_ws_check_response_peer_no_takeover` |
 | `xcv_ws_check_response_takeover` | `proven_ws_check_response_takeover` |
 | `xcv_ws_close_code_for` | `proven_ws_close_code_for` |
 | `xcv_ws_close_code_is_valid` | `proven_ws_close_code_is_valid` |
@@ -1311,6 +1313,7 @@ alias 1314개: 소문자 `xcv_` 이름 971개와 대문자 `XCV_` 이름 343개.
 | `xcv_ws_decoder_init` | `proven_ws_decoder_init` |
 | `xcv_ws_decoder_t` | `proven_ws_decoder_t` |
 | `xcv_ws_deflate_accept` | `proven_ws_deflate_accept` |
+| `xcv_ws_deflate_accept_peer_no_takeover` | `proven_ws_deflate_accept_peer_no_takeover` |
 | `xcv_ws_deflate_accept_takeover` | `proven_ws_deflate_accept_takeover` |
 | `xcv_ws_deflate_terms_t` | `proven_ws_deflate_terms_t` |
 | `xcv_ws_event_accept` | `proven_ws_event_accept` |

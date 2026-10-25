@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1314 aliases: 971 lowercase `xcv_` names and 343 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1332 aliases: 981 lowercase `xcv_` names and 351 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -363,6 +363,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_WS_CONTINUATION` | `PROVEN_WS_CONTINUATION` |
 | `XCV_WS_DEFLATE_ANSWER_MAX` | `PROVEN_WS_DEFLATE_ANSWER_MAX` |
 | `XCV_WS_DEFLATE_OFFER` | `PROVEN_WS_DEFLATE_OFFER` |
+| `XCV_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER` | `PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER` |
 | `XCV_WS_DEFLATE_OFFER_TAKEOVER` | `PROVEN_WS_DEFLATE_OFFER_TAKEOVER` |
 | `XCV_WS_EVENT_CLOSE` | `PROVEN_WS_EVENT_CLOSE` |
 | `XCV_WS_EVENT_DATA` | `PROVEN_WS_EVENT_DATA` |
@@ -1281,6 +1282,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_ws_check_request` | `proven_ws_check_request` |
 | `xcv_ws_check_response` | `proven_ws_check_response` |
 | `xcv_ws_check_response_deflate` | `proven_ws_check_response_deflate` |
+| `xcv_ws_check_response_peer_no_takeover` | `proven_ws_check_response_peer_no_takeover` |
 | `xcv_ws_check_response_takeover` | `proven_ws_check_response_takeover` |
 | `xcv_ws_close_code_for` | `proven_ws_close_code_for` |
 | `xcv_ws_close_code_is_valid` | `proven_ws_close_code_is_valid` |
@@ -1309,6 +1311,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_ws_decoder_init` | `proven_ws_decoder_init` |
 | `xcv_ws_decoder_t` | `proven_ws_decoder_t` |
 | `xcv_ws_deflate_accept` | `proven_ws_deflate_accept` |
+| `xcv_ws_deflate_accept_peer_no_takeover` | `proven_ws_deflate_accept_peer_no_takeover` |
 | `xcv_ws_deflate_accept_takeover` | `proven_ws_deflate_accept_takeover` |
 | `xcv_ws_deflate_terms_t` | `proven_ws_deflate_terms_t` |
 | `xcv_ws_event_accept` | `proven_ws_event_accept` |

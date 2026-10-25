@@ -67,6 +67,7 @@ typedef struct {
     int compress_level;                    /**< 1 (fastest) to 9 (smallest); -1 stores without compressing. 0: 6 */
     int compress_window_bits;              /**< how far back the compressor looks, 9 to 15: about 11 KiB of memory at 9, 28 KiB at 11, 325 KiB at 15 (without takeover only during one send, and less for a message smaller than the window). 0: 11 with takeover, 15 without */
     bool compress_no_takeover;             /**< with `compress`: compress each message on its own, keeping nothing between messages (no context takeover), as before v0.80.0. Short, similar messages then shrink far less, and an idle connection holds no compression state. false: each side may keep its window (see proven_ws_stream_compressed) */
+    bool compress_peer_no_takeover;        /**< with `compress` and takeover: this side keeps its own window, and the other side must compress each message on its own - so this side needs no decompressor between messages (about 35 KiB less per idle compressed connection), and the other side's short, similar messages shrink far less. A server answers `client_no_context_takeover` unasked; a client offers `server_no_context_takeover`, and a server that will not honour it leaves the connection uncompressed. false: the other side may keep its window too */
 } proven_ws_event_config_t;
 
 /**

@@ -661,6 +661,13 @@ proven_err_t proven_ws_deflate_accept_takeover(const proven_http_request_t *requ
 proven_err_t proven_ws_check_response_takeover(const proven_http_response_t *response, proven_u8str_view_t key,
                                                proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate,
                                                proven_ws_deflate_terms_t *terms);
+
+#define PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER "permessage-deflate; client_max_window_bits; server_no_context_takeover"
+proven_err_t proven_ws_deflate_accept_peer_no_takeover(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len,
+                                                       proven_ws_deflate_terms_t *terms);
+proven_err_t proven_ws_check_response_peer_no_takeover(const proven_http_response_t *response, proven_u8str_view_t key,
+                                                       proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate,
+                                                       proven_ws_deflate_terms_t *terms);
 void proven_inflate_restart(proven_inflate_t *z);                         /* deflate.h, 16장 */
 void proven_ws_decoder_allow_compressed(proven_ws_decoder_t *decoder);
 ```
@@ -708,8 +715,17 @@ takeover를 쓰는 클라이언트도 takeover를 막는 답을 받아들인다.
 `server_max_window_bits`, 답의 `client_max_window_bits`)는 따른다. 이 압축기의 최소보다 작은 256바이트로
 제한하는 상대에게는 이쪽 메시지를 압축 없이 보낸다.
 
+`compress_peer_no_takeover`는 둘 사이의 형태다: **이쪽은 윈도를 이어 가고, 상대는 그러지 못한다.** 이쪽이
+상대에게 보내는 메시지는 이득을 그대로 얻고, 메시지 사이에 해제기가 필요 없으므로 압축 메시지를 하나씩
+주고받은 유휴 연결은 양방향 takeover일 때 약 64 KiB를 쥐는 대신 약 30 KiB를 쥔다(측정, `test_unit_ws_event`).
+대신 상대의 짧고 비슷한 메시지는 따로 압축할 때만큼만 줄어든다. 서버는 제안에 있든 없든
+`client_no_context_takeover`로 답하고(RFC 7692가 허용한다), 클라이언트는 `server_no_context_takeover`를
+제안한다. 그것을 따르지 않을 서버는 확장을 거절하므로 연결은 압축 없이 이어진다. 그래도 takeover하는
+클라이언트는 1007로 닫힌다: 그 메시지는 따로는 풀리지 않는다.
+
 `proven_ws_conn_open`은 핸드셰이크를 하지 않는다: 양 끝이 같게 말해야 한다 - takeover, 또는
-`compress_no_takeover`. v0.80.0 전에 빌드한 끝은 언제나 takeover 없음을 뜻한다. 다른 끝에
+`compress_no_takeover`(`compress_peer_no_takeover`는 거기서 `PROVEN_ERR_INVALID_ARG`로 거부된다: 핸드셰이크만
+맺을 수 있는 합의다). v0.80.0 전에 빌드한 끝은 언제나 takeover 없음을 뜻한다. 다른 끝에
 `compress_no_takeover`를 주어라. 그러지 않으면 그 끝의 두 번째 압축 메시지는 1007로 거부된다.
 
 ### 예제: 필드 하나, 그리고 그것이 바꾸는 것
@@ -978,6 +994,23 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_ws_check_response_takeover(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed, &seen) == PROVEN_OK &&
                     compressed && seen.server_takeover && seen.client_takeover, "and the client sees the same terms");
 
+    /* 한쪽이 자기 창은 유지하고 상대의 것은 막을 수 있다: 그러면 메시지 사이에 해제기가 필요
+     * 없다. 서버는 proven_ws_deflate_accept_peer_no_takeover로, 클라이언트는
+     * PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER를 제안하고 proven_ws_check_response_peer_no_takeover로
+     * 답을 확인한다. 여기서는 서버가 막고, 이어서 클라이언트가 막는다. */
+    answer_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept_peer_no_takeover(&request_take, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &terms) == PROVEN_OK &&
+                    terms.server_takeover && !terms.client_takeover, "the server keeps its window and forbids the client's");
+    printf("a server that forbids the client's: %.*s\n", (int)answer_len, (const char *)answer);
+    proven_http_header_t asked_own[] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER) } };
+    proven_http_request_t request_own = { .headers = asked_own, .header_count = 1 };
+    answer_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept_takeover(&request_own, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &terms) == PROVEN_OK &&
+                    !terms.server_takeover && terms.client_takeover, "a server honours a client that forbids its takeover");
+    answered[3].value = (proven_u8str_view_t){ answer, answer_len };
+    EXAMPLE_REQUIRE(proven_ws_check_response_peer_no_takeover(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed, &seen) == PROVEN_OK &&
+                    compressed && !seen.server_takeover && seen.client_takeover, "and the client checks that it did");
+
     /* takeover하는 쪽은 연결에 압축기 하나를 두고 메시지마다 sync flush로 끝낸다. 읽는 쪽은
      * 해제기 하나를 둔다. 같은 줄을 두 번: 두 번째는 첫 번째를 가리키는 참조로 나간다. */
     EXAMPLE_REQUIRE(proven_deflate_create(&options, &c) == PROVEN_OK && proven_inflate_create(heap, PROVEN_DEFLATE_RAW, &z) == PROVEN_OK, "one of each, kept");
@@ -1017,6 +1050,10 @@ int main(void) {
 | `PROVEN_WS_DEFLATE_OFFER_TAKEOVER` | takeover를 요청하는 클라이언트가 보내는 값. | 문자열 리터럴. |
 | `proven_ws_deflate_accept_takeover(request, out, &len, &terms)` | 윈도를 이어 가는 서버의 `proven_ws_deflate_accept`: 제안이 요청한 곳에서만 takeover를 막는다. `terms`는 합의된 것을 말한다. | `proven_ws_deflate_accept`와 같다. |
 | `proven_ws_check_response_takeover(response, key, offered, &protocol, &deflate, &terms)` | `PROVEN_WS_DEFLATE_OFFER_TAKEOVER`를 보낸 클라이언트의 검사: 네 매개변수 무엇이든 한 번씩. `terms`는 합의된 것을 말한다. | 같고, 매개변수가 두 번이거나 모르는 것이거나 범위 밖이면 `INVALID_FORMAT`. |
+| `compress_peer_no_takeover` (둘 다) | 이쪽은 윈도를 이어 가고, 상대는 메시지를 하나씩 따로 압축해야 한다. 서버는 답에서 막고, 클라이언트는 제안에서 요청한다. | `proven_ws_conn_open`에서 `INVALID_ARG`. |
+| `PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER` | 자기 윈도는 이어 가고 서버에게는 이어 가지 말라고 요청하는 클라이언트가 보내는 값. | 문자열 리터럴. |
+| `proven_ws_deflate_accept_peer_no_takeover(request, out, &len, &terms)` | 답에 언제나 `client_no_context_takeover`가 붙는 `proven_ws_deflate_accept_takeover`. | `proven_ws_deflate_accept`와 같다. |
+| `proven_ws_check_response_peer_no_takeover(response, key, offered, &protocol, &deflate, &terms)` | `PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER`를 보낸 클라이언트의 검사. | `proven_ws_check_response_takeover`와 같고, `server_no_context_takeover`가 없는 답에는 `INVALID_FORMAT`. |
 | `proven_ws_deflate_terms_t` | 누가 윈도를 이어 가도 되는지(`server_takeover`, `client_takeover`), 각 쪽 윈도가 얼마까지인지(`server_window_bits`, `client_window_bits`. 8이면 이쪽은 압축할 수 없어 압축 없이 보낸다). | - |
 | `proven_inflate_restart(z)` | `ended` 뒤에 윈도를 지키며 이어 간다. takeover를 쓰는 상대가 메시지를 마지막 블록으로 끝냈을 때. | 없음. |
 | `proven_ws_decoder_allow_compressed(decoder)` | 디코더가 압축된 메시지를 `compressed` 표시와 함께 통과시키게 한다. 풀지는 않는다. | 없음. |
@@ -1044,7 +1081,8 @@ int main(void) {
   서버는 메시지가 도착하는 동안 16 KiB를 더 쓴다. `compress_no_takeover`에서는: 메시지 하나를 푸는 데 약
   35 KiB(이벤트 구동 서버에서는 51 KiB), 하나를 압축하는 데 윈도에 따라 11 KiB에서 325 KiB까지이며
   메시지가 필요로 하는 것보다 크지 않고, 메시지를 위해 할당해 메시지와 함께 해제한다 - 그래서 바쁜 연결은
-  takeover 연결이 하지 않는 할당을 메시지마다 한다.
+  takeover 연결이 하지 않는 할당을 메시지마다 한다. `compress_peer_no_takeover`에서는: 압축기는 쥐고,
+  해제기는 받는 메시지마다.
 - **코덱만 쓸 때 텍스트 검사는 여러분 몫이다.** 디코더는 아직 텍스트가 아닌 바이트를 검사할 수 없다.
   푼 다음에 검사한다. 그리고 나오는 양을 센다: 디코더의 한도는 압축된 바이트를 센다.
 

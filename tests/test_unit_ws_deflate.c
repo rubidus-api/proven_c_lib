@@ -390,6 +390,81 @@ int main(void) {
             "no place for the terms is PROVEN_ERR_INVALID_ARG", "");
     }
 
+    PROVEN_TEST_SECTION("the negotiation without the peer's takeover", "A server that keeps its own window and forbids the client's, and a client that asks the server not to keep one.", "Check ws_deflate_answer, proven_ws_deflate_accept_peer_no_takeover and ws_check_response in src/proven/ws.c.");
+    {
+        static const struct { const char *offer; const char *answer; bool server_takeover; int server_bits; } rows[] = {
+            { "permessage-deflate", "permessage-deflate; client_no_context_takeover", true, 15 },
+            { PROVEN_WS_DEFLATE_OFFER_TAKEOVER, "permessage-deflate; client_no_context_takeover", true, 15 },
+            { "permessage-deflate; client_no_context_takeover", "permessage-deflate; client_no_context_takeover", true, 15 },
+            { "permessage-deflate; server_no_context_takeover", "permessage-deflate; server_no_context_takeover; client_no_context_takeover", false, 15 },
+            { PROVEN_WS_DEFLATE_OFFER, "permessage-deflate; server_no_context_takeover; client_no_context_takeover", false, 15 },
+            { "permessage-deflate; server_max_window_bits=10", "permessage-deflate; client_no_context_takeover; server_max_window_bits=10", true, 10 },
+            { PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER, "permessage-deflate; server_no_context_takeover; client_no_context_takeover", false, 15 },
+            { "permessage-deflate; server_max_window_bits=8", NULL, false, 0 },
+        };
+        for (proven_size_t i = 0; i < sizeof rows / sizeof rows[0]; ++i) {
+            proven_http_header_t h[1] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), sv(rows[i].offer) } };
+            proven_http_request_t req = { .headers = h, .header_count = 1 };
+            proven_byte_t out[PROVEN_WS_DEFLATE_ANSWER_MAX];
+            proven_size_t len = 0;
+            proven_ws_deflate_terms_t t = { .client_takeover = true };
+            proven_err_t e = proven_ws_deflate_accept_peer_no_takeover(&req, (proven_mem_mut_t){ out, sizeof out }, &len, &t);
+            if (!rows[i].answer) {
+                PROVEN_TEST_ASSERT(e == PROVEN_ERR_NOT_FOUND && len == 0, "an offer that cannot be met is passed over", rows[i].offer);
+                continue;
+            }
+            PROVEN_TEST_ASSERT(e == PROVEN_OK && len == strlen(rows[i].answer) && memcmp(out, rows[i].answer, len) == 0,
+                "the answer always forbids the client's takeover, and the server's only where the offer asked", rows[i].offer);
+            PROVEN_TEST_ASSERT(t.server_takeover == rows[i].server_takeover && !t.client_takeover && t.server_window_bits == rows[i].server_bits &&
+                               t.client_window_bits == 15, "and the terms say what was agreed", rows[i].offer);
+            PROVEN_TEST_ASSERT(len <= PROVEN_WS_DEFLATE_ANSWER_MAX, "within the room PROVEN_WS_DEFLATE_ANSWER_MAX promises", rows[i].offer);
+        }
+        {
+            proven_http_request_t none = { 0 };
+            proven_byte_t out[8];
+            proven_size_t len = 0;
+            PROVEN_TEST_ASSERT(proven_ws_deflate_accept_peer_no_takeover(&none, (proven_mem_mut_t){ out, sizeof out }, &len, NULL) == PROVEN_ERR_INVALID_ARG,
+                "no place for the terms is PROVEN_ERR_INVALID_ARG", "");
+            proven_http_header_t h[1] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT("permessage-deflate") } };
+            proven_http_request_t req = { .headers = h, .header_count = 1 };
+            proven_ws_deflate_terms_t t;
+            len = 2;
+            PROVEN_TEST_ASSERT(proven_ws_deflate_accept_peer_no_takeover(&req, (proven_mem_mut_t){ out, sizeof out }, &len, &t) == PROVEN_ERR_OUT_OF_BOUNDS && len == 2,
+                "too little room is PROVEN_ERR_OUT_OF_BOUNDS with nothing written", "");
+        }
+        PROVEN_TEST_ASSERT(strcmp(PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER, "permessage-deflate; client_max_window_bits; server_no_context_takeover") == 0,
+            "the offer keeps the client's own window and asks the server to keep none", "");
+
+        static const struct { const char *answer; proven_err_t want; bool deflate, client_takeover; int client_bits; } answers[] = {
+            { NULL, PROVEN_OK, false, false, 0 },
+            { "permessage-deflate; server_no_context_takeover", PROVEN_OK, true, true, 15 },
+            { "permessage-deflate; server_no_context_takeover; client_no_context_takeover", PROVEN_OK, true, false, 15 },
+            { "permessage-deflate; server_no_context_takeover; client_max_window_bits=10", PROVEN_OK, true, true, 10 },
+            { "permessage-deflate", PROVEN_ERR_INVALID_FORMAT, false, false, 0 },          /* the server would keep its window: RFC 7692 7.1.1.1 */
+            { "permessage-deflate; client_no_context_takeover", PROVEN_ERR_INVALID_FORMAT, false, false, 0 },
+            { "permessage-deflate; server_no_context_takeover; mystery", PROVEN_ERR_INVALID_FORMAT, false, false, 0 },
+        };
+        for (proven_size_t i = 0; i < sizeof answers / sizeof answers[0]; ++i) {
+            proven_http_header_t h[4] = { { PROVEN_LIT("Upgrade"), PROVEN_LIT("websocket") }, { PROVEN_LIT("Connection"), PROVEN_LIT("Upgrade") },
+                                          { PROVEN_LIT("Sec-WebSocket-Accept"), PROVEN_LIT("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") },
+                                          { PROVEN_LIT("Sec-WebSocket-Extensions"), sv(answers[i].answer ? answers[i].answer : "") } };
+            proven_http_response_t res = { .status = 101, .headers = h, .header_count = answers[i].answer ? 4 : 3 };
+            proven_u8str_view_t protocol;
+            bool deflate = true;
+            proven_ws_deflate_terms_t t = { .server_takeover = true, .client_window_bits = 99 };
+            proven_err_t e = proven_ws_check_response_peer_no_takeover(&res, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &deflate, &t);
+            const char *what = answers[i].answer ? answers[i].answer : "(no field)";
+            PROVEN_TEST_ASSERT(e == answers[i].want && deflate == answers[i].deflate, "a client that asked the server to keep nothing accepts only an answer that agrees", what);
+            PROVEN_TEST_ASSERT(!t.server_takeover && t.client_takeover == answers[i].client_takeover && t.client_window_bits == answers[i].client_bits,
+                "and reports what was agreed - nothing, unless agreed", what);
+        }
+        proven_http_response_t bad = { .status = 200 };
+        proven_u8str_view_t protocol;
+        bool deflate = false;
+        PROVEN_TEST_ASSERT(proven_ws_check_response_peer_no_takeover(&bad, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &deflate, NULL) == PROVEN_ERR_INVALID_ARG,
+            "no place for the terms is PROVEN_ERR_INVALID_ARG", "");
+    }
+
     PROVEN_TEST_SECTION("the examples of RFC 7692", "Messages somebody else compressed, read at every step size.", "Check proven_ws_inflate_step_ in src/proven/ws_deflate.c.");
     {
         static const proven_byte_t hello[] = { 0xf2, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00 };                     /* 7.2.3.1 */

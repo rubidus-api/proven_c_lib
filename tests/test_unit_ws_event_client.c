@@ -100,6 +100,7 @@ static void srv_request(void *ctx, proven_http_stream_t *stream, const proven_ht
     proven_ws_event_config_t cfg = { .on = { srv_message, NULL, srv_closed }, .max_message_bytes = 1024 * 1024, .max_buffered_output = 4 * 1024 * 1024,
                                      .compress = strcmp(path, "/plain") != 0 };
     if (strcmp(path, "/sub") == 0) cfg.subprotocol = sv("superchat");
+    if (strcmp(path, "/echo-own") == 0) cfg.compress_peer_no_takeover = true;
     if (strcmp(path, "/pings") == 0) { cfg.ping_interval_ms = 40 * SLOW; cfg.pong_timeout_ms = 150 * SLOW; }
     /* The fields a client may add are seen here: one of them is asked for back. */
     proven_u8str_view_t origin = { 0 };
@@ -330,6 +331,24 @@ static void cases(bool tls) {
     again = true;
     for (int i = 0; i < 20 && again; ++i) again = echoed(&c, i % 2 == 0, g_msg, i % 2 ? 64 : 3000);
     PROVEN_TEST_ASSERT(again, "and twenty messages go and come back, each compressed on its own", how);
+    proven_ws_stream_close(c.ws, 1000, sv(""));
+    PROVEN_TEST_ASSERT(turn_until(&c.closes, 1, 5000) && c.code == 1000, "closed", how);
+    /* This side keeps its window and asks the server to keep none (server_no_context_takeover):
+     * the server's messages each inflate on their own, this side's refer back. */
+    proven_ws_event_connect_options_t own = zip;
+    own.ws.compress_peer_no_takeover = true;
+    PROVEN_TEST_ASSERT(dial(&c, tls, at.port, "/echo", own) == PROVEN_OK && turn_until(&c.opens, 1, 5000) && c.compressed_at_open,
+        "compression offered with the server's takeover forbidden: agreed by a server that keeps its window otherwise", how);
+    again = true;
+    for (int i = 0; i < 20 && again; ++i) again = echoed(&c, i % 2 == 0, g_msg, i % 3 == 0 ? 7 : i % 3 == 1 ? 8 : 300);
+    PROVEN_TEST_ASSERT(again, "and twenty short messages go and come back", how);
+    proven_ws_stream_close(c.ws, 1000, sv(""));
+    PROVEN_TEST_ASSERT(turn_until(&c.closes, 1, 5000) && c.code == 1000, "closed", how);
+    PROVEN_TEST_ASSERT(dial(&c, tls, at.port, "/echo-own", own) == PROVEN_OK && turn_until(&c.opens, 1, 5000) && c.compressed_at_open,
+        "and with a server that forbids this side's takeover as well: each keeps its own window only", how);
+    again = true;
+    for (int i = 0; i < 20 && again; ++i) again = echoed(&c, i % 2 == 0, g_msg, i % 3 == 0 ? 7 : i % 3 == 1 ? 8 : 300);
+    PROVEN_TEST_ASSERT(again, "twenty short messages go and come back there too", how);
     proven_ws_stream_close(c.ws, 1000, sv(""));
     PROVEN_TEST_ASSERT(turn_until(&c.closes, 1, 5000) && c.code == 1000, "closed", how);
     PROVEN_TEST_ASSERT(dial(&c, tls, at.port, "/plain", zip) == PROVEN_OK && turn_until(&c.opens, 1, 5000) && !c.compressed_at_open && echoed(&c, true, g_msg, 20000),

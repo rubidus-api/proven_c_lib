@@ -478,6 +478,11 @@ static proven_err_t wc_open(proven_transport_t transport, bool is_server, proven
 
 proven_err_t proven_ws_conn_open(proven_transport_t transport, bool is_server, proven_mem_view_t early,
                                  const proven_ws_conn_config_t *config, proven_ws_conn_t **out) {
+    /* Nothing was negotiated here, so there is no "the peer" to have agreed to keep nothing. */
+    if (config && config->compress && !config->compress_no_takeover && config->compress_peer_no_takeover) {
+        if (out) *out = (void *)0;
+        return PROVEN_ERR_INVALID_ARG;
+    }
     bool takeover = config && !config->compress_no_takeover;
     proven_ws_deflate_terms_t terms = { .server_takeover = takeover, .client_takeover = takeover, .server_window_bits = 15, .client_window_bits = 15 };
     return wc_open(transport, is_server, early, config, config && config->compress ? &terms : (void *)0, out);
@@ -545,7 +550,8 @@ proven_err_t proven_ws_conn_accept(proven_http_exchange_t *exchange, proven_u8st
     proven_mem_mut_t room = { .ptr = extension, .size = sizeof extension };
     bool deflate = config->compress &&
                    (config->compress_no_takeover ? wc_accept_plain(req, room, &extension_len, &terms)
-                                                 : proven_ws_deflate_accept_takeover(req, room, &extension_len, &terms)) == PROVEN_OK;
+                    : config->compress_peer_no_takeover ? proven_ws_deflate_accept_peer_no_takeover(req, room, &extension_len, &terms)
+                                                        : proven_ws_deflate_accept_takeover(req, room, &extension_len, &terms)) == PROVEN_OK;
     if (deflate) headers[header_count++] = (proven_http_header_t){ wc_lit("Sec-WebSocket-Extensions"), { .ptr = extension, .size = extension_len } };
     proven_transport_t t;
     proven_mem_view_t early;
@@ -588,7 +594,8 @@ proven_err_t proven_ws_conn_connect(proven_http_client_t *client, proven_u8str_v
     if (protocols.size > 0) all[n++] = (proven_http_header_t){ wc_lit("Sec-WebSocket-Protocol"), protocols };
     if (config->compress) {
         all[n++] = (proven_http_header_t){ wc_lit("Sec-WebSocket-Extensions"),
-                                           config->compress_no_takeover ? wc_lit(PROVEN_WS_DEFLATE_OFFER) : wc_lit(PROVEN_WS_DEFLATE_OFFER_TAKEOVER) };
+                                           config->compress_no_takeover ? wc_lit(PROVEN_WS_DEFLATE_OFFER)
+                                           : config->compress_peer_no_takeover ? wc_lit(PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER) : wc_lit(PROVEN_WS_DEFLATE_OFFER_TAKEOVER) };
     }
 
     proven_http_client_request_t req = {
@@ -612,6 +619,7 @@ proven_err_t proven_ws_conn_connect(proven_http_client_t *client, proven_u8str_v
     proven_u8str_view_t sent_key = { .ptr = key, .size = sizeof key };
     proven_ws_deflate_terms_t terms = { .server_window_bits = 15, .client_window_bits = 15 };
     if (config->compress && config->compress_no_takeover) e = proven_ws_check_response_deflate(&head, sent_key, protocols, &chosen, &deflate);
+    else if (config->compress && config->compress_peer_no_takeover) e = proven_ws_check_response_peer_no_takeover(&head, sent_key, protocols, &chosen, &deflate, &terms);
     else if (config->compress) e = proven_ws_check_response_takeover(&head, sent_key, protocols, &chosen, &deflate, &terms);
     else e = proven_ws_check_response(&head, sent_key, protocols, &chosen);
     proven_transport_t t = {0};

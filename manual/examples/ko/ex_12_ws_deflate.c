@@ -128,6 +128,23 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_ws_check_response_takeover(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed, &seen) == PROVEN_OK &&
                     compressed && seen.server_takeover && seen.client_takeover, "and the client sees the same terms");
 
+    /* 한쪽이 자기 창은 유지하고 상대의 것은 막을 수 있다: 그러면 메시지 사이에 해제기가 필요
+     * 없다. 서버는 proven_ws_deflate_accept_peer_no_takeover로, 클라이언트는
+     * PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER를 제안하고 proven_ws_check_response_peer_no_takeover로
+     * 답을 확인한다. 여기서는 서버가 막고, 이어서 클라이언트가 막는다. */
+    answer_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept_peer_no_takeover(&request_take, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &terms) == PROVEN_OK &&
+                    terms.server_takeover && !terms.client_takeover, "the server keeps its window and forbids the client's");
+    printf("a server that forbids the client's: %.*s\n", (int)answer_len, (const char *)answer);
+    proven_http_header_t asked_own[] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER) } };
+    proven_http_request_t request_own = { .headers = asked_own, .header_count = 1 };
+    answer_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept_takeover(&request_own, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &terms) == PROVEN_OK &&
+                    !terms.server_takeover && terms.client_takeover, "a server honours a client that forbids its takeover");
+    answered[3].value = (proven_u8str_view_t){ answer, answer_len };
+    EXAMPLE_REQUIRE(proven_ws_check_response_peer_no_takeover(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed, &seen) == PROVEN_OK &&
+                    compressed && !seen.server_takeover && seen.client_takeover, "and the client checks that it did");
+
     /* takeover하는 쪽은 연결에 압축기 하나를 두고 메시지마다 sync flush로 끝낸다. 읽는 쪽은
      * 해제기 하나를 둔다. 같은 줄을 두 번: 두 번째는 첫 번째를 가리키는 참조로 나간다. */
     EXAMPLE_REQUIRE(proven_deflate_create(&options, &c) == PROVEN_OK && proven_inflate_create(heap, PROVEN_DEFLATE_RAW, &z) == PROVEN_OK, "one of each, kept");

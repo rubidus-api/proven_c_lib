@@ -17,6 +17,7 @@
  *
  *   /echo   compression accepted, with context takeover (the default); every message comes back
  *   /fresh  compression accepted without takeover (`compress_no_takeover`); the same
+ *   /own    compression accepted, the client's takeover forbidden (`compress_peer_no_takeover`); the same
  *   /plain  compression not accepted; the same
  *   /small  compression accepted, messages limited to 100,000 bytes
  *   /count  (event server) pauses after every piece and answers with what it saw
@@ -58,7 +59,7 @@ static void blocking_handler(void *ctx, proven_http_exchange_t *x) {
     char path[32] = { 0 };
     memcpy(path, req->target.ptr, req->target.size < sizeof path - 1 ? req->target.size : sizeof path - 1);
     proven_ws_conn_config_t cfg = { .alloc = g_heap, .max_message_bytes = 2 * MIB, .compress = strcmp(path, "/plain") != 0, .compress_window_bits = 12,
-                                    .compress_no_takeover = strcmp(path, "/fresh") == 0 };
+                                    .compress_no_takeover = strcmp(path, "/fresh") == 0, .compress_peer_no_takeover = strcmp(path, "/own") == 0 };
     if (strcmp(path, "/small") == 0) cfg.max_message_bytes = 100000;
     proven_ws_conn_t *c = NULL;
     if (proven_ws_conn_accept(x, sv(""), &cfg, &c) != PROVEN_OK) return;
@@ -198,7 +199,8 @@ static void ev_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     char path[32] = { 0 };
     memcpy(path, head->target.ptr, head->target.size < sizeof path - 1 ? head->target.size : sizeof path - 1);
     proven_ws_event_config_t cfg = { .on = { ev_message, ev_writable, ev_closed }, .max_message_bytes = 2 * MIB, .max_buffered_output = 16 * 1024,
-                                     .compress = strcmp(path, "/plain") != 0, .compress_window_bits = 12, .compress_no_takeover = strcmp(path, "/fresh") == 0 };
+                                     .compress = strcmp(path, "/plain") != 0, .compress_window_bits = 12, .compress_no_takeover = strcmp(path, "/fresh") == 0,
+                                     .compress_peer_no_takeover = strcmp(path, "/own") == 0 };
     if (strcmp(path, "/small") == 0) cfg.max_message_bytes = 100000;
     proven_ws_stream_t *ws = NULL;
     if (strcmp(path, "/config") == 0) {
@@ -255,11 +257,13 @@ static proven_http_client_t *g_https;       /* the same, with TLS: for wss */
 static bool g_wss;
 
 static bool g_no_takeover;                  /* the client dials with compress_no_takeover */
+static bool g_peer_none;                    /* the client dials with compress_peer_no_takeover */
 
 static proven_ws_conn_t *dial(proven_u16 port, const char *path, bool compress) {
     char url[96];
     int n = snprintf(url, sizeof url, "%s://127.0.0.1:%u%s", g_wss ? "wss" : "ws", (unsigned)port, path);
-    proven_ws_conn_config_t cfg = { .alloc = g_heap, .max_message_bytes = 2 * MIB, .compress = compress, .compress_no_takeover = g_no_takeover };
+    proven_ws_conn_config_t cfg = { .alloc = g_heap, .max_message_bytes = 2 * MIB, .compress = compress, .compress_no_takeover = g_no_takeover,
+                                    .compress_peer_no_takeover = g_peer_none };
     proven_ws_conn_t *c = NULL;
     proven_u16 status = 0;
     proven_err_t e = proven_ws_conn_connect(g_wss ? g_https : g_http, (proven_u8str_view_t){ (const proven_byte_t *)url, (proven_size_t)n }, NULL, 0, sv(""), &cfg, &c, &status);
@@ -409,6 +413,12 @@ int main(void) {
             PROVEN_TEST_ASSERT(proven_ws_conn_open(proven_net_conn_transport(&a), false, (proven_mem_view_t){ 0 }, &cfg, &c) == PROVEN_ERR_INVALID_ARG && c == NULL,
                 "a compression level or window outside its range is PROVEN_ERR_INVALID_ARG", "");
         }
+        {
+            proven_ws_conn_config_t cfg = { .alloc = g_heap, .compress = true, .compress_peer_no_takeover = true };
+            proven_ws_conn_t *c = (proven_ws_conn_t *)1;
+            PROVEN_TEST_ASSERT(proven_ws_conn_open(proven_net_conn_transport(&a), false, (proven_mem_view_t){ 0 }, &cfg, &c) == PROVEN_ERR_INVALID_ARG && c == NULL,
+                "compress_peer_no_takeover is refused where nothing is negotiated", "");
+        }
         /* proven_ws_conn_open negotiates nothing: both ends take over unless told not to. Two
          * ends that agree read each other; a sender that takes over and a receiver told
          * compress_no_takeover (as every receiver before v0.80.0 was) do not, from the second
@@ -476,6 +486,24 @@ int main(void) {
                                        "a client with takeover and a server with compress_no_takeover: thirty messages, repeated, round", server);
             hang_up(c);
             g_no_takeover = false;
+        }
+
+        /* One side forbids the other's takeover and keeps its own window: the client, the
+         * server, or both. */
+        for (int k = 0; k < 3; ++k) {
+            g_peer_none = k != 1;
+            proven_ws_conn_t *c = dial(port, k ? "/own" : "/echo", true);
+            PROVEN_TEST_ASSERT(proven_ws_conn_compressed(c), "compression is agreed with one side's takeover forbidden", server);
+            bool ok = true;
+            for (int m = 0; m < 30 && ok; ++m) {
+                fill(m % 3 == 0 ? 7 : m % 3 == 1 ? 200 : 9000, m % 2 == 0, (unsigned)(m % 4));
+                ok = echo_ok(c, m % 3 == 0 ? 7 : m % 3 == 1 ? 200 : 9000, m % 2 == 0, m % 5 == 0);
+            }
+            PROVEN_TEST_ASSERT(ok, k == 0 ? "a client that forbids the server's takeover: thirty messages, repeated, round" :
+                                   k == 1 ? "a server that forbids the client's takeover: thirty messages, repeated, round" :
+                                            "both forbidding the other's: thirty messages, repeated, round", server);
+            hang_up(c);
+            g_peer_none = false;
         }
 
         proven_ws_conn_t *c = dial(port, "/echo", true);
@@ -571,6 +599,10 @@ int main(void) {
             PROVEN_TEST_ASSERT(raw_upgrade(&r, port, "/echo", "permessage-deflate; client_no_context_takeover", head, sizeof head) &&
                                strstr(head, "Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover\r\n") != NULL,
                 "and a server with takeover forbids it only where the offer asked", server);
+            (void)proven_net_close(&r);
+            PROVEN_TEST_ASSERT(raw_upgrade(&r, port, "/own", OFFER, head, sizeof head) &&
+                               strstr(head, "Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover\r\n") != NULL,
+                "a server with compress_peer_no_takeover forbids the client's takeover unasked, and keeps its own", server);
             (void)proven_net_close(&r);
 
             /* Takeover from the client: RFC 7692 7.2.3.2, a second Hello that is a match into the

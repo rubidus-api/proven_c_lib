@@ -343,6 +343,7 @@
 #define XCV_WS_CONTINUATION PROVEN_WS_CONTINUATION
 #define XCV_WS_DEFLATE_ANSWER_MAX PROVEN_WS_DEFLATE_ANSWER_MAX
 #define XCV_WS_DEFLATE_OFFER PROVEN_WS_DEFLATE_OFFER
+#define XCV_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER
 #define XCV_WS_DEFLATE_OFFER_TAKEOVER PROVEN_WS_DEFLATE_OFFER_TAKEOVER
 #define XCV_WS_EVENT_CLOSE PROVEN_WS_EVENT_CLOSE
 #define XCV_WS_EVENT_DATA PROVEN_WS_EVENT_DATA
@@ -1261,6 +1262,7 @@
 #define xcv_ws_check_request proven_ws_check_request
 #define xcv_ws_check_response proven_ws_check_response
 #define xcv_ws_check_response_deflate proven_ws_check_response_deflate
+#define xcv_ws_check_response_peer_no_takeover proven_ws_check_response_peer_no_takeover
 #define xcv_ws_check_response_takeover proven_ws_check_response_takeover
 #define xcv_ws_close_code_for proven_ws_close_code_for
 #define xcv_ws_close_code_is_valid proven_ws_close_code_is_valid
@@ -1289,6 +1291,7 @@
 #define xcv_ws_decoder_init proven_ws_decoder_init
 #define xcv_ws_decoder_t proven_ws_decoder_t
 #define xcv_ws_deflate_accept proven_ws_deflate_accept
+#define xcv_ws_deflate_accept_peer_no_takeover proven_ws_deflate_accept_peer_no_takeover
 #define xcv_ws_deflate_accept_takeover proven_ws_deflate_accept_takeover
 #define xcv_ws_deflate_terms_t proven_ws_deflate_terms_t
 #define xcv_ws_event_accept proven_ws_event_accept

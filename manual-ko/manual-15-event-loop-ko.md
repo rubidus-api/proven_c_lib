@@ -934,7 +934,7 @@ proven_size_t proven_ws_stream_buffered(const proven_ws_stream_t *ws);
 | `ping_interval_ms` | 클라이언트가 이만큼 조용하면 ping을 보낸다. | 30초 |
 | `pong_timeout_ms` | 그 뒤로도 이만큼 조용하면 연결을 끝낸다. | 10초 |
 | `close_timeout_ms` | close에 대한 답을 기다리는 시간. 클라이언트가 마지막으로 출력을 가져간 때부터 센다. | 5초 |
-| `compress`, `compress_level`, `compress_window_bits`, `compress_no_takeover` | 클라이언트가 제안하면 압축된 메시지를 받아들인다: [12장](manual-12-websocket-ko.md) 9절. `compress_no_takeover`를 켜거나 클라이언트가 막지 않는 한 양쪽이 메시지 사이에 윈도를 이어 간다(연결마다 약 64 KiB). 압축된 메시지는 풀린 채 최대 16 KiB 조각으로 도착하고, `max_message_bytes`는 풀린 크기를 센다. | 꺼짐. 6. takeover에서 11, 아니면 15. 꺼짐 |
+| `compress`, `compress_level`, `compress_window_bits`, `compress_no_takeover`, `compress_peer_no_takeover` | 클라이언트가 제안하면 압축된 메시지를 받아들인다: [12장](manual-12-websocket-ko.md) 9절. `compress_no_takeover`를 켜거나 클라이언트가 막지 않는 한 양쪽이 메시지 사이에 윈도를 이어 간다(연결마다 약 64 KiB). 압축된 메시지는 풀린 채 최대 16 KiB 조각으로 도착하고, `max_message_bytes`는 풀린 크기를 센다. | 꺼짐. 6. takeover에서 11, 아니면 15. 꺼짐 |
 
 **메시지는 조각으로 도착한다.** `on_message`는 각 메시지를 네트워크가 전달한 조각대로 받고,
 `first`와 `last`가 그 양 끝을 표시한다: 어떤 크기의 메시지든 조립되거나 붙들리지 않고 지나가며,

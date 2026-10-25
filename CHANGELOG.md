@@ -18,6 +18,23 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+RFC-0026: the other side's WebSocket takeover forbidden, and the event server's window changed
+while it runs (the owner's decisions of 2026-10-25).
+
+### Added
+
+- **`compress_peer_no_takeover`** in `proven_ws_event_config_t` (the event server and the event
+  client) and `proven_ws_conn_config_t`: with `compress` and takeover, this side keeps its own
+  window and the other side must compress each message on its own. A server answers
+  `client_no_context_takeover` unasked (RFC 7692 section 7.1.1.2); a client offers
+  `server_no_context_takeover`, and a server that will not honour it declines the extension. An
+  idle compressed connection that has sent and received a message holds 30,338 bytes instead of
+  66,218 (event server, measured); the other side's short, similar messages shrink far less.
+  `proven_ws_conn_open`, which negotiates nothing, refuses it with `PROVEN_ERR_INVALID_ARG`.
+  The same for a program on the codec alone: `PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER`,
+  `proven_ws_deflate_accept_peer_no_takeover` and `proven_ws_check_response_peer_no_takeover`.
+  Aliases for each; chapter 12 (en/ko) and its example `ex_12_ws_deflate.c`.
+
 ## [0.81.0] - 2026-10-25
 
 RFC-0025: the event loop becomes a completion model, and Windows gets IOCP (the owner's

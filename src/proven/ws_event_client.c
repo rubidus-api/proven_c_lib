@@ -57,7 +57,7 @@ typedef struct wsc {
     proven_size_t max_head;
     proven_u32 depth;
     proven_wsc_state_t state;
-    bool attached, sock_gone, recv_armed, dead, paused, more_out, peer_eof, offered_deflate, offered_takeover;
+    bool attached, sock_gone, recv_armed, dead, paused, more_out, peer_eof, offered_deflate, offered_takeover, offered_peer_none;
     proven_byte_t key[PROVEN_WS_KEY_SIZE];
     proven_size_t protocols_len;
     proven_byte_t protocols[256];      /* the offer, to check the answer against */
@@ -315,7 +315,8 @@ static void wsc_answer(proven_wsc_t *c) {
     bool deflate = false;
     proven_ws_deflate_terms_t terms = { .server_window_bits = 15, .client_window_bits = 15 };
     const proven_u8str_view_t key = { .ptr = c->key, .size = sizeof c->key }, offered = { .ptr = c->protocols, .size = c->protocols_len };
-    if (c->offered_takeover) e = proven_ws_check_response_takeover(&head, key, offered, &chosen, &deflate, &terms);
+    if (c->offered_peer_none) e = proven_ws_check_response_peer_no_takeover(&head, key, offered, &chosen, &deflate, &terms);
+    else if (c->offered_takeover) e = proven_ws_check_response_takeover(&head, key, offered, &chosen, &deflate, &terms);
     else if (c->offered_deflate) e = proven_ws_check_response_deflate(&head, key, offered, &chosen, &deflate);
     else e = proven_ws_check_response(&head, key, offered, &chosen);
     if (e != PROVEN_OK) { wsc_gone(c, PROVEN_ERR_INVALID_FORMAT); return; }
@@ -507,6 +508,7 @@ proven_err_t proven_ws_event_connect(proven_loop_t *loop, const proven_ws_event_
     c->max_head = o->max_head_bytes ? o->max_head_bytes : 16384;
     c->offered_deflate = o->ws.compress;
     c->offered_takeover = o->ws.compress && !o->ws.compress_no_takeover;
+    c->offered_peer_none = c->offered_takeover && o->ws.compress_peer_no_takeover;
     c->protocols_len = o->protocols.size;
     for (proven_size_t i = 0; i < o->protocols.size; ++i) c->protocols[i] = o->protocols.ptr[i];
     c->depth = 1;                                  /* this call: wsc_leave at the end frees it if it died */
@@ -558,7 +560,8 @@ proven_err_t proven_ws_event_connect(proven_loop_t *loop, const proven_ws_event_
         if (e == PROVEN_OK && o->protocols.size > 0) e = proven_http_write_header(text, &len, wsc_lit("Sec-WebSocket-Protocol"), o->protocols);
         if (e == PROVEN_OK && o->ws.compress) {
             e = proven_http_write_header(text, &len, wsc_lit("Sec-WebSocket-Extensions"),
-                                         c->offered_takeover ? wsc_lit(PROVEN_WS_DEFLATE_OFFER_TAKEOVER) : wsc_lit(PROVEN_WS_DEFLATE_OFFER));
+                                         c->offered_peer_none ? wsc_lit(PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER)
+                                         : c->offered_takeover ? wsc_lit(PROVEN_WS_DEFLATE_OFFER_TAKEOVER) : wsc_lit(PROVEN_WS_DEFLATE_OFFER));
         }
         for (proven_size_t i = 0; i < o->header_count && e == PROVEN_OK; ++i) {
             /* The seven this call writes are not the caller's to write as well. */

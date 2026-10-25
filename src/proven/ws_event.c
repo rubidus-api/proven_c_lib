@@ -449,7 +449,8 @@ proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_h
         deflate = proven_ws_deflate_accept(head, room, &extension_len, &window_bits) == PROVEN_OK;
         terms = (proven_ws_deflate_terms_t){ .server_window_bits = window_bits, .client_window_bits = 15 };
     } else if (config->compress) {
-        deflate = proven_ws_deflate_accept_takeover(head, room, &extension_len, &terms) == PROVEN_OK;
+        deflate = (config->compress_peer_no_takeover ? proven_ws_deflate_accept_peer_no_takeover(head, room, &extension_len, &terms)
+                                                     : proven_ws_deflate_accept_takeover(head, room, &extension_len, &terms)) == PROVEN_OK;
     }
 
     /* Over HTTP/2 (RFC 8441) the answer is 200 with the same two optional fields, and no

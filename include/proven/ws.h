@@ -231,6 +231,43 @@ proven_err_t proven_ws_check_response_takeover(const proven_http_response_t *res
                                                proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate,
                                                proven_ws_deflate_terms_t *terms);
 
+/**
+ * @brief What a client sends to keep its own window between messages and ask the server to
+ *        keep none: the server then compresses each message on its own, and this client
+ *        needs no decompressor between messages (about 35 KiB less per idle connection), at
+ *        the price of the server's short, similar messages shrinking far less. A server that
+ *        will not honour it declines the extension (RFC 7692 section 7.1.1.1). Check the answer
+ *        with proven_ws_check_response_peer_no_takeover.
+ */
+#define PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER "permessage-deflate; client_max_window_bits; server_no_context_takeover"
+
+/**
+ * @brief proven_ws_deflate_accept_takeover for a server that keeps its own window and forbids
+ *        the client's: the answer always carries `client_no_context_takeover` (RFC 7692
+ *        section 7.1.1.2 lets a server add it), so the client compresses each message on its
+ *        own and this side needs no decompressor between messages.
+ *
+ * `server_no_context_takeover` and `server_max_window_bits` are answered as there.
+ *
+ * @param terms receives what was agreed; `client_takeover` is always false.
+ * @return as proven_ws_deflate_accept.
+ */
+[[nodiscard]]
+proven_err_t proven_ws_deflate_accept_peer_no_takeover(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len,
+                                                       proven_ws_deflate_terms_t *terms);
+
+/**
+ * @brief proven_ws_check_response_takeover for a client that sent
+ *        PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER.
+ *
+ * @return also PROVEN_ERR_INVALID_FORMAT when the server accepts the extension without
+ *         `server_no_context_takeover`: it would keep a window this side does not keep.
+ */
+[[nodiscard]]
+proven_err_t proven_ws_check_response_peer_no_takeover(const proven_http_response_t *response, proven_u8str_view_t key,
+                                                       proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate,
+                                                       proven_ws_deflate_terms_t *terms);
+
 // -----------------------------------------------------------------------------
 // Frames
 // -----------------------------------------------------------------------------

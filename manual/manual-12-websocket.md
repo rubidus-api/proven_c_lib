@@ -683,6 +683,13 @@ proven_err_t proven_ws_deflate_accept_takeover(const proven_http_request_t *requ
 proven_err_t proven_ws_check_response_takeover(const proven_http_response_t *response, proven_u8str_view_t key,
                                                proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate,
                                                proven_ws_deflate_terms_t *terms);
+
+#define PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER "permessage-deflate; client_max_window_bits; server_no_context_takeover"
+proven_err_t proven_ws_deflate_accept_peer_no_takeover(const proven_http_request_t *request, proven_mem_mut_t out, proven_size_t *len,
+                                                       proven_ws_deflate_terms_t *terms);
+proven_err_t proven_ws_check_response_peer_no_takeover(const proven_http_response_t *response, proven_u8str_view_t key,
+                                                       proven_u8str_view_t offered, proven_u8str_view_t *protocol, bool *deflate,
+                                                       proven_ws_deflate_terms_t *terms);
 void proven_inflate_restart(proven_inflate_t *z);                         /* deflate.h, Chapter 16 */
 void proven_ws_decoder_allow_compressed(proven_ws_decoder_t *decoder);
 ```
@@ -736,8 +743,19 @@ answer that forbids it. A peer that limits this side's window (`server_max_windo
 offer, `client_max_window_bits` in an answer) is obeyed; one that limits it to 256 bytes,
 smaller than this compressor's smallest, gets this side's messages uncompressed.
 
+`compress_peer_no_takeover` is the form between the two: **this side keeps its window, the
+other side must not**. Its messages to the other side keep their gain; it needs no
+decompressor between messages, so an idle connection that has sent and received a compressed
+message holds about 30 KiB where with takeover both ways it holds about 64 (measured,
+`test_unit_ws_event`). The other side's short, similar messages then shrink no more than they
+do on their own. A server answers `client_no_context_takeover` whether or not the offer had
+it, which RFC 7692 allows; a client offers `server_no_context_takeover`, and a server that will
+not honour it declines the extension, so the connection goes on uncompressed. A client that
+takes over anyway is closed with 1007: its messages do not inflate on their own.
+
 `proven_ws_conn_open` makes no handshake: both ends must say the same - takeover, or
-`compress_no_takeover`. An end built before v0.80.0 always means no takeover; give the
+`compress_no_takeover` (`compress_peer_no_takeover` is refused there with
+`PROVEN_ERR_INVALID_ARG`: it is an agreement only a handshake makes). An end built before v0.80.0 always means no takeover; give the
 other end `compress_no_takeover`, or its second compressed message is refused with 1007.
 
 ### Example: one field, and what it changes
@@ -1007,6 +1025,23 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_ws_check_response_takeover(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed, &seen) == PROVEN_OK &&
                     compressed && seen.server_takeover && seen.client_takeover, "and the client sees the same terms");
 
+    /* A side may keep its own window and forbid the other's: it then needs no decompressor
+     * between messages. A server does it with proven_ws_deflate_accept_peer_no_takeover; a
+     * client offers PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER and checks the answer with
+     * proven_ws_check_response_peer_no_takeover. The server forbids here, then the client. */
+    answer_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept_peer_no_takeover(&request_take, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &terms) == PROVEN_OK &&
+                    terms.server_takeover && !terms.client_takeover, "the server keeps its window and forbids the client's");
+    printf("a server that forbids the client's: %.*s\n", (int)answer_len, (const char *)answer);
+    proven_http_header_t asked_own[] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER) } };
+    proven_http_request_t request_own = { .headers = asked_own, .header_count = 1 };
+    answer_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept_takeover(&request_own, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &terms) == PROVEN_OK &&
+                    !terms.server_takeover && terms.client_takeover, "a server honours a client that forbids its takeover");
+    answered[3].value = (proven_u8str_view_t){ answer, answer_len };
+    EXAMPLE_REQUIRE(proven_ws_check_response_peer_no_takeover(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed, &seen) == PROVEN_OK &&
+                    compressed && !seen.server_takeover && seen.client_takeover, "and the client checks that it did");
+
     /* A side that takes over keeps one compressor for the connection and ends every message
      * with a sync flush; the side that reads keeps one decompressor. The same line twice: the
      * second goes out as a reference to the first. */
@@ -1047,6 +1082,10 @@ int main(void) {
 | `PROVEN_WS_DEFLATE_OFFER_TAKEOVER` | The value a client sends to ask for takeover. | a string literal. |
 | `proven_ws_deflate_accept_takeover(request, out, &len, &terms)` | `proven_ws_deflate_accept` for a server that keeps its window: forbids takeover only where the offer asked; `terms` says what was agreed. | as `proven_ws_deflate_accept`. |
 | `proven_ws_check_response_takeover(response, key, offered, &protocol, &deflate, &terms)` | The check for a client that sent `PROVEN_WS_DEFLATE_OFFER_TAKEOVER`: any of the four parameters, once each; `terms` says what was agreed. | the same, and `INVALID_FORMAT` for a parameter twice, unknown, or out of range. |
+| `compress_peer_no_takeover` (both) | This side keeps its window; the other side must compress each message on its own. A server forbids it in its answer, a client asks for it in its offer. | `INVALID_ARG` from `proven_ws_conn_open`. |
+| `PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER` | The value a client sends to keep its own window and ask the server to keep none. | a string literal. |
+| `proven_ws_deflate_accept_peer_no_takeover(request, out, &len, &terms)` | `proven_ws_deflate_accept_takeover`, with `client_no_context_takeover` always in the answer. | as `proven_ws_deflate_accept`. |
+| `proven_ws_check_response_peer_no_takeover(response, key, offered, &protocol, &deflate, &terms)` | The check for a client that sent `PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER`. | as `proven_ws_check_response_takeover`, and `INVALID_FORMAT` for an answer without `server_no_context_takeover`. |
 | `proven_ws_deflate_terms_t` | Who may keep a window (`server_takeover`, `client_takeover`), and how large each side's may be (`server_window_bits`, `client_window_bits`; 8 means this side cannot compress and sends uncompressed). | - |
 | `proven_inflate_restart(z)` | After `ended`: go on keeping the window, for a peer that took over and ended a message with a final block. | none. |
 | `proven_ws_decoder_allow_compressed(decoder)` | Let the decoder pass compressed messages through, marked `compressed`. It does not inflate. | none. |
@@ -1079,7 +1118,8 @@ int main(void) {
   is arriving. With `compress_no_takeover`: about 35 KiB to inflate one message (51 KiB in
   the event-driven server), and from 11 KiB to 325 KiB to compress one, by the window and no
   more than the message needs, allocated for the message and freed with it - so a busy
-  connection allocates per message where one with takeover does not.
+  connection allocates per message where one with takeover does not. With
+  `compress_peer_no_takeover`: the compressor kept, and a decompressor per message received.
 - **With the codec alone, text is yours to check.** The decoder cannot check bytes that are
   not text yet; after inflating, check them. And count what comes out: the decoder's limit
   counts compressed bytes.

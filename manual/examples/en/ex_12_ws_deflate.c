@@ -128,6 +128,23 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_ws_check_response_takeover(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed, &seen) == PROVEN_OK &&
                     compressed && seen.server_takeover && seen.client_takeover, "and the client sees the same terms");
 
+    /* A side may keep its own window and forbid the other's: it then needs no decompressor
+     * between messages. A server does it with proven_ws_deflate_accept_peer_no_takeover; a
+     * client offers PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER and checks the answer with
+     * proven_ws_check_response_peer_no_takeover. The server forbids here, then the client. */
+    answer_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept_peer_no_takeover(&request_take, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &terms) == PROVEN_OK &&
+                    terms.server_takeover && !terms.client_takeover, "the server keeps its window and forbids the client's");
+    printf("a server that forbids the client's: %.*s\n", (int)answer_len, (const char *)answer);
+    proven_http_header_t asked_own[] = { { PROVEN_LIT("Sec-WebSocket-Extensions"), PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER) } };
+    proven_http_request_t request_own = { .headers = asked_own, .header_count = 1 };
+    answer_len = 0;
+    EXAMPLE_REQUIRE(proven_ws_deflate_accept_takeover(&request_own, (proven_mem_mut_t){ answer, sizeof answer }, &answer_len, &terms) == PROVEN_OK &&
+                    !terms.server_takeover && terms.client_takeover, "a server honours a client that forbids its takeover");
+    answered[3].value = (proven_u8str_view_t){ answer, answer_len };
+    EXAMPLE_REQUIRE(proven_ws_check_response_peer_no_takeover(&response, PROVEN_LIT("dGhlIHNhbXBsZSBub25jZQ=="), PROVEN_LIT(""), &protocol, &compressed, &seen) == PROVEN_OK &&
+                    compressed && !seen.server_takeover && seen.client_takeover, "and the client checks that it did");
+
     /* A side that takes over keeps one compressor for the connection and ends every message
      * with a sync flush; the side that reads keeps one decompressor. The same line twice: the
      * second goes out as a reference to the first. */
