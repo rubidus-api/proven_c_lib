@@ -2153,7 +2153,7 @@ allocated per connection, 10.9 KiB of it resident, against 480 bytes. And it is 
 whose handler waits; the reasons to choose this chapter's server are the ones of section 1,
 not raw speed for a trivial handler.
 
-**On Windows the ceiling is low, and here is where.** There the loop waits with `WSAPoll`,
+**On Windows, until v0.80.0, the ceiling was low.** There the loop waited with `WSAPoll`,
 which looks at every socket on every call. Both ends of the same program on one Windows 11
 virtual machine, ten connections making requests:
 
@@ -2165,10 +2165,11 @@ virtual machine, ten connections making requests:
 | 5,000 | 480 | 18 ms |
 | 10,000 | 150 | 66 ms |
 
-The client is on the same loop implementation, so each figure carries the cost twice. Asked
-for 20,000 connections, that machine opened 16,369 before its ports ran out. On Windows this
-server is for hundreds of connections, or a few thousand at most; nothing in this release
-changes that.
+The client was on the same loop implementation, so each figure carries the cost twice. Asked
+for 20,000 connections, that machine opened 16,369 before its ports ran out. Since v0.81.0 the
+loop is built on an I/O completion port there (section 5), which is told only of the operations
+that finish and does not look at idle sockets. Its figures on that machine have not been
+measured yet.
 
 **What is not here.**
 
@@ -2181,7 +2182,6 @@ changes that.
   requests but the order of starting.
 - **TLS handshakes off the loop's thread.** Each costs the loop about 2 ms during which it
   serves nothing else (Chapter 14, section 9).
-- **A faster wait on Windows** than `WSAPoll`.
 - **Sending a file without copying it**, HTTP/2. (Compressed responses are in
   [Chapter 16](manual-16-compression.md), section 6: `proven_http_stream_compress` in the
   server - with `compress_zstd` in its configuration for Zstandard - and `decompress` - and

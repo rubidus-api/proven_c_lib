@@ -38,6 +38,7 @@ static proven_err_t internal_err_from_reason(proven_sys_net_result_t r) {
          * something else is closed. "Back off" is the right response, which is what BUSY asks. */
         case PROVEN_SYS_NET_LIMIT:        return PROVEN_ERR_BUSY;
         case PROVEN_SYS_NET_EXISTS:       return PROVEN_ERR_EXISTS;
+        case PROVEN_SYS_NET_CANCELLED:    return PROVEN_ERR_CANCELLED;
         default:                          return PROVEN_ERR_IO;
     }
 }
@@ -454,6 +455,16 @@ static int internal_remaining_ms(proven_net_deadline_t until, bool *expired) {
     if (ms > 0x7fffffff) ms = 0x7fffffff;
     return (int)ms;
 }
+
+#if defined(_WIN32) || defined(_WIN64)
+proven_err_t proven_net_err_from_sys_(proven_sys_net_result_t r) { return internal_err_from_reason(r); }
+void proven_net_addr_to_sys_(const proven_net_addr_t *a, proven_sys_net_addr_t *s) { internal_addr_to_sys(a, s); }
+void proven_net_addr_from_sys_(const proven_sys_net_addr_t *s, proven_net_addr_t *a) { internal_addr_from_sys(s, a); }
+int proven_net_remaining_ms_(proven_net_deadline_t until) {
+    bool expired;
+    return internal_remaining_ms(until, &expired);
+}
+#endif
 
 /* Wait for one socket. PROVEN_OK: something happened on it - try the operation again, which
  * will say what. PROVEN_ERR_TIMEOUT: the deadline passed. */

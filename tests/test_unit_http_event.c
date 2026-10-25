@@ -532,7 +532,12 @@ static void memory_case(void) {
     PROVEN_TEST_ASSERT(proven_http_event_server_connections(server) == N, "three hundred connections, each answered once, all idle", "");
     proven_size_t each = (count.live - base) / N;
     fprintf(stderr, "[PROVEN][TEST][INFO] an idle plain connection holds %u bytes\n", (unsigned)each);
+#if defined(_WIN32) || defined(_WIN64)
+    /* The loop's socket holds an OVERLAPPED and a link for destroy there: 48 bytes more. */
+    PROVEN_TEST_ASSERT(each < 576, "an idle connection holds less than 576 bytes on Windows: its struct, and no buffer", "");
+#else
     PROVEN_TEST_ASSERT(each < 512, "an idle connection holds less than 512 bytes: its struct, and no buffer", "");
+#endif
     for (int i = 0; i < N; ++i) (void)proven_net_close(&socks[i]);
     until = proven_net_deadline_in(300);
     while (proven_time_monotonic_now() < until) PROVEN_TEST_ASSERT(proven_loop_poll(loop, until) == PROVEN_OK, "a round", "");

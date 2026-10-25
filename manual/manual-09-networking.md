@@ -1089,6 +1089,6 @@ Unix-domain sockets need Windows 10 version 1803 or later; where the family is m
 - **Encryption.** A connection made here is not encrypted. TLS is a layer over the transport
   interface: [Chapter 14](manual-14-tls.md).
 - **A deadline on name resolution.** See section 2.
-- **Scale on Windows.** The selector is `epoll` or `kqueue` where they exist; on Windows it is built on `WSAPoll`, and there is no completion-port path.
+- **Scale on Windows.** The selector is `epoll` or `kqueue` where they exist; on Windows it is built on `WSAPoll`. The event loop of [Chapter 15](manual-15-event-loop.md) does not use it there: it is built on an I/O completion port.
 - **Unix-domain datagrams, raw sockets, multicast, socket options beyond `TCP_NODELAY`.**
 - **HTTP.** The message codec is [Chapter 10](manual-10-http.md); the client and the server that drive it over these sockets are [Chapter 11](manual-11-http-client-server.md).

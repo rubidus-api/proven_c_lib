@@ -9,8 +9,8 @@
  * The loop's operations (RFC-0025): receives, sends, accepts and connects that complete.
  *
  * Every case runs twice: on a loop over the system's selector (epoll on Linux) and on one over
- * the portable poll kind, which is what the Windows build runs until its completion port.
- * The two must answer alike.
+ * the portable poll kind. The two must answer alike. On Windows both loops are the completion
+ * port (RFC-0025 step 6), so the cases run on it twice.
  *
  * The rule checked throughout: an operation is answered exactly once, from the loop, and
  * never from inside the call that started it - `g_inside` is set around every such call, and
@@ -63,12 +63,13 @@ static const proven_loop_sock_fns_t g_fns = { on_received, on_writable, on_conne
 
 static void rounds(int n) { for (int i = 0; i < n; ++i) (void)proven_loop_poll(g_loop, PROVEN_NET_DONT_WAIT); }
 
-/* Poll until `*count` moves past `before`, or two seconds pass. */
-static bool until_moves(const int *count, int before) {
-    proven_net_deadline_t end = proven_net_deadline_in(2000);
+/* Poll until `*count` moves past `before`, or `ms` pass. */
+static bool until_moves_in(const int *count, int before, proven_u32 ms) {
+    proven_net_deadline_t end = proven_net_deadline_in(ms);
     while (*count == before && proven_time_monotonic_now() < end) (void)proven_loop_poll(g_loop, proven_net_deadline_in(20));
     return *count != before;
 }
+static bool until_moves(const int *count, int before) { return until_moves_in(count, before, 2000); }
 
 static void pair(conn_t *c, proven_net_conn_t *far) {
     memset(c, 0, sizeof *c);
@@ -427,7 +428,8 @@ static void case_accept_connect(void) {
     memset(&c, 0, sizeof c);
     e = proven_loop_connect(g_loop, &c.sock, gone_at, &c.conn, &g_fns, &c);
     if (e == PROVEN_OK) {
-        PROVEN_TEST_ASSERT(until_moves(&c.connected, 0) && c.conn_err == PROVEN_ERR_REFUSED, "a refused connect is answered with PROVEN_ERR_REFUSED", g_kind);
+        /* Windows tries a refused connect again for about two seconds before it says so. */
+        PROVEN_TEST_ASSERT(until_moves_in(&c.connected, 0, 6000) && c.conn_err == PROVEN_ERR_REFUSED, "a refused connect is answered with PROVEN_ERR_REFUSED", g_kind);
         close_and_wait(&c);
     } else {
         PROVEN_TEST_ASSERT(e == PROVEN_ERR_REFUSED && !proven_net_conn_is_open(&c.conn), "or refused at once, with nothing to close", g_kind);
@@ -577,7 +579,7 @@ int main(void) {
 
     /* RFC-0025 section 12: the socket holds what the loop needs per connection. */
 #if defined(_WIN32) || defined(_WIN64)
-    PROVEN_TEST_ASSERT(sizeof(proven_loop_sock_t) == 104, "a socket of the loop is 104 bytes on Windows", "");
+    PROVEN_TEST_ASSERT(sizeof(proven_loop_sock_t) == 120, "a socket of the loop is 120 bytes on Windows: its OVERLAPPED included", "");
 #else
     PROVEN_TEST_ASSERT(sizeof(proven_loop_sock_t) == 72, "a socket of the loop is 72 bytes", "");
 #endif

@@ -8,6 +8,14 @@
 #include "proven_internal_quic_net.h"
 #include <stdatomic.h>
 
+#if defined(_WIN32) || defined(_WIN64)
+#define LOOP_IOCP 1
+#include <stddef.h>
+#else
+#define LOOP_IOCP 0
+#endif
+
+
 /*
  * The event loop: a selector, a hashed timer wheel, a waker, and a queue other threads post to.
  *
@@ -36,6 +44,16 @@
  * Bytes waiting to be sent are in chunks of PROVEN_LOOP_CHUNK_ bytes from a pool of the loop's,
  * a whole TLS record each; a socket holds chunks only while bytes wait, and one gather write
  * sends a socket's chain.
+ *
+ * On Windows the operations are those of an I/O completion port instead (RFC-0025 step 6): a
+ * receive is an overlapped WSARecv - of zero bytes, or into the caller's buffer - a send one
+ * WSASend of the socket's chain, an accept AcceptEx, a connect ConnectEx, a UDP receive
+ * WSARecvMsg, and the waker a post to the port. What the system holds while an operation is in
+ * flight - its OVERLAPPED, its buffer - is in the socket's own struct or in the chunk being sent,
+ * and a socket's `closed` comes only once the port has reported every operation of it, so that
+ * the system never writes memory its owner has freed. A report finds its node from the OVERLAPPED
+ * alone: every struct that holds one has its node first and the OVERLAPPED right after it. The
+ * done list, the chunks, the timers and the posts are the same on both.
  */
 
 #define LOOP_WHEEL_SLOTS 1024u
@@ -53,6 +71,7 @@
 #define KIND_SOCK 1
 #define KIND_ACCEPT 2
 #define KIND_UDP 3
+#define KIND_CHUNK 4        /* a chunk's send, on a completion port */
 
 /* A socket's state. */
 #define S_NONE 0
@@ -66,6 +85,13 @@
 #define F_REG 0x02          /* registered with the selector */
 #define F_RECV 0x04         /* a receive (an accept) is in flight */
 #define F_WAIT 0x08         /* a send wait is asked for */
+#define F_OVR 0x10          /* completion port: the node's own OVERLAPPED is the system's (a receive, a connect, an accept) */
+#define F_OVS 0x20          /* completion port: a send of the socket's chain is the system's */
+#define F_SKIP 0x40         /* completion port: what finishes at once is not reported */
+#define F_CANCEL 0x80       /* completion port: what is in flight was asked to stop */
+/* On a completion port F_REG says the node is on the loop's list of every node (for destroy),
+ * and `want` holds W_CONNECT while the node's OVERLAPPED is a connect's. */
+#define W_CONNECT 0x01
 
 /* done: what is waiting to be delivered */
 #define D_CONNECTED 0x01
@@ -82,9 +108,19 @@ typedef struct loop_node {
     proven_u8 kind, flags, want, done, state, family;
     proven_u16 err;                       /* the receive's answer, or the accept's */
     struct loop_node *next;               /* on the done list */
+#if LOOP_IOCP
+    struct loop_node *all_prev, *all_next;    /* every node with an end still to come, for destroy */
+#endif
 } loop_node_t;
 
+typedef struct loop_sock loop_sock_t;
+
 typedef struct loop_chunk {
+#if LOOP_IOCP
+    loop_node_t node;                     /* kind KIND_CHUNK: what the report of the chunk's send finds */
+    proven_sys_net_ov_t ov;               /* the send of the chain that starts at this chunk */
+    loop_sock_t *owner;
+#endif
     struct loop_chunk *next;              /* in its socket's chain, or in the pool */
     struct loop_chunk *all_prev, *all_next;    /* every chunk out of the pool, for destroy */
     struct loop_chunk *last;              /* in the first chunk of a socket's chain: its last */
@@ -92,40 +128,56 @@ typedef struct loop_chunk {
     proven_byte_t data[PROVEN_LOOP_CHUNK_];
 } loop_chunk_t;
 
-typedef struct loop_sock {
+struct loop_sock {
     loop_node_t node;                     /* node.err: the answer of a receive, or of a connect */
+#if LOOP_IOCP
+    proven_sys_net_ov_t ov;               /* the receive's, or the connect's */
+#endif
     proven_u16 send_err;                  /* stays once a send failed */
     proven_u16 limit_k;                   /* what proven_loop_send holds at most, in KiB; LIMIT_NONE: no bound */
-    proven_u32 recv_cap;
+    proven_u32 recv_cap;                  /* completion port: what a receive answered at once took */
     proven_u32 queued, wait_at;
     proven_uintptr_t handle;
     const proven_loop_sock_fns_t *fns;
     void *ctx;
     proven_byte_t *recv_buf;
     loop_chunk_t *head;                   /* bytes waiting to be sent; head->last is the chain's end */
-} loop_sock_t;
+};
 
 #define LIMIT_NONE 0xffffu
 static proven_u32 sock_limit(const loop_sock_t *s) { return s->limit_k == LIMIT_NONE ? 0xffffffffu : (proven_u32)s->limit_k * 1024u; }
 static loop_chunk_t *sock_tail(const loop_sock_t *s) { return s->head ? s->head->last : (void *)0; }
 
 typedef struct loop_acc {
-    loop_node_t node;
+    loop_node_t node;                     /* node.family: the listener's */
+#if LOOP_IOCP
+    proven_sys_net_ov_t ov;
+#endif
     proven_uintptr_t handle;
     proven_net_listener_t *listener;
     proven_loop_accept_fn fn;
     void *ctx;
-    proven_net_conn_t conn;               /* the accepted connection, until delivered */
+    proven_net_conn_t conn;               /* the accepted connection, until delivered (the socket made for an AcceptEx) */
+#if LOOP_IOCP
+    proven_byte_t area[PROVEN_SYS_NET_ACCEPT_AREA];
+#endif
 } loop_acc_t;
 
 typedef struct loop_udp {
     loop_node_t node;                     /* node.err: the receive's answer */
+#if LOOP_IOCP
+    proven_sys_net_ov_t ov;
+#endif
     proven_net_udp_t *udp;
     const proven_loop_udp_fns_t *fns;
     void *ctx;
     proven_byte_t *buf;
     proven_net_addr_t *from;
     proven_u32 cap, n, seg;               /* n, seg: an answer waiting on the done list */
+#if LOOP_IOCP
+    proven_sys_net_msg_t msg;
+    proven_loop_timer_t wait;             /* a send wait's answer */
+#endif
 } loop_udp_t;
 
 _Static_assert(sizeof(loop_udp_t) <= sizeof(proven_loop_udp_t), "proven_loop_udp_t holds the loop's UDP socket");
@@ -135,6 +187,13 @@ _Static_assert(_Alignof(loop_sock_t) <= _Alignof(proven_loop_sock_t), "and is al
 _Static_assert(sizeof(loop_acc_t) <= sizeof(proven_loop_accept_t), "proven_loop_accept_t holds the loop's acceptor");
 _Static_assert(_Alignof(loop_acc_t) <= _Alignof(proven_loop_accept_t), "and is aligned for it");
 _Static_assert(PROVEN_LOOP_CHUNK_ >= 16384 + 5 + 16 + 1, "a chunk holds a whole TLS record");
+#if LOOP_IOCP
+#define LOOP_OV_AT offsetof(loop_sock_t, ov)
+_Static_assert(offsetof(loop_acc_t, ov) == LOOP_OV_AT && offsetof(loop_udp_t, ov) == LOOP_OV_AT && offsetof(loop_chunk_t, ov) == LOOP_OV_AT,
+               "every OVERLAPPED is at the same place after its node");
+_Static_assert((int)PROVEN_NET_FAMILY_IPV4 == (int)PROVEN_SYS_NET_FAMILY_IPV4 && (int)PROVEN_NET_FAMILY_IPV6 == (int)PROVEN_SYS_NET_FAMILY_IPV6 &&
+               (int)PROVEN_NET_FAMILY_UNIX == (int)PROVEN_SYS_NET_FAMILY_UNIX, "a listener's family is the platform's");
+#endif
 
 typedef struct loop_task {
     struct loop_task *next;
@@ -144,18 +203,27 @@ typedef struct loop_task {
 
 struct proven_loop {
     proven_allocator_t alloc;
+#if LOOP_IOCP
+    proven_uintptr_t port;
+    bool port_open;
+    atomic_bool woken;                            /* a post to the port is on its way */
+    loop_node_t *all;                             /* every node with an end still to come */
+    proven_size_t in_flight;                      /* operations the system holds */
+    proven_sys_net_done_t batch[LOOP_EVENTS];     /* the reports of the round being delivered */
+#else
     proven_net_selector_t *selector;
     proven_net_waker_t waker;
     bool waker_open;
     loop_node_t waker_node;                       /* the waker's registration: readable means "look at the posts" */
+    proven_net_ready_t batch[LOOP_EVENTS];        /* the events of the round being delivered */
+    proven_size_t batch_count, batch_pos;
+#endif
     _Atomic(proven_loop_task_t *) tasks;
     atomic_bool stop;
     proven_loop_timer_t *wheel[LOOP_WHEEL_SLOTS];
     proven_loop_timer_t *due;                     /* timers taken off the wheel, not yet fired */
     proven_u64 wheel_tick;
     proven_size_t timed_count;
-    proven_net_ready_t batch[LOOP_EVENTS];        /* the events of the round being delivered */
-    proven_size_t batch_count, batch_pos;
     proven_byte_t *scratch;
     proven_loop_after_t *after_first, *after_last;    /* "after this round", in the order asked */
     proven_size_t after_count;
@@ -190,6 +258,17 @@ static proven_err_t loop_create(proven_allocator_t alloc, proven_loop_t **out, b
     atomic_init(&l->tasks, (proven_loop_task_t *)0);
     atomic_init(&l->stop, false);
     l->wheel_tick = (proven_u64)loop_now(l) / LOOP_TICK_NS;
+#if LOOP_IOCP
+    (void)poll_kind;                              /* one kind on Windows: the port */
+    atomic_init(&l->woken, false);
+    proven_err_t e = proven_net_err_from_sys_(proven_sys_net_port_open(&l->port));
+    l->port_open = e == PROVEN_OK;
+    if (e == PROVEN_OK) {
+        m = alloc.alloc_fn(alloc.ctx, LOOP_SCRATCH, 16);
+        if (m.err != PROVEN_OK) e = m.err;
+        else l->scratch = m.value.ptr;
+    }
+#else
     proven_err_t e = poll_kind ? proven_net_selector_create_poll(alloc, &l->selector) : proven_net_selector_create(alloc, &l->selector);
     if (e == PROVEN_OK) {
         m = alloc.alloc_fn(alloc.ctx, LOOP_SCRATCH, 16);
@@ -204,6 +283,7 @@ static proven_err_t loop_create(proven_allocator_t alloc, proven_loop_t **out, b
         e = proven_net_selector_add(l->selector, proven_net_waker_handle(&l->waker), PROVEN_NET_READABLE, &l->waker_node);
         if (e == PROVEN_OK) l->waker_node.flags |= F_REG;
     }
+#endif
     if (e != PROVEN_OK) { proven_loop_destroy(l); return e; }
     *out = l;
     return PROVEN_OK;
@@ -212,9 +292,16 @@ static proven_err_t loop_create(proven_allocator_t alloc, proven_loop_t **out, b
 proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out) { return loop_create(alloc, out, false); }
 proven_err_t proven_loop_create_poll_(proven_allocator_t alloc, proven_loop_t **out) { return loop_create(alloc, out, true); }
 
+#if LOOP_IOCP
+static void loop_drain(proven_loop_t *l);
+#endif
+
 void proven_loop_destroy(proven_loop_t *l) {
     if (!l) return;
     proven_allocator_t a = l->alloc;
+#if LOOP_IOCP
+    if (l->port_open) loop_drain(l);
+#else
     /* What has already ended gets its last answer, so that its owner can free it: `closed` of a
      * socket that was closed, and an accept that was cancelled. Nothing else is called. */
     for (loop_node_t *n = l->done_first, *next; n; n = next) {
@@ -234,14 +321,19 @@ void proven_loop_destroy(proven_loop_t *l) {
             acc->fn(acc->ctx, PROVEN_ERR_CANCELLED, &none);
         }
     }
+#endif
     l->done_first = l->done_last = (void *)0;
     proven_loop_task_t *t = atomic_exchange_explicit(&l->tasks, (proven_loop_task_t *)0, memory_order_acquire);
     while (t) { proven_loop_task_t *next = t->next; a.free_fn(a.ctx, t); t = next; }
+#if LOOP_IOCP
+    if (l->port_open) proven_sys_net_port_close(l->port);
+#else
     if (l->waker_open) {
         if (l->waker_node.flags & F_REG) (void)proven_net_selector_remove(l->selector, proven_net_waker_handle(&l->waker));
         proven_net_waker_close(&l->waker);
     }
     if (l->selector) proven_net_selector_destroy(l->selector);
+#endif
     if (l->scratch) a.free_fn(a.ctx, l->scratch);
     while (l->pool) { loop_chunk_t *next = l->pool->next; a.free_fn(a.ctx, l->pool); l->pool = next; }
     while (l->chunks) { loop_chunk_t *next = l->chunks->all_next; a.free_fn(a.ctx, l->chunks); l->chunks = next; }
@@ -270,6 +362,7 @@ static proven_net_conn_t sock_conn(const loop_sock_t *s) {
     return c;
 }
 
+#if !LOOP_IOCP
 /* Ask the selector for `want` of a node's socket, registering it on first need. */
 static proven_err_t node_watch(proven_loop_t *l, loop_node_t *n, proven_uintptr_t handle, proven_u8 want) {
     proven_net_handle_t h = { .raw = handle, .valid = true };
@@ -295,6 +388,8 @@ static void node_unwatch(proven_loop_t *l, loop_node_t *n, proven_uintptr_t hand
         if (l->batch[i].tag == n) l->batch[i].tag = (void *)0;
     }
 }
+#endif
+
 
 static void node_queue(proven_loop_t *l, loop_node_t *n, proven_u8 bits) {
     n->done |= bits;
@@ -304,6 +399,25 @@ static void node_queue(proven_loop_t *l, loop_node_t *n, proven_u8 bits) {
     if (l->done_last) l->done_last->next = n; else l->done_first = n;
     l->done_last = n;
 }
+
+#if LOOP_IOCP
+static void node_link(proven_loop_t *l, loop_node_t *n) {
+    if (n->flags & F_REG) return;
+    n->flags |= F_REG;
+    n->all_prev = (void *)0;
+    n->all_next = l->all;
+    if (l->all) l->all->all_prev = n;
+    l->all = n;
+}
+
+static void node_unlink(proven_loop_t *l, loop_node_t *n) {
+    if (!(n->flags & F_REG)) return;
+    n->flags &= (proven_u8)~F_REG;
+    if (n->all_prev) n->all_prev->all_next = n->all_next; else l->all = n->all_next;
+    if (n->all_next) n->all_next->all_prev = n->all_prev;
+    n->all_prev = n->all_next = (void *)0;
+}
+#endif
 
 // --- chunks
 
@@ -317,6 +431,10 @@ static loop_chunk_t *chunk_take(proven_loop_t *l) {
     }
     c->next = (void *)0;
     c->used = c->sent = 0;
+#if LOOP_IOCP
+    c->node.kind = KIND_CHUNK;
+    c->owner = (void *)0;
+#endif
     c->all_prev = (void *)0;
     c->all_next = l->chunks;
     if (l->chunks) l->chunks->all_prev = c;
@@ -357,6 +475,10 @@ static proven_err_t sock_room(proven_loop_t *l, loop_sock_t *s, proven_size_t mi
 static void sock_deliver_writable(loop_sock_t *s, proven_err_t err) {
     if (s->fns->writable) s->fns->writable(s->ctx, err);
 }
+#if LOOP_IOCP
+static void sock_flush(proven_loop_t *l, loop_sock_t *s, bool answer);
+#define SOCK_SENDING(s) (((s)->node.flags & F_OVS) != 0)
+#else
 
 /* Write what waits; answer a wait that has come true, or the failure - from the loop. With
  * `answer` false (a driver's own call) the answer is queued to come from the loop instead. */
@@ -407,6 +529,10 @@ static void sock_flush(proven_loop_t *l, loop_sock_t *s, bool answer) {
     }
 }
 
+/* Whether a send of the chain is under way: the selector is asked for writable. */
+#define SOCK_SENDING(s) (((s)->node.want & PROVEN_NET_WRITABLE) != 0)
+#endif
+
 static void sock_connected(loop_sock_t *s, proven_err_t err) {
     if (s->node.state == S_CONNECTING) s->node.state = err == PROVEN_OK ? S_OPEN : S_DEAD;
     s->fns->connected(s->ctx, err);
@@ -419,21 +545,36 @@ static void sock_deliver(proven_loop_t *l, loop_sock_t *s) {
     s->node.done = 0;
     /* Deferred, a receive is answered only when cancelled: nothing taken. */
     if (bits & D_CONNECTED) sock_connected(s, (proven_err_t)s->node.err);
+#if LOOP_IOCP
+    /* On a port, a receive answered at once (or failed at once), with what it took. */
+    if (bits & D_RECEIVED) {
+        s->node.flags &= (proven_u8)~(F_RECV | F_CANCEL);
+        const proven_err_t e = (proven_err_t)s->node.err;
+        s->fns->received(s->ctx, e, e == PROVEN_OK ? s->recv_cap : 0);
+    }
+#else
     if (bits & D_RECEIVED) s->fns->received(s->ctx, (proven_err_t)s->node.err, 0);
+#endif
     if (bits & D_WRITABLE) {
         proven_err_t e = s->node.state == S_CLOSING ? PROVEN_ERR_CANCELLED : (proven_err_t)s->send_err;
         sock_deliver_writable(s, e);
     }
-    if ((bits & D_FLUSH) && s->node.state == S_OPEN && s->head && !(s->node.want & PROVEN_NET_WRITABLE)) sock_flush(l, s, true);
+    if ((bits & D_FLUSH) && s->node.state == S_OPEN && s->head && !SOCK_SENDING(s)) sock_flush(l, s, true);
     if ((bits & D_CLOSED) && s->node.state == S_CLOSING) {
         s->node.state = S_NONE;
+#if LOOP_IOCP
+        node_unlink(l, &s->node);
+#endif
         if (s->fns->closed) s->fns->closed(s->ctx);
     }
 }
 
 static void acc_deliver(proven_loop_t *l, loop_acc_t *a) {
     a->node.done = 0;
-    a->node.flags &= (proven_u8)~F_RECV;
+    a->node.flags &= (proven_u8)~(F_RECV | F_CANCEL);
+#if LOOP_IOCP
+    node_unlink(l, &a->node);
+#endif
     proven_err_t err = (proven_err_t)a->node.err;
     proven_net_conn_t conn = a->conn;
     a->conn = (proven_net_conn_t){ 0 };
@@ -466,7 +607,7 @@ static void loop_run_done(proven_loop_t *l) {
 
 
 static void udp_received(proven_loop_t *l, loop_udp_t *u, proven_err_t err, proven_size_t n, proven_size_t seg) {
-    u->node.flags &= (proven_u8)~F_RECV;
+    u->node.flags &= (proven_u8)~(F_RECV | F_CANCEL);
     l->delivering_udp = u;
     u->fns->received(u->ctx, err, n, seg);
     if (l->delivering_udp == u) l->delivering_udp = (void *)0;
@@ -479,9 +620,14 @@ static void udp_deliver(proven_loop_t *l, loop_udp_t *u) {
     if ((bits & D_WRITABLE) && u->fns->writable) u->fns->writable(u->ctx, u->node.state == S_CLOSING ? PROVEN_ERR_CANCELLED : PROVEN_OK);
     if ((bits & D_CLOSED) && u->node.state == S_CLOSING) {
         u->node.state = S_NONE;
+#if LOOP_IOCP
+        node_unlink(l, &u->node);
+#endif
         if (u->fns->closed) u->fns->closed(u->ctx);
     }
 }
+#if !LOOP_IOCP
+
 
 /* One receive now. True when there is an answer: datagrams, or nothing worth waiting on. An
  * oversized datagram (none of QUIC's) and a reported error of an earlier send are passed over. */
@@ -706,6 +852,588 @@ void proven_loop_recv_cancel(proven_loop_t *l, proven_loop_sock_t *sock) {
     node_queue(l, &s->node, D_RECEIVED);
 }
 
+/* What waits is sent when the socket is writable. */
+static proven_err_t sock_kick(proven_loop_t *l, loop_sock_t *s) {
+    return node_watch(l, &s->node, s->handle, (proven_u8)(s->node.want | PROVEN_NET_WRITABLE));
+}
+
+void proven_loop_close(proven_loop_t *l, proven_loop_sock_t *sock) {
+    if (!l || !sock) return;
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK) return;
+    proven_u8 state = s->node.state;
+    if (state != S_OPEN && state != S_CONNECTING && state != S_DEAD) return;
+    proven_u8 bits = D_CLOSED;
+    if (s->node.flags & F_RECV) {
+        s->node.flags &= (proven_u8)~F_RECV;
+        s->node.err = (proven_u16)PROVEN_ERR_CANCELLED;
+        bits |= D_RECEIVED;
+    }
+    if (state == S_CONNECTING) { s->node.err = (proven_u16)PROVEN_ERR_CANCELLED; bits |= D_CONNECTED; }
+    if (s->node.flags & F_WAIT) { s->node.flags &= (proven_u8)~F_WAIT; bits |= D_WRITABLE; }
+    sock_drop_chunks(l, s);
+    node_unwatch(l, &s->node, s->handle);
+    s->node.state = S_CLOSING;
+    node_queue(l, &s->node, bits);
+}
+
+proven_err_t proven_loop_accept(proven_loop_t *l, proven_loop_accept_t *acc, proven_net_listener_t *listener,
+                                proven_loop_accept_fn fn, void *ctx) {
+    if (!l || !acc || !listener || !fn || !proven_net_listener_is_open(listener)) return PROVEN_ERR_INVALID_ARG;
+    loop_acc_t *a = acc_of(acc);
+    if (a->node.kind != KIND_ACCEPT || a->listener != listener) {
+        if (a->node.kind == KIND_ACCEPT && (a->node.flags & F_RECV)) return PROVEN_ERR_BUSY;
+        if (a->node.kind == KIND_ACCEPT) node_unwatch(l, &a->node, a->handle);
+        for (proven_size_t i = 0; i < sizeof *a; ++i) ((proven_byte_t *)a)[i] = 0;
+        a->node.kind = KIND_ACCEPT;
+        a->listener = listener;
+        a->handle = listener->internal.handle;
+    }
+    if (a->node.flags & F_RECV) return PROVEN_ERR_BUSY;
+    a->fn = fn;
+    a->ctx = ctx;
+    /* Armed again from inside its own function: there is often another connection waiting
+     * already, and taking it now saves a round. It is still answered from the loop. */
+    if (l->delivering == a && acc_try(a)) {
+        a->node.flags |= F_RECV;
+        node_queue(l, &a->node, D_ACCEPT);
+        return PROVEN_OK;
+    }
+    proven_err_t e = node_watch(l, &a->node, a->handle, PROVEN_NET_READABLE);
+    if (e != PROVEN_OK) return e;
+    a->node.flags |= F_RECV;
+    return PROVEN_OK;
+}
+
+void proven_loop_accept_cancel(proven_loop_t *l, proven_loop_accept_t *acc) {
+    if (!l || !acc) return;
+    loop_acc_t *a = acc_of(acc);
+    if (a->node.kind != KIND_ACCEPT) return;
+    node_unwatch(l, &a->node, a->handle);
+    if (!(a->node.flags & F_RECV)) return;
+    (void)proven_net_close(&a->conn);             /* one taken and not yet delivered */
+    a->node.err = (proven_u16)PROVEN_ERR_CANCELLED;
+    node_queue(l, &a->node, D_ACCEPT);
+}
+
+#else   /* LOOP_IOCP */
+
+// --- the completion port
+
+static loop_node_t *node_of_ov(proven_sys_net_ov_t *ov) { return (loop_node_t *)(void *)((proven_byte_t *)ov - LOOP_OV_AT); }
+static proven_err_t sys_err(proven_sys_net_result_t r) { return proven_net_err_from_sys_(r); }
+static bool skip_of(const loop_node_t *n) { return (n->flags & F_SKIP) != 0; }
+static proven_sys_socket_t sock_handle(const loop_sock_t *s) { return (proven_sys_socket_t)s->handle; }
+
+/* An operation the system holds from now until the port reports it; and its report. */
+static void ov_held(proven_loop_t *l, loop_node_t *n, proven_u8 flag) { n->flags |= flag; l->in_flight++; }
+static void ov_back(proven_loop_t *l, loop_node_t *n, proven_u8 flag) { n->flags &= (proven_u8)~flag; l->in_flight--; }
+
+/* A closing socket's end comes once the system holds nothing of it. */
+static void sock_maybe_closed(proven_loop_t *l, loop_sock_t *s) {
+    if (s->node.state == S_CLOSING && !(s->node.flags & (F_OVR | F_OVS))) node_queue(l, &s->node, D_CLOSED);
+}
+
+static void sock_check_wait(proven_loop_t *l, loop_sock_t *s, bool answer) {
+    if ((s->node.flags & F_WAIT) && s->queued <= s->wait_at) {
+        s->node.flags &= (proven_u8)~F_WAIT;
+        if (answer) sock_deliver_writable(s, PROVEN_OK); else node_queue(l, &s->node, D_WRITABLE);
+    }
+}
+
+static void sock_send_failed(proven_loop_t *l, loop_sock_t *s, proven_err_t e, bool answer) {
+    if (e == PROVEN_OK) e = PROVEN_ERR_IO;
+    s->send_err = (proven_u16)e;
+    sock_drop_chunks(l, s);
+    s->node.flags &= (proven_u8)~F_WAIT;
+    if (answer) sock_deliver_writable(s, e); else node_queue(l, &s->node, D_WRITABLE);
+}
+
+/* `n` bytes from the head of the chain have left. */
+static void sock_sent(proven_loop_t *l, loop_sock_t *s, proven_size_t n) {
+    s->queued -= (proven_u32)n;
+    while (s->head) {
+        loop_chunk_t *c = s->head;
+        proven_size_t here = c->used - c->sent;
+        if (n < here) { c->sent += (proven_u32)n; break; }
+        n -= here;
+        s->head = c->next;
+        if (s->head) s->head->last = c->last;
+        chunk_give(l, c);
+    }
+}
+
+/* Send what waits: one WSASend of the chain, from the head chunk's OVERLAPPED. While it is the
+ * system's, what is added waits for the next one; nothing of the chain is given back until the
+ * port has reported it. A send that finishes at once is counted at once and the next started,
+ * a few times over; then the rest goes after this callback. */
+static void sock_flush(proven_loop_t *l, loop_sock_t *s, bool answer) {
+    for (int pass = 0; pass < 4 && s->head && !(s->node.flags & F_OVS) && s->node.state == S_OPEN; ++pass) {
+        proven_sys_net_vec_t vec[PROVEN_SYS_NET_VEC_MAX];
+        proven_size_t count = 0;
+        for (loop_chunk_t *c = s->head; c && count < PROVEN_SYS_NET_VEC_MAX; c = c->next) {
+            if (c->used == c->sent) continue;
+            vec[count++] = (proven_sys_net_vec_t){ .ptr = c->data + c->sent, .len = c->used - c->sent };
+        }
+        if (count == 0) break;
+        loop_chunk_t *h = s->head;
+        h->owner = s;
+        proven_u32 sent = 0;
+        const proven_sys_net_result_t r = proven_sys_net_ov_send(sock_handle(s), &h->ov, vec, count, skip_of(&s->node), &sent);
+        if (r == PROVEN_SYS_NET_IN_PROGRESS) { ov_held(l, &s->node, F_OVS); break; }
+        if (r != PROVEN_SYS_NET_OK) { sock_send_failed(l, s, sys_err(r), answer); return; }
+        sock_sent(l, s, sent);
+    }
+    if (s->queued > 0 && !(s->node.flags & F_OVS) && s->node.state == S_OPEN) node_queue(l, &s->node, D_FLUSH);
+    sock_check_wait(l, s, answer);
+}
+
+/* What waits is sent from the loop, after the callback that gave it: one send for all of it. */
+static proven_err_t sock_kick(proven_loop_t *l, loop_sock_t *s) {
+    if (!(s->node.flags & F_OVS)) node_queue(l, &s->node, D_FLUSH);
+    return PROVEN_OK;
+}
+
+static void sock_send_done(proven_loop_t *l, loop_chunk_t *c, const proven_sys_net_done_t *d) {
+    loop_sock_t *s = c->owner;
+    ov_back(l, &s->node, F_OVS);
+    if (s->node.state != S_OPEN) {          /* closed meanwhile: what waited goes now that the system has let go of it */
+        sock_drop_chunks(l, s);
+        sock_maybe_closed(l, s);
+        return;
+    }
+    if (d->failed) { sock_send_failed(l, s, sys_err(proven_sys_net_ov_result(sock_handle(s), &c->ov)), true); return; }
+    sock_sent(l, s, d->bytes);
+    sock_flush(l, s, true);
+}
+
+/* Start the receive asked for; what happens at once is answered from the loop. */
+static void sock_post_recv(proven_loop_t *l, loop_sock_t *s) {
+    proven_u32 got = 0;
+    const proven_sys_net_result_t r = proven_sys_net_ov_recv(sock_handle(s), &s->ov, s->recv_buf, s->recv_cap, skip_of(&s->node), &got);
+    if (r == PROVEN_SYS_NET_IN_PROGRESS) { ov_held(l, &s->node, F_OVR); return; }
+    const proven_err_t e = r != PROVEN_SYS_NET_OK ? sys_err(r) : s->recv_cap > 0 && got == 0 ? PROVEN_ERR_EOF : PROVEN_OK;
+    s->node.err = (proven_u16)e;
+    s->recv_cap = got;                    /* from here on, what it took */
+    node_queue(l, &s->node, D_RECEIVED);
+}
+
+/* The report of the socket's own OVERLAPPED: a connect's, or a receive's. A socket that is
+ * closing has its answer CANCELLED, without asking the system why (its handle may be gone). */
+static void sock_ov_done(proven_loop_t *l, loop_sock_t *s, const proven_sys_net_done_t *d) {
+    ov_back(l, &s->node, F_OVR);
+    const bool cancelled = (s->node.flags & F_CANCEL) != 0;
+    s->node.flags &= (proven_u8)~F_CANCEL;
+    if (s->node.want & W_CONNECT) {
+        s->node.want = 0;
+        proven_err_t e = s->node.state != S_CONNECTING ? PROVEN_ERR_CANCELLED
+                       : d->failed ? sys_err(proven_sys_net_ov_result(sock_handle(s), &s->ov))
+                       : sys_err(proven_sys_net_ov_connect_done(sock_handle(s)));
+        if (d->failed && e == PROVEN_OK) e = PROVEN_ERR_IO;
+        sock_connected(s, e);
+    } else if (s->node.flags & F_RECV) {
+        proven_err_t e;
+        proven_size_t n = 0;
+        if (s->node.state != S_OPEN) e = PROVEN_ERR_CANCELLED;
+        else if (d->failed) { e = sys_err(proven_sys_net_ov_result(sock_handle(s), &s->ov)); if (e == PROVEN_OK) e = PROVEN_ERR_IO; }
+        else if (s->recv_cap == 0) e = cancelled ? PROVEN_ERR_CANCELLED : PROVEN_OK;   /* took nothing: a late cancel still stands */
+        else if (d->bytes == 0) e = PROVEN_ERR_EOF;
+        else { e = PROVEN_OK; n = d->bytes; }                                          /* bytes taken are delivered, cancelled or not */
+        s->node.flags &= (proven_u8)~F_RECV;
+        s->fns->received(s->ctx, e, n);
+    }
+    sock_maybe_closed(l, s);
+}
+
+// --- UDP
+
+static void udp_maybe_closed(proven_loop_t *l, loop_udp_t *u) {
+    if (u->node.state == S_CLOSING && !(u->node.flags & F_OVR)) node_queue(l, &u->node, D_CLOSED);
+}
+
+static void udp_took(loop_udp_t *u, proven_u32 got) {
+    proven_size_t seg = 0;
+    proven_sys_net_addr_t from;
+    proven_sys_net_ov_msg_done(&u->msg, got, &seg, &from);
+    proven_net_addr_from_sys_(&from, u->from);
+    u->node.err = (proven_u16)PROVEN_OK;
+    u->n = got;
+    u->seg = (proven_u32)seg;
+}
+
+/* Start the receive asked for. A datagram cut short (none of QUIC's) and a reported error of an
+ * earlier send are passed over, as on the selector. */
+static void udp_post(proven_loop_t *l, loop_udp_t *u) {
+    proven_sys_net_result_t r = PROVEN_SYS_NET_ERROR;
+    for (int i = 0; i < 64; ++i) {
+        proven_u32 got = 0;
+        r = proven_sys_net_ov_recv_msg((proven_sys_socket_t)u->udp->internal.handle, &u->ov, &u->msg, u->buf, u->cap, skip_of(&u->node), &got);
+        if (r == PROVEN_SYS_NET_IN_PROGRESS) { ov_held(l, &u->node, F_OVR); return; }
+        if (r == PROVEN_SYS_NET_OK) { udp_took(u, got); node_queue(l, &u->node, D_RECEIVED); return; }
+        if (r != PROVEN_SYS_NET_TRUNCATED && r != PROVEN_SYS_NET_RESET) break;
+    }
+    u->node.err = (proven_u16)sys_err(r);
+    u->n = u->seg = 0;
+    node_queue(l, &u->node, D_RECEIVED);
+}
+
+static void udp_ov_done(proven_loop_t *l, loop_udp_t *u, const proven_sys_net_done_t *d) {
+    ov_back(l, &u->node, F_OVR);
+    u->node.flags &= (proven_u8)~F_CANCEL;
+    if (u->node.state != S_OPEN) {
+        udp_received(l, u, PROVEN_ERR_CANCELLED, 0, 0);
+        udp_maybe_closed(l, u);
+        return;
+    }
+    if (d->failed) {
+        const proven_sys_net_result_t r = proven_sys_net_ov_result((proven_sys_socket_t)u->udp->internal.handle, &u->ov);
+        if (r == PROVEN_SYS_NET_TRUNCATED || r == PROVEN_SYS_NET_RESET) { udp_post(l, u); return; }
+        udp_received(l, u, r == PROVEN_SYS_NET_OK ? PROVEN_ERR_IO : sys_err(r), 0, 0);
+        return;
+    }
+    udp_took(u, d->bytes);
+    udp_received(l, u, PROVEN_OK, u->n, u->seg);
+}
+
+proven_err_t proven_loop_udp_attach_(proven_loop_t *l, proven_loop_udp_t *udp_op, proven_net_udp_t *udp, const proven_loop_udp_fns_t *fns, void *ctx) {
+    if (!l || !udp_op || !udp || !fns || !fns->received || !proven_net_udp_is_open(udp)) return PROVEN_ERR_INVALID_ARG;
+    loop_udp_t *u = (loop_udp_t *)(void *)udp_op;
+    for (proven_size_t i = 0; i < sizeof *u; ++i) ((proven_byte_t *)u)[i] = 0;
+    /* Every receive of a datagram socket is reported by the port (proven_sys_net_port_bind). */
+    bool skip = false;
+    const proven_sys_net_result_t r = proven_sys_net_port_bind(l->port, (proven_sys_socket_t)udp->internal.handle, false, &skip);
+    if (r != PROVEN_SYS_NET_OK) return sys_err(r);
+    u->node.kind = KIND_UDP;
+    u->node.state = S_OPEN;
+    u->udp = udp;
+    u->fns = fns;
+    u->ctx = ctx;
+    node_link(l, &u->node);
+    return PROVEN_OK;
+}
+
+proven_err_t proven_loop_udp_recv_(proven_loop_t *l, proven_loop_udp_t *udp_op, proven_mem_mut_t buf, proven_net_addr_t *from) {
+    if (!l || !udp_op || !buf.ptr || buf.size == 0 || !from) return PROVEN_ERR_INVALID_ARG;
+    loop_udp_t *u = (loop_udp_t *)(void *)udp_op;
+    if (u->node.kind != KIND_UDP || u->node.state != S_OPEN) return PROVEN_ERR_INVALID_STATE;
+    if (u->node.flags & F_RECV) return PROVEN_ERR_BUSY;
+    u->buf = buf.ptr;
+    u->cap = buf.size > 0x7fffffffu ? 0x7fffffffu : (proven_u32)buf.size;
+    u->from = from;
+    u->node.flags |= F_RECV;
+    udp_post(l, u);
+    return PROVEN_OK;
+}
+
+/* Windows does not say when a UDP socket takes datagrams again - its sends are rarely refused -
+ * so a wait is answered after a millisecond, on the loop's timer. */
+static void udp_wait_fire(void *ctx) {
+    loop_udp_t *u = ctx;
+    if (u->node.state != S_OPEN || !(u->node.flags & F_WAIT)) return;
+    u->node.flags &= (proven_u8)~F_WAIT;
+    if (u->fns->writable) u->fns->writable(u->ctx, PROVEN_OK);
+}
+
+proven_err_t proven_loop_udp_send_wait_(proven_loop_t *l, proven_loop_udp_t *udp_op) {
+    if (!l || !udp_op) return PROVEN_ERR_INVALID_ARG;
+    loop_udp_t *u = (loop_udp_t *)(void *)udp_op;
+    if (u->node.kind != KIND_UDP || u->node.state != S_OPEN) return PROVEN_ERR_INVALID_STATE;
+    if (u->node.flags & F_WAIT) return PROVEN_OK;
+    u->node.flags |= F_WAIT;
+    proven_loop_timer_set(l, &u->wait, 1, udp_wait_fire, u);
+    return PROVEN_OK;
+}
+
+void proven_loop_udp_close_(proven_loop_t *l, proven_loop_udp_t *udp_op) {
+    if (!l || !udp_op) return;
+    loop_udp_t *u = (loop_udp_t *)(void *)udp_op;
+    if (u->node.kind != KIND_UDP || u->node.state != S_OPEN) return;
+    proven_u8 bits = 0;
+    if ((u->node.flags & F_RECV) && !(u->node.flags & F_OVR)) {     /* answered already from the list: datagrams taken are dropped */
+        u->node.err = (proven_u16)PROVEN_ERR_CANCELLED;
+        u->n = u->seg = 0;
+        bits |= D_RECEIVED;
+    }
+    if (u->node.flags & F_OVR) proven_sys_net_ov_cancel((proven_sys_socket_t)u->udp->internal.handle, &u->ov);
+    if (u->node.flags & F_WAIT) { u->node.flags &= (proven_u8)~F_WAIT; proven_loop_timer_cancel(l, &u->wait); bits |= D_WRITABLE; }
+    u->node.state = S_CLOSING;
+    if (!(u->node.flags & F_OVR)) bits |= D_CLOSED;
+    node_queue(l, &u->node, bits);
+}
+
+// --- accepts
+
+/* A socket accepted, made what proven_net_accept gives. False: it failed, and is closed. */
+static bool acc_take(loop_acc_t *a, proven_sys_socket_t got) {
+    if (proven_sys_net_ov_accept_done((proven_sys_socket_t)a->handle, got) != PROVEN_SYS_NET_OK) { (void)proven_sys_net_close(got); return false; }
+    a->conn = (proven_net_conn_t){ 0 };
+    a->conn.internal.handle = (proven_uintptr_t)got;
+    a->conn.internal.open = true;
+    a->conn.internal.family = a->node.family;
+    return true;
+}
+
+/* Start the accept asked for: AcceptEx, with a socket made for it. A connection aborted before it
+ * was taken is passed over. */
+static void acc_post(proven_loop_t *l, loop_acc_t *a) {
+    proven_sys_net_result_t r = PROVEN_SYS_NET_ERROR;
+    for (int i = 0; i < 64; ++i) {
+        proven_sys_socket_t got = PROVEN_SYS_SOCKET_INVALID;
+        r = proven_sys_net_ov_accept((proven_sys_socket_t)a->handle, (proven_sys_net_family_t)a->node.family, &a->ov, a->area, skip_of(&a->node), &got);
+        if (r == PROVEN_SYS_NET_IN_PROGRESS) { a->conn.internal.handle = (proven_uintptr_t)got; ov_held(l, &a->node, F_OVR); return; }
+        if (r == PROVEN_SYS_NET_OK) {
+            if (!acc_take(a, got)) continue;
+            a->node.err = (proven_u16)PROVEN_OK;
+            node_queue(l, &a->node, D_ACCEPT);
+            return;
+        }
+        if (r != PROVEN_SYS_NET_RESET) break;
+    }
+    a->conn = (proven_net_conn_t){ 0 };
+    a->node.err = (proven_u16)sys_err(r);
+    node_queue(l, &a->node, D_ACCEPT);
+}
+
+static void acc_ov_done(proven_loop_t *l, loop_acc_t *a, const proven_sys_net_done_t *d) {
+    ov_back(l, &a->node, F_OVR);
+    const proven_sys_socket_t got = (proven_sys_socket_t)a->conn.internal.handle;
+    a->conn = (proven_net_conn_t){ 0 };
+    if (a->node.flags & F_CANCEL) {         /* the listener may be gone: no question asked of it */
+        (void)proven_sys_net_close(got);
+        a->node.err = (proven_u16)PROVEN_ERR_CANCELLED;
+        acc_deliver(l, a);
+        return;
+    }
+    if (d->failed) {
+        const proven_sys_net_result_t r = proven_sys_net_ov_result((proven_sys_socket_t)a->handle, &a->ov);
+        (void)proven_sys_net_close(got);
+        if (r == PROVEN_SYS_NET_RESET) { acc_post(l, a); return; }
+        a->node.err = (proven_u16)(r == PROVEN_SYS_NET_OK ? PROVEN_ERR_IO : sys_err(r));
+        acc_deliver(l, a);
+        return;
+    }
+    if (!acc_take(a, got)) { acc_post(l, a); return; }
+    a->node.err = (proven_u16)PROVEN_OK;
+    acc_deliver(l, a);
+}
+
+/* What the port reports. */
+static void loop_report(proven_loop_t *l, const proven_sys_net_done_t *d) {
+    if (!d->ov) { atomic_store(&l->woken, false); return; }       /* the waker: the posts are looked at after this batch */
+    loop_node_t *n = node_of_ov(d->ov);
+    switch (n->kind) {
+    case KIND_SOCK: sock_ov_done(l, (loop_sock_t *)n, d); break;
+    case KIND_CHUNK: sock_send_done(l, (loop_chunk_t *)n, d); break;
+    case KIND_ACCEPT: acc_ov_done(l, (loop_acc_t *)n, d); break;
+    case KIND_UDP: udp_ov_done(l, (loop_udp_t *)n, d); break;
+    default: break;
+    }
+}
+
+/* At destroy: what the system still holds is asked to stop and waited for (for up to two
+ * seconds) - until the port has reported it, the system may still write into memory its owner
+ * frees once the loop is gone. Then what had ended gets its last answer; a node the system still
+ * holds after the wait gets none, so that its memory is not freed under the system. */
+static void loop_drain(proven_loop_t *l) {
+    for (loop_node_t *n = l->all; n; n = n->all_next) {
+        if (!(n->flags & (F_OVR | F_OVS))) continue;
+        if (n->kind == KIND_SOCK && n->state != S_CLOSING) proven_sys_net_ov_cancel(sock_handle((loop_sock_t *)n), (void *)0);
+        else if (n->kind == KIND_ACCEPT && !(n->flags & F_CANCEL)) proven_sys_net_ov_cancel((proven_sys_socket_t)((loop_acc_t *)n)->handle, &((loop_acc_t *)n)->ov);
+        else if (n->kind == KIND_UDP && n->state != S_CLOSING) proven_sys_net_ov_cancel((proven_sys_socket_t)((loop_udp_t *)n)->udp->internal.handle, &((loop_udp_t *)n)->ov);
+    }
+    const proven_net_deadline_t end = proven_net_deadline_in(2000);
+    while (l->in_flight > 0 && proven_time_monotonic_now() < end) {
+        proven_size_t count = 0;
+        if (proven_sys_net_port_wait(l->port, l->batch, LOOP_EVENTS, 100, &count) != PROVEN_SYS_NET_OK) break;
+        for (proven_size_t i = 0; i < count; ++i) {
+            if (!l->batch[i].ov) continue;
+            loop_node_t *n = node_of_ov(l->batch[i].ov);
+            if (n->kind == KIND_CHUNK) { ov_back(l, &((loop_chunk_t *)n)->owner->node, F_OVS); continue; }
+            ov_back(l, n, F_OVR);
+            if (n->kind == KIND_ACCEPT) {
+                loop_acc_t *a = (loop_acc_t *)n;
+                (void)proven_sys_net_close((proven_sys_socket_t)a->conn.internal.handle);
+                a->conn = (proven_net_conn_t){ 0 };
+            }
+        }
+    }
+    /* Every node leaves the list first; those owed a last answer are put in order on the done
+     * links (the done list itself is forgotten), and answered after. */
+    loop_node_t *ends = (void *)0, **tail = &ends;
+    while (l->all) {
+        loop_node_t *n = l->all;
+        node_unlink(l, n);
+        if (n->flags & (F_OVR | F_OVS)) continue;
+        bool owed = false;
+        if (n->kind == KIND_SOCK || n->kind == KIND_UDP) owed = n->state == S_CLOSING;
+        else if (n->kind == KIND_ACCEPT) {
+            loop_acc_t *a = (loop_acc_t *)n;
+            owed = (n->flags & F_CANCEL) || ((n->done & D_ACCEPT) && n->err == (proven_u16)PROVEN_ERR_CANCELLED);
+            if (!owed && (n->done & D_ACCEPT)) (void)proven_net_close(&a->conn);     /* taken, never delivered */
+        }
+        if (!owed) continue;
+        n->next = (void *)0;
+        *tail = n;
+        tail = &n->next;
+    }
+    l->done_first = l->done_last = (void *)0;
+    for (loop_node_t *n = ends, *next; n; n = next) {
+        next = n->next;
+        n->flags &= (proven_u8)~(F_RECV | F_CANCEL | F_QUEUED);
+        n->done = 0;
+        if (n->kind == KIND_SOCK) {
+            loop_sock_t *s = (loop_sock_t *)n;
+            s->node.state = S_NONE;
+            if (s->fns->closed) s->fns->closed(s->ctx);
+        } else if (n->kind == KIND_UDP) {
+            loop_udp_t *u = (loop_udp_t *)n;
+            u->node.state = S_NONE;
+            if (u->fns->closed) u->fns->closed(u->ctx);
+        } else {
+            loop_acc_t *a = (loop_acc_t *)n;
+            proven_net_conn_t none = { 0 };
+            a->fn(a->ctx, PROVEN_ERR_CANCELLED, &none);
+        }
+    }
+}
+
+// --- the calls
+
+proven_err_t proven_loop_attach(proven_loop_t *l, proven_loop_sock_t *sock, const proven_net_conn_t *conn,
+                                const proven_loop_sock_fns_t *fns, void *ctx) {
+    if (!l || !sock || !conn || !fns || !conn->internal.open) return PROVEN_ERR_INVALID_ARG;
+    loop_sock_t *s = sock_of(sock);
+    for (proven_size_t i = 0; i < sizeof *s; ++i) ((proven_byte_t *)s)[i] = 0;
+    bool skip = false;
+    const proven_sys_net_result_t r = proven_sys_net_port_bind(l->port, (proven_sys_socket_t)conn->internal.handle, true, &skip);
+    if (r != PROVEN_SYS_NET_OK) return sys_err(r);
+    s->node.kind = KIND_SOCK;
+    s->node.state = S_OPEN;
+    s->node.family = conn->internal.family;
+    if (skip) s->node.flags |= F_SKIP;
+    s->handle = conn->internal.handle;
+    s->fns = fns;
+    s->ctx = ctx;
+    s->limit_k = LOOP_SEND_LIMIT_K;
+    node_link(l, &s->node);
+    return PROVEN_OK;
+}
+
+proven_err_t proven_loop_connect(proven_loop_t *l, proven_loop_sock_t *sock, proven_net_addr_t to, proven_net_conn_t *out,
+                                 const proven_loop_sock_fns_t *fns, void *ctx) {
+    if (!l || !sock || !out || !fns || !fns->connected) return PROVEN_ERR_INVALID_ARG;
+    *out = (proven_net_conn_t){ 0 };
+    if (to.family == PROVEN_NET_FAMILY_NONE) return PROVEN_ERR_INVALID_ARG;
+    proven_sys_net_addr_t sys;
+    proven_net_addr_to_sys_(&to, &sys);
+    proven_sys_socket_t h = PROVEN_SYS_SOCKET_INVALID;
+    proven_sys_net_result_t r = proven_sys_net_ov_connect_socket(&sys, &h);
+    if (r != PROVEN_SYS_NET_OK) return sys_err(r);
+    out->internal.handle = (proven_uintptr_t)h;
+    out->internal.open = true;
+    out->internal.family = (proven_u8)to.family;
+    proven_err_t e = proven_loop_attach(l, sock, out, fns, ctx);
+    if (e != PROVEN_OK) { (void)proven_net_close(out); return e; }
+    loop_sock_t *s = sock_of(sock);
+    s->node.state = S_CONNECTING;
+    r = proven_sys_net_ov_connect(h, &sys, &s->ov, skip_of(&s->node));
+    if (r == PROVEN_SYS_NET_IN_PROGRESS) { s->node.want = W_CONNECT; ov_held(l, &s->node, F_OVR); return PROVEN_OK; }
+    if (r == PROVEN_SYS_NET_OK) {                 /* connected already: answered from the loop */
+        s->node.err = PROVEN_OK;
+        node_queue(l, &s->node, D_CONNECTED);
+        return PROVEN_OK;
+    }
+    node_unlink(l, &s->node);                     /* failed at once: nothing is attached */
+    s->node.state = S_NONE;
+    (void)proven_net_close(out);
+    return sys_err(r);
+}
+
+proven_err_t proven_loop_recv(proven_loop_t *l, proven_loop_sock_t *sock, proven_mem_mut_t buf) {
+    if (!l || !sock || (buf.size > 0 && !buf.ptr)) return PROVEN_ERR_INVALID_ARG;
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN) return PROVEN_ERR_INVALID_STATE;
+    if (!s->fns->received) return PROVEN_ERR_INVALID_ARG;
+    if (s->node.flags & F_RECV) return PROVEN_ERR_BUSY;
+    s->recv_buf = buf.ptr;
+    s->recv_cap = buf.size > 0x7fffffffu ? 0x7fffffffu : (proven_u32)buf.size;
+    s->node.flags |= F_RECV;
+    sock_post_recv(l, s);
+    return PROVEN_OK;
+}
+
+void proven_loop_recv_cancel(proven_loop_t *l, proven_loop_sock_t *sock) {
+    if (!l || !sock) return;
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK || !(s->node.flags & F_RECV)) return;
+    if (s->node.flags & F_OVR) {
+        if (!(s->node.flags & F_CANCEL)) { s->node.flags |= F_CANCEL; proven_sys_net_ov_cancel(sock_handle(s), &s->ov); }
+        return;
+    }
+    /* Answered already, from the list: cancelled, unless bytes were taken. */
+    if (s->node.err != (proven_u16)PROVEN_OK || s->recv_cap == 0 || s->recv_buf == (void *)0) s->node.err = (proven_u16)PROVEN_ERR_CANCELLED;
+}
+
+void proven_loop_close(proven_loop_t *l, proven_loop_sock_t *sock) {
+    if (!l || !sock) return;
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK) return;
+    const proven_u8 state = s->node.state;
+    if (state != S_OPEN && state != S_CONNECTING && state != S_DEAD) return;
+    proven_u8 bits = 0;
+    if ((s->node.flags & F_RECV) && !(s->node.flags & F_OVR)) { s->node.err = (proven_u16)PROVEN_ERR_CANCELLED; bits |= D_RECEIVED; }
+    if (state == S_CONNECTING && !(s->node.flags & F_OVR)) { s->node.err = (proven_u16)PROVEN_ERR_CANCELLED; bits |= D_CONNECTED; }
+    if (s->node.flags & F_WAIT) { s->node.flags &= (proven_u8)~F_WAIT; bits |= D_WRITABLE; }
+    /* What the system holds is cancelled and answered when the port reports it; bytes in a send
+     * of the system's go when it has let go of them. */
+    if (s->node.flags & (F_OVR | F_OVS)) proven_sys_net_ov_cancel(sock_handle(s), (void *)0);
+    if (!(s->node.flags & F_OVS)) sock_drop_chunks(l, s);
+    s->node.state = S_CLOSING;
+    if (!(s->node.flags & (F_OVR | F_OVS))) bits |= D_CLOSED;
+    node_queue(l, &s->node, bits);
+}
+
+proven_err_t proven_loop_accept(proven_loop_t *l, proven_loop_accept_t *acc, proven_net_listener_t *listener,
+                                proven_loop_accept_fn fn, void *ctx) {
+    if (!l || !acc || !listener || !fn || !proven_net_listener_is_open(listener)) return PROVEN_ERR_INVALID_ARG;
+    loop_acc_t *a = acc_of(acc);
+    if (a->node.kind != KIND_ACCEPT || a->listener != listener || a->handle != listener->internal.handle) {
+        if (a->node.kind == KIND_ACCEPT && (a->node.flags & F_RECV)) return PROVEN_ERR_BUSY;
+        for (proven_size_t i = 0; i < sizeof *a; ++i) ((proven_byte_t *)a)[i] = 0;
+        bool skip = false;
+        const proven_sys_net_result_t r = proven_sys_net_port_bind(l->port, (proven_sys_socket_t)listener->internal.handle, true, &skip);
+        if (r != PROVEN_SYS_NET_OK) return sys_err(r);
+        a->node.kind = KIND_ACCEPT;
+        a->node.family = listener->internal.family;
+        if (skip) a->node.flags |= F_SKIP;
+        a->listener = listener;
+        a->handle = listener->internal.handle;
+    }
+    if (a->node.flags & F_RECV) return PROVEN_ERR_BUSY;
+    a->fn = fn;
+    a->ctx = ctx;
+    a->node.flags |= F_RECV;
+    node_link(l, &a->node);
+    acc_post(l, a);
+    return PROVEN_OK;
+}
+
+void proven_loop_accept_cancel(proven_loop_t *l, proven_loop_accept_t *acc) {
+    if (!l || !acc) return;
+    loop_acc_t *a = acc_of(acc);
+    if (a->node.kind != KIND_ACCEPT || !(a->node.flags & F_RECV)) return;
+    if (a->node.flags & F_OVR) {
+        if (!(a->node.flags & F_CANCEL)) { a->node.flags |= F_CANCEL; proven_sys_net_ov_cancel((proven_sys_socket_t)a->handle, &a->ov); }
+        return;
+    }
+    (void)proven_net_close(&a->conn);             /* one taken and not yet delivered */
+    a->node.err = (proven_u16)PROVEN_ERR_CANCELLED;
+    node_queue(l, &a->node, D_ACCEPT);
+}
+
+#endif  /* LOOP_IOCP */
+
+
 /* Copy what the socket did not take into the chain, up to the limit. */
 static proven_err_t sock_hold(proven_loop_t *l, loop_sock_t *s, const proven_byte_t *p, proven_size_t n, proven_size_t *taken) {
     *taken = 0;
@@ -779,9 +1507,9 @@ proven_result_size_t proven_loop_sendv_(proven_loop_t *l, proven_loop_sock_t *so
         if (e != PROVEN_OK) res.err = e;
     }
     /* What waits was offered to the socket just now (or waits behind bytes that were): the
-     * next try is when it is writable. */
+     * next try is the loop's - when the socket is writable, or after this callback. */
     if (s->queued > 0) {
-        proven_err_t e = node_watch(l, &s->node, s->handle, (proven_u8)(s->node.want | PROVEN_NET_WRITABLE));
+        proven_err_t e = sock_kick(l, s);
         if (e != PROVEN_OK && res.err == PROVEN_OK) res.err = e;
     }
     return res;
@@ -843,67 +1571,8 @@ void proven_loop_commit_(proven_loop_t *l, proven_loop_sock_t *sock, proven_size
 void proven_loop_flush_(proven_loop_t *l, proven_loop_sock_t *sock) {
     if (!l || !sock) return;
     loop_sock_t *s = sock_of(sock);
-    if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN || !s->head || (s->node.want & PROVEN_NET_WRITABLE)) return;
+    if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN || !s->head || SOCK_SENDING(s)) return;
     sock_flush(l, s, false);
-}
-
-void proven_loop_close(proven_loop_t *l, proven_loop_sock_t *sock) {
-    if (!l || !sock) return;
-    loop_sock_t *s = sock_of(sock);
-    if (s->node.kind != KIND_SOCK) return;
-    proven_u8 state = s->node.state;
-    if (state != S_OPEN && state != S_CONNECTING && state != S_DEAD) return;
-    proven_u8 bits = D_CLOSED;
-    if (s->node.flags & F_RECV) {
-        s->node.flags &= (proven_u8)~F_RECV;
-        s->node.err = (proven_u16)PROVEN_ERR_CANCELLED;
-        bits |= D_RECEIVED;
-    }
-    if (state == S_CONNECTING) { s->node.err = (proven_u16)PROVEN_ERR_CANCELLED; bits |= D_CONNECTED; }
-    if (s->node.flags & F_WAIT) { s->node.flags &= (proven_u8)~F_WAIT; bits |= D_WRITABLE; }
-    sock_drop_chunks(l, s);
-    node_unwatch(l, &s->node, s->handle);
-    s->node.state = S_CLOSING;
-    node_queue(l, &s->node, bits);
-}
-
-proven_err_t proven_loop_accept(proven_loop_t *l, proven_loop_accept_t *acc, proven_net_listener_t *listener,
-                                proven_loop_accept_fn fn, void *ctx) {
-    if (!l || !acc || !listener || !fn || !proven_net_listener_is_open(listener)) return PROVEN_ERR_INVALID_ARG;
-    loop_acc_t *a = acc_of(acc);
-    if (a->node.kind != KIND_ACCEPT || a->listener != listener) {
-        if (a->node.kind == KIND_ACCEPT && (a->node.flags & F_RECV)) return PROVEN_ERR_BUSY;
-        if (a->node.kind == KIND_ACCEPT) node_unwatch(l, &a->node, a->handle);
-        for (proven_size_t i = 0; i < sizeof *a; ++i) ((proven_byte_t *)a)[i] = 0;
-        a->node.kind = KIND_ACCEPT;
-        a->listener = listener;
-        a->handle = listener->internal.handle;
-    }
-    if (a->node.flags & F_RECV) return PROVEN_ERR_BUSY;
-    a->fn = fn;
-    a->ctx = ctx;
-    /* Armed again from inside its own function: there is often another connection waiting
-     * already, and taking it now saves a round. It is still answered from the loop. */
-    if (l->delivering == a && acc_try(a)) {
-        a->node.flags |= F_RECV;
-        node_queue(l, &a->node, D_ACCEPT);
-        return PROVEN_OK;
-    }
-    proven_err_t e = node_watch(l, &a->node, a->handle, PROVEN_NET_READABLE);
-    if (e != PROVEN_OK) return e;
-    a->node.flags |= F_RECV;
-    return PROVEN_OK;
-}
-
-void proven_loop_accept_cancel(proven_loop_t *l, proven_loop_accept_t *acc) {
-    if (!l || !acc) return;
-    loop_acc_t *a = acc_of(acc);
-    if (a->node.kind != KIND_ACCEPT) return;
-    node_unwatch(l, &a->node, a->handle);
-    if (!(a->node.flags & F_RECV)) return;
-    (void)proven_net_close(&a->conn);             /* one taken and not yet delivered */
-    a->node.err = (proven_u16)PROVEN_ERR_CANCELLED;
-    node_queue(l, &a->node, D_ACCEPT);
 }
 
 // -----------------------------------------------------------------------------
@@ -1023,6 +1692,17 @@ static void loop_timers_advance(proven_loop_t *l) {
 // Posting, running
 // -----------------------------------------------------------------------------
 
+#if LOOP_IOCP
+/* One post to the port at a time: the flag is cleared when the post is taken, before the posts
+ * are looked at, so that one posted meanwhile posts again. */
+static void loop_wake(proven_loop_t *l) {
+    if (atomic_exchange(&l->woken, true)) return;
+    if (proven_sys_net_port_post(l->port) != PROVEN_SYS_NET_OK) atomic_store(&l->woken, false);
+}
+#else
+static void loop_wake(proven_loop_t *l) { proven_net_waker_wake(&l->waker); }
+#endif
+
 proven_err_t proven_loop_post(proven_loop_t *l, proven_loop_fn fn, void *ctx) {
     if (!l || !fn) return PROVEN_ERR_INVALID_ARG;
     proven_result_mem_mut_t m = l->alloc.alloc_fn(l->alloc.ctx, sizeof(proven_loop_task_t), 16);
@@ -1031,7 +1711,7 @@ proven_err_t proven_loop_post(proven_loop_t *l, proven_loop_fn fn, void *ctx) {
     t->fn = fn; t->ctx = ctx;
     t->next = atomic_load_explicit(&l->tasks, memory_order_relaxed);
     while (!atomic_compare_exchange_weak_explicit(&l->tasks, &t->next, t, memory_order_release, memory_order_relaxed)) { }
-    proven_net_waker_wake(&l->waker);
+    loop_wake(l);
     return PROVEN_OK;
 }
 
@@ -1055,7 +1735,7 @@ static bool loop_run_tasks(proven_loop_t *l) {
 void proven_loop_stop(proven_loop_t *l) {
     if (!l) return;
     atomic_store_explicit(&l->stop, true, memory_order_release);
-    proven_net_waker_wake(&l->waker);
+    loop_wake(l);
 }
 
 void proven_loop_after_(proven_loop_t *l, proven_loop_after_t *a, proven_loop_fn fn, void *ctx) {
@@ -1098,6 +1778,11 @@ proven_err_t proven_loop_poll(proven_loop_t *l, proven_net_deadline_t until) {
     proven_net_deadline_t next = loop_next_timer(l);
     if (next != PROVEN_NET_NO_DEADLINE && (until == PROVEN_NET_NO_DEADLINE || (until != PROVEN_NET_DONT_WAIT && next < until))) until = next;
     proven_size_t count = 0;
+#if LOOP_IOCP
+    const proven_sys_net_result_t r = proven_sys_net_port_wait(l->port, l->batch, LOOP_EVENTS, proven_net_remaining_ms_(until), &count);
+    if (r != PROVEN_SYS_NET_OK) return proven_net_err_from_sys_(r);
+    for (proven_size_t i = 0; i < count; ++i) loop_report(l, &l->batch[i]);
+#else
     proven_err_t e = proven_net_selector_wait(l->selector, l->batch, LOOP_EVENTS, until, &count);
     if (e != PROVEN_OK && e != PROVEN_ERR_TIMEOUT) return e;
     l->batch_count = count;
@@ -1113,6 +1798,7 @@ proven_err_t proven_loop_poll(proven_loop_t *l, proven_net_deadline_t until) {
         }
     }
     l->batch_count = 0; l->batch_pos = 0;
+#endif
     loop_run_done(l);
     loop_timers_advance(l);
     loop_run_done(l);

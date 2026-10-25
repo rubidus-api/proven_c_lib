@@ -53,6 +53,7 @@ typedef enum {
     PROVEN_SYS_NET_TOO_BIG,       /**< a datagram is larger than the network will carry */
     PROVEN_SYS_NET_LIMIT,         /**< out of descriptors, buffers or memory */
     PROVEN_SYS_NET_EXISTS,        /**< a selector already holds this socket */
+    PROVEN_SYS_NET_CANCELLED,     /**< an operation of a completion port was cancelled (Windows) */
     PROVEN_SYS_NET_ERROR          /**< anything else */
 } proven_sys_net_result_t;
 
@@ -254,6 +255,81 @@ proven_sys_net_result_t proven_sys_net_selector_remove(proven_uintptr_t selector
  */
 proven_sys_net_result_t proven_sys_net_selector_wait(proven_uintptr_t selector, proven_sys_net_event_t *events,
                                                      proven_size_t cap, int timeout_ms, proven_size_t *count);
+
+#if defined(_WIN32) || defined(_WIN64)
+/*
+ * I/O completion ports, on Windows only (RFC-0025 step 6): what the event loop is built on
+ * there. Nothing else calls them.
+ *
+ * An operation is started with an OVERLAPPED of the caller's (proven_sys_net_ov_t), which must
+ * stay where it is, untouched, until the port has reported it. `skip` is what
+ * proven_sys_net_port_bind said for the socket. A start answers:
+ *   OK            finished at once, `*bytes` moved; the port reports nothing for it.
+ *   IN_PROGRESS   under way (or finished, on a socket without `skip`): the port reports it.
+ *   anything else failed at once; the port reports nothing for it.
+ */
+typedef struct { proven_uintptr_t w[sizeof(void *) == 8 ? 4 : 5]; } proven_sys_net_ov_t;
+
+/** One report of a port: the operation's OVERLAPPED (null for a proven_sys_net_port_post),
+ *  the bytes it moved, and whether it failed - proven_sys_net_ov_result says why. */
+typedef struct {
+    proven_sys_net_ov_t *ov;
+    proven_u32 bytes;
+    bool failed;
+} proven_sys_net_done_t;
+
+proven_sys_net_result_t proven_sys_net_port_open(proven_uintptr_t *out);
+void proven_sys_net_port_close(proven_uintptr_t port);
+/** Bind `sock` to the port for the rest of its life. A socket bound already is taken to be bound
+ *  to this port. `*skip` (only when `allow_skip`): an operation of this socket that finishes at
+ *  once is not reported. Not for datagram sockets: there a receive cut short finishes at once
+ *  with an error and is reported all the same. */
+proven_sys_net_result_t proven_sys_net_port_bind(proven_uintptr_t port, proven_sys_socket_t sock, bool allow_skip, bool *skip);
+/** A report with no operation, from any thread: the loop's waker. */
+proven_sys_net_result_t proven_sys_net_port_post(proven_uintptr_t port);
+/** Wait up to `timeout_ms` (negative: no limit) and take at most `cap` reports; OK with
+ *  `*count` 0 when the time passed. */
+proven_sys_net_result_t proven_sys_net_port_wait(proven_uintptr_t port, proven_sys_net_done_t *out, proven_size_t cap,
+                                                 int timeout_ms, proven_size_t *count);
+/** Why a reported operation failed: CANCELLED, RESET, REFUSED, TRUNCATED (a datagram cut), ... */
+proven_sys_net_result_t proven_sys_net_ov_result(proven_sys_socket_t sock, proven_sys_net_ov_t *ov);
+/** Cancel `ov`'s operation on `sock`, or every one of them (`ov` null); each is still reported. */
+void proven_sys_net_ov_cancel(proven_sys_socket_t sock, proven_sys_net_ov_t *ov);
+
+/** A receive of at most `cap` bytes (0: done when data has arrived, nothing taken). */
+proven_sys_net_result_t proven_sys_net_ov_recv(proven_sys_socket_t sock, proven_sys_net_ov_t *ov, void *buf, proven_size_t cap,
+                                               bool skip, proven_u32 *bytes);
+/** A send of the buffers in order (at most PROVEN_SYS_NET_VEC_MAX). */
+proven_sys_net_result_t proven_sys_net_ov_send(proven_sys_socket_t sock, proven_sys_net_ov_t *ov, const proven_sys_net_vec_t *vec,
+                                               proven_size_t count, bool skip, proven_u32 *bytes);
+
+/** The room an accept needs for the two addresses it writes. */
+#define PROVEN_SYS_NET_ACCEPT_AREA 288
+/** An accept: `*accepted` is the socket made for it (open from OK or IN_PROGRESS on, and the
+ *  caller's to close if the accept fails or is cancelled); call proven_sys_net_ov_accept_done
+ *  on it when the accept has finished well. */
+proven_sys_net_result_t proven_sys_net_ov_accept(proven_sys_socket_t listener, proven_sys_net_family_t family, proven_sys_net_ov_t *ov,
+                                                 void *area, bool skip, proven_sys_socket_t *accepted);
+proven_sys_net_result_t proven_sys_net_ov_accept_done(proven_sys_socket_t listener, proven_sys_socket_t accepted);
+
+/** A socket for a connect to `addr` (bound to the wildcard address, as a connect of a port
+ *  needs); bind it to the port, then proven_sys_net_ov_connect. A Unix-domain connect is not an
+ *  operation of the port: it is made at once (OK) or fails. A connect reported by the port is
+ *  finished with proven_sys_net_ov_connect_done; one that finished at once is finished already. */
+proven_sys_net_result_t proven_sys_net_ov_connect_socket(const proven_sys_net_addr_t *addr, proven_sys_socket_t *out);
+proven_sys_net_result_t proven_sys_net_ov_connect(proven_sys_socket_t sock, const proven_sys_net_addr_t *addr, proven_sys_net_ov_t *ov,
+                                                  bool skip);
+proven_sys_net_result_t proven_sys_net_ov_connect_done(proven_sys_socket_t sock);
+
+/** What a datagram receive keeps while it is in flight: the message, the sender's address and
+ *  the control data that carries the size of coalesced datagrams. */
+typedef struct { proven_u64 w[40]; } proven_sys_net_msg_t;
+/** A datagram receive into `buf`. When it has finished, proven_sys_net_ov_msg_done reads the
+ *  size of each datagram (`*seg`, 0 for one) and the sender. */
+proven_sys_net_result_t proven_sys_net_ov_recv_msg(proven_sys_socket_t sock, proven_sys_net_ov_t *ov, proven_sys_net_msg_t *msg,
+                                                   void *buf, proven_size_t cap, bool skip, proven_u32 *bytes);
+void proven_sys_net_ov_msg_done(const proven_sys_net_msg_t *msg, proven_u32 bytes, proven_size_t *seg, proven_sys_net_addr_t *from);
+#endif
 
 /**
  * Resolve a host name to addresses for stream sockets, blocking, through the system resolver.

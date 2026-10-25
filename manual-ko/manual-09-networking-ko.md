@@ -1072,6 +1072,6 @@ POSIX는 즉시 답한다 - 기한에 그만큼을 감안하라. 그리고 유�
 
 - **암호화.** 여기서 만든 연결은 암호화되지 않는다. TLS는 전송 인터페이스 위의 한 층이다: [14장](manual-14-tls-ko.md).
 - **이름 해석의 기한.** §2를 보라.
-- **Windows에서의 규모.** selector는 `epoll`이나 `kqueue`가 있는 곳에서는 그것이고, Windows에서는 `WSAPoll` 위에 지은 것이다. completion port 경로는 없다.
+- **Windows에서의 규모.** selector는 `epoll`이나 `kqueue`가 있는 곳에서는 그것이고, Windows에서는 `WSAPoll` 위에 지은 것이다. [15장](manual-15-event-loop-ko.md)의 이벤트 루프는 거기서 그것을 쓰지 않는다: I/O 완료 포트 위에 지어졌다.
 - **유닉스 도메인 데이터그램, raw 소켓, 멀티캐스트, `TCP_NODELAY` 외의 소켓 옵션.**
 - **HTTP.** 메시지 코덱은 [10장](manual-10-http-ko.md)에 있다. 그것을 이 소켓 위에서 구동하는 클라이언트와 서버는 [11장](manual-11-http-client-server-ko.md)에 있다.

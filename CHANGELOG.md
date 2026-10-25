@@ -35,12 +35,24 @@ decisions of 2026-10-24: one release with everything). Work in progress.
   `proven_loop_send_wait`; `proven_loop_close`, after which `closed` comes last; and
   `proven_loop_accept` with `proven_loop_accept_cancel`. Every operation is answered exactly
   once, on the loop's thread, never from inside the call that started it; a cancelled one with
-  `PROVEN_ERR_CANCELLED`. A `proven_loop_sock_t` is 72 bytes (104 on Windows). Aliases for each.
+  `PROVEN_ERR_CANCELLED`. A `proven_loop_sock_t` is 72 bytes (120 on Windows). Aliases for each.
   A new manual example, `ex_15_echo.c`, uses every one; `tests/test_unit_loop_ops` runs every
   operation on the system's selector and on the poll kind.
 
 ### Changed
 
+- **On Windows the loop is built on an I/O completion port** (RFC-0025 step 6), where it waited
+  with `WSAPoll` before: receives (of zero bytes, or into a buffer), sends of a connection's
+  buffers in one `WSASend`, accepts (`AcceptEx`), connects (`ConnectEx`), UDP receives
+  (`WSARecvMsg`, segment sizes included), and a post to the port as the waker. Nothing it calls
+  is undocumented. Built with mingw-w64 for x86-64; not yet run on Windows - the release runs the
+  suite there before it is published. What it changes for a program: the system writes into a
+  receive's buffer until the receive is answered, so on Windows a receive into a buffer that is
+  cancelled after data reached it is answered with that data rather than `PROVEN_ERR_CANCELLED`;
+  `proven_loop_destroy` cancels what the system still holds and waits for it (up to two seconds)
+  before it frees anything; a `proven_loop_sock_t` is 120 bytes there and a
+  `proven_loop_accept_t` 400. A Unix-domain connect through the loop is made at once (it is not
+  an operation of the port).
 - **The event-driven server runs on the loop's operations** (RFC-0025 step 2): each connection
   waits for input with a receive of zero bytes and sends through the loop - straight to the
   socket when nothing waits, the rest held in the loop's chunks; a response's head and body go

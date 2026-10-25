@@ -79,7 +79,9 @@ typedef struct proven_loop_sock_fns {
      * data has arrived (or the connection has ended): read it now with proven_net_read and
      * PROVEN_NET_DONT_WAIT. For a receive into a buffer: PROVEN_OK and `n` bytes in it, or
      * PROVEN_ERR_EOF, PROVEN_ERR_RESET, and the other errors of proven_net_read. And
-     * PROVEN_ERR_CANCELLED after proven_loop_recv_cancel or proven_loop_close.
+     * PROVEN_ERR_CANCELLED after proven_loop_recv_cancel or proven_loop_close - except that on
+     * Windows a receive into a buffer cancelled after data had reached it is answered with that
+     * data: the system had taken it from the socket already.
      */
     void (*received)(void *ctx, proven_err_t err, proven_size_t n);
     /**
@@ -98,15 +100,17 @@ typedef struct proven_loop_sock_fns {
 } proven_loop_sock_fns_t;
 
 #if defined(_WIN32) || defined(_WIN64)
-#define PROVEN_LOOP_SOCK_WORDS_ 13
+#define PROVEN_LOOP_SOCK_WORDS_ 15
+#define PROVEN_LOOP_ACCEPT_WORDS_ 50
 #else
 #define PROVEN_LOOP_SOCK_WORDS_ 9
+#define PROVEN_LOOP_ACCEPT_WORDS_ 48
 #endif
 
 /**
  * @brief A connection given to a loop. Yours to hold - inside your connection struct, say -
  *        from proven_loop_attach (or proven_loop_connect) until its `closed`. Do not copy or move
- *        it in between. Opaque: 72 bytes, 104 on Windows, which hold everything the loop needs for
+ *        it in between. Opaque: 72 bytes, 120 on Windows, which hold everything the loop needs for
  *        the connection, its receive included; the loop allocates nothing per connection except
  *        the buffers of bytes waiting to be sent.
  */
@@ -125,7 +129,7 @@ typedef void (*proven_loop_accept_fn)(void *ctx, proven_err_t err, proven_net_co
  *        new round.
  */
 typedef struct proven_loop_accept {
-    proven_u64 internal_[48];
+    proven_u64 internal_[PROVEN_LOOP_ACCEPT_WORDS_];
 } proven_loop_accept_t;
 
 /** @return PROVEN_ERR_INVALID_ARG, PROVEN_ERR_NOMEM, or what opening the selector returned. */
@@ -137,7 +141,9 @@ proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out);
  *        go: `closed` of a socket given to proven_loop_close, and the PROVEN_ERR_CANCELLED of an
  *        accept that was cancelled - those functions must only free, not start anything on the
  *        loop. Whatever else is still attached, in flight or set is simply forgotten: nothing is
- *        called, and the bytes waiting to be sent are freed. Null is accepted.
+ *        called, and the bytes waiting to be sent are freed. On Windows what the system still
+ *        holds - a receive, a send, an accept - is cancelled first and waited for, up to two
+ *        seconds, so that it writes into no memory after the loop is gone. Null is accepted.
  */
 void proven_loop_destroy(proven_loop_t *loop);
 
@@ -217,8 +223,8 @@ proven_err_t proven_loop_connect(proven_loop_t *loop, proven_loop_sock_t *sock, 
 [[nodiscard]]
 proven_err_t proven_loop_recv(proven_loop_t *loop, proven_loop_sock_t *sock, proven_mem_mut_t buf);
 
-/** @brief Stop a receive in flight: `received` comes with PROVEN_ERR_CANCELLED. Harmless when
- *         there is none. */
+/** @brief Stop a receive in flight: `received` comes with PROVEN_ERR_CANCELLED (or, on Windows,
+ *         with data that reached a buffer first). Harmless when there is none. */
 void proven_loop_recv_cancel(proven_loop_t *loop, proven_loop_sock_t *sock);
 
 /**

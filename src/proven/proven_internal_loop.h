@@ -58,14 +58,19 @@ typedef struct proven_loop_udp_fns {
     void (*writable)(void *ctx, proven_err_t err);
     void (*closed)(void *ctx);
 } proven_loop_udp_fns_t;
+#if defined(_WIN32) || defined(_WIN64)
+typedef struct proven_loop_udp { proven_u64 internal_[64]; } proven_loop_udp_t;   /* with what an overlapped WSARecvMsg keeps */
+#else
 typedef struct proven_loop_udp { proven_u64 internal_[10]; } proven_loop_udp_t;
+#endif
 proven_err_t proven_loop_udp_attach_(proven_loop_t *loop, proven_loop_udp_t *u, proven_net_udp_t *udp, const proven_loop_udp_fns_t *fns, void *ctx);
 proven_err_t proven_loop_udp_recv_(proven_loop_t *loop, proven_loop_udp_t *u, proven_mem_mut_t buf, proven_net_addr_t *from);
 proven_err_t proven_loop_udp_send_wait_(proven_loop_t *loop, proven_loop_udp_t *u);
 void proven_loop_udp_close_(proven_loop_t *loop, proven_loop_udp_t *u);
 
-/* Internal, for tests: a loop over the poll kind of selector, so that Linux runs the code the
- * Windows build runs over WSAPoll. */
+/* Internal, for tests: a loop over the poll kind of selector, so that the emulation is checked
+ * over poll as well as over epoll or kqueue. On Windows there is one kind, the completion port,
+ * and this makes that. */
 proven_err_t proven_loop_create_poll_(proven_allocator_t alloc, proven_loop_t **out);
 
 /*

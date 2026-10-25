@@ -1305,6 +1305,301 @@ proven_sys_net_result_t proven_sys_net_selector_wait(proven_uintptr_t selector, 
 
 #endif
 
+#if defined(_WIN32) || defined(_WIN64)
+/* ============================================================================
+ * I/O completion ports (RFC-0025 step 6), for the event loop
+ * ========================================================================== */
+
+_Static_assert(sizeof(proven_sys_net_ov_t) == sizeof(OVERLAPPED), "proven_sys_net_ov_t is an OVERLAPPED");
+_Static_assert(_Alignof(proven_sys_net_ov_t) >= _Alignof(OVERLAPPED), "and aligned as one");
+_Static_assert(PROVEN_SYS_NET_ACCEPT_AREA >= 2 * (sizeof(struct sockaddr_storage) + 16), "room for AcceptEx's two addresses");
+_Static_assert(PROVEN_SYS_NET_VEC_MAX <= 64, "a send's buffers are on the stack");
+
+/* What a datagram receive keeps while in flight: the system writes the message's lengths and
+ * flags, the sender and the control data when the receive finishes, not when it starts. */
+typedef struct {
+    WSAMSG msg;
+    WSABUF buf;
+    INT fromlen;                  /* for WSARecvFrom, where there is no WSARecvMsg */
+    DWORD flags;
+    struct sockaddr_storage from;
+    union { char b[WSA_CMSG_SPACE(sizeof(DWORD)) * 4]; WSACMSGHDR align; } ctl;
+    bool plain;                   /* received with WSARecvFrom: no segment size */
+} port_msg_t;
+_Static_assert(sizeof(port_msg_t) <= sizeof(proven_sys_net_msg_t), "proven_sys_net_msg_t holds a datagram receive");
+_Static_assert(_Alignof(port_msg_t) <= _Alignof(proven_sys_net_msg_t), "and is aligned for it");
+
+/* AcceptEx and ConnectEx are reached through pointers the provider hands out: fetched once for
+ * the IP families, with the first socket that asks; a Unix-domain socket asks its own provider
+ * each time (rare, and its pointers may differ). */
+static INIT_ONCE g_ext_once = INIT_ONCE_STATIC_INIT;
+static LPFN_ACCEPTEX g_acceptex;
+static LPFN_CONNECTEX g_connectex;
+
+static void ext_fetch(SOCKET s, LPFN_ACCEPTEX *acc, LPFN_CONNECTEX *con) {
+    GUID a = WSAID_ACCEPTEX, c = WSAID_CONNECTEX;
+    DWORD n = 0;
+    if (WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, &a, (DWORD)sizeof a, acc, (DWORD)sizeof *acc, &n, NULL, NULL) != 0) *acc = NULL;
+    if (WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, &c, (DWORD)sizeof c, con, (DWORD)sizeof *con, &n, NULL, NULL) != 0) *con = NULL;
+}
+
+static BOOL CALLBACK ext_find(PINIT_ONCE once, PVOID param, PVOID *context) {
+    (void)once; (void)context;
+    ext_fetch(*(const SOCKET *)param, &g_acceptex, &g_connectex);
+    return TRUE;
+}
+
+static void ext_for(SOCKET s, proven_sys_net_family_t family, LPFN_ACCEPTEX *acc, LPFN_CONNECTEX *con) {
+    if (family == PROVEN_SYS_NET_FAMILY_UNIX) { ext_fetch(s, acc, con); return; }
+    InitOnceExecuteOnce(&g_ext_once, ext_find, &s, NULL);
+    *acc = g_acceptex;
+    *con = g_connectex;
+}
+
+/* Reasons an operation of the port fails with, beside the socket errors: the system's own codes,
+ * which WSAGetOverlappedResult does not always turn into socket errors. */
+static proven_sys_net_result_t ov_reason(int e) {
+    switch (e) {
+        case WSA_OPERATION_ABORTED:      return PROVEN_SYS_NET_CANCELLED;
+        case ERROR_NETNAME_DELETED:
+        case ERROR_CONNECTION_ABORTED:   return PROVEN_SYS_NET_RESET;
+        case ERROR_CONNECTION_REFUSED:   return PROVEN_SYS_NET_REFUSED;
+        case ERROR_SEM_TIMEOUT:          return PROVEN_SYS_NET_TIMEOUT;
+        case ERROR_NETWORK_UNREACHABLE:
+        case ERROR_HOST_UNREACHABLE:     return PROVEN_SYS_NET_UNREACHABLE;
+        case ERROR_MORE_DATA:
+        case WSAEMSGSIZE:                return PROVEN_SYS_NET_TRUNCATED;    /* a receive: the datagram was cut */
+        default:                         return net_reason(e);
+    }
+}
+
+/* What a start's return says: done at once, under way (the port will report it), or failed. */
+static proven_sys_net_result_t ov_started(bool done_now, bool skip) {
+    if (done_now) return skip ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_IN_PROGRESS;
+    const int e = WSAGetLastError();
+    if (e == WSA_IO_PENDING) return PROVEN_SYS_NET_IN_PROGRESS;
+    /* A datagram cut short is a warning of the system's, not a failure: the receive has finished
+     * and the port reports it (as failed), which a start that failed at once would not be. */
+    if (e == WSAEMSGSIZE && !skip) return PROVEN_SYS_NET_IN_PROGRESS;
+    return ov_reason(e);
+}
+
+proven_sys_net_result_t proven_sys_net_port_open(proven_uintptr_t *out) {
+    if (!net_ready()) return PROVEN_SYS_NET_ERROR;
+    HANDLE h = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
+    if (!h) return PROVEN_SYS_NET_LIMIT;
+    *out = (proven_uintptr_t)h;
+    return PROVEN_SYS_NET_OK;
+}
+
+void proven_sys_net_port_close(proven_uintptr_t port) { CloseHandle((HANDLE)port); }
+
+proven_sys_net_result_t proven_sys_net_port_bind(proven_uintptr_t port, proven_sys_socket_t sock, bool allow_skip, bool *skip) {
+    *skip = false;
+    if (!CreateIoCompletionPort((HANDLE)sock, (HANDLE)port, 0, 0)) {
+        /* Bound already: a handle is bound once for its life, and the caller's rule is one loop
+         * per socket. */
+        if (GetLastError() != ERROR_INVALID_PARAMETER) return PROVEN_SYS_NET_ERROR;
+    }
+    /* Not reporting what finishes at once is safe only when every provider on the socket's path
+     * hands out real handles (no layered provider of the old kind). Asked again for a socket bound
+     * already: the answer is the same, and the caller learns it. */
+    if (!allow_skip) return PROVEN_SYS_NET_OK;
+    WSAPROTOCOL_INFOW info;
+    int len = (int)sizeof info;
+    if (getsockopt((SOCKET)sock, SOL_SOCKET, SO_PROTOCOL_INFOW, (char *)&info, &len) == 0 && (info.dwServiceFlags1 & XP1_IFS_HANDLES) &&
+        SetFileCompletionNotificationModes((HANDLE)sock, FILE_SKIP_COMPLETION_PORT_ON_SUCCESS | FILE_SKIP_SET_EVENT_ON_HANDLE))
+        *skip = true;
+    return PROVEN_SYS_NET_OK;
+}
+
+proven_sys_net_result_t proven_sys_net_port_post(proven_uintptr_t port) {
+    return PostQueuedCompletionStatus((HANDLE)port, 0, 0, NULL) ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_LIMIT;
+}
+
+proven_sys_net_result_t proven_sys_net_port_wait(proven_uintptr_t port, proven_sys_net_done_t *out, proven_size_t cap,
+                                                 int timeout_ms, proven_size_t *count) {
+    OVERLAPPED_ENTRY got[64];
+    *count = 0;
+    if (cap == 0) return PROVEN_SYS_NET_OK;
+    if (cap > 64) cap = 64;
+    ULONG n = 0;
+    if (!GetQueuedCompletionStatusEx((HANDLE)port, got, (ULONG)cap, &n, timeout_ms < 0 ? INFINITE : (DWORD)timeout_ms, FALSE)) {
+        const DWORD e = GetLastError();
+        return e == WAIT_TIMEOUT ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_ERROR;
+    }
+    for (ULONG i = 0; i < n; ++i) {
+        OVERLAPPED *o = got[i].lpOverlapped;
+        out[i].ov = (proven_sys_net_ov_t *)(void *)o;
+        out[i].bytes = (proven_u32)got[i].dwNumberOfBytesTransferred;
+        /* `Internal` is the request's status once it has completed (an NTSTATUS: negative is a
+         * failure, a datagram cut short among them). */
+        out[i].failed = o && (LONG)(ULONG)o->Internal < 0;
+    }
+    *count = (proven_size_t)n;
+    return PROVEN_SYS_NET_OK;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_result(proven_sys_socket_t sock, proven_sys_net_ov_t *ov) {
+    OVERLAPPED *o = (OVERLAPPED *)(void *)ov;
+    if ((ULONG)o->Internal == 0xC0000120u) return PROVEN_SYS_NET_CANCELLED;      /* STATUS_CANCELLED */
+    DWORD n = 0, flags = 0;
+    if (WSAGetOverlappedResult((SOCKET)sock, o, &n, FALSE, &flags)) return PROVEN_SYS_NET_OK;
+    return ov_reason(WSAGetLastError());
+}
+
+void proven_sys_net_ov_cancel(proven_sys_socket_t sock, proven_sys_net_ov_t *ov) {
+    (void)CancelIoEx((HANDLE)sock, (OVERLAPPED *)(void *)ov);
+}
+
+proven_sys_net_result_t proven_sys_net_ov_recv(proven_sys_socket_t sock, proven_sys_net_ov_t *ov, void *buf, proven_size_t cap,
+                                               bool skip, proven_u32 *bytes) {
+    /* The WSABUF may be on the stack: the provider takes it before the call returns. */
+    WSABUF b = { .len = cap > 0 ? (ULONG)clamp_len(cap) : 0, .buf = (CHAR *)buf };
+    DWORD n = 0, flags = 0;
+    memset(ov, 0, sizeof *ov);
+    const bool now = WSARecv((SOCKET)sock, &b, 1, &n, &flags, (OVERLAPPED *)(void *)ov, NULL) == 0;
+    *bytes = (proven_u32)n;
+    return ov_started(now, skip);
+}
+
+proven_sys_net_result_t proven_sys_net_ov_send(proven_sys_socket_t sock, proven_sys_net_ov_t *ov, const proven_sys_net_vec_t *vec,
+                                               proven_size_t count, bool skip, proven_u32 *bytes) {
+    WSABUF b[PROVEN_SYS_NET_VEC_MAX];
+    if (count > PROVEN_SYS_NET_VEC_MAX) count = PROVEN_SYS_NET_VEC_MAX;
+    for (proven_size_t i = 0; i < count; ++i) { b[i].len = (ULONG)clamp_len(vec[i].len); b[i].buf = (CHAR *)(proven_uintptr_t)vec[i].ptr; }
+    DWORD n = 0;
+    memset(ov, 0, sizeof *ov);
+    const bool now = WSASend((SOCKET)sock, b, (DWORD)count, &n, 0, (OVERLAPPED *)(void *)ov, NULL) == 0;
+    *bytes = (proven_u32)n;
+    return ov_started(now, skip);
+}
+
+proven_sys_net_result_t proven_sys_net_ov_accept(proven_sys_socket_t listener, proven_sys_net_family_t family, proven_sys_net_ov_t *ov,
+                                                 void *area, bool skip, proven_sys_socket_t *accepted) {
+    *accepted = PROVEN_SYS_SOCKET_INVALID;
+    LPFN_ACCEPTEX accept_ex = NULL;
+    LPFN_CONNECTEX connect_ex = NULL;
+    ext_for((SOCKET)listener, family, &accept_ex, &connect_ex);
+    if (!accept_ex) return PROVEN_SYS_NET_UNSUPPORTED;
+    const int af = native_family(family);
+    if (af < 0) return PROVEN_SYS_NET_ADDR_INVALID;
+    SOCKET s = native_open(af, SOCK_STREAM);
+    if (s == INVALID_SOCKET) return net_fail();
+    const DWORD each = (DWORD)(sizeof(struct sockaddr_storage) + 16);
+    DWORD n = 0;
+    memset(ov, 0, sizeof *ov);
+    /* No data with the accept: a client that connects and says nothing would hold it. */
+    const bool now = accept_ex((SOCKET)listener, s, area, 0, each, each, &n, (OVERLAPPED *)(void *)ov) != FALSE;
+    const proven_sys_net_result_t r = ov_started(now, skip);
+    if (r != PROVEN_SYS_NET_OK && r != PROVEN_SYS_NET_IN_PROGRESS) { closesocket(s); return r; }
+    *accepted = (proven_sys_socket_t)s;
+    return r;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_accept_done(proven_sys_socket_t listener, proven_sys_socket_t accepted) {
+    SOCKET l = (SOCKET)listener;
+    if (setsockopt((SOCKET)accepted, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (const char *)&l, (int)sizeof l) != 0) return net_fail();
+    return native_prepare_accepted((SOCKET)accepted) ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_ERROR;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_connect_socket(const proven_sys_net_addr_t *addr, proven_sys_socket_t *out) {
+    if (!net_ready()) return PROVEN_SYS_NET_ERROR;
+    const int af = native_family(addr->family);
+    if (af < 0) return PROVEN_SYS_NET_ADDR_INVALID;
+    SOCKET s = native_open(af, SOCK_STREAM);
+    if (s == INVALID_SOCKET) return net_fail();
+    if (af != AF_UNIX) {
+        /* ConnectEx connects only a socket that is bound. */
+        struct sockaddr_storage any;
+        memset(&any, 0, sizeof any);
+        any.ss_family = (ADDRESS_FAMILY)af;
+        const int len = af == AF_INET ? (int)sizeof(struct sockaddr_in) : (int)sizeof(struct sockaddr_in6);
+        if (bind(s, (const struct sockaddr *)&any, len) != 0) {
+            const proven_sys_net_result_t r = net_fail();
+            closesocket(s);
+            return r;
+        }
+    }
+    *out = (proven_sys_socket_t)s;
+    return PROVEN_SYS_NET_OK;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_connect(proven_sys_socket_t sock, const proven_sys_net_addr_t *addr, proven_sys_net_ov_t *ov,
+                                                  bool skip) {
+    struct sockaddr_storage ss;
+    const proven_native_len_t len = to_native(addr, &ss);
+    if (len == 0) return PROVEN_SYS_NET_ADDR_INVALID;
+    if (addr->family == PROVEN_SYS_NET_FAMILY_UNIX) {
+        /* Not an operation of the port: a local connect, made blocking for its moment. */
+        u_long off = 0, on = 1;
+        (void)ioctlsocket((SOCKET)sock, FIONBIO, &off);
+        const int rc = connect((SOCKET)sock, (const struct sockaddr *)&ss, len);
+        const proven_sys_net_result_t r = rc == 0 ? PROVEN_SYS_NET_OK : net_fail();
+        (void)ioctlsocket((SOCKET)sock, FIONBIO, &on);
+        return r;
+    }
+    LPFN_ACCEPTEX accept_ex = NULL;
+    LPFN_CONNECTEX connect_ex = NULL;
+    ext_for((SOCKET)sock, addr->family, &accept_ex, &connect_ex);
+    if (!connect_ex) return PROVEN_SYS_NET_UNSUPPORTED;
+    DWORD n = 0;
+    memset(ov, 0, sizeof *ov);
+    const bool now = connect_ex((SOCKET)sock, (const struct sockaddr *)&ss, len, NULL, 0, &n, (OVERLAPPED *)(void *)ov) != FALSE;
+    const proven_sys_net_result_t r = ov_started(now, skip);
+    return r == PROVEN_SYS_NET_OK ? proven_sys_net_ov_connect_done(sock) : r;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_connect_done(proven_sys_socket_t sock) {
+    /* Without this the socket does not know it is connected: getpeername and shutdown fail. */
+    if (setsockopt((SOCKET)sock, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0) != 0) return net_fail();
+    return PROVEN_SYS_NET_OK;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_recv_msg(proven_sys_socket_t sock, proven_sys_net_ov_t *ov, proven_sys_net_msg_t *msg,
+                                                   void *buf, proven_size_t cap, bool skip, proven_u32 *bytes) {
+    port_msg_t *m = (port_msg_t *)(void *)msg;
+    SOCKET s = (SOCKET)sock;
+    InitOnceExecuteOnce(&g_recvmsg_once, recvmsg_find, &s, NULL);
+    memset(m, 0, sizeof *m);
+    m->buf.len = (ULONG)clamp_len(cap);
+    m->buf.buf = (CHAR *)buf;
+    DWORD n = 0;
+    bool now;
+    memset(ov, 0, sizeof *ov);
+    if (!g_recvmsg || atomic_load_explicit(&g_segments_off, memory_order_relaxed)) {
+        m->plain = true;
+        m->fromlen = (INT)sizeof m->from;
+        now = WSARecvFrom(s, &m->buf, 1, &n, &m->flags, (struct sockaddr *)&m->from, &m->fromlen, (OVERLAPPED *)(void *)ov, NULL) == 0;
+    } else {
+        m->msg.name = (LPSOCKADDR)&m->from;
+        m->msg.namelen = (INT)sizeof m->from;
+        m->msg.lpBuffers = &m->buf;
+        m->msg.dwBufferCount = 1;
+        m->msg.Control.buf = m->ctl.b;
+        m->msg.Control.len = (ULONG)sizeof m->ctl.b;
+        now = g_recvmsg(s, &m->msg, &n, (OVERLAPPED *)(void *)ov, NULL) == 0;
+    }
+    *bytes = (proven_u32)n;
+    return ov_started(now, skip);
+}
+
+void proven_sys_net_ov_msg_done(const proven_sys_net_msg_t *msg, proven_u32 bytes, proven_size_t *seg, proven_sys_net_addr_t *from) {
+    const port_msg_t *m = (const port_msg_t *)(const void *)msg;
+    *seg = 0;
+    if (from) from_native(&m->from, m->plain ? m->fromlen : m->msg.namelen, from);
+    if (m->plain) return;
+    WSAMSG copy = m->msg;
+    for (WSACMSGHDR *c = WSA_CMSG_FIRSTHDR(&copy); c; c = WSA_CMSG_NXTHDR(&copy, c)) {
+        if (c->cmsg_len < sizeof(WSACMSGHDR)) break;          /* nothing written there */
+        if (c->cmsg_level != IPPROTO_UDP || c->cmsg_type != UDP_COALESCED_INFO) continue;
+        DWORD size = 0;
+        memcpy(&size, WSA_CMSG_DATA(c), sizeof size);
+        if (size > 0 && (proven_size_t)size < bytes) *seg = (proven_size_t)size;
+    }
+}
+#endif
+
 #else
 /* A translation unit must not be empty. */
 typedef int proven_sys_net_unused_t;

@@ -1027,11 +1027,11 @@ Failure tip: inspect `src/proven/loop.c` - `loop_timers_advance` for the wheel, 
 
 ### `tests/test_unit_loop_ops` - the event loop's operations
 
-Intent: verify the operations of `loop.h` that complete (RFC-0025) - receives, sends, accepts and connects - on a loop over the system's selector and again on one over the poll kind, the code the Windows build runs until its completion port. Every callback fails the test if it is called from inside the call that started its operation.
+Intent: verify the operations of `loop.h` that complete (RFC-0025) - receives, sends, accepts and connects - on a loop over the system's selector and again on one over the poll kind; on Windows both loops are its completion port. Every callback fails the test if it is called from inside the call that started its operation.
 
 Sub-checks:
 
-- Size: a `proven_loop_sock_t` is 72 bytes (104 on Windows).
+- Size: a `proven_loop_sock_t` is 72 bytes (120 on Windows).
 - Receives: a zero-byte receive is not answered inside the call, waits while nothing is sent, is answered once with `PROVEN_OK` and nothing taken when data arrives and not again while the data stays unread; a second receive in flight is `PROVEN_ERR_BUSY`; a receive into a buffer brings what arrived; a cancelled receive is answered once with `PROVEN_ERR_CANCELLED`, and cancelling with nothing in flight is harmless; after the far end closes, a receive into a buffer is `PROVEN_ERR_EOF` and a zero-byte one is answered; no receive after close (`PROVEN_ERR_INVALID_STATE`).
 - Sends: a small send goes straight to the socket; a wait that is already true is answered from the loop; three MiB sent to a far end that reads less per turn than is sent arrive whole and in order, a send was refused with `PROVEN_ERR_AGAIN`, `writable` came when the bytes waiting were down to what was asked, the loop never held more than its limit plus one send, and nothing after; bytes written in place (`proven_loop_reserve_`, `proven_loop_commit_`) and a send behind them arrive in order; several pieces given at once (`proven_loop_sendv_`), small ones and ones of 3,000 bytes, arrive in order; no reservation larger than a chunk; no send or wait after close.
 - UDP (internal, for HTTP/3): a receive into a buffer is not answered inside the call, a second in flight is `PROVEN_ERR_BUSY`, it waits while nothing is sent; five datagrams sent at once are answered five times - the first by the receive, the rest by receives armed again from inside - from the sender's address; a send wait is answered from the loop; closed with a receive in flight, the receive is answered `PROVEN_ERR_CANCELLED` and then `closed`; no receive after.
@@ -1040,7 +1040,7 @@ Sub-checks:
 - Accepts and connects: an accept is not answered inside the call; a second in flight is `PROVEN_ERR_BUSY`; three connections are each answered once, re-armed from inside the function; a cancelled accept is answered once with `PROVEN_ERR_CANCELLED` from the loop; a connect through the loop is answered `PROVEN_OK`, refuses a receive before then, and carries bytes; a connect to a port with no listener is answered `PROVEN_ERR_REFUSED`, or refused at once with nothing to close.
 - A loop destroyed with a receive and bytes in flight calls nothing (and the sanitizer runs find no leak).
 
-Failure tip: inspect `src/proven/loop.c` - `loop_run_done` and `sock_deliver` for delivery, `sock_flush` for sends, `sock_event` and `acc_event` for what the selector reports. Not covered here: the Windows completion port (RFC-0025 steps 6 and 8 run it on the Windows VM), and the kqueue path.
+Failure tip: inspect `src/proven/loop.c` - `loop_run_done` and `sock_deliver` for delivery, `sock_flush` for sends, `sock_event` and `acc_event` for what the selector reports. The Windows completion port is `loop_report` and the functions it calls, and runs only where the suite runs on Windows. Not covered here: the kqueue path.
 
 ### `tests/test_unit_http_event` - the event-driven HTTP server
 
@@ -1055,7 +1055,7 @@ Sub-checks:
 - Leaving: a client that disappears during a response ends the exchange with an error; `proven_http_stream_abort` closes with nothing sent and `on_done(PROVEN_ERR_RESET)`; half a request head gets 408 after the head timeout; destroying the server under an unanswered request ends it with `PROVEN_ERR_RESET`.
 - Every case above over plain HTTP, over TLS, and a third time with clients limited to TLS 1.2.
 - Accounting: `on_done` was called exactly once for every `on_request`; many connections that have each made a request stay open and close when their clients do.
-- Memory: three hundred idle plain connections hold less than 512 bytes of heap each (488 measured on x86-64 Linux), and everything is given back when they close and when the server is destroyed. Forty idle TLS connections, counted with the server's and its TLS configuration's allocator and the loop on its own thread, hold less than 2 KiB each - the connection and the engine together (the TLS target since v0.78.0); after 1.2 seconds more, quiet, under 1,152 bytes each with their record keys compacted (1,080 measured) and each answers another request - and give everything back.
+- Memory: three hundred idle plain connections hold less than 512 bytes of heap each (488 measured on x86-64 Linux; less than 576 on Windows, where the loop's socket holds an OVERLAPPED), and everything is given back when they close and when the server is destroyed. Forty idle TLS connections, counted with the server's and its TLS configuration's allocator and the loop on its own thread, hold less than 2 KiB each - the connection and the engine together (the TLS target since v0.78.0); after 1.2 seconds more, quiet, under 1,152 bytes each with their record keys compacted (1,080 measured) and each answers another request - and give everything back.
 - The idle timeout: an answered connection that then says nothing is closed by the server after `idle_timeout_ms`, not before.
 - The blocking client's `expect_continue` against this server, plain and over both TLS versions: a 300,000-byte upload goes on the server's `100` and arrives whole, well inside the thirty seconds the client would otherwise wait.
 - The linger time: a connection answered with `Connection: close` is let go 1300 ms after the answer when `linger_ms` says so, not after the default second.
