@@ -45,7 +45,7 @@ decisions of 2026-10-24: one release with everything). Work in progress.
   with `WSAPoll` before: receives (of zero bytes, or into a buffer), sends of a connection's
   buffers in one `WSASend`, accepts (`AcceptEx`), connects (`ConnectEx`), UDP receives
   (`WSARecvMsg`, segment sizes included), and a post to the port as the waker. Nothing it calls
-  is undocumented. Built with mingw-w64 for x86-64; not yet run on Windows - the release runs the
+  is undocumented. Built with mingw-w64 for x86-64 and i686; not yet run on Windows - the release runs the
   suite there before it is published. What it changes for a program: the system writes into a
   receive's buffer until the receive is answered, so on Windows a receive into a buffer that is
   cancelled after data reached it is answered with that data rather than `PROVEN_ERR_CANCELLED`;

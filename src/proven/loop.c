@@ -336,6 +336,10 @@ void proven_loop_destroy(proven_loop_t *l) {
 #endif
     if (l->scratch) a.free_fn(a.ctx, l->scratch);
     while (l->pool) { loop_chunk_t *next = l->pool->next; a.free_fn(a.ctx, l->pool); l->pool = next; }
+#if LOOP_IOCP
+    /* A send the port never reported in the drain's time may still read its chunks: they stay. */
+    if (l->in_flight == 0)
+#endif
     while (l->chunks) { loop_chunk_t *next = l->chunks->all_next; a.free_fn(a.ctx, l->chunks); l->chunks = next; }
     a.free_fn(a.ctx, l);
 }
