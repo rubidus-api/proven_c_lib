@@ -18,6 +18,14 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **Tests:** `test_unit_loop_ops` adds Unix-domain sockets through the loop (accepted, received
+  on, connected by path) and batched datagrams received through the loop with URO/GRO asked for;
+  `test_unit_net_selector` adds a datagram socket registered with either kind of selector. On
+  Windows these reach AcceptEx on a Unix-domain listener, URO through an overlapped
+  `WSARecvMsg`, and the selector's notice path for a datagram socket.
+
 ## [0.82.0] - 2026-10-25
 
 RFC-0026: the other side's WebSocket takeover forbidden, and the event server's window changed

@@ -2,6 +2,7 @@
 #include "proven_test.h"
 #include "../src/proven/proven_internal_loop.h"
 #include "../src/proven/proven_internal_net.h"
+#include "../src/proven/proven_internal_quic_net.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -515,6 +516,163 @@ static void case_udp(void) {
     (void)proven_net_udp_close(&peer);
 }
 
+/* Unix-domain sockets through the loop: accepted (on Windows, AcceptEx with the family's own
+ * provider), connected (on Windows, a blocking connect for its moment), and carrying bytes both
+ * ways. Where the family cannot be opened the case says so and is passed over. */
+static void case_unix(void) {
+    proven_u8str_view_t path = PROVEN_LIT("proven_test_loop_ops.sock");
+    (void)proven_fs_remove(proven_heap_allocator(), path);
+    proven_net_addr_t at;
+    PROVEN_TEST_ASSERT(proven_net_addr_unix(path, &at) == PROVEN_OK, "a path", g_kind);
+    acceptor_t a;
+    memset(&a, 0, sizeof a);
+    const proven_err_t le = proven_net_listen(at, 8, &a.listener, NULL);
+    if (le == PROVEN_ERR_UNSUPPORTED || le == PROVEN_ERR_PERMISSION) {
+        PROVEN_TEST_INFO("SKIP: Unix-domain sockets cannot be opened here (error {}).", PROVEN_ARG((int)le));
+        return;
+    }
+    PROVEN_TEST_ASSERT(le == PROVEN_OK, "a listener on a path", g_kind);
+    a.want = 2;
+    proven_err_t e;
+    INSIDE(e = proven_loop_accept(g_loop, &a.acc, &a.listener, on_accept, &a));
+    PROVEN_TEST_ASSERT(e == PROVEN_OK, "an accept in flight on the path", g_kind);
+    proven_net_conn_t clients[2];
+    for (int i = 0; i < 2; ++i) PROVEN_TEST_ASSERT(proven_net_connect(at, proven_net_deadline_in(2000), &clients[i]) == PROVEN_OK, "a client connects by path", g_kind);
+    proven_net_deadline_t end = proven_net_deadline_in(3000);
+    while (a.count < 2 && proven_time_monotonic_now() < end) (void)proven_loop_poll(g_loop, proven_net_deadline_in(20));
+    PROVEN_TEST_ASSERT(a.count == 2 && a.calls == 2 && a.got[0].internal.family == PROVEN_NET_FAMILY_UNIX, "two connections accepted by the loop, re-armed from inside", g_kind);
+
+    /* What was accepted is a working socket: the loop receives on it, and it answers. */
+    conn_t c;
+    memset(&c, 0, sizeof c);
+    c.conn = a.got[0];
+    PROVEN_TEST_ASSERT(proven_loop_attach(g_loop, &c.sock, &c.conn, &g_fns, &c) == PROVEN_OK, "the accepted socket attached", g_kind);
+    proven_byte_t into[32] = { 0 };
+    PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &c.sock, (proven_mem_mut_t){ into, sizeof into }) == PROVEN_OK, "a receive on it", g_kind);
+    put(&clients[0], "by path");
+    PROVEN_TEST_ASSERT(until_moves(&c.received, 0) && c.recv_err == PROVEN_OK && c.recv_n == 7 && memcmp(into, "by path", 7) == 0, "brings what the client wrote", g_kind);
+    proven_result_size_t s = proven_loop_send(g_loop, &c.sock, (proven_mem_view_t){ (const proven_byte_t *)"back", 4 });
+    proven_byte_t buf[8];
+    proven_result_size_t r = proven_net_read(&clients[0], (proven_mem_mut_t){ buf, sizeof buf }, proven_net_deadline_in(1000));
+    PROVEN_TEST_ASSERT(s.err == PROVEN_OK && r.err == PROVEN_OK && r.value == 4 && memcmp(buf, "back", 4) == 0, "and the loop's send reaches the client", g_kind);
+    (void)proven_net_close(&clients[0]);
+    PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &c.sock, (proven_mem_mut_t){ into, sizeof into }) == PROVEN_OK &&
+                       until_moves(&c.received, 1) && c.recv_err == PROVEN_ERR_EOF, "the client gone: PROVEN_ERR_EOF", g_kind);
+    close_and_wait(&c);
+
+    /* A connect through the loop to the path, accepted by the blocking call. */
+    conn_t d;
+    memset(&d, 0, sizeof d);
+    INSIDE(e = proven_loop_connect(g_loop, &d.sock, at, &d.conn, &g_fns, &d));
+    PROVEN_TEST_ASSERT(e == PROVEN_OK && d.connected == 0, "a connect by path begins, not answered inside the call", g_kind);
+    PROVEN_TEST_ASSERT(until_moves(&d.connected, 0) && d.conn_err == PROVEN_OK, "connected", g_kind);
+    proven_net_conn_t server;
+    PROVEN_TEST_ASSERT(proven_net_accept(&a.listener, proven_net_deadline_in(2000), &server, NULL) == PROVEN_OK, "the other end", g_kind);
+    s = proven_loop_send(g_loop, &d.sock, (proven_mem_view_t){ (const proven_byte_t *)"ping", 4 });
+    r = proven_net_read(&server, (proven_mem_mut_t){ buf, sizeof buf }, proven_net_deadline_in(1000));
+    PROVEN_TEST_ASSERT(s.err == PROVEN_OK && r.err == PROVEN_OK && r.value == 4 && memcmp(buf, "ping", 4) == 0, "and the connection carries bytes", g_kind);
+    close_and_wait(&d);
+    (void)proven_net_close(&server);
+
+    proven_loop_accept_cancel(g_loop, &a.acc);           /* nothing in flight: forgets the listener */
+    rounds(3);
+    (void)proven_net_close(&clients[1]);
+    (void)proven_net_close(&a.got[1]);
+    (void)proven_net_listener_close(&a.listener);
+    (void)proven_fs_remove(proven_heap_allocator(), path);
+}
+
+/* Batched datagrams through the loop (internal, for HTTP/3): sent in one call where the platform
+ * can, received by the loop's receives - on Windows an overlapped WSARecvMsg, with URO asked for,
+ * whose segment size comes back in UDP_COALESCED_INFO. Whether the system coalesced is printed,
+ * never asserted; that every datagram arrives whole, in order and of its size is. A receive that
+ * held several but lost its segment size would come out as one datagram of their sum. */
+typedef struct {
+    proven_loop_udp_t lu;
+    proven_net_udp_t udp;
+    proven_byte_t buf[65536];
+    proven_net_addr_t from;
+    proven_size_t sizes[128];
+    unsigned count, batches;
+    int received;
+    bool bad;
+    unsigned run;
+} useg_t;
+
+static proven_byte_t seg_pattern(unsigned run, unsigned dg, proven_size_t i) { return (proven_byte_t)(run * 31 + dg * 7 + i * 13 + (i >> 8)); }
+
+static void s_received(void *ctx, proven_err_t err, proven_size_t n, proven_size_t seg) {
+    useg_t *u = ctx;
+    PROVEN_TEST_ASSERT(!g_inside, "a UDP receive is never answered inside the call that started it", g_kind);
+    u->received++;
+    if (err != PROVEN_OK) { u->bad = true; return; }
+    if (seg) ++u->batches;
+    const proven_size_t step = seg ? seg : n;
+    for (proven_size_t off = 0; off < n; off += step) {
+        const proven_size_t len = n - off < step ? n - off : step;
+        if (u->count >= 128) { u->bad = true; return; }
+        for (proven_size_t i = 0; i < len; ++i) if (u->buf[off + i] != seg_pattern(u->run, u->count, i)) u->bad = true;
+        u->sizes[u->count++] = len;
+    }
+    g_inside = true;
+    const proven_err_t e = proven_loop_udp_recv_(g_loop, &u->lu, (proven_mem_mut_t){ u->buf, sizeof u->buf }, &u->from);
+    g_inside = false;
+    if (e != PROVEN_OK) u->bad = true;
+}
+static void s_closed(void *ctx) { (void)ctx; }
+static const proven_loop_udp_fns_t g_sfns = { s_received, NULL, s_closed };
+
+static void case_udp_segments(void) {
+    static useg_t u;
+    static proven_byte_t out[PROVEN_NET_UDP_BATCH_BYTES];
+    struct { proven_size_t seg; unsigned count; proven_size_t tail; } shapes[] = {
+        { 1452, 1, 0 }, { 1452, 2, 0 }, { 1452, 44, 0 }, { 1452, 44, 300 }, { 1200, 53, 1 }, { 60, 64, 0 }, { 60, 63, 20 },
+    };
+    unsigned run = 0;
+    for (int forced = 0; forced < 2; ++forced) {
+        proven_net_udp_segments_off_for_test_(forced == 1);
+        memset(&u, 0, sizeof u);
+        proven_net_udp_t peer;
+        proven_net_addr_t at;
+        /* GRO (URO) asked for before anything is sent: once on, it stays on. */
+        PROVEN_TEST_ASSERT(proven_net_udp_open(proven_net_addr_ipv4(127, 0, 0, 1, 0), &u.udp, &at) == PROVEN_OK &&
+                           proven_net_udp_open(proven_net_addr_ipv4(127, 0, 0, 1, 0), &peer, NULL) == PROVEN_OK, "two UDP sockets", g_kind);
+        const bool gro = proven_net_udp_gro_(&u.udp);
+        if (forced) PROVEN_TEST_ASSERT(!gro, "with the one-at-a-time way forced, no URO either", g_kind);
+        const proven_err_t ae = proven_loop_udp_attach_(g_loop, &u.lu, &u.udp, &g_sfns, &u);
+        const proven_err_t re = proven_loop_udp_recv_(g_loop, &u.lu, (proven_mem_mut_t){ u.buf, sizeof u.buf }, &u.from);
+        PROVEN_TEST_ASSERT(ae == PROVEN_OK && re == PROVEN_OK, "attached, a receive in flight", g_kind);
+        for (unsigned k = 0; k < sizeof shapes / sizeof shapes[0]; ++k, ++run) {
+            const unsigned n = shapes[k].count + (shapes[k].tail ? 1u : 0u);
+            proven_size_t total = 0;
+            for (unsigned d = 0; d < n; ++d) {
+                const proven_size_t len = d < shapes[k].count ? shapes[k].seg : shapes[k].tail;
+                for (proven_size_t i = 0; i < len; ++i) out[total + i] = seg_pattern(run, d, i);
+                total += len;
+            }
+            u.run = run; u.count = 0;
+            proven_size_t sent = 0;
+            PROVEN_TEST_ASSERT(proven_net_udp_send_segments_(&peer, at, (proven_mem_view_t){ out, total }, shapes[k].seg, &sent) == PROVEN_OK && sent == total,
+                               "a batch is sent whole", g_kind);
+            const proven_net_deadline_t end = proven_net_deadline_in(3000);
+            while (u.count < n && !u.bad && proven_time_monotonic_now() < end) (void)proven_loop_poll(g_loop, proven_net_deadline_in(20));
+            bool shape = !u.bad && u.count == n;
+            for (unsigned d = 0; shape && d < n; ++d) shape = u.sizes[d] == (d < shapes[k].count ? shapes[k].seg : shapes[k].tail);
+            if (!shape) printf("  FAILED: %u x %zu + %zu: %u datagrams received%s\n", shapes[k].count, shapes[k].seg, shapes[k].tail, u.count, u.bad ? ", a byte or an answer wrong" : "");
+            PROVEN_TEST_ASSERT(shape, "the loop's receives bring every datagram, its size and every byte, in order", g_kind);
+        }
+        printf("  %s, %s: receives through the loop that held several datagrams: %u (the system's choice)\n",
+               g_kind, forced ? "one at a time (forced)" : gro ? "the platform's way, URO/GRO on" : "the platform's way, no URO/GRO here", u.batches);
+        int closed_before = u.received;
+        proven_loop_udp_close_(g_loop, &u.lu);
+        (void)until_moves(&u.received, closed_before);      /* the receive in flight, CANCELLED */
+        rounds(3);
+        (void)proven_net_udp_close(&u.udp);
+        (void)proven_net_udp_close(&peer);
+    }
+    proven_net_udp_segments_off_for_test_(false);
+}
+
 /* Destroyed with things in flight: nothing is called, and nothing leaks (the sanitizer runs
  * say so). */
 static void case_destroy(proven_allocator_t heap, bool poll_kind) {
@@ -565,7 +723,11 @@ static void run_all(proven_allocator_t heap, bool poll_kind) {
     case_accept_connect();
     PROVEN_TEST_SECTION("UDP", "Receives into a buffer, re-armed from inside, closed with one in flight; a send wait (internal, for HTTP/3).", g_kind);
     case_udp();
-        PROVEN_TEST_SECTION("destroy", "A loop destroyed with a receive and bytes in flight calls nothing.", g_kind);
+    PROVEN_TEST_SECTION("Unix-domain sockets", "Accepted by the loop on a path, re-armed from inside; the accepted socket receives and sends through the loop; a connect by path.", g_kind);
+    case_unix();
+    PROVEN_TEST_SECTION("batched datagrams", "Datagrams of one size sent in one call, received through the loop with URO/GRO asked for and with the one-at-a-time way forced: every datagram whole, in order, of its size (internal, for HTTP/3).", g_kind);
+    case_udp_segments();
+    PROVEN_TEST_SECTION("destroy", "A loop destroyed with a receive and bytes in flight calls nothing.", g_kind);
     case_destroy(heap, poll_kind);
 
     proven_loop_destroy(g_loop);

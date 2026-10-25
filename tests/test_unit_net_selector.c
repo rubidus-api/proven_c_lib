@@ -4,13 +4,13 @@
 
 /*
  * The selector, in both of its kinds: the one the system provides (epoll on Linux, kqueue on
- * the BSDs) and the portable one built on poll, which is the only one Windows has.
+ * the BSDs, a completion port on Windows) and the portable one built on poll.
  *
  * Every case runs against both where both exist, and the two must answer alike: a program
  * written against one behaves the same on the other, only at a different cost.
  *
- * Sockets come from proven_net_pair, so nothing here depends on a network: what is written
- * into one end makes the other end readable.
+ * Sockets come from proven_net_pair (and two UDP sockets on loopback), so nothing here depends
+ * on a network: what is written into one end makes the other end readable.
  */
 
 enum { PAIRS = 300 };
@@ -311,6 +311,74 @@ static void run(bool force_poll) {
             if (want <= 64 && got != want) PROVEN_TEST_INFO("step {}: {} ready, {} reported", PROVEN_ARG(step), PROVEN_ARG((proven_u64)want), PROVEN_ARG((proven_u64)got));
             PROVEN_TEST_ASSERT(want > 64 || got == want, "every registered, ready socket is reported", "");
         }
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("a datagram socket",
+        "A UDP socket registered for reading is reported when a datagram waits and only then, again for the next one; for writing at once; changed, removed and registered again.",
+        "On Windows a datagram socket is not a completion port's: inspect sel_look and proven_sys_net_evt_arm (WSAEventSelect).");
+    // ---------------------------------------------------------------
+    {
+        proven_net_udp_t u, peer;
+        proven_net_addr_t at;
+        PROVEN_TEST_ASSERT(proven_net_udp_open(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &u, &at) == PROVEN_OK &&
+                           proven_net_udp_open(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &peer, NULL) == PROVEN_OK, "two UDP sockets", "");
+        /* A selector of its own: the ones above are still registered, some of them ready. */
+        proven_net_selector_t *ds = NULL;
+        PROVEN_TEST_ASSERT((force_poll ? proven_net_selector_create_poll(heap, &ds) : proven_net_selector_create(heap, &ds)) == PROVEN_OK, "a selector", "");
+        int tag = 0;
+        const proven_size_t before = proven_net_selector_count(ds);
+        PROVEN_TEST_ASSERT(proven_net_selector_add(ds, proven_net_udp_handle(&u), PROVEN_NET_READABLE, &tag) == PROVEN_OK &&
+                           proven_net_selector_count(ds) == before + 1, "registered for reading", "");
+        PROVEN_TEST_ASSERT(proven_net_selector_wait(ds, events, 64, proven_net_deadline_in(50), &n) == PROVEN_ERR_TIMEOUT && n == 0,
+                           "nothing waiting: nothing reported", "");
+        proven_byte_t buf[64];
+        proven_net_addr_t from;
+        for (int round = 0; round < 3; ++round) {
+            PROVEN_TEST_ASSERT(proven_net_udp_send_to(&peer, at, (proven_mem_view_t){ (const proven_byte_t *)"dgram", 5 }, proven_net_deadline_in(1000)) == PROVEN_OK,
+                               "a datagram sent", "");
+            e = proven_net_selector_wait(ds, events, 64, proven_net_deadline_in(2000), &n);
+            PROVEN_TEST_ASSERT(e == PROVEN_OK && n == 1 && events[0].tag == &tag && (events[0].got & PROVEN_NET_READABLE),
+                               "a datagram waiting: the socket is reported readable (each round: again after the last was read)", "");
+            e = proven_net_selector_wait(ds, events, 64, PROVEN_NET_DONT_WAIT, &n);
+            PROVEN_TEST_ASSERT(e == PROVEN_OK && n == 1 && events[0].tag == &tag, "level-triggered: still reported while unread", "");
+            proven_result_size_t r = proven_net_udp_recv_from(&u, (proven_mem_mut_t){ buf, sizeof buf }, &from, PROVEN_NET_DONT_WAIT);
+            PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.value == 5 && memcmp(buf, "dgram", 5) == 0, "and the datagram is there to read", "");
+            PROVEN_TEST_ASSERT(proven_net_selector_wait(ds, events, 64, proven_net_deadline_in(50), &n) == PROVEN_ERR_TIMEOUT && n == 0,
+                               "read: no longer reported", "");
+        }
+        /* Two waiting: reported until both are read. */
+        for (int i = 0; i < 2; ++i)
+            PROVEN_TEST_ASSERT(proven_net_udp_send_to(&peer, at, (proven_mem_view_t){ (const proven_byte_t *)"two", 3 }, proven_net_deadline_in(1000)) == PROVEN_OK, "a datagram sent", "");
+        PROVEN_TEST_ASSERT(proven_net_selector_wait(ds, events, 64, proven_net_deadline_in(2000), &n) == PROVEN_OK && n == 1, "two waiting: reported", "");
+        proven_time_sleep(20);          /* the second is on its way over loopback */
+        proven_result_size_t r = proven_net_udp_recv_from(&u, (proven_mem_mut_t){ buf, sizeof buf }, &from, PROVEN_NET_DONT_WAIT);
+        PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.value == 3, "one read", "");
+        PROVEN_TEST_ASSERT(proven_net_selector_wait(ds, events, 64, proven_net_deadline_in(2000), &n) == PROVEN_OK && n == 1 && events[0].tag == &tag,
+                           "one still waiting: still reported", "");
+        r = proven_net_udp_recv_from(&u, (proven_mem_mut_t){ buf, sizeof buf }, &from, PROVEN_NET_DONT_WAIT);
+        PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.value == 3, "the second read", "");
+        PROVEN_TEST_ASSERT(proven_net_selector_wait(ds, events, 64, proven_net_deadline_in(50), &n) == PROVEN_ERR_TIMEOUT, "none waiting: none reported", "");
+
+        /* Writing: a datagram socket can take one at once. */
+        int wtag = 0;
+        PROVEN_TEST_ASSERT(proven_net_selector_modify(ds, proven_net_udp_handle(&u), PROVEN_NET_WRITABLE, &wtag) == PROVEN_OK, "changed to writing", "");
+        e = proven_net_selector_wait(ds, events, 64, proven_net_deadline_in(2000), &n);
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && n == 1 && events[0].tag == &wtag && (events[0].got & PROVEN_NET_WRITABLE), "reported writable, with the new tag", "");
+        PROVEN_TEST_ASSERT(proven_net_selector_modify(ds, proven_net_udp_handle(&u), PROVEN_NET_READABLE, &tag) == PROVEN_OK, "back to reading", "");
+        PROVEN_TEST_ASSERT(proven_net_selector_wait(ds, events, 64, proven_net_deadline_in(50), &n) == PROVEN_ERR_TIMEOUT, "nothing waiting: nothing reported", "");
+
+        /* Removed: a datagram is not reported; registered again: it is. */
+        PROVEN_TEST_ASSERT(proven_net_selector_remove(ds, proven_net_udp_handle(&u)) == PROVEN_OK && proven_net_selector_count(ds) == before, "removed", "");
+        PROVEN_TEST_ASSERT(proven_net_udp_send_to(&peer, at, (proven_mem_view_t){ (const proven_byte_t *)"late", 4 }, proven_net_deadline_in(1000)) == PROVEN_OK, "a datagram sent", "");
+        PROVEN_TEST_ASSERT(proven_net_selector_wait(ds, events, 64, proven_net_deadline_in(100), &n) == PROVEN_ERR_TIMEOUT, "a removed socket is not reported", "");
+        PROVEN_TEST_ASSERT(proven_net_selector_add(ds, proven_net_udp_handle(&u), PROVEN_NET_READABLE, &tag) == PROVEN_OK, "registered again", "");
+        e = proven_net_selector_wait(ds, events, 64, proven_net_deadline_in(2000), &n);
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && n == 1 && events[0].tag == &tag, "the datagram that waited is reported", "");
+        PROVEN_TEST_ASSERT(proven_net_selector_remove(ds, proven_net_udp_handle(&u)) == PROVEN_OK, "removed for good", "");
+        proven_net_selector_destroy(ds);
+        (void)proven_net_udp_close(&u);
+        (void)proven_net_udp_close(&peer);
     }
 
     // ---------------------------------------------------------------
