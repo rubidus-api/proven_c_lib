@@ -551,6 +551,7 @@ struct proven_quic_conn {
     proven_u64 tx_max_data, tx_data;    /* the peer's limit; new stream bytes sent */
     proven_u64 rx_max_data, rx_data, rx_read;   /* ours as last sent; the sum of highest offsets; bytes read */
     proven_u64 rx_conn_window, rx_conn_moved_at;   /* the connection's window as it has grown, and when it last moved */
+    proven_u64 rx_cap;                             /* a ceiling on credit (RFC-0026; proven_quic_conn_cap_window_): 0 none */
     proven_u64 tx_written;                       /* stream bytes ever written: less send_buffered, those acknowledged */
     bool max_data_owed;
     proven_u64 send_buffered;           /* stream bytes held for sending, all streams */
@@ -780,8 +781,8 @@ static proven_qstream_t *stream_new(proven_quic_conn_t *c, proven_u64 id) {
     s->has_rx = !uni || !s->local;
     const proven_quic_tp_t *tp = &c->peer_tp;
     s->tx_max = uni ? tp->initial_max_stream_data_uni : s->local ? tp->initial_max_stream_data_bidi_remote : tp->initial_max_stream_data_bidi_local;
-    s->rx_max = c->cfg.stream_window;
-    s->rx_window = c->cfg.stream_window;
+    s->rx_max = c->cfg.stream_window;              /* promised in the transport parameters, cap or not */
+    s->rx_window = c->rx_cap && c->rx_cap < c->cfg.stream_window ? c->rx_cap : c->cfg.stream_window;
     s->rx_moved_at = c->now;
     c->streams[c->nstreams++] = s;
     return s;
@@ -851,27 +852,31 @@ static proven_u64 rx_grow(const proven_quic_conn_t *c, proven_u64 window, proven
     return 2 * window < cap ? 2 * window : cap;
 }
 
-/* Bytes read: the window moves, and MAX_STREAM_DATA / MAX_DATA are owed at half a window. */
+/* A growth cap under the ceiling, if there is one. */
+static proven_u64 rx_capped(const proven_quic_conn_t *c, proven_u64 cap) { return c->rx_cap && cap > c->rx_cap ? c->rx_cap : cap; }
+
+/* Bytes read: the window moves, and MAX_STREAM_DATA / MAX_DATA are owed at half a window. A
+ * grant is never lowered (RFC 9000 section 4.1): under a ceiling it only stops rising. */
 static void rx_credit(proven_quic_conn_t *c, proven_qstream_t *s, proven_u64 n) {
     c->rx_read += n;
     if (s && !s->rx.has_final && s->rx_max - s->rx.read < s->rx_window / 2) {
-        s->rx_window = rx_grow(c, s->rx_window, s->rx_moved_at, c->cfg.stream_window_max);
-        s->rx_max = s->rx.read + s->rx_window;
+        s->rx_window = rx_grow(c, s->rx_window, s->rx_moved_at, rx_capped(c, c->cfg.stream_window_max));
+        s->rx_max = qmax(s->rx_max, s->rx.read + s->rx_window);
         s->rx_moved_at = c->now;
         s->rx_max_owed = true;
         /* The connection's window keeps one and a half of the largest stream window, so one
          * stream that grew is not held back by the connection's. */
-        const proven_u64 want = s->rx_window + s->rx_window / 2;
-        if (c->cfg.conn_window_max && c->rx_conn_window < want) {
-            c->rx_conn_window = want < c->cfg.conn_window_max ? want : c->cfg.conn_window_max;
-            c->rx_max_data = c->rx_read + c->rx_conn_window;
+        const proven_u64 want = s->rx_window + s->rx_window / 2, conn_max = rx_capped(c, c->cfg.conn_window_max);
+        if (c->cfg.conn_window_max && c->rx_conn_window < want && c->rx_conn_window < conn_max) {
+            c->rx_conn_window = want < conn_max ? want : conn_max;
+            c->rx_max_data = qmax(c->rx_max_data, c->rx_read + c->rx_conn_window);
             c->rx_conn_moved_at = c->now;
             c->max_data_owed = true;
         }
     }
     if (c->rx_max_data - c->rx_read < c->rx_conn_window / 2) {
-        c->rx_conn_window = rx_grow(c, c->rx_conn_window, c->rx_conn_moved_at, c->cfg.conn_window_max);
-        c->rx_max_data = c->rx_read + c->rx_conn_window;
+        c->rx_conn_window = rx_grow(c, c->rx_conn_window, c->rx_conn_moved_at, rx_capped(c, c->cfg.conn_window_max));
+        c->rx_max_data = qmax(c->rx_max_data, c->rx_read + c->rx_conn_window);
         c->rx_conn_moved_at = c->now;
         c->max_data_owed = true;
     }
@@ -2903,6 +2908,32 @@ proven_size_t proven_quic_stateless_reset(const proven_quic_config_t *cfg, const
 /* For the event server (declared in proven_internal_quic.h; RFC-0024): how many bidirectional
  * streams the peer may have open at once from now on, at most the configured number. What was
  * granted stands; later grants follow `n`, and a raise is granted at once. */
+/* For the event server (declared in proven_internal_quic.h; RFC-0026): a ceiling on credit from
+ * now on, 0 for none. MAX_STREAM_DATA and MAX_DATA grant at most `n` beyond what was read, and
+ * windows that grow stop at it; what was granted stands, and a stream the peer opens later may
+ * still use the transport parameter's window promised at the handshake. A raise lets the
+ * windows come back - to the configured one, or growing - from the next grant. */
+void proven_quic_conn_cap_window_(proven_quic_conn_t *c, proven_u64 n) {
+    if (!c) return;
+    c->rx_cap = n;
+    for (proven_size_t i = 0; i < c->nstreams; ++i) {
+        proven_qstream_t *s = c->streams[i];
+        const proven_u64 base = n && n < c->cfg.stream_window ? n : c->cfg.stream_window;
+        s->rx_window = n && s->rx_window > n ? n : qmax(s->rx_window, base);
+    }
+    const proven_u64 base = n && n < c->cfg.conn_window ? n : c->cfg.conn_window;
+    c->rx_conn_window = n && c->rx_conn_window > n ? n : qmax(c->rx_conn_window, base);
+}
+
+/* For tests (declared in proven_internal_quic.h): the peer's grant to this side - a stream's
+ * MAX_STREAM_DATA, or for UINT64_MAX the connection's MAX_DATA. 0 for a stream not open. */
+proven_u64 proven_quic_conn_test_tx_max_(const proven_quic_conn_t *c, proven_u64 id) {
+    if (!c) return 0;
+    if (id == ~(proven_u64)0) return c->tx_max_data;
+    for (proven_size_t i = 0; i < c->nstreams; ++i) if (c->streams[i]->id == id) return c->streams[i]->tx_max;
+    return 0;
+}
+
 void proven_quic_conn_set_max_streams_(proven_quic_conn_t *c, proven_u64 n) {
     if (!c || n > c->cfg.max_streams_bidi) return;
     c->grant_bidi = n;

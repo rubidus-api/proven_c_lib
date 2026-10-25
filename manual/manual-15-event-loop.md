@@ -494,6 +494,7 @@ proven_err_t proven_http_event_server_listen(proven_http_event_server_t *server,
 void proven_http_event_server_destroy(proven_http_event_server_t *server);
 proven_size_t proven_http_event_server_connections(const proven_http_event_server_t *server);
 proven_err_t proven_http_event_server_set_max_streams(proven_http_event_server_t *server, proven_size_t n);
+proven_err_t proven_http_event_server_set_window(proven_http_event_server_t *server, proven_size_t n);
 void proven_http_event_server_stop_listening(proven_http_event_server_t *server);
 typedef void (*proven_http_event_drained_fn)(void *ctx, proven_err_t why);
 proven_err_t proven_http_event_server_shutdown(proven_http_event_server_t *server, proven_u32 grace_ms,
@@ -508,6 +509,7 @@ A server is made on a loop, told where to listen, and does nothing until the loo
 | `proven_http_event_server_listen(server, at, &bound)` | Listen at `at`; up to four addresses for one server. `bound` (optional) receives the address in use, with the port the system chose when `at` asked for port 0. | `proven_err_t`. |
 | `proven_http_event_server_connections(server)` | Connections open now. | `proven_size_t`. |
 | `proven_http_event_server_set_max_streams(server, n)` | Change `max_concurrent_streams` while the server runs: 1 to the configured value, for the connections open and those to come ([Chapter 17](manual-17-http2.md), sections 6 and 9). On the loop's thread. | `proven_err_t`: `INVALID_ARG`. |
+| `proven_http_event_server_set_window(server, n)` | A ceiling, from now on, on the request body a client may send ahead of the handler - per stream and per connection, HTTP/2 and HTTP/3 - for the connections open and those to come. What was granted stands; growing windows stop at it ([Chapter 17](manual-17-http2.md), section 6). On the loop's thread. | `proven_err_t`: `INVALID_ARG` for 0 or more than 2^31-1. |
 | `proven_http_event_server_stop_listening(server)` | Stop accepting; open connections go on, an HTTP/1.1 response from now on says `Connection: close`, HTTP/2 says goodbye. | nothing. |
 | `proven_http_event_server_shutdown(server, grace_ms, on_drained, ctx)` | End gracefully (section 10); `on_drained(ctx, why)` when it is over. | `proven_err_t`: `INVALID_STATE` when already shutting down. |
 | `proven_http_event_server_destroy(server)` | Close every connection and the listeners, and free the server. Exchanges still in progress get `on_done` with `PROVEN_ERR_RESET`. The loop is neither stopped nor freed. What the loop has not answered yet - an accept in flight, a connection's socket - keeps its memory until the loop's next round or `proven_loop_destroy` (section 5, rule 3). Null is accepted. | nothing. |

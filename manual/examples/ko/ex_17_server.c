@@ -114,6 +114,9 @@ int main(void) {
      * 다시 올릴 수 있다. 루프의 스레드에서, 또는 여기처럼 루프가 돌기 전에 부른다. */
     EXAMPLE_REQUIRE(proven_http_event_server_set_max_streams(server, 8) == PROVEN_OK && proven_http_event_server_set_max_streams(server, 0) == PROVEN_ERR_INVALID_ARG,
                     "eight requests at once from now on, and never none");
+    /* 핸들러보다 앞서 클라이언트를 위해 쥐는 요청 본문도 줄일 수 있다: 지금부터 스트림당, 연결당
+     * 최대 64 KiB - 주는 것의 천장이고, 이미 준 것을 거두지는 않는다. */
+    EXAMPLE_REQUIRE(proven_http_event_server_set_window(server, 64 * 1024) == PROVEN_OK, "64 KiB of body at most ahead of the handler");
     proven_job_sys_t *threads = NULL;
     proven_job_group_t running;
     proven_job_group_init(&running);

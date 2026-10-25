@@ -27,6 +27,7 @@ static proven_job_sys_t *g_threads;
 static proven_job_group_t g_running;
 static proven_tls_config_t *g_server_tls, *g_client_tls, *g_client_tls_h2h3, *g_tcp_tls_h1, *g_tcp_tls_h2;
 static atomic_int g_in_write, g_reentered;
+static atomic_ullong g_sunk;                /* body bytes the /sink handler has been given */
 static atomic_int g_requests, g_done_ok, g_done_reset, g_done_timeout, g_done_other, g_writable, g_bodies_while_paused, g_dispatch_bad, g_protocol;
 
 /* A loopback port where both a TCP listener and a UDP socket can be had, the UDP one kept open in
@@ -181,6 +182,7 @@ static void on_body(void *ctx, proven_http_stream_t *s, proven_mem_view_t piece,
         if (piece.size) memcpy(a->echo + a->received, piece.ptr, piece.size);
     }
     a->received += piece.size;
+    if (a->sink) atomic_fetch_add(&g_sunk, (unsigned long long)piece.size);
     if (!last) return;
     if (a->sink) {
         char text[32];
@@ -238,6 +240,7 @@ static void do_relisten(void *ctx) {
 static proven_size_t g_set_n;
 static atomic_int g_set_err;
 static void do_set_streams(void *ctx) { (void)ctx; atomic_store(&g_set_err, (int)proven_http_event_server_set_max_streams(g_server, g_set_n)); atomic_fetch_add(&g_ran, 1); }
+static void do_set_window(void *ctx) { (void)ctx; atomic_store(&g_set_err, (int)proven_http_event_server_set_window(g_server, g_set_n)); atomic_fetch_add(&g_ran, 1); }
 static void on_loop(proven_loop_fn fn) {
     int before = atomic_load(&g_ran);
     PROVEN_TEST_ASSERT(proven_loop_post(g_loop, fn, NULL) == PROVEN_OK, "posted to the loop", "");
@@ -811,6 +814,47 @@ int main(void) {
         cl_close(c2);
         cl_close(c);
         free(c); free(c2);
+        server_stop();
+    }
+
+    PROVEN_TEST_SECTION("the window changed while the server runs", "proven_http_event_server_set_window over QUIC: an open connection is granted at most the ceiling beyond what was read; a connection made after is promised the ceiling in its transport parameters; a raise lets later connections have the configured window again.", "Check proven_quic_conn_cap_window_, rx_credit in quic_conn.c, and h3_windows in http_event_h3.c.");
+    {
+        const proven_u16 port = server_start((proven_http_event_server_config_t){ .max_body_bytes = 4 * 1024 * 1024, .http3_window_bytes = 300000 });
+        cl_t *c = calloc(1, sizeof *c), *c2 = calloc(1, sizeof *c2), *c3 = calloc(1, sizeof *c3);
+        PROVEN_TEST_ASSERT(cl_connect(c, port), "a connection, promised 300,000 a stream", "");
+        g_set_n = 50000; on_loop(do_set_window);
+        PROVEN_TEST_ASSERT(atomic_load(&g_set_err) == PROVEN_OK, "the server lowers the window to 50,000", "");
+        /* While it is sent: once past the 300,000 promised at the handshake, the server never
+         * allows more than 50,000 beyond what it has given the handler (and a few bytes of
+         * HTTP/3 framing); without the ceiling it would be 300,000. */
+        atomic_store(&g_sunk, 0);
+        const int q = cl_request(c, "POST", "/sink", 1000000, NULL, 0, true);
+        proven_u64 ahead = 0;
+        int samples = 0;
+        for (int i = 0; i < 5000 && !c->r[q].end; ++i) {
+            cl_run(c, 1);
+            const proven_u64 t = proven_quic_conn_test_tx_max_(c->q, c->r[q].id), got = atomic_load(&g_sunk);
+            if (t == 0 || t <= 300000 + 64) continue;
+            samples++;
+            if (t > got && t - got > ahead) ahead = t - got;
+        }
+        PROVEN_TEST_ASSERT(cl_wait(c, q, q + 1, 10000) && c->r[q].status == 200 && body_is(&c->r[q], "got 1000000"), "1 MB still passes on the connection open before", "");
+        if (!(samples > 0 && ahead <= 50000 + 1024)) PROVEN_TEST_INFO("samples {}, most granted beyond what the handler had {}", PROVEN_ARG(samples), PROVEN_ARG((unsigned long long)ahead));
+        PROVEN_TEST_ASSERT(samples > 0 && ahead <= 50000 + 1024, "and past the promise it is never granted more than 50,000 beyond what the handler has (300,000 without the ceiling)", "");
+        PROVEN_TEST_ASSERT(cl_connect(c2, port), "a connection made after", "");
+        const int p = cl_request(c2, "POST", "/pause", 1000000, NULL, 0, true);
+        cl_run(c2, 60);                            /* the handler resumes at 150 ms */
+        PROVEN_TEST_ASSERT(proven_quic_conn_test_tx_max_(c2->q, c2->r[p].id) == 50000 && proven_quic_conn_test_tx_max_(c2->q, ~(proven_u64)0) == 50000 && !c2->r[p].up_done,
+            "is promised 50,000 a stream and on the connection, and a paused request is held there", "");
+        g_set_n = 300000; on_loop(do_set_window);
+        PROVEN_TEST_ASSERT(atomic_load(&g_set_err) == PROVEN_OK, "raised again", "");
+        PROVEN_TEST_ASSERT(cl_connect(c3, port), "a third connection", "");
+        const int p3 = cl_request(c3, "POST", "/pause", 1000000, NULL, 0, true);
+        cl_run(c3, 60);
+        PROVEN_TEST_ASSERT(proven_quic_conn_test_tx_max_(c3->q, c3->r[p3].id) == 300000, "is promised the configured 300,000 again", "");
+        PROVEN_TEST_ASSERT(!c->closed && !c2->closed && !c3->closed, "no connection was ended by any of it", "");
+        cl_close(c3); cl_close(c2); cl_close(c);
+        free(c); free(c2); free(c3);
         server_stop();
     }
 

@@ -994,6 +994,7 @@ int proven_http_stream_protocol(const proven_http_stream_t *stream);
 
 ```c
 proven_err_t proven_http_event_server_set_max_streams(proven_http_event_server_t *server, proven_size_t n);
+proven_err_t proven_http_event_server_set_window(proven_http_event_server_t *server, proven_size_t n);
 ```
 
 `max_concurrent_streams`는 서버가 도는 동안 바꿀 수 있다(v0.79.0).
@@ -1002,6 +1003,12 @@ proven_err_t proven_http_event_server_set_max_streams(proven_http_event_server_t
 - 진행 중인 요청은 계속된다. 클라이언트가 확인하기 전에는 이전 수 안에서 요청을 더 시작할 수 있다.
 - HTTP/3에는 따로 규칙이 있다(9절).
 - 새 요청을 아예 받지 않으려면 서버를 종료한다. 0은 `PROVEN_ERR_INVALID_ARG`이다.
+
+`proven_http_event_server_set_window`(v0.82.0)는 요청 본문에 같은 일을 한다.
+- 루프의 스레드에서 부르면 `n`이, 클라이언트가 처리기보다 앞서 보낼 수 있는 양의 천장이 된다. 스트림당, 연결당, HTTP/2와 HTTP/3, 열린 연결과 앞으로 올 연결에.
+- 돌려주는 room은 그 천장까지다 - 클라이언트가 아직 보낼 수 있는 양과 서버가 읽지 않고 쥔 양을 합쳐서. 자라는 창(`http2_window_bytes`를 0으로 둔 경우)은 거기서 멈추고, 올리면 다시 자란다. 설정한 창은 그대로 프로토콜이 주는 최대다.
+- 이미 준 것은 남는다: 더 낮게 알린 HTTP/2 창은 클라이언트가 확인한 뒤에 효력이 있고, HTTP/3 credit은 되돌릴 수 없다. 그래서 낮춘 천장은 남은 것이 쓰이면서 드러난다.
+- HTTP/2 연결마다 `min(n, 그 연결의 창)`을 초기 창으로 알린다(5절의 `proven_h2_conn_set_initial_window`). 지금 열린 HTTP/3 연결에서 클라이언트가 나중에 여는 스트림은 핸드셰이크에서 약속한 창을 여전히 쓸 수 있고, 나중에 생기는 연결에는 많아야 `n`을 약속한다.
 
 `proven_http_event_server_stop_listening`이 우아하게 끝내는 길이다: HTTP/2 연결마다 GOAWAY를 보내고, 가진
 스트림을 끝내고, 닫는다. `proven_http_event_server_destroy`는 모든 것을 즉시 끝내고, 열려 있던 스트림의
@@ -1126,6 +1133,9 @@ int main(void) {
      * 다시 올릴 수 있다. 루프의 스레드에서, 또는 여기처럼 루프가 돌기 전에 부른다. */
     EXAMPLE_REQUIRE(proven_http_event_server_set_max_streams(server, 8) == PROVEN_OK && proven_http_event_server_set_max_streams(server, 0) == PROVEN_ERR_INVALID_ARG,
                     "eight requests at once from now on, and never none");
+    /* 핸들러보다 앞서 클라이언트를 위해 쥐는 요청 본문도 줄일 수 있다: 지금부터 스트림당, 연결당
+     * 최대 64 KiB - 주는 것의 천장이고, 이미 준 것을 거두지는 않는다. */
+    EXAMPLE_REQUIRE(proven_http_event_server_set_window(server, 64 * 1024) == PROVEN_OK, "64 KiB of body at most ahead of the handler");
     proven_job_sys_t *threads = NULL;
     proven_job_group_t running;
     proven_job_group_init(&running);

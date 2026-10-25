@@ -175,6 +175,30 @@ proven_size_t proven_http_event_server_connections(const proven_http_event_serve
 [[nodiscard]]
 proven_err_t proven_http_event_server_set_max_streams(proven_http_event_server_t *server, proven_size_t n);
 
+/**
+ * @brief Change while the server runs how many bytes of request body a client may send ahead
+ *        of the handler - on one stream, and on one connection as a whole - for the
+ *        connections open now and for those to come: a ceiling on that credit, to shed memory
+ *        under load and to give it back. HTTP/2 and HTTP/3. On the loop's thread.
+ *
+ * From now on room is given back only up to `n`: what the client may still send and what the
+ * server holds unread, together. Windows that grow (`http2_window_bytes` / `http3_window_bytes`
+ * left 0) stop growing at `n`, and grow again past it when `n` is raised; a configured window
+ * is the most a protocol gives whatever `n` is. **What was granted stands** - HTTP/3 credit
+ * cannot be taken back (RFC 9000 section 4), and an HTTP/2 window set lower holds once the
+ * client acknowledges it - so a lower `n` shows as what is outstanding is used up, as a lower
+ * proven_http_event_server_set_max_streams does.
+ *
+ * HTTP/2: each connection says `min(n, its window)` as its initial stream window
+ * (proven_h2_conn_set_initial_window). HTTP/3: on a connection open now, a stream the client
+ * opens later may still use the window promised in the handshake; connections to come are
+ * promised at most `n`.
+ *
+ * @return PROVEN_ERR_INVALID_ARG for a null server, 0, or more than 2^31-1.
+ */
+[[nodiscard]]
+proven_err_t proven_http_event_server_set_window(proven_http_event_server_t *server, proven_size_t n);
+
 /** @brief Stop accepting - and adopting; connections that are open go on, but an HTTP/1.1
  *         response from now on says `Connection: close` and its connection ends after it, and
  *         an HTTP/2 or HTTP/3 connection says goodbye (GOAWAY) and ends when its open streams

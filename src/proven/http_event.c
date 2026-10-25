@@ -995,6 +995,18 @@ proven_err_t proven_http_event_server_set_max_streams(proven_http_event_server_t
     return PROVEN_OK;
 }
 
+proven_err_t proven_http_event_server_set_window(proven_http_event_server_t *s, proven_size_t n) {
+    if (!s || n == 0 || n > 0x7fffffffu) return PROVEN_ERR_INVALID_ARG;
+    const proven_u32 v = (proven_u32)n;
+    if (v == s->window_now) return PROVEN_OK;
+    s->window_now = v;
+    if (s->cfg.http2) proven_http_event_h2_set_window_(s, v);
+#if !defined(PROVEN_NO_HTTP3)
+    if (s->h3) proven_http_event_h3_set_window_(s, v);
+#endif
+    return PROVEN_OK;
+}
+
 void proven_http_event_ended_(proven_http_event_server_t *s) { ev_ended(s); }
 
 void proven_http_event_gone_(proven_http_event_server_t *s) {

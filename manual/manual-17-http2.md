@@ -1033,6 +1033,7 @@ Both protocols are served on one port, by one handler, at the same time.
 
 ```c
 proven_err_t proven_http_event_server_set_max_streams(proven_http_event_server_t *server, proven_size_t n);
+proven_err_t proven_http_event_server_set_window(proven_http_event_server_t *server, proven_size_t n);
 ```
 
 `max_concurrent_streams` can be changed while the server runs (v0.79.0), from the loop's
@@ -1041,6 +1042,18 @@ new number to its client (section 5's `proven_h2_conn_set_max_streams`), and a c
 made later opens with it. Requests already running go on; until a client acknowledges, it may
 still begin requests under the number before. HTTP/3 has its own rule (section 9). To take no
 new requests at all, shut the server down instead: 0 is `PROVEN_ERR_INVALID_ARG`.
+
+`proven_http_event_server_set_window` (v0.82.0) does the same for request bodies: from the loop's
+thread, `n` becomes a ceiling on what a client may send ahead of the handler, on a stream and on
+a connection, HTTP/2 and HTTP/3, for the connections open and those to come. Room is given back
+only up to it - what the client may still send and what the server holds unread, together - and
+windows that grow (`http2_window_bytes` left 0) stop at it, growing again when it is raised. A
+configured window stays the most a protocol gives. What was granted stands: an HTTP/2 window
+said lower holds once the client acknowledges it, and HTTP/3 credit cannot be taken back, so a
+lower ceiling shows as what is outstanding is used up. Each HTTP/2 connection says
+`min(n, its window)` as its initial window (section 5's `proven_h2_conn_set_initial_window`). On
+an HTTP/3 connection open now a stream the client opens later may still use the window promised
+in the handshake; connections made later are promised at most `n`.
 
 `proven_http_event_server_stop_listening` is the graceful way to end: each HTTP/2 connection
 is sent GOAWAY, finishes the streams it has, and closes. `proven_http_event_server_destroy`
@@ -1167,6 +1180,9 @@ int main(void) {
      * thread, or before it runs, as here. */
     EXAMPLE_REQUIRE(proven_http_event_server_set_max_streams(server, 8) == PROVEN_OK && proven_http_event_server_set_max_streams(server, 0) == PROVEN_ERR_INVALID_ARG,
                     "eight requests at once from now on, and never none");
+    /* And fewer bytes of request body held for a client ahead of the handler: 64 KiB per stream
+     * and per connection at most, from now on - a ceiling on what is given, not taken back. */
+    EXAMPLE_REQUIRE(proven_http_event_server_set_window(server, 64 * 1024) == PROVEN_OK, "64 KiB of body at most ahead of the handler");
     proven_job_sys_t *threads = NULL;
     proven_job_group_t running;
     proven_job_group_init(&running);

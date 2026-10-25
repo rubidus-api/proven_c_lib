@@ -320,6 +320,7 @@ static void do_shutdown(void *ctx) {
 static proven_size_t g_set_n;
 static atomic_int g_set_err;
 static void do_set_streams(void *ctx) { (void)ctx; atomic_store(&g_set_err, (int)proven_http_event_server_set_max_streams(g_server, g_set_n)); atomic_fetch_add(&g_ran, 1); }
+static void do_set_window(void *ctx) { (void)ctx; atomic_store(&g_set_err, (int)proven_http_event_server_set_window(g_server, g_set_n)); atomic_fetch_add(&g_ran, 1); }
 static void on_loop(proven_loop_fn fn) {
     int before = atomic_load(&g_ran);
     PROVEN_TEST_ASSERT(proven_loop_post(g_loop, fn, NULL) == PROVEN_OK, "posted to the loop", "");
@@ -1405,6 +1406,62 @@ int main(void) {
             cl_close(&c);
             server_stop();
         }
+    }
+
+    PROVEN_TEST_SECTION("the window changed while the server runs", "proven_http_event_server_set_window (RFC-0026): a ceiling on what a client may send ahead of the handler, for connections open and to come; back up again; the bounds.", "Check proven_http_event_server_set_window in http_event.c, proven_http_event_h2_set_window_ and proven_h2_conn_cap_window_.");
+    {
+        /* What a paused request is sent before the client's engine takes no more. */
+        static proven_byte_t zeros[1 << 16];
+        #define PAUSED_SENT(cl, out) do { \
+            proven_u32 id_ = cl_ask((cl), "POST", "/pause-long", false); \
+            (out) = 0; \
+            for (int round = 0, still = 0; round < 2000 && still < 20; ++round) { \
+                proven_result_size_t r_ = proven_h2_conn_send_data((cl)->e, id_, (proven_mem_view_t){ zeros, sizeof zeros }, false); \
+                if (r_.err != PROVEN_OK) break; \
+                (out) += r_.value; \
+                still = r_.value == 0 ? still + 1 : 0; \
+                (void)cl_pump((cl), 5); \
+            } \
+            (void)proven_h2_conn_reset((cl)->e, id_, PROVEN_H2_CANCEL); \
+            (void)cl_pump((cl), 20); \
+        } while (0)
+        proven_size_t sent = 0;
+        for (int fixed = 1; fixed >= 0; --fixed) {
+            proven_http_event_server_config_t cfg = { .http2_window_bytes = fixed ? 300000 : 0 };
+            proven_u16 port = server_start(cfg);
+            cl_t c, d, e;
+            PROVEN_TEST_ASSERT(cl_open_with(&c, NULL, port, 0), "a client connects before the change", "");
+            (void)cl_pump(&c, 50);
+            g_set_n = fixed ? 50000 : 20000; on_loop(do_set_window);
+            PROVEN_TEST_ASSERT(atomic_load(&g_set_err) == PROVEN_OK, "the server lowers the window", fixed ? "from a configured 300,000" : "from the growing default");
+            for (int i = 0; i < 20; i++) (void)cl_pump(&c, 10);
+            PAUSED_SENT(&c, sent);
+            PROVEN_TEST_ASSERT(sent == g_set_n, fixed ? "a connection open before it is sent 50,000 for a paused request, not 300,000" : "a connection open before it is sent 20,000, not 65,535", "");
+            PROVEN_TEST_ASSERT(cl_open_with(&d, NULL, port, 0), "a client connects after", "");
+            for (int i = 0; i < 20 && !proven_h2_conn_has_peer_settings(d.e); i++) (void)cl_pump(&d, 10);
+            (void)cl_pump(&d, 20);
+            PAUSED_SENT(&d, sent);
+            PROVEN_TEST_ASSERT(sent == g_set_n, "and so is one made after", fixed ? "50,000" : "20,000");
+            g_set_n = fixed ? 300000 : 70000; on_loop(do_set_window);
+            PROVEN_TEST_ASSERT(atomic_load(&g_set_err) == PROVEN_OK, "raised again", "");
+            PROVEN_TEST_ASSERT(cl_open_with(&e, NULL, port, 0), "a third client", "");
+            for (int i = 0; i < 20 && !proven_h2_conn_has_peer_settings(e.e); i++) (void)cl_pump(&e, 10);
+            (void)cl_pump(&e, 20);
+            PAUSED_SENT(&e, sent);
+            PROVEN_TEST_ASSERT(sent == (fixed ? 300000u : 65535u), fixed ? "a connection made after the raise is sent the configured 300,000 again" : "and after a raise above it, the default's 65,535 again: the ceiling does not make a window larger", "");
+            PROVEN_TEST_ASSERT(!c.closed && !d.closed && !e.closed && !c.gone && !d.gone && !e.gone, "no connection was ended by any of it", "");
+            cl_close(&c); cl_close(&d); cl_close(&e);
+            server_stop();
+        }
+        #undef PAUSED_SENT
+        proven_http_event_server_config_t cfg = { 0 };
+        (void)server_start(cfg);
+        g_set_n = 0; on_loop(do_set_window);
+        PROVEN_TEST_ASSERT(atomic_load(&g_set_err) == PROVEN_ERR_INVALID_ARG, "0 is refused", "");
+        g_set_n = (proven_size_t)0x80000000u; on_loop(do_set_window);
+        PROVEN_TEST_ASSERT(atomic_load(&g_set_err) == PROVEN_ERR_INVALID_ARG, "above 2^31-1 is refused", "");
+        server_stop();
+        PROVEN_TEST_ASSERT(proven_http_event_server_set_window(NULL, 1000) == PROVEN_ERR_INVALID_ARG, "no server is refused", "");
     }
 
     PROVEN_TEST_SECTION("WebSocket over HTTP/2", "RFC 8441: an extended CONNECT, accepted by the handler that accepts WebSocket over HTTP/1.1.", "Check the `tunnel` branches of d_request and d_body, s_raw_feed and the proven_http_event_h2_raw_* functions in http_event_h2.c, and proven_ws_event_accept's HTTP/2 answer.");

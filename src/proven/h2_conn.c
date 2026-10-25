@@ -87,7 +87,11 @@ struct proven_h2_conn {
     /* the reader */
     proven_h2c_rs_t rs;
     proven_byte_t small[16];
-    proven_u32 small_len, small_need;
+    proven_u8 small_len, small_need;       /* at most the preface's 24, and 16 */
+    /* A ceiling on credit (RFC-0026; proven_h2_conn_cap_window_): what a stream, and the
+     * connection, may have granted and not yet consumed. 0: none. It takes the room the two
+     * above gave up, so the struct stays 400 bytes. */
+    proven_u32 cap_window;
     proven_h2_frame_t f;
     proven_u32 content_left, pad_left, settings_left;
     proven_u32 cur, expect_cont;
@@ -229,12 +233,28 @@ static void h2c_q_empty(proven_h2_conn_t *c, proven_u8 type, proven_u8 flags, co
 // Flow control, receiving
 // -----------------------------------------------------------------------------
 
+/* Body bytes received on the open streams and not yet consumed. */
+static proven_u64 h2c_held(const proven_h2_conn_t *c) {
+    proven_u64 held = 0;
+    for (proven_u32 i = 0; i < c->stream_count; i++) held += c->streams[i].held;
+    return held;
+}
+
 static void h2c_conn_credit(proven_h2_conn_t *c, proven_size_t n) {
     if (n == 0 || c->closed) return;
     c->recv_unacked += (proven_u32)n;
-    if ((proven_u64)c->recv_unacked * 2 >= c->recv_target) {
+    const proven_u32 target = c->cap_window && c->cap_window < c->recv_target ? c->cap_window : c->recv_target;
+    if ((proven_u64)c->recv_unacked * 2 >= target) {
         proven_u32 inc = c->recv_unacked;
         c->recv_unacked = 0;
+        if (c->cap_window) {
+            /* Under a ceiling, room is given back only up to it: what the peer may still send
+             * and what is held here together. Room withheld is not owed later. */
+            const proven_i64 out = c->recv_win + (proven_i64)h2c_held(c);
+            const proven_i64 room = (proven_i64)c->cap_window - out;
+            if (room <= 0) return;
+            if ((proven_i64)inc > room) inc = (proven_u32)room;
+        }
         c->recv_win += inc;
         h2c_q_window(c, 0, inc);
     }
@@ -242,7 +262,8 @@ static void h2c_conn_credit(proven_h2_conn_t *c, proven_size_t n) {
 
 /* The connection's window keeps one and a half of the largest stream window, up to its cap. */
 static void h2c_conn_follow(proven_h2_conn_t *c, proven_u32 stream_window) {
-    const proven_u64 cap = (proven_u64)c->grow_conn_kib * 1024;
+    proven_u64 cap = (proven_u64)c->grow_conn_kib * 1024;
+    if (c->cap_window && c->cap_window < cap) cap = c->cap_window;
     proven_u64 want = (proven_u64)stream_window + stream_window / 2;
     if (want > cap) want = cap;
     if (want <= c->recv_target) return;
@@ -261,15 +282,18 @@ static void h2c_stream_credit(proven_h2_conn_t *c, proven_h2c_stream_t *s, prove
      * holding to, the smaller of the two cannot leave it waiting. */
     proven_u32 window = c->local_window < c->adv_window ? c->local_window : c->adv_window;
     if (s->win > window) window = s->win;
+    if (c->cap_window && window > c->cap_window) window = c->cap_window;
     if ((proven_u64)s->unacked * 2 >= window) {
         proven_u32 inc = s->unacked;
         proven_u32 id = s->id;
         s->unacked = 0;
+        if (c->cap_window && s->win > c->cap_window) s->win = c->cap_window;
         if (c->grow_now && c->settings_acked) {
             /* A reader that took half the window within two round trips of its last move is held
              * back by it: the window doubles, and this update carries the added room. */
             const proven_u32 now = (proven_u32)c->grow_now();
-            const proven_u32 cap = (proven_u32)c->grow_stream_kib * 1024;
+            proven_u32 cap = (proven_u32)c->grow_stream_kib * 1024;
+            if (c->cap_window && c->cap_window < cap) cap = c->cap_window;
             if ((proven_u64)(proven_u32)(now - s->moved) < 2 * (proven_u64)c->grow_mark && window < cap) {
                 const proven_u32 next = (proven_u64)window * 2 > cap ? cap : window * 2;
                 inc += next - window;
@@ -277,6 +301,14 @@ static void h2c_stream_credit(proven_h2_conn_t *c, proven_h2c_stream_t *s, prove
                 h2c_conn_follow(c, next);
             }
             s->moved = now;
+        }
+        if (c->cap_window) {
+            /* Under a ceiling (RFC-0026), room is given back only up to it - what the peer may
+             * still send on the stream and what is held here together - and the stream does not
+             * grow past it (above). Room withheld is not owed later. */
+            const proven_i64 room = (proven_i64)c->cap_window - ((proven_i64)s->recv_win + (proven_i64)s->held);
+            if (room <= 0) return;
+            if ((proven_i64)inc > room) inc = (proven_u32)room;
         }
         s->recv_win += (proven_i32)inc;
         h2c_q_window(c, id, inc);
@@ -727,7 +759,7 @@ static void h2c_to_skip(proven_h2_conn_t *c, proven_u32 n) {
 static void h2c_to_fixed(proven_h2_conn_t *c, proven_u32 need) {
     c->rs = RS_FIXED;
     c->small_len = 0;
-    c->small_need = need;
+    c->small_need = (proven_u8)need;
 }
 
 /* The peer's GOAWAY has been read, with what is kept of its text. */
@@ -1000,7 +1032,7 @@ static proven_err_t h2c_read(proven_h2_conn_t *c, proven_mem_view_t in, proven_s
                 const proven_u32 n = h2c_min_u32(need - c->small_len, avail);
                 if (n == 0 && c->small_len < need) return PROVEN_OK;
                 h2c_copy(c->small + c->small_len, p, n);
-                c->small_len += n;
+                c->small_len = (proven_u8)(c->small_len + n);
                 *used += n;
                 if (c->small_len < need) return PROVEN_OK;
                 if (c->rs == RS_HDR) {
@@ -1560,7 +1592,10 @@ proven_u32 proven_h2_conn_test_window_(const proven_h2_conn_t *c, proven_u32 id)
 proven_u32 proven_h2_conn_test_window_(const proven_h2_conn_t *c, proven_u32 id) {
     if (!c) return 0;
     if (id == 0) return c->recv_target;
-    if (id == 0xffffffffu) return c->grow_now ? (proven_u32)c->grow_stream_kib * 1024 : c->cfg_window;
+    if (id == 0xffffffffu) {
+        const proven_u32 cap = c->grow_now ? (proven_u32)c->grow_stream_kib * 1024 : c->cfg_window;
+        return c->cap_window && c->cap_window < cap ? c->cap_window : cap;
+    }
     const proven_h2c_stream_t *s = h2c_peek(c, id);
     if (!s) return 0;
     const proven_u32 base = c->local_window < c->adv_window ? c->local_window : c->adv_window;
@@ -1587,4 +1622,17 @@ void proven_h2_conn_open_with_streams_(proven_h2_conn_t *c, proven_u32 n) {
         c->adv_streams = c->acked_streams = c->want_streams = n;
         return;
     }
+}
+
+/* For the event server (declared in proven_internal_http_event.h; RFC-0026): a ceiling on
+ * credit from now on, 0 for none. Room on a stream and on the connection - what the peer may
+ * still send and what is held here, together - is given back only up to it, and windows that
+ * grow stop at it; the initial window said to the peer becomes the smaller of `n` and the
+ * configured one (proven_h2_conn_set_initial_window's rules). What was granted stands. */
+void proven_h2_conn_cap_window_(proven_h2_conn_t *c, proven_u32 n);
+void proven_h2_conn_cap_window_(proven_h2_conn_t *c, proven_u32 n) {
+    if (!c || c->closed) return;
+    c->cap_window = n;
+    const proven_u32 initial = n && n < c->cfg_window ? n : c->cfg_window;
+    if (initial != c->want_window) (void)h2c_set(c, c->want_streams, initial);
 }

@@ -34,6 +34,16 @@ while it runs (the owner's decisions of 2026-10-25).
   The same for a program on the codec alone: `PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER`,
   `proven_ws_deflate_accept_peer_no_takeover` and `proven_ws_check_response_peer_no_takeover`.
   Aliases for each; chapter 12 (en/ko) and its example `ex_12_ws_deflate.c`.
+- **`proven_http_event_server_set_window(server, n)`**: while the server runs, a ceiling on the
+  request body a client may send ahead of the handler - per stream and per connection, HTTP/2 and
+  HTTP/3 - for the connections open and those to come. Room is given back only up to it; windows
+  that grow stop at it and grow again when it is raised; a configured window stays the most a
+  protocol gives. What was granted stands (an HTTP/2 window said lower holds once acknowledged;
+  QUIC credit cannot be taken back, and a stream opened later on an open HTTP/3 connection may
+  still use the window promised at its handshake). Each HTTP/2 connection says `min(n, its window)`
+  as its initial window. `INVALID_ARG` for 0 or more than 2^31-1. Alias
+  `xcv_http_event_server_set_window`; chapter 15 and 17 (en/ko), used in `ex_17_server.c`.
+  `struct proven_h2_conn` stays 400 bytes.
 
 ## [0.81.0] - 2026-10-25
 

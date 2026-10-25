@@ -741,6 +741,7 @@ proven_err_t proven_http_event_h2_take_(proven_http_stream_t *conn) {
     if (sv->streams_now < cfg.max_concurrent_streams) proven_h2_conn_open_with_streams_(d->engine, sv->streams_now);
     /* No window configured: it starts at the protocol's and grows while bodies are read, to HTTP/3's caps (RFC-0019 section 10). */
     if (sv->cfg.http2_window_bytes == 0) proven_h2_conn_grow_(d->engine, 16384, 24576, h2_now_us);
+    if (sv->window_now) proven_h2_conn_cap_window_(d->engine, sv->window_now);   /* proven_http_event_server_set_window */
     proven_h2_conn_heads_past_bound_(d->engine);
     d->ops = &h2_ops;
     d->conn = conn;
@@ -1270,6 +1271,19 @@ void proven_http_event_h2_raw_kill_(proven_http_stream_t *stream) {
     d->calls--;
     d_leave(d);
     s_leave(s);
+}
+
+void proven_http_event_h2_set_window_(proven_http_event_server_t *sv, proven_u32 n) {
+    for (proven_http_stream_t *conn = sv->conns, *next; conn; conn = next) {
+        next = conn->next;
+        if (conn->h.state != EV_RAW || !conn->raw || *(const proven_http_event_raw_ops_t *const *)conn->raw != &h2_ops) continue;
+        h2d_t *d = conn->raw;
+        if (d->dead) continue;
+        d_enter(d);
+        proven_h2_conn_cap_window_(d->engine, n);
+        d_pump(d);
+        d_leave(d);
+    }
 }
 
 void proven_http_event_h2_set_max_streams_(proven_http_event_server_t *sv, proven_u32 n) {

@@ -116,6 +116,9 @@ int main(void) {
      * thread, or before it runs, as here. */
     EXAMPLE_REQUIRE(proven_http_event_server_set_max_streams(server, 8) == PROVEN_OK && proven_http_event_server_set_max_streams(server, 0) == PROVEN_ERR_INVALID_ARG,
                     "eight requests at once from now on, and never none");
+    /* And fewer bytes of request body held for a client ahead of the handler: 64 KiB per stream
+     * and per connection at most, from now on - a ceiling on what is given, not taken back. */
+    EXAMPLE_REQUIRE(proven_http_event_server_set_window(server, 64 * 1024) == PROVEN_OK, "64 KiB of body at most ahead of the handler");
     proven_job_sys_t *threads = NULL;
     proven_job_group_t running;
     proven_job_group_init(&running);

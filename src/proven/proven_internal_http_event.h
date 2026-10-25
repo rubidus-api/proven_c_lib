@@ -182,6 +182,7 @@ struct proven_http_event_server {
     proven_size_t h2buf_size;
     struct ev_h3 *h3;                  /* HTTP/3 (http_event_h3.c): its sockets and connections; null without `http3` */
     proven_u32 streams_now;            /* max_concurrent_streams as it is now (proven_http_event_server_set_max_streams); the configured number is the ceiling */
+    proven_u32 window_now;             /* the ceiling on request-body credit (proven_http_event_server_set_window); 0: none was set */
     proven_size_t h3_count;            /* QUIC connections open: they count against `max_connections` with `conn_count` */
     /* proven_http_event_server_shutdown */
     bool draining;                     /* it was called: final */
@@ -233,9 +234,12 @@ void proven_h2_conn_grow_(struct proven_h2_conn *conn, proven_u16 stream_kib, pr
 /* The engine, for this server's driver (RFC-0024): the first SETTINGS says `n` streams, the
  * configured number staying the ceiling. Right after proven_h2_conn_create. */
 void proven_h2_conn_open_with_streams_(struct proven_h2_conn *conn, proven_u32 n);
+void proven_h2_conn_cap_window_(struct proven_h2_conn *conn, proven_u32 n);
 /* proven_http_event_server_set_max_streams for each protocol's connections. */
 void proven_http_event_h2_set_max_streams_(proven_http_event_server_t *server, proven_u32 n);
 void proven_http_event_h3_set_max_streams_(proven_http_event_server_t *server, proven_u32 n);
+void proven_http_event_h2_set_window_(proven_http_event_server_t *server, proven_u32 n);
+void proven_http_event_h3_set_window_(proven_http_event_server_t *server, proven_u32 n);
 /* For tests: stream `id`'s receive window now, or (0) the connection's, or (PROVEN_H2_TEST_CAP)
  * what a stream's may grow to. */
 #define PROVEN_H2_TEST_CAP 0xffffffffu

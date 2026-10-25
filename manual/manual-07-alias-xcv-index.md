@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1332 aliases: 981 lowercase `xcv_` names and 351 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1333 aliases: 982 lowercase `xcv_` names and 351 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -712,6 +712,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_event_server_destroy` | `proven_http_event_server_destroy` |
 | `xcv_http_event_server_listen` | `proven_http_event_server_listen` |
 | `xcv_http_event_server_set_max_streams` | `proven_http_event_server_set_max_streams` |
+| `xcv_http_event_server_set_window` | `proven_http_event_server_set_window` |
 | `xcv_http_event_server_shutdown` | `proven_http_event_server_shutdown` |
 | `xcv_http_event_server_stop_listening` | `proven_http_event_server_stop_listening` |
 | `xcv_http_event_server_t` | `proven_http_event_server_t` |

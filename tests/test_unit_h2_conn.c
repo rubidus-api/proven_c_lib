@@ -495,6 +495,11 @@ out:
  * connection, open, for the caller to look at and destroy. */
 static proven_u64 g_clock;
 static proven_u64 test_clock(void) { return g_clock; }
+/* RFC-0026: a ceiling on credit for grow_run's connection (0: none), and the most the sender was
+ * allowed beyond what it had sent, on the stream and on the connection, after the first window. */
+static proven_u32 g_cap;
+static proven_u64 g_most_s, g_most_c;
+
 static proven_h2_conn_t *grow_run(bool grow, proven_u64 rtt, proven_u64 step, proven_size_t total, bool unread, proven_size_t *sent_out) {
     static proven_byte_t piece[16384];
     const proven_u64 start = 5000000;               /* not 0: a clock's start must not stand in for a round trip */
@@ -502,6 +507,8 @@ static proven_h2_conn_t *grow_run(bool grow, proven_u64 rtt, proven_u64 step, pr
     const proven_h2_config_t cfg = { .alloc = g_alloc, .server = true };
     proven_h2_conn_t *c = conn_new(&cfg);
     if (grow) proven_h2_conn_grow_(c, 16384, 24576, test_clock);
+    if (g_cap) proven_h2_conn_cap_window_(c, g_cap);
+    g_most_s = g_most_c = 0;
     buf_t *b = &g_rec;
     b->n = 0;
     memcpy(b->b, PROVEN_H2_PREFACE, 24); b->n = 24;
@@ -536,6 +543,8 @@ static proven_h2_conn_t *grow_run(bool grow, proven_u64 rtt, proven_u64 step, pr
         drain(c, &seen);
         allowed_s = PROVEN_H2_DEFAULT_WINDOW + seen.window_streams;
         allowed_c = PROVEN_H2_DEFAULT_WINDOW + seen.window_conn;
+        if (allowed_s - sent > g_most_s) g_most_s = allowed_s - sent;
+        if (allowed_c - sent > g_most_c) g_most_c = allowed_c - sent;
     }
     g_consume = consume;
     PROVEN_TEST_ASSERT(log.err == PROVEN_OK && log.closed == 0 && log.resets == 0, "the body is taken within the windows the server opened", "");
@@ -1902,6 +1911,34 @@ int main(void) {
         c = grow_run(true, 0, 100, (proven_size_t)4 << 20, false, &sent);
         PROVEN_TEST_ASSERT(proven_h2_conn_test_window_(c, 1) == PROVEN_H2_DEFAULT_WINDOW, "and nothing grows before the round trip is known (no SETTINGS acknowledgement)", "");
         proven_h2_conn_destroy(c);
+    }
+
+    PROVEN_TEST_SECTION("a ceiling on credit", "RFC-0026's internal call (proven_http_event_server_set_window): room given back - what the peer may still send and what is held - never passes the ceiling, growth stops at it, and a ceiling below the initial window is said as one.", "Check proven_h2_conn_cap_window_, h2c_stream_credit and h2c_conn_credit in src/proven/h2_conn.c.");
+    {
+        proven_size_t sent = 0;
+        g_cap = 1u << 20;
+        proven_h2_conn_t *c = grow_run(true, 10000, 10, (proven_size_t)40 << 20, false, &sent);
+        PROVEN_TEST_ASSERT(sent == (proven_size_t)40 << 20 && proven_h2_conn_test_window_(c, 1) == 1u << 20 && proven_h2_conn_test_window_(c, 0) <= 1u << 20 &&
+                           proven_h2_conn_test_window_(c, 0xffffffffu) == 1u << 20,
+            "a reader that keeps up under a ceiling of 1 MiB: forty megabytes pass, the stream's window grows to 1 MiB and stops, and the connection's no further", "");
+        PROVEN_TEST_ASSERT(g_most_s <= 1u << 20 && g_most_c <= 1u << 20, "and the sender is never allowed more than 1 MiB ahead, on the stream or the connection", "");
+        proven_h2_conn_destroy(c);
+        g_cap = 30000;
+        {
+            const proven_h2_config_t cfg = { .alloc = g_alloc, .server = true };
+            proven_h2_conn_t *fresh = conn_new(&cfg);
+            proven_h2_conn_cap_window_(fresh, 30000);
+            said_t st = said(fresh);
+            bool told = false;
+            for (int i = 0; i < st.entries; i++) told = told || (st.id[i] == PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE && st.value[i] == 30000);
+            PROVEN_TEST_ASSERT(st.frames == 2 && told, "a ceiling of 30,000 below the 65,535 a connection begins with is said as its initial window, after the opening", "");
+            proven_h2_conn_destroy(fresh);
+        }
+        c = grow_run(false, 10000, 100, (proven_size_t)1 << 20, false, &sent);
+        PROVEN_TEST_ASSERT(sent == (proven_size_t)1 << 20, "a megabyte passes under it, to a sender that has not yet read the setting", "");
+        PROVEN_TEST_ASSERT(g_most_s <= 65535 && g_most_c <= 65535, "and room is given back only up to it: the sender's allowance shrinks from the first window, never grows", "");
+        proven_h2_conn_destroy(c);
+        g_cap = 0;
     }
 
     PROVEN_TEST_SECTION("settings changed after the opening", "proven_h2_conn_set_max_streams and proven_h2_conn_set_initial_window: one frame in flight, the larger value enforced until the peer acknowledges, the values at creation as ceilings.", "Check h2c_settings_change, h2c_settings_acked and the enforced number in h2c_on_block.");

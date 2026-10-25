@@ -484,10 +484,13 @@ void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s)
  * its result: the close code, or 0), and a key update started by this side. */
 proven_u64 proven_quic_conn_test_frames_(proven_quic_conn_t *c, int lvl, proven_mem_view_t payload, proven_u64 now);
 bool proven_quic_conn_test_key_update_(proven_quic_conn_t *c);
+proven_u64 proven_quic_conn_test_tx_max_(const proven_quic_conn_t *c, proven_u64 id);
 /* The peer's bidirectional streams open at once from now on: at most the configured number;
  * credit already granted stands (RFC 9000, section 4.6), and a raise is granted at once. For the
  * event server (RFC-0024). */
 void proven_quic_conn_set_max_streams_(proven_quic_conn_t *c, proven_u64 n);
+/* RFC-0026: a ceiling on credit from now on (MAX_STREAM_DATA, MAX_DATA, growth), 0 for none. */
+void proven_quic_conn_cap_window_(proven_quic_conn_t *c, proven_u64 n);
 /* Whether the handshake resumed a session the client offered (RFC-0020). */
 bool proven_quic_conn_resumed(const proven_quic_conn_t *c);
 /* The protocol agreed (ALPN), as proven_tls_alpn: empty before the handshake has agreed one. */

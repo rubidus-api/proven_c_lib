@@ -1337,6 +1337,27 @@ proven_size_t proven_http_event_h3_buffered_(const proven_http_stream_t *stream)
     return s->dead ? 0 : s_out_pending(s);
 }
 
+/* The configured windows, or the engine's defaults, under the ceiling `n` (0: none). */
+static void h3_windows(struct ev_h3 *x, const proven_http_event_server_t *sv, proven_u32 n) {
+    const proven_u32 w = (proven_u32)sv->cfg.http3_window_bytes;
+    const proven_u32 sw = w ? w : 256u * 1024u, cw = w ? w : 1024u * 1024u;
+    x->qc.stream_window = n && n < sw ? n : sw;
+    x->qc.conn_window = n && n < cw ? n : cw;
+    x->qc.stream_window_max = w ? 0u : n && n < PROVEN_QUIC_STREAM_WINDOW_MAX ? n : PROVEN_QUIC_STREAM_WINDOW_MAX;
+    x->qc.conn_window_max = w ? 0u : n && n < PROVEN_QUIC_CONN_WINDOW_MAX ? n : PROVEN_QUIC_CONN_WINDOW_MAX;
+}
+
+void proven_http_event_h3_set_window_(proven_http_event_server_t *sv, proven_u32 n) {
+    struct ev_h3 *x = sv->h3;
+    if (!x) return;
+    h3_windows(x, sv, n);                          /* connections to come: their transport parameters */
+    for (h3d_t *d = x->conns; d; d = d->next) {
+        if (d->dead || !d->q) continue;
+        proven_quic_conn_cap_window_(d->q, n);
+        d_mark(d);
+    }
+}
+
 void proven_http_event_h3_set_max_streams_(proven_http_event_server_t *sv, proven_u32 n) {
     struct ev_h3 *x = sv->h3;
     if (!x) return;
