@@ -43,8 +43,8 @@
  * The loop waits on a selector (net.h) and keeps its timeouts on a timer wheel, so what a
  * round costs depends on the connections that have something to do, not on how many are open:
  * thousands of idle connections are held at no cost to the busy ones where the selector is
- * epoll or kqueue. On Windows it is built on an I/O completion port, not yet measured there at
- * scale.
+ * epoll or kqueue. On Windows it is built on an I/O completion port: measured on one Windows 11
+ * virtual machine, ten busy connections among 10,000 held were answered as fast as among 1,000.
  * Two limits remain everywhere: each connection holds its buffers from the moment it is
  * accepted, and each request occupies a thread while its handler runs.
  *

@@ -58,6 +58,15 @@ decisions of 2026-10-24: one release with everything). Work in progress.
   (another selector falls back to a notice); `proven_net_selector_destroy` cancels what the
   system holds and waits for it, up to two seconds. An accepted socket no longer inherits its
   listener's `WSAEventSelect`. `proven_net_selector_create_poll` still makes the poll kind.
+- **Windows, measured** (RFC-0025 step 8; documentation only). The whole suite on a Windows 11
+  test virtual machine: 366 PASS, 0 FAIL, 10 SKIP (the POSIX-only fixtures) on x86-64 and on i686.
+  The loop, selector, event server and client, WebSocket event and blocking server tests pass
+  again with the system's full page heap on, both word sizes. A load program, server and client
+  on that machine over loopback, two runs: ten connections making requests among 10,000 held
+  were answered 51,000 to 53,000 times a second at a median of 0.15 ms - as among 1,000, where
+  under `WSAPoll` it was 147 a second at 66 ms - with 536 bytes allocated per idle connection;
+  the blocking server on the selector, 52,000 to 53,000 at 0.15 ms. The figures replace "not yet
+  measured" in README, chapters 9, 11 and 15 (section 14 has the table) and `http_server.h`.
 
 - **On Windows the loop is built on an I/O completion port** (RFC-0025 step 6), where it waited
   with `WSAPoll` before: receives (of zero bytes, or into a buffer), sends of a connection's

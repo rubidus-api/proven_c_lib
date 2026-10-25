@@ -2168,8 +2168,28 @@ virtual machine, ten connections making requests:
 The client was on the same loop implementation, so each figure carries the cost twice. Asked
 for 20,000 connections, that machine opened 16,369 before its ports ran out. Since v0.81.0 the
 loop is built on an I/O completion port there (section 5), which is told only of the operations
-that finish and does not look at idle sockets. Its figures on that machine have not been
-measured yet.
+that finish and does not look at idle sockets. The same program on the same machine, two runs in
+a row (the two figures per cell; the client on the completion port as well):
+
+| Connections held | Making requests | Requests per second | Round trip: median, 99th percentile | Server's private memory per connection |
+|---|---|---|---|---|
+| 100 | 10 | 42,000 / 46,000 | 0.18 / 0.16 ms, 0.8 / 0.4 ms | - |
+| 1,000 | 10 | 50,000 / 50,000 | 0.15 ms, 0.4 ms | 1.2 KB |
+| 2,000 | 10 | 55,000 / 51,000 | 0.15 ms, 0.3 / 0.4 ms | 1,065 B |
+| 5,000 | 10 | 48,000 / 36,000 | 0.16 / 0.26 ms, 0.4 ms | 1,049 B |
+| 10,000 | 10 | 53,000 / 51,000 | 0.15 ms, 0.4 ms | 1,040 B |
+| 10,000 | 100 | 47,000 / 48,000 | 2.0 / 1.9 ms, 3.9 / 4.2 ms | 1,045 B |
+| 16,372 (20,000 asked) | 9 | 53,000 / 54,000 | 0.13 ms, 0.3 ms | 1,047 B |
+
+Ten connections are served as fast among sixteen thousand as among a thousand: at 10,000 held,
+about 350 times the requests of `WSAPoll` and a round trip four hundred times shorter. What the
+server's allocator holds is 536 bytes per idle connection in every row (the registered test's
+figure); the process's private memory, with the heap's own bookkeeping, is about 1 KB per
+connection. The machine is a virtual one on a shared host, so one row in a run can be a quarter
+slower than the other run (5,000 held); the ports still ran out at about 16,370. The blocking
+server of Chapter 11, whose selector is on the completion port too, measured 50,000 / 54,000
+requests per second at 1,000 held and 53,000 / 52,000 at 10,000, a median of 0.15 ms, with 40 KB
+of private memory per connection.
 
 **What is not here.**
 

@@ -1097,6 +1097,6 @@ Unix-domain sockets need Windows 10 version 1803 or later; where the family is m
 - **Encryption.** A connection made here is not encrypted. TLS is a layer over the transport
   interface: [Chapter 14](manual-14-tls.md).
 - **A deadline on name resolution.** See section 2.
-- **Scale on Windows, measured.** The selector and the event loop of [Chapter 15](manual-15-event-loop.md) are built on I/O completion ports there; neither has been measured at scale on Windows yet.
+- **Windows at scale, beyond one machine.** The selector and the event loop of [Chapter 15](manual-15-event-loop.md) are built on I/O completion ports there. Measured once on a Windows 11 virtual machine, over loopback: with 10,000 connections held and ten making requests, the blocking server of Chapter 11 (on this selector) answered about 52,000 requests a second with a median round trip of 0.15 ms - as with 1,000 held; the event loop's figures are in [Chapter 15, section 14](manual-15-event-loop.md#14-what-a-connection-holds-what-was-measured-and-what-is-not-here). Not measured there: a client on another machine, datagram sockets on the selector, and more than about 16,000 connections (the machine's ports ran out with both ends on it).
 - **Unix-domain datagrams, raw sockets, multicast, socket options beyond `TCP_NODELAY`.**
 - **HTTP.** The message codec is [Chapter 10](manual-10-http.md); the client and the server that drive it over these sockets are [Chapter 11](manual-11-http-client-server.md).

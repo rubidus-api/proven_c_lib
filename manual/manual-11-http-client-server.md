@@ -152,7 +152,9 @@ section 9) and keeps its timeouts on a timer wheel, so a round of the loop costs
 to the connections that have something to do, not to the connections that are open: with
 twenty thousand idle keep-alive connections held, a request on one more takes as long as with
 none (measured on Linux, where the selector is `epoll`). On Windows the selector is built on an
-I/O completion port; it has not been measured there at scale.
+I/O completion port; on a Windows 11 virtual machine, ten connections making requests among
+10,000 held were answered about 52,000 times a second, a median of 0.15 ms, as among 1,000
+([Chapter 15, section 14](manual-15-event-loop.md#14-what-a-connection-holds-what-was-measured-and-what-is-not-here)).
 
 That removes one limit and leaves two. Each connection still holds its buffers from the moment
 it is accepted (below), and each request still occupies a thread while its handler runs
