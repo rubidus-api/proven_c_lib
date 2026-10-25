@@ -18,8 +18,10 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.81.0] - 2026-10-25
+
 RFC-0025: the event loop becomes a completion model, and Windows gets IOCP (the owner's
-decisions of 2026-10-24: one release with everything). Work in progress.
+decisions of 2026-10-24: one release with everything).
 
 ### Added
 
