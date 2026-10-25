@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.82.0] - 2026-10-25
+
 RFC-0026: the other side's WebSocket takeover forbidden, and the event server's window changed
 while it runs (the owner's decisions of 2026-10-25).
 
