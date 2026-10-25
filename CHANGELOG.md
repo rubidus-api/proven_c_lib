@@ -50,7 +50,7 @@ decisions of 2026-10-24: one release with everything). Work in progress.
   while nothing is asked of it by `WSAEventSelect` and a wait of the system's thread pool, which
   posts to the port (about 500 bytes and two handles per socket while asked). Each wait checks
   the sockets so reported with `WSAPoll` at no wait, so what it reports is what the poll kind
-  reports; `tests/test_unit_net_selector` passes unchanged but for the kind's name, three times
+  reports; `tests/test_unit_net_selector` (which now also fills a socket and checks that a sleeping wait is told when it can write again) passes, three times
   in a row on Windows 11 for x86-64 and for i686, with the blocking HTTP server and client,
   WebSocket and TLS-over-socket tests. What it changes for a program: `alloc` holds about 170
   bytes more per registered socket (64-bit); a connection the selector has watched for reading stays

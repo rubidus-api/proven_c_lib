@@ -192,6 +192,20 @@ static void run(bool force_poll) {
                            proven_net_selector_wait(sel, events, 64, proven_net_deadline_in(1000), &n) == PROVEN_OK && n == 1 && events[0].tag == w &&
                            (events[0].got & PROVEN_NET_WRITABLE) && !(events[0].got & PROVEN_NET_READABLE),
             "an idle socket asked about writing is writable, and not readable", "");
+        /* Full, it is not writable; read at the far end, it is again - told while the wait
+         * sleeps, not found by looking (on Windows, the notice armed while it was full). */
+        static proven_byte_t chunk[16384];
+        proven_result_size_t put;
+        do put = proven_net_write(&w->a, (proven_mem_view_t){ chunk, sizeof chunk }, PROVEN_NET_DONT_WAIT); while (put.err == PROVEN_OK);
+        PROVEN_TEST_ASSERT(proven_net_selector_wait(sel, events, 64, proven_net_deadline_in(300), &n) == PROVEN_ERR_TIMEOUT,
+            "a socket whose sending side is full is not writable", "");
+        for (;;) {
+            proven_result_size_t got = proven_net_read(&w->b, (proven_mem_mut_t){ chunk, sizeof chunk }, proven_net_deadline_in(50));
+            if (got.err != PROVEN_OK) break;
+        }
+        PROVEN_TEST_ASSERT(proven_net_selector_wait(sel, events, 64, proven_net_deadline_in(2000), &n) == PROVEN_OK && n == 1 && events[0].tag == w &&
+                           (events[0].got & PROVEN_NET_WRITABLE),
+            "read at the far end, it is writable again, and the wait that sleeps is told", "Check sel_arm's notice for WRITABLE and WSAEventSelect's FD_WRITE.");
         PROVEN_TEST_ASSERT(proven_net_selector_modify(sel, proven_net_conn_handle(&w->a), PROVEN_NET_READABLE, w) == PROVEN_OK, "back to reading", "");
     }
 

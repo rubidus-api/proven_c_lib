@@ -925,7 +925,8 @@ ready. On Windows it is an I/O completion port (`PROVEN_NET_SELECTOR_IOCP`): a c
 watched for reading by a receive of zero bytes, and room to write, a connection waiting to be
 accepted, a datagram, or a connection lost while nothing is asked of it, by a notice of the
 system's thread pool - about 500 bytes and two handles per socket while it is asked, so that
-cost falls on listeners, datagram sockets and connections waiting to write, not on idle ones.
+cost falls on listeners, datagram sockets, connections waiting to write and those of which
+nothing is asked, not on connections waiting to read.
 Each wait checks what was so reported with the call `proven_net_poll` uses, so it reports what
 the portable kind would. A connection it has watched for reading stays bound to its port while
 it is open. Anywhere else it is the portable kind: the same interface kept over the call
