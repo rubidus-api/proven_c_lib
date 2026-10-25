@@ -5,6 +5,7 @@
 #include "../../platform/proven_sys_net.h"
 #include "proven_internal_quic_net.h"
 #include "proven_internal_net.h"
+#include <stddef.h>
 
 /*
  * The portable half of the socket layer. Everything the operating system does is in
@@ -1005,12 +1006,21 @@ proven_err_t proven_net_poll(proven_net_poll_item_t *items, proven_size_t count,
 // Selector
 // -----------------------------------------------------------------------------
 
-/* One socket of a poll-kind selector. */
+#if defined(_WIN32) || defined(_WIN64)
+#define SEL_IOCP 1
+#else
+#define SEL_IOCP 0
+#endif
+
+/* One socket of a poll-kind selector, or of the IOCP kind. */
 typedef struct {
     proven_uintptr_t raw;
     void *tag;
     proven_u8 want;
     bool told;                         /* nothing was asked of it and it was reported all the same: not again until something is */
+#if SEL_IOCP
+    struct sel_reg *reg;               /* the IOCP kind's registration; null for a socket removed that is bound to the port still */
+#endif
 } proven_sel_item_t;
 
 struct proven_net_selector {
@@ -1027,6 +1037,18 @@ struct proven_net_selector {
     proven_size_t slot_count;           /* a power of two, at least twice cap */
     proven_size_t scratch_size;
     proven_size_t next;                 /* where the last report stopped, so nobody is starved */
+#if SEL_IOCP
+    /* The IOCP kind (RFC-0025 step 7) keeps the poll kind's list and hash, without its wait
+     * memory, and: its port; the registrations to look at; those removed whose operations the
+     * port has not reported yet; the room for one look at SEL_LOOK of them. */
+    bool iocp;
+    bool retry;                         /* a notice could not be armed: the wait does not sleep long */
+    proven_uintptr_t port;
+    struct sel_reg *hot_first, *hot_last, *dead;
+    proven_size_t hot_count;
+    proven_size_t detached;             /* items of sockets removed, kept because they are bound to the port */
+    proven_byte_t *look;
+#endif
 };
 
 static void *sel_alloc(proven_allocator_t a, proven_size_t size) {
@@ -1054,6 +1076,9 @@ static proven_err_t sel_grow(proven_net_selector_t *s) {
     proven_size_t cap = s->cap ? s->cap * 2 : 64;
     proven_size_t slot_count = cap * 2;
     proven_size_t wait_bytes = proven_net_poll_scratch_size(cap);
+#if SEL_IOCP
+    if (s->iocp) wait_bytes = 1;        /* it looks at SEL_LOOK at a time, in its own room */
+#endif
     if (cap > 0x7fffffffu || wait_bytes == PROVEN_SIZE_MAX) return PROVEN_ERR_OVERFLOW;
     proven_sel_item_t *items = sel_alloc(s->alloc, cap * sizeof *items);
     proven_u32 *slots = sel_alloc(s->alloc, slot_count * sizeof *slots);
@@ -1083,6 +1108,233 @@ static proven_err_t sel_grow(proven_net_selector_t *s) {
     return PROVEN_OK;
 }
 
+
+#if SEL_IOCP
+/*
+ * The IOCP kind. A registration is "hot" when something may hold for it: it was just added or
+ * changed, or the port has reported its notice. A wait looks at the hot ones with a WSAPoll that
+ * does not wait - the poll kind's own call, so what is reported is what the poll kind would
+ * report - and one for which nothing holds leaves the list and is armed again: a zero-byte
+ * receive for reading a connection, a notice (proven_sys_net_evt_*) for the rest. What holds
+ * already when either is armed is reported at once, so nothing is missed between the look and
+ * the arm. A wait costs what the ready sockets cost, not the registered ones.
+ */
+
+/* An OVERLAPPED of a registration, and which of its two it is. */
+typedef struct { proven_sys_net_ov_t ov; proven_u8 which; } sel_ov_t;
+
+typedef struct sel_reg {
+    sel_ov_t rd;                        /* the zero-byte receive */
+    sel_ov_t mark;                      /* what the notice posts */
+    proven_sys_net_evt_t evt;
+    struct sel_reg *prev, *next;        /* on the hot list, or the dead one */
+    proven_uintptr_t raw;
+    void *tag;
+    proven_u8 want;
+    proven_u8 evt_want;                 /* what the armed notice asks */
+    bool recv_ok;                       /* a connection bound to this selector's port */
+    bool rd_pending, evt_open, evt_armed;
+    bool hot, parked, dead;
+} sel_reg_t;
+
+enum { SEL_LOOK = 64 };
+
+static sel_reg_t *sel_reg_of(sel_ov_t *o) {
+    return (sel_reg_t *)(void *)((proven_byte_t *)o - (o->which ? offsetof(sel_reg_t, mark) : offsetof(sel_reg_t, rd)));
+}
+
+static void sel_hot(proven_net_selector_t *s, sel_reg_t *r) {
+    if (r->hot || r->dead) return;
+    r->hot = true;
+    r->next = (void *)0;
+    r->prev = s->hot_last;
+    if (s->hot_last) s->hot_last->next = r; else s->hot_first = r;
+    s->hot_last = r;
+    s->hot_count++;
+}
+
+static void sel_cool(proven_net_selector_t *s, sel_reg_t *r) {
+    if (!r->hot) return;
+    if (r->prev) r->prev->next = r->next; else s->hot_first = r->next;
+    if (r->next) r->next->prev = r->prev; else s->hot_last = r->prev;
+    r->prev = r->next = (void *)0;
+    r->hot = false;
+    s->hot_count--;
+}
+
+static void sel_free(proven_net_selector_t *s, sel_reg_t *r) {
+    if (r->evt_open) proven_sys_net_evt_close(&r->evt);
+    s->alloc.free_fn(s->alloc.ctx, r);
+}
+
+/* Ask to be told when something holds again. */
+static void sel_arm(proven_net_selector_t *s, sel_reg_t *r) {
+    if (r->parked) return;
+    const proven_sys_socket_t sock = (proven_sys_socket_t)r->raw;
+    proven_u8 ask = 0;
+    bool notice = !(r->want & PROVEN_NET_READABLE);       /* a connection lost while nothing is read */
+    if (r->want & PROVEN_NET_READABLE) {
+        bool by_recv = r->recv_ok && r->rd_pending;
+        if (r->recv_ok && !r->rd_pending) {
+            proven_u32 b = 0;
+            const proven_sys_net_result_t res = proven_sys_net_ov_recv(sock, &r->rd.ov, (void *)0, 0, false, &b);
+            if (res == PROVEN_SYS_NET_IN_PROGRESS) { r->rd_pending = true; by_recv = true; }
+            else if (res == PROVEN_SYS_NET_OK) { sel_hot(s, r); return; }
+            /* Refused at once - a socket not connected yet: a notice instead. */
+        }
+        if (!by_recv) { ask |= PROVEN_SYS_NET_READABLE; notice = true; }
+    }
+    if (r->want & PROVEN_NET_WRITABLE) { ask |= PROVEN_SYS_NET_WRITABLE; notice = true; }
+    if (!notice) return;
+    if (r->evt_armed) {
+        if (r->evt_want == ask) return;
+        /* Armed for something else: taken back, unless its notice is on its way already. */
+        if (proven_sys_net_evt_disarm(&r->evt, sock)) return;
+        r->evt_armed = false;
+    }
+    if (!r->evt_open && proven_sys_net_evt_open(&r->evt, s->port, &r->mark.ov) == PROVEN_SYS_NET_OK) r->evt_open = true;
+    if (r->evt_open && proven_sys_net_evt_arm(&r->evt, sock, ask) == PROVEN_SYS_NET_OK) {
+        r->evt_armed = true;
+        r->evt_want = ask;
+        return;
+    }
+    /* Out of handles, or a socket gone: looked at again by the next waits, which do not sleep long. */
+    sel_hot(s, r);
+    s->retry = true;
+}
+
+/* Take a registration out: what the system holds of it is cancelled, and its memory kept until
+ * the port has reported that. */
+static void sel_retire(proven_net_selector_t *s, sel_reg_t *r) {
+    sel_cool(s, r);
+    const proven_sys_socket_t sock = (proven_sys_socket_t)r->raw;
+    if (r->rd_pending) proven_sys_net_ov_cancel(sock, &r->rd.ov);
+    if (r->evt_open) r->evt_armed = proven_sys_net_evt_disarm(&r->evt, sock);
+    if (!r->rd_pending && !r->evt_armed) { sel_free(s, r); return; }
+    r->dead = true;
+    r->prev = (void *)0;
+    r->next = s->dead;
+    if (s->dead) s->dead->prev = r;
+    s->dead = r;
+}
+
+static void sel_report(proven_net_selector_t *s, const proven_sys_net_done_t *d) {
+    if (!d->ov) return;
+    sel_ov_t *o = (sel_ov_t *)(void *)d->ov;
+    sel_reg_t *r = sel_reg_of(o);
+    if (o->which) { proven_sys_net_evt_taken(&r->evt); r->evt_armed = false; }
+    else r->rd_pending = false;
+    if (!r->dead) { if (!r->parked) sel_hot(s, r); return; }     /* parked: told once, left alone until asked */
+    if (r->rd_pending || r->evt_armed) return;
+    if (r->prev) r->prev->next = r->next; else s->dead = r->next;
+    if (r->next) r->next->prev = r->prev;
+    sel_free(s, r);
+}
+
+/* Take what the port reports, waiting up to `ms` for the first. */
+static proven_err_t sel_take(proven_net_selector_t *s, int ms) {
+    proven_sys_net_done_t done[64];
+    for (int round = 0; round < 1024; ++round) {
+        proven_size_t n = 0;
+        const proven_sys_net_result_t r = proven_sys_net_port_wait(s->port, done, 64, round == 0 ? ms : 0, &n);
+        if (r != PROVEN_SYS_NET_OK) return internal_err_from_reason(r);
+        for (proven_size_t i = 0; i < n; ++i) sel_report(s, &done[i]);
+        if (n == 0) break;
+    }
+    return PROVEN_OK;
+}
+
+/* Look at the hot registrations, SEL_LOOK at a time, until `cap` are reported. Those reported
+ * go to the back, so that with more ready than `cap` the next wait reports others first. */
+static proven_err_t sel_look(proven_net_selector_t *s, proven_net_ready_t *events, proven_size_t cap, proven_size_t *count) {
+    proven_byte_t *first = internal_align_up(s->look);
+    proven_sys_net_wait_t *list = (proven_sys_net_wait_t *)(void *)first;
+    proven_byte_t *native = internal_align_up(first + SEL_LOOK * sizeof(proven_sys_net_wait_t));
+    sel_reg_t *batch[SEL_LOOK];
+    sel_reg_t *again = (void *)0, *again_last = (void *)0;
+    proven_size_t out = 0, budget = s->hot_count;
+    sel_reg_t *r = s->hot_first;
+    s->retry = false;
+    while (r && budget > 0 && out < cap) {
+        proven_size_t k = 0;
+        for (; r && k < SEL_LOOK && k < budget; r = r->next, ++k) {
+            batch[k] = r;
+            list[k] = (proven_sys_net_wait_t){ .sock = (proven_sys_socket_t)r->raw, .want = r->want, .got = 0 };
+        }
+        budget -= k;
+        proven_size_t n = 0;
+        const proven_sys_net_result_t res = proven_sys_net_wait(list, k, native, 0, &n);
+        if (res != PROVEN_SYS_NET_OK) return internal_err_from_reason(res);
+        for (proven_size_t i = 0; i < k; ++i) {
+            sel_reg_t *b = batch[i];
+            if (list[i].got == 0) { sel_cool(s, b); sel_arm(s, b); continue; }
+            if (out == cap) continue;                   /* still hot: the next wait */
+            events[out++] = (proven_net_ready_t){ .tag = b->tag, .got = list[i].got };
+            sel_cool(s, b);
+            /* Nothing asked of it and reported all the same: once, then left alone until something is. */
+            if (b->want == 0) { b->parked = true; continue; }
+            if (again_last) again_last->next = b; else again = b;
+            again_last = b;
+        }
+    }
+    while (again) { sel_reg_t *next = again->next; sel_hot(s, again); again = next; }
+    *count = out;
+    return PROVEN_OK;
+}
+
+static proven_err_t sel_wait_iocp(proven_net_selector_t *s, proven_net_ready_t *events, proven_size_t cap,
+                                  proven_net_deadline_t until, proven_size_t *count) {
+    for (;;) {
+        bool expired = false;
+        int ms = internal_remaining_ms(until, &expired);
+        if (expired) ms = 0;
+        proven_err_t e = sel_take(s, 0);
+        if (e != PROVEN_OK) return e;
+        if (s->hot_first) {
+            e = sel_look(s, events, cap, count);
+            if (e != PROVEN_OK || *count > 0) return e;
+        }
+        if (expired) return PROVEN_ERR_TIMEOUT;
+        if (s->retry && (ms < 0 || ms > 10)) ms = 10;
+        e = sel_take(s, ms);
+        if (e != PROVEN_OK) return e;
+    }
+}
+
+static proven_err_t sel_create_iocp(proven_net_selector_t *s) {
+    proven_sys_net_result_t r = proven_sys_net_port_open(&s->port);
+    if (r != PROVEN_SYS_NET_OK) return internal_err_from_reason(r);
+    s->look = sel_alloc(s->alloc, proven_net_poll_scratch_size(SEL_LOOK));
+    if (!s->look) { proven_sys_net_port_close(s->port); return PROVEN_ERR_NOMEM; }
+    s->iocp = true;
+    return PROVEN_OK;
+}
+
+/* Everything still registered is cancelled; the port is drained for up to two seconds. A
+ * registration whose receive the port never reported in that time may still be written by the
+ * system: its memory is left, not freed. */
+static void sel_destroy_iocp(proven_net_selector_t *s) {
+    for (proven_size_t i = 0; i < s->count; ++i) {
+        if (s->items[i].reg) { sel_retire(s, s->items[i].reg); s->items[i].reg = (void *)0; }
+    }
+    const proven_net_deadline_t until = proven_net_deadline_in(2000);
+    for (;;) {
+        bool expired = false;
+        const int ms = internal_remaining_ms(until, &expired);
+        if (!s->dead || expired) break;
+        if (sel_take(s, ms < 100 ? ms : 100) != PROVEN_OK) break;
+    }
+    while (s->dead) {
+        sel_reg_t *r = s->dead;
+        s->dead = r->next;
+        if (r->evt_open) { proven_sys_net_evt_close(&r->evt); r->evt_open = false; }
+        if (!r->rd_pending) s->alloc.free_fn(s->alloc.ctx, r);
+    }
+    proven_sys_net_port_close(s->port);
+    s->alloc.free_fn(s->alloc.ctx, s->look);
+}
+#endif
+
 proven_err_t proven_net_selector_create_poll(proven_allocator_t alloc, proven_net_selector_t **out) {
     if (out) *out = (void *)0;
     if (!out || !proven_alloc_is_valid(alloc)) return PROVEN_ERR_INVALID_ARG;
@@ -1101,6 +1353,12 @@ proven_err_t proven_net_selector_create(proven_allocator_t alloc, proven_net_sel
     if (!s) return PROVEN_ERR_NOMEM;
     *s = (proven_net_selector_t){0};
     s->alloc = alloc;
+#if SEL_IOCP
+    proven_err_t e = sel_create_iocp(s);
+    if (e != PROVEN_OK) { alloc.free_fn(alloc.ctx, s); return e; }
+    *out = s;
+    return PROVEN_OK;
+#endif
     proven_sys_net_result_t r = proven_sys_net_selector_open(&s->sys);
     if (r == PROVEN_SYS_NET_OK) {
         s->native = true;
@@ -1115,6 +1373,9 @@ proven_err_t proven_net_selector_create(proven_allocator_t alloc, proven_net_sel
 void proven_net_selector_destroy(proven_net_selector_t *selector) {
     if (!selector) return;
     proven_allocator_t a = selector->alloc;
+#if SEL_IOCP
+    if (selector->iocp) sel_destroy_iocp(selector);
+#endif
     if (selector->native) proven_sys_net_selector_close(selector->sys);
     if (selector->items) a.free_fn(a.ctx, selector->items);
     if (selector->slots) a.free_fn(a.ctx, selector->slots);
@@ -1123,11 +1384,21 @@ void proven_net_selector_destroy(proven_net_selector_t *selector) {
 }
 
 proven_net_selector_kind_t proven_net_selector_kind(const proven_net_selector_t *selector) {
+#if SEL_IOCP
+    if (selector && selector->iocp) return PROVEN_NET_SELECTOR_IOCP;
+#endif
     if (!selector || !selector->native) return PROVEN_NET_SELECTOR_POLL;
-    return proven_sys_net_selector_kind() == PROVEN_SYS_NET_SELECTOR_KQUEUE ? PROVEN_NET_SELECTOR_KQUEUE : PROVEN_NET_SELECTOR_EPOLL;
+    switch (proven_sys_net_selector_kind()) {
+    case PROVEN_SYS_NET_SELECTOR_EPOLL: return PROVEN_NET_SELECTOR_EPOLL;
+    case PROVEN_SYS_NET_SELECTOR_KQUEUE: return PROVEN_NET_SELECTOR_KQUEUE;
+    default: return PROVEN_NET_SELECTOR_POLL;
+    }
 }
 
 proven_size_t proven_net_selector_count(const proven_net_selector_t *selector) {
+#if SEL_IOCP
+    if (selector) return selector->count - selector->detached;
+#endif
     return selector ? selector->count : 0;
 }
 
@@ -1147,6 +1418,39 @@ proven_err_t proven_net_selector_add(proven_net_selector_t *selector, proven_net
     }
     bool found;
     proven_size_t at = sel_find(s, handle.raw, &found);
+#if SEL_IOCP
+    if (s->iocp) {
+        proven_sel_item_t *it = found ? &s->items[s->slots[at] - 1] : (void *)0;
+        if (it && it->reg) return PROVEN_ERR_EXISTS;
+        const proven_sys_socket_t sock = (proven_sys_socket_t)handle.raw;
+        bool stream = false, listening = false;
+        proven_sys_net_result_t k = proven_sys_net_sock_kind(sock, &stream, &listening);
+        if (k != PROVEN_SYS_NET_OK) return internal_err_from_reason(k);
+        bool recv_ok = false;
+        if (stream && !listening) {
+            /* Bound already: to this port if this selector had the socket before (its item is
+             * kept), else to another, whose reports this selector would never see. */
+            k = proven_sys_net_port_attach(s->port, sock);
+            if (k == PROVEN_SYS_NET_OK) recv_ok = true;
+            else if (k == PROVEN_SYS_NET_EXISTS) recv_ok = it != (void *)0;
+            else return internal_err_from_reason(k);
+        }
+        sel_reg_t *r = sel_alloc(s->alloc, sizeof *r);
+        if (!r) return PROVEN_ERR_NOMEM;
+        *r = (sel_reg_t){ .raw = handle.raw, .tag = tag, .want = want, .recv_ok = recv_ok };
+        r->mark.which = 1;
+        if (it) {
+            *it = (proven_sel_item_t){ .raw = handle.raw, .tag = tag, .want = want, .reg = r };
+            s->detached--;
+        } else {
+            s->items[s->count] = (proven_sel_item_t){ .raw = handle.raw, .tag = tag, .want = want, .reg = r };
+            s->slots[at] = (proven_u32)(s->count + 1);
+            s->count++;
+        }
+        sel_hot(s, r);
+        return PROVEN_OK;
+    }
+#endif
     if (found) return PROVEN_ERR_EXISTS;
     s->items[s->count] = (proven_sel_item_t){ .raw = handle.raw, .tag = tag, .want = want };
     s->slots[at] = (proven_u32)(s->count + 1);
@@ -1164,6 +1468,15 @@ proven_err_t proven_net_selector_modify(proven_net_selector_t *selector, proven_
     proven_size_t at = sel_find(s, handle.raw, &found);
     if (!found) return PROVEN_ERR_NOT_FOUND;
     proven_sel_item_t *it = &s->items[s->slots[at] - 1];
+#if SEL_IOCP
+    if (s->iocp) {
+        if (!it->reg) return PROVEN_ERR_NOT_FOUND;
+        it->reg->want = want;
+        it->reg->tag = tag;
+        it->reg->parked = false;
+        sel_hot(s, it->reg);
+    }
+#endif
     it->want = want;
     it->tag = tag;
     it->told = false;
@@ -1185,6 +1498,17 @@ proven_err_t proven_net_selector_remove(proven_net_selector_t *selector, proven_
     if (!found) return PROVEN_ERR_NOT_FOUND;
     proven_size_t place = s->slots[at] - 1;
     proven_size_t mask = s->slot_count - 1;
+#if SEL_IOCP
+    if (s->iocp) {
+        sel_reg_t *r = s->items[place].reg;
+        if (!r) return PROVEN_ERR_NOT_FOUND;
+        const bool bound = r->recv_ok;
+        sel_retire(s, r);
+        s->items[place].reg = (void *)0;
+        /* A socket bound to the port stays known, so that it can be registered again. */
+        if (bound) { s->detached++; return PROVEN_OK; }
+    }
+#endif
 
     /* Take the entry out of the hash and close the gap it leaves in its probe run. */
     proven_size_t hole = at;
@@ -1212,6 +1536,9 @@ proven_err_t proven_net_selector_wait(proven_net_selector_t *selector, proven_ne
     if (count) *count = 0;
     if (!selector || !events || !count || cap == 0) return PROVEN_ERR_INVALID_ARG;
     proven_net_selector_t *s = selector;
+#if SEL_IOCP
+    if (s->iocp) return sel_wait_iocp(s, events, cap, until, count);
+#endif
     for (;;) {
         bool expired = false;
         int ms = internal_remaining_ms(until, &expired);

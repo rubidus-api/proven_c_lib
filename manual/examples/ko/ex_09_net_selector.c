@@ -27,7 +27,7 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_net_selector_create(proven_heap_allocator(), &selector) == PROVEN_OK, "a selector");
     /* Linux에서는 epoll, BSD와 macOS에서는 kqueue. 그 밖에서는 poll 위의 같은 인터페이스. */
     proven_net_selector_kind_t kind = proven_net_selector_kind(selector);
-    printf("selector kind: %s\n", kind == PROVEN_NET_SELECTOR_EPOLL ? "epoll" : kind == PROVEN_NET_SELECTOR_KQUEUE ? "kqueue" : "poll");
+    printf("selector kind: %s\n", kind == PROVEN_NET_SELECTOR_EPOLL ? "epoll" : kind == PROVEN_NET_SELECTOR_KQUEUE ? "kqueue" : kind == PROVEN_NET_SELECTOR_IOCP ? "iocp" : "poll");
 
     /* tag는 이벤트와 함께 돌아오는 것이다: 그 소켓에 대한 여러분 자신의 기록을 가리키는 포인터.
      * 여기서 리스너의 tag는 리스너 자신이다. */
@@ -90,8 +90,8 @@ int main(void) {
                     proven_net_selector_count(selector) == 0, "and the listener: the selector is empty");
     (void)proven_net_listener_close(&listener);
 
-    /* 이식형 종류를 이름으로 요청할 수 있다 - 둘을 비교하거나, Windows가 쓰는 코드 경로를
-     * Linux에서 돌려 보려고. */
+    /* 이식형 종류를 이름으로 요청할 수 있다 - 둘을 비교하거나, 더 나은 것이 없는 시스템의
+     * 코드 경로를 돌려 보려고. */
     proven_net_selector_t *portable = NULL;
     EXAMPLE_REQUIRE(proven_net_selector_create_poll(proven_heap_allocator(), &portable) == PROVEN_OK &&
                     proven_net_selector_kind(portable) == PROVEN_NET_SELECTOR_POLL, "a selector of the poll kind");

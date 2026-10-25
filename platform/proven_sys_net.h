@@ -329,6 +329,37 @@ typedef struct { proven_u64 w[40]; } proven_sys_net_msg_t;
 proven_sys_net_result_t proven_sys_net_ov_recv_msg(proven_sys_socket_t sock, proven_sys_net_ov_t *ov, proven_sys_net_msg_t *msg,
                                                    void *buf, proven_size_t cap, bool skip, proven_u32 *bytes);
 void proven_sys_net_ov_msg_done(const proven_sys_net_msg_t *msg, proven_u32 bytes, proven_size_t *seg, proven_sys_net_addr_t *from);
+
+/*
+ * What the selector of the IOCP kind needs besides the above (RFC-0025 step 7).
+ */
+
+/** Bind `sock` to the port, as proven_sys_net_port_bind without `skip`, but say which it was:
+ *  OK bound now, EXISTS bound already (to this port or another - the caller knows which). */
+proven_sys_net_result_t proven_sys_net_port_attach(proven_uintptr_t port, proven_sys_socket_t sock);
+
+/** What a socket is: `*stream` a connection-oriented socket, `*listening` one that listens. */
+proven_sys_net_result_t proven_sys_net_sock_kind(proven_sys_socket_t sock, bool *stream, bool *listening);
+
+/**
+ * A readiness notice through the port, for what a receive of the port cannot tell (writable, a
+ * connection waiting, a datagram, a connection lost while nothing is read): WSAEventSelect and a
+ * wait of the system's thread pool that, when the event is set, posts `marker` to the port.
+ * One notice per arm. The struct must stay where it is from open to close.
+ */
+typedef struct { proven_uintptr_t w[5]; } proven_sys_net_evt_t;
+proven_sys_net_result_t proven_sys_net_evt_open(proven_sys_net_evt_t *evt, proven_uintptr_t port, proven_sys_net_ov_t *marker);
+/** Ask for one notice about `sock`: PROVEN_SYS_NET_READABLE (data, or a connection to accept)
+ *  and/or _WRITABLE; a connect finished and a connection lost are always asked. What holds
+ *  already is noticed at once. */
+proven_sys_net_result_t proven_sys_net_evt_arm(proven_sys_net_evt_t *evt, proven_sys_socket_t sock, proven_u8 want);
+/** The port has reported the marker: the notice is taken. */
+void proven_sys_net_evt_taken(proven_sys_net_evt_t *evt);
+/** Stop asking about `sock` (null: the socket is gone) and wait out a notice being posted. True
+ *  when a notice has been posted and not yet taken: the port still reports the marker. */
+bool proven_sys_net_evt_disarm(proven_sys_net_evt_t *evt, proven_sys_socket_t sock);
+/** Free the event and the wait; disarmed first. */
+void proven_sys_net_evt_close(proven_sys_net_evt_t *evt);
 #endif
 
 /**

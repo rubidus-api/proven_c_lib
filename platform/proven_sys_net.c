@@ -113,6 +113,9 @@ static proven_native_socket_t native_open(int af, int type) {
 /* An accepted socket does not reliably inherit either property. */
 static bool native_prepare_accepted(proven_native_socket_t s) {
     u_long on = 1;
+    /* Nor anything else of the listener's but one thing: a WSAEventSelect of the listener's (a
+     * selector's notice) carries over to it, and is dropped here. */
+    (void)WSAEventSelect(s, NULL, 0);
     if (ioctlsocket(s, FIONBIO, &on) != 0) return false;
     SetHandleInformation((HANDLE)s, HANDLE_FLAG_INHERIT, 0);
     return true;
@@ -1597,6 +1600,94 @@ void proven_sys_net_ov_msg_done(const proven_sys_net_msg_t *msg, proven_u32 byte
         memcpy(&size, WSA_CMSG_DATA(c), sizeof size);
         if (size > 0 && (proven_size_t)size < bytes) *seg = (proven_size_t)size;
     }
+}
+
+proven_sys_net_result_t proven_sys_net_port_attach(proven_uintptr_t port, proven_sys_socket_t sock) {
+    if (CreateIoCompletionPort((HANDLE)sock, (HANDLE)port, 0, 0)) return PROVEN_SYS_NET_OK;
+    return GetLastError() == ERROR_INVALID_PARAMETER ? PROVEN_SYS_NET_EXISTS : PROVEN_SYS_NET_ERROR;
+}
+
+proven_sys_net_result_t proven_sys_net_sock_kind(proven_sys_socket_t sock, bool *stream, bool *listening) {
+    int type = 0, acc = 0;
+    int len = (int)sizeof type;
+    *stream = *listening = false;
+    if (getsockopt((SOCKET)sock, SOL_SOCKET, SO_TYPE, (char *)&type, &len) != 0) return net_fail();
+    len = (int)sizeof acc;
+    if (getsockopt((SOCKET)sock, SOL_SOCKET, SO_ACCEPTCONN, (char *)&acc, &len) != 0) acc = 0;
+    *stream = type == SOCK_STREAM;
+    *listening = acc != 0;
+    return PROVEN_SYS_NET_OK;
+}
+
+/* The words of a proven_sys_net_evt_t. */
+typedef struct {
+    HANDLE event;               /* auto-reset: the pool's wait takes the signal */
+    PTP_WAIT wait;
+    HANDLE port;
+    OVERLAPPED *marker;
+    volatile LONG posted;       /* the pool posted the marker; the port has not reported it yet */
+} port_evt_t;
+_Static_assert(sizeof(port_evt_t) <= sizeof(proven_sys_net_evt_t), "proven_sys_net_evt_t holds an event, a wait and a marker");
+
+static VOID CALLBACK evt_fired(PTP_CALLBACK_INSTANCE inst, PVOID ctx, PTP_WAIT wait, TP_WAIT_RESULT result) {
+    (void)inst; (void)wait; (void)result;
+    port_evt_t *e = ctx;
+    InterlockedExchange(&e->posted, 1);
+    /* Out of memory for the packet: the notice is lost, as the caller's next arm would find out. */
+    if (!PostQueuedCompletionStatus(e->port, 0, 0, e->marker)) InterlockedExchange(&e->posted, 0);
+}
+
+proven_sys_net_result_t proven_sys_net_evt_open(proven_sys_net_evt_t *evt, proven_uintptr_t port, proven_sys_net_ov_t *marker) {
+    port_evt_t *e = (port_evt_t *)(void *)evt;
+    memset(evt, 0, sizeof *evt);
+    e->port = (HANDLE)port;
+    e->marker = (OVERLAPPED *)(void *)marker;
+    e->event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    if (!e->event) return PROVEN_SYS_NET_LIMIT;
+    e->wait = CreateThreadpoolWait(evt_fired, e, NULL);
+    if (!e->wait) { CloseHandle(e->event); e->event = NULL; return PROVEN_SYS_NET_LIMIT; }
+    return PROVEN_SYS_NET_OK;
+}
+
+proven_sys_net_result_t proven_sys_net_evt_arm(proven_sys_net_evt_t *evt, proven_sys_socket_t sock, proven_u8 want) {
+    port_evt_t *e = (port_evt_t *)(void *)evt;
+    long mask = FD_CLOSE;
+    /* A connect is asked about only while there is one: of a socket connected long ago the
+     * system might record it on every arm. */
+    struct sockaddr_storage peer;
+    int plen = (int)sizeof peer;
+    if (getpeername((SOCKET)sock, (struct sockaddr *)&peer, &plen) != 0 && WSAGetLastError() == WSAENOTCONN) mask |= FD_CONNECT;
+    if (want & PROVEN_SYS_NET_READABLE) mask |= FD_READ | FD_ACCEPT;
+    if (want & PROVEN_SYS_NET_WRITABLE) mask |= FD_WRITE;
+    /* A new selection clears the socket's record and records what holds now, so a condition
+     * that held before the arm is noticed. */
+    if (WSAEventSelect((SOCKET)sock, e->event, mask) != 0) return net_fail();
+    SetThreadpoolWait(e->wait, e->event, NULL);
+    return PROVEN_SYS_NET_OK;
+}
+
+void proven_sys_net_evt_taken(proven_sys_net_evt_t *evt) {
+    InterlockedExchange(&((port_evt_t *)(void *)evt)->posted, 0);
+}
+
+bool proven_sys_net_evt_disarm(proven_sys_net_evt_t *evt, proven_sys_socket_t sock) {
+    port_evt_t *e = (port_evt_t *)(void *)evt;
+    if (!e->wait) return false;
+    SetThreadpoolWait(e->wait, NULL, NULL);
+    WaitForThreadpoolWaitCallbacks(e->wait, TRUE);
+    if (sock != PROVEN_SYS_SOCKET_INVALID) (void)WSAEventSelect((SOCKET)sock, NULL, 0);
+    ResetEvent(e->event);
+    return InterlockedCompareExchange(&e->posted, 0, 0) != 0;
+}
+
+void proven_sys_net_evt_close(proven_sys_net_evt_t *evt) {
+    port_evt_t *e = (port_evt_t *)(void *)evt;
+    if (e->wait) {
+        (void)proven_sys_net_evt_disarm(evt, PROVEN_SYS_SOCKET_INVALID);
+        CloseThreadpoolWait(e->wait);
+    }
+    if (e->event) CloseHandle(e->event);
+    memset(evt, 0, sizeof *evt);
 }
 #endif
 

@@ -38,8 +38,26 @@ decisions of 2026-10-24: one release with everything). Work in progress.
   `PROVEN_ERR_CANCELLED`. A `proven_loop_sock_t` is 72 bytes (120 on Windows). Aliases for each.
   A new manual example, `ex_15_echo.c`, uses every one; `tests/test_unit_loop_ops` runs every
   operation on the system's selector and on the poll kind.
+- **`PROVEN_NET_SELECTOR_IOCP`**, after `PROVEN_NET_SELECTOR_KQUEUE`: the kind of selector
+  `proven_net_selector_create` makes on Windows (below). Alias `XCV_NET_SELECTOR_IOCP`. A
+  `switch` over `proven_net_selector_kind_t` without a default needs the new case.
 
 ### Changed
+
+- **On Windows the selector is built on an I/O completion port** (RFC-0025 step 7), where it
+  was the poll kind over `WSAPoll`: a connection is watched for reading by a receive of zero
+  bytes; room to write, a connection waiting to be accepted, a datagram, and a connection lost
+  while nothing is asked of it by `WSAEventSelect` and a wait of the system's thread pool, which
+  posts to the port (about 500 bytes and two handles per socket while asked). Each wait checks
+  the sockets so reported with `WSAPoll` at no wait, so what it reports is what the poll kind
+  reports; `tests/test_unit_net_selector` passes unchanged but for the kind's name, three times
+  in a row on Windows 11 for x86-64 and for i686, with the blocking HTTP server and client,
+  WebSocket and TLS-over-socket tests. What it changes for a program: `alloc` holds about 170
+  bytes more per registered socket (64-bit); a connection the selector has watched for reading stays
+  bound to its port while open, so it cannot later be read through a loop or another selector
+  (another selector falls back to a notice); `proven_net_selector_destroy` cancels what the
+  system holds and waits for it, up to two seconds. An accepted socket no longer inherits its
+  listener's `WSAEventSelect`. `proven_net_selector_create_poll` still makes the poll kind.
 
 - **On Windows the loop is built on an I/O completion port** (RFC-0025 step 6), where it waited
   with `WSAPoll` before: receives (of zero bytes, or into a buffer), sends of a connection's

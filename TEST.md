@@ -1871,7 +1871,7 @@ Failure tip: inspect `proven_net_poll_with` and the transport functions at the e
 
 ### `tests/test_unit_net_selector` - net: the selector
 
-Intent: verify a registered set of sockets and a wait that reports the ready ones, for the system's kind (epoll on Linux) and for the portable kind built on poll - which must answer alike.
+Intent: verify a registered set of sockets and a wait that reports the ready ones, for the system's kind (epoll on Linux, an I/O completion port on Windows) and for the portable kind built on poll - which must answer alike.
 
 Sub-checks, each run for both kinds:
 
@@ -1882,7 +1882,7 @@ Sub-checks, each run for both kinds:
 - Null pointers, a zero cap, an invalid allocator and handles that are not open are `PROVEN_ERR_INVALID_ARG`.
 - A socket of which nothing is asked, and whose connection is reset, in both kinds of selector: reported at most once in twenty waits, each of which waits its 20 ms; asked about reading it is reported for as long as it asks; nothing asked again, once more and then not.
 
-Failure tip: inspect the Selector section of `src/proven/net.c` - `proven_net_selector_remove` is where the portable kind repairs its hash - and of `platform/proven_sys_net.c` for the system's kind. The `kqueue` path is compiled and run by nothing this project has. The test opens 600 sockets per kind.
+Failure tip: inspect the Selector section of `src/proven/net.c` - `proven_net_selector_remove` is where the portable kind repairs its hash - and of `platform/proven_sys_net.c` for the system's kind; on Windows the IOCP kind is `sel_wait_iocp`, `sel_look` and `sel_arm` in `net.c` and `proven_sys_net_evt_*` in the platform file, run only where the suite runs on Windows. The `kqueue` path is compiled and run by nothing this project has. The test opens 600 sockets per kind.
 
 ### `tests/test_unit_url` - url: parsing, percent-coding, and a path that stays inside its root
 

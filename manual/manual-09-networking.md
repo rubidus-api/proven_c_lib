@@ -894,7 +894,7 @@ remembers it; a wait returns the sockets that are ready and does not look at the
 |---|---|---|
 | `proven_net_selector_create(alloc, &selector)` | Make a selector. | `proven_err_t`: `INVALID_ARG`; `NOMEM`; `BUSY` when out of descriptors. |
 | `proven_net_selector_create_poll(alloc, &selector)` | Make one of the portable kind, whatever the system offers. | the same. |
-| `proven_net_selector_kind(selector)` | Which facility it is built on. | `PROVEN_NET_SELECTOR_EPOLL`, `_KQUEUE` or `_POLL`. |
+| `proven_net_selector_kind(selector)` | Which facility it is built on. | `PROVEN_NET_SELECTOR_EPOLL`, `_KQUEUE`, `_IOCP` (Windows) or `_POLL`. |
 | `proven_net_selector_add(selector, handle, want, tag)` | Register a socket: what to watch it for, and a pointer that comes back with its events. | `proven_err_t`: `EXISTS` when it is already registered; `INVALID_ARG`; `NOMEM`; `BUSY`. |
 | `proven_net_selector_modify(selector, handle, want, tag)` | Change what is asked of it, and its tag. | `proven_err_t`: `NOT_FOUND`. |
 | `proven_net_selector_remove(selector, handle)` | Take it out. | `proven_err_t`: `NOT_FOUND`. |
@@ -921,10 +921,17 @@ is; that kind has not been run.)
 
 **What you get depends on the system, and the selector says which.** On Linux it is `epoll`; on
 the BSDs and macOS it is `kqueue`. There a wait costs in proportion to the sockets that are
-ready. On Windows, and anywhere else, it is the portable kind: the same interface kept over the
-call `proven_net_poll` uses, which still examines every socket on every wait. It behaves the
-same and it does not scale the same. `proven_net_selector_kind` tells you; a server that
-means to hold tens of thousands of connections should look.
+ready. On Windows it is an I/O completion port (`PROVEN_NET_SELECTOR_IOCP`): a connection is
+watched for reading by a receive of zero bytes, and room to write, a connection waiting to be
+accepted, a datagram, or a connection lost while nothing is asked of it, by a notice of the
+system's thread pool - about 500 bytes and two handles per socket while it is asked, so that
+cost falls on listeners, datagram sockets and connections waiting to write, not on idle ones.
+Each wait checks what was so reported with the call `proven_net_poll` uses, so it reports what
+the portable kind would. A connection it has watched for reading stays bound to its port while
+it is open. Anywhere else it is the portable kind: the same interface kept over the call
+`proven_net_poll` uses, which still examines every socket on every wait. It behaves the same
+and it does not scale the same. `proven_net_selector_kind` tells you; a server that means to
+hold tens of thousands of connections should look.
 
 **Remove a socket before you close it.** A closed socket's number is given to the next socket
 opened. A selector that still holds the old registration then reports events for a socket that
@@ -988,7 +995,7 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_net_selector_create(proven_heap_allocator(), &selector) == PROVEN_OK, "a selector");
     /* epoll on Linux, kqueue on the BSDs and macOS; elsewhere the same interface over poll. */
     proven_net_selector_kind_t kind = proven_net_selector_kind(selector);
-    printf("selector kind: %s\n", kind == PROVEN_NET_SELECTOR_EPOLL ? "epoll" : kind == PROVEN_NET_SELECTOR_KQUEUE ? "kqueue" : "poll");
+    printf("selector kind: %s\n", kind == PROVEN_NET_SELECTOR_EPOLL ? "epoll" : kind == PROVEN_NET_SELECTOR_KQUEUE ? "kqueue" : kind == PROVEN_NET_SELECTOR_IOCP ? "iocp" : "poll");
 
     /* The tag is what comes back with an event: a pointer to your own record of the socket.
      * The listener's tag here is the listener itself. */
@@ -1051,8 +1058,8 @@ int main(void) {
                     proven_net_selector_count(selector) == 0, "and the listener: the selector is empty");
     (void)proven_net_listener_close(&listener);
 
-    /* The portable kind can be asked for by name - to compare the two, or to run on Linux the
-     * code path Windows uses. */
+    /* The portable kind can be asked for by name - to compare the two, or to run the code path
+     * of a system that offers nothing better. */
     proven_net_selector_t *portable = NULL;
     EXAMPLE_REQUIRE(proven_net_selector_create_poll(proven_heap_allocator(), &portable) == PROVEN_OK &&
                     proven_net_selector_kind(portable) == PROVEN_NET_SELECTOR_POLL, "a selector of the poll kind");
@@ -1089,6 +1096,6 @@ Unix-domain sockets need Windows 10 version 1803 or later; where the family is m
 - **Encryption.** A connection made here is not encrypted. TLS is a layer over the transport
   interface: [Chapter 14](manual-14-tls.md).
 - **A deadline on name resolution.** See section 2.
-- **Scale on Windows.** The selector is `epoll` or `kqueue` where they exist; on Windows it is built on `WSAPoll`. The event loop of [Chapter 15](manual-15-event-loop.md) does not use it there: it is built on an I/O completion port.
+- **Scale on Windows, measured.** The selector and the event loop of [Chapter 15](manual-15-event-loop.md) are built on I/O completion ports there; neither has been measured at scale on Windows yet.
 - **Unix-domain datagrams, raw sockets, multicast, socket options beyond `TCP_NODELAY`.**
 - **HTTP.** The message codec is [Chapter 10](manual-10-http.md); the client and the server that drive it over these sockets are [Chapter 11](manual-11-http-client-server.md).

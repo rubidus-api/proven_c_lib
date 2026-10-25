@@ -70,7 +70,10 @@ static void run(bool force_poll) {
 #if defined(__linux__)
     PROVEN_TEST_ASSERT(force_poll || kind == PROVEN_NET_SELECTOR_EPOLL, "on Linux the system's kind is epoll", "");
 #endif
-    PROVEN_TEST_INFO("kind: {}", PROVEN_ARG(kind == PROVEN_NET_SELECTOR_EPOLL ? "epoll" : kind == PROVEN_NET_SELECTOR_KQUEUE ? "kqueue" : "poll"));
+#if defined(_WIN32) || defined(_WIN64)
+    PROVEN_TEST_ASSERT(force_poll || kind == PROVEN_NET_SELECTOR_IOCP, "on Windows the system's kind is a completion port", "");
+#endif
+    PROVEN_TEST_INFO("kind: {}", PROVEN_ARG(kind == PROVEN_NET_SELECTOR_EPOLL ? "epoll" : kind == PROVEN_NET_SELECTOR_KQUEUE ? "kqueue" : kind == PROVEN_NET_SELECTOR_IOCP ? "iocp" : "poll"));
     proven_net_ready_t events[64];
     proven_size_t n = 99;
 

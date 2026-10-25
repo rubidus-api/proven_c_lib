@@ -885,7 +885,7 @@ selector는 같은 질문을 거꾸로 묻는다. 소켓을 한 번 등록하면
 |---|---|---|
 | `proven_net_selector_create(alloc, &selector)` | selector를 만든다. | `proven_err_t`: `INVALID_ARG`. `NOMEM`. 디스크립터가 모자라면 `BUSY`. |
 | `proven_net_selector_create_poll(alloc, &selector)` | 시스템이 무엇을 제공하든 이식형 종류로 만든다. | 같다. |
-| `proven_net_selector_kind(selector)` | 무엇 위에 지어졌는지. | `PROVEN_NET_SELECTOR_EPOLL`, `_KQUEUE` 또는 `_POLL`. |
+| `proven_net_selector_kind(selector)` | 무엇 위에 지어졌는지. | `PROVEN_NET_SELECTOR_EPOLL`, `_KQUEUE`, `_IOCP`(Windows) 또는 `_POLL`. |
 | `proven_net_selector_add(selector, handle, want, tag)` | 소켓을 등록한다: 무엇을 지켜볼지, 그리고 이벤트와 함께 돌아올 포인터. | `proven_err_t`: 이미 등록되어 있으면 `EXISTS`. `INVALID_ARG`. `NOMEM`. `BUSY`. |
 | `proven_net_selector_modify(selector, handle, want, tag)` | 그 소켓에 묻는 것과 tag를 바꾼다. | `proven_err_t`: `NOT_FOUND`. |
 | `proven_net_selector_remove(selector, handle)` | 꺼낸다. | `proven_err_t`: `NOT_FOUND`. |
@@ -908,7 +908,12 @@ typedef struct {
 무언가를 물을 때까지 보고하지 않는다. 그 종류는 실행해 보지 못했다.)
 
 **무엇을 얻는지는 시스템에 달려 있고, selector가 어느 쪽인지 말해 준다.** Linux에서는 `epoll`이고 BSD와
-macOS에서는 `kqueue`다. 거기서는 기다림의 비용이 준비된 소켓 수에 비례한다. Windows와 그 밖의 곳에서는
+macOS에서는 `kqueue`다. 거기서는 기다림의 비용이 준비된 소켓 수에 비례한다. Windows에서는 I/O 완료
+포트다(`PROVEN_NET_SELECTOR_IOCP`): 연결의 읽기는 0바이트 수신으로 지켜보고, 쓸 자리, 받아들일 연결,
+데이터그램, 아무것도 묻지 않은 동안 끊긴 연결은 시스템 스레드 풀의 알림으로 지켜본다. 알림은 묻는 동안 소켓마다
+약 500바이트와 핸들 두 개가 들므로, 그 비용은 리스너, 데이터그램 소켓, 쓰기를 기다리는 연결이 치르고 한가한
+연결은 치르지 않는다. 기다릴 때마다 그렇게 보고된 것을 `proven_net_poll`이 쓰는 호출로 확인하므로, 이식형
+종류가 보고할 것을 보고한다. 읽기를 지켜본 연결은 열려 있는 동안 그 포트에 묶여 있다. 그 밖의 곳에서는
 이식형 종류다: 같은 인터페이스를 `proven_net_poll`이 쓰는 호출 위에 얹은 것으로, 기다릴 때마다 여전히
 모든 소켓을 살핀다. 동작은 같고 확장성은 같지 않다. `proven_net_selector_kind`가 알려 준다. 수만 연결을
 쥘 작정인 서버는 확인해야 한다.
@@ -972,7 +977,7 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_net_selector_create(proven_heap_allocator(), &selector) == PROVEN_OK, "a selector");
     /* Linux에서는 epoll, BSD와 macOS에서는 kqueue. 그 밖에서는 poll 위의 같은 인터페이스. */
     proven_net_selector_kind_t kind = proven_net_selector_kind(selector);
-    printf("selector kind: %s\n", kind == PROVEN_NET_SELECTOR_EPOLL ? "epoll" : kind == PROVEN_NET_SELECTOR_KQUEUE ? "kqueue" : "poll");
+    printf("selector kind: %s\n", kind == PROVEN_NET_SELECTOR_EPOLL ? "epoll" : kind == PROVEN_NET_SELECTOR_KQUEUE ? "kqueue" : kind == PROVEN_NET_SELECTOR_IOCP ? "iocp" : "poll");
 
     /* tag는 이벤트와 함께 돌아오는 것이다: 그 소켓에 대한 여러분 자신의 기록을 가리키는 포인터.
      * 여기서 리스너의 tag는 리스너 자신이다. */
@@ -1035,8 +1040,8 @@ int main(void) {
                     proven_net_selector_count(selector) == 0, "and the listener: the selector is empty");
     (void)proven_net_listener_close(&listener);
 
-    /* 이식형 종류를 이름으로 요청할 수 있다 - 둘을 비교하거나, Windows가 쓰는 코드 경로를
-     * Linux에서 돌려 보려고. */
+    /* 이식형 종류를 이름으로 요청할 수 있다 - 둘을 비교하거나, 더 나은 것이 없는 시스템의
+     * 코드 경로를 돌려 보려고. */
     proven_net_selector_t *portable = NULL;
     EXAMPLE_REQUIRE(proven_net_selector_create_poll(proven_heap_allocator(), &portable) == PROVEN_OK &&
                     proven_net_selector_kind(portable) == PROVEN_NET_SELECTOR_POLL, "a selector of the poll kind");
@@ -1072,6 +1077,6 @@ POSIX는 즉시 답한다 - 기한에 그만큼을 감안하라. 그리고 유�
 
 - **암호화.** 여기서 만든 연결은 암호화되지 않는다. TLS는 전송 인터페이스 위의 한 층이다: [14장](manual-14-tls-ko.md).
 - **이름 해석의 기한.** §2를 보라.
-- **Windows에서의 규모.** selector는 `epoll`이나 `kqueue`가 있는 곳에서는 그것이고, Windows에서는 `WSAPoll` 위에 지은 것이다. [15장](manual-15-event-loop-ko.md)의 이벤트 루프는 거기서 그것을 쓰지 않는다: I/O 완료 포트 위에 지어졌다.
+- **Windows에서 잰 규모.** 거기서 selector와 [15장](manual-15-event-loop-ko.md)의 이벤트 루프는 I/O 완료 포트 위에 지어졌다. 어느 쪽도 Windows에서 규모를 아직 재지 않았다.
 - **유닉스 도메인 데이터그램, raw 소켓, 멀티캐스트, `TCP_NODELAY` 외의 소켓 옵션.**
 - **HTTP.** 메시지 코덱은 [10장](manual-10-http-ko.md)에 있다. 그것을 이 소켓 위에서 구동하는 클라이언트와 서버는 [11장](manual-11-http-client-server-ko.md)에 있다.

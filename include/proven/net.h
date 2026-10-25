@@ -496,9 +496,17 @@ void proven_net_waker_close(proven_net_waker_t *waker);
  * (kqueue) the cost of a wait then depends on how many sockets are ready, not on how many are
  * registered.
  *
- * Where the system has no such facility - Windows among them - the selector is built on the
- * same call proven_net_poll uses. It behaves identically and scales as proven_net_poll does;
- * proven_net_selector_kind says which you have.
+ * On Windows the selector is built on an I/O completion port: a connection waiting to be read
+ * is watched by a receive of zero bytes, and what that cannot tell - room to write, a
+ * connection waiting to be accepted, a datagram, a connection lost while nothing is asked - by
+ * a notice of the system's thread pool, which costs about 500 bytes and two handles per socket
+ * while it is asked. Each wait checks the sockets so reported with the call proven_net_poll uses,
+ * so what it reports is what the poll kind would. A connection a selector has watched for
+ * reading stays bound to that selector's port for as long as it is open: it cannot later be
+ * read through another selector or a loop (another selector falls back to a notice).
+ * Where the system has none of these, the selector is built on the call proven_net_poll uses.
+ * It behaves identically and scales as proven_net_poll does. proven_net_selector_kind says
+ * which you have.
  *
  * Readiness is level-triggered, as with proven_net_poll: a socket is reported for as long as
  * it is ready, so an event you do not act on comes back on the next wait.
@@ -521,11 +529,13 @@ typedef struct {
 typedef enum {
     PROVEN_NET_SELECTOR_POLL = 0,   /**< built on poll / WSAPoll: every wait looks at every socket */
     PROVEN_NET_SELECTOR_EPOLL,      /**< Linux */
-    PROVEN_NET_SELECTOR_KQUEUE      /**< the BSDs and macOS */
+    PROVEN_NET_SELECTOR_KQUEUE,     /**< the BSDs and macOS */
+    PROVEN_NET_SELECTOR_IOCP        /**< Windows: an I/O completion port */
 } proven_net_selector_kind_t;
 
 /**
- * @brief Make a selector. `alloc` holds the selector itself and, for the poll kind, its list.
+ * @brief Make a selector. `alloc` holds the selector itself and, for the poll kind, its list; for
+ *        the IOCP kind, its list and about 170 bytes per socket (64-bit).
  * @return PROVEN_ERR_INVALID_ARG; PROVEN_ERR_NOMEM; PROVEN_ERR_BUSY when the system is out of
  *         descriptors.
  */
@@ -536,12 +546,13 @@ proven_err_t proven_net_selector_create(proven_allocator_t alloc, proven_net_sel
  * @brief Make a selector of the poll kind whatever the system offers.
  *
  * The portable construction, on every platform. For measuring one kind against the other, and
- * for testing on Linux the code that runs on Windows.
+ * for testing on one system the code that runs where the system offers nothing better.
  */
 [[nodiscard]]
 proven_err_t proven_net_selector_create_poll(proven_allocator_t alloc, proven_net_selector_t **out);
 
-/** @brief Free a selector. The sockets registered with it are not closed. NULL is ignored. */
+/** @brief Free a selector. The sockets registered with it are not closed. NULL is ignored. Of the
+ *         IOCP kind, what the system still holds is cancelled and waited for, up to two seconds. */
 void proven_net_selector_destroy(proven_net_selector_t *selector);
 
 /** @brief Which facility this selector is built on. */

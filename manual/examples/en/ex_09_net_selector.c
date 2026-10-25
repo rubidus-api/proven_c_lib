@@ -27,7 +27,7 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_net_selector_create(proven_heap_allocator(), &selector) == PROVEN_OK, "a selector");
     /* epoll on Linux, kqueue on the BSDs and macOS; elsewhere the same interface over poll. */
     proven_net_selector_kind_t kind = proven_net_selector_kind(selector);
-    printf("selector kind: %s\n", kind == PROVEN_NET_SELECTOR_EPOLL ? "epoll" : kind == PROVEN_NET_SELECTOR_KQUEUE ? "kqueue" : "poll");
+    printf("selector kind: %s\n", kind == PROVEN_NET_SELECTOR_EPOLL ? "epoll" : kind == PROVEN_NET_SELECTOR_KQUEUE ? "kqueue" : kind == PROVEN_NET_SELECTOR_IOCP ? "iocp" : "poll");
 
     /* The tag is what comes back with an event: a pointer to your own record of the socket.
      * The listener's tag here is the listener itself. */
@@ -90,8 +90,8 @@ int main(void) {
                     proven_net_selector_count(selector) == 0, "and the listener: the selector is empty");
     (void)proven_net_listener_close(&listener);
 
-    /* The portable kind can be asked for by name - to compare the two, or to run on Linux the
-     * code path Windows uses. */
+    /* The portable kind can be asked for by name - to compare the two, or to run the code path
+     * of a system that offers nothing better. */
     proven_net_selector_t *portable = NULL;
     EXAMPLE_REQUIRE(proven_net_selector_create_poll(proven_heap_allocator(), &portable) == PROVEN_OK &&
                     proven_net_selector_kind(portable) == PROVEN_NET_SELECTOR_POLL, "a selector of the poll kind");

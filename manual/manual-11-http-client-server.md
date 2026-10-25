@@ -151,8 +151,8 @@ and this library's clients do so once. The example below ends that way.
 section 9) and keeps its timeouts on a timer wheel, so a round of the loop costs in proportion
 to the connections that have something to do, not to the connections that are open: with
 twenty thousand idle keep-alive connections held, a request on one more takes as long as with
-none (measured on Linux, where the selector is `epoll`). On Windows the selector is built on
-`WSAPoll` and every round still looks at every connection.
+none (measured on Linux, where the selector is `epoll`). On Windows the selector is built on an
+I/O completion port; it has not been measured there at scale.
 
 That removes one limit and leaves two. Each connection still holds its buffers from the moment
 it is accepted (below), and each request still occupies a thread while its handler runs
