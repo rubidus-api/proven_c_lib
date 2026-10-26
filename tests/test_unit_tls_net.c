@@ -142,7 +142,7 @@ static void transport_cases(void) {
 // -----------------------------------------------------------------------------
 
 static proven_http_server_t *g_server;
-static atomic_int g_requests;
+static atomic_int g_requests, g_early;
 
 static void serve(void *arg) { (void)arg; (void)proven_http_server_run(g_server); }
 
@@ -184,8 +184,21 @@ static void handler(void *ctx, proven_http_exchange_t *x) {
         (void)proven_http_exchange_respond(x, 200, NULL, 0, (proven_mem_view_t){ .ptr = big, .size = sizeof big });
         return;
     }
+    if (proven_u8str_view_eq(r->target, sv("/early"))) {
+        /* Says whether it came as early data; /early-425 will not act on an early copy. */
+        const bool early = proven_http_exchange_early(x);
+        if (early) atomic_fetch_add(&g_early, 1);
+        (void)proven_http_exchange_respond(x, 200, NULL, 0, mv(early ? "early" : "late"));
+        return;
+    }
+    if (proven_u8str_view_eq(r->target, sv("/early-425"))) {
+        if (proven_http_exchange_early(x)) { atomic_fetch_add(&g_early, 1); (void)proven_http_exchange_respond(x, 425, NULL, 0, mv("")); return; }
+        (void)proven_http_exchange_respond(x, 200, NULL, 0, mv("late"));
+        return;
+    }
     (void)proven_http_exchange_respond(x, 200, NULL, 0, mv("hello over tls"));
 }
+
 
 static char g_url[128];
 static proven_u8str_view_t url(const char *scheme, proven_u16 port, const char *path) {
@@ -200,6 +213,71 @@ static bool body_is(proven_http_client_response_t *resp, const char *want) {
     ok = ok && v.size == strlen(want) && memcmp(v.ptr, want, v.size) == 0;
     proven_u8str_destroy(g_heap, &body);
     return ok;
+}
+
+/* 0-RTT over TCP from the blocking client to the blocking server (RFC-0027). */
+static void early_cases(proven_tls_config_t *client_tls, proven_tls_config_t *client_plain, proven_tls_config_t *server_tls, proven_tls_config_t *server_plain) {
+    for (int which = 0; which < 2; ++which) {
+        proven_http_server_config_t scfg = { .alloc = g_heap, .handler = handler, .tls = which == 0 ? server_tls : server_plain, .head_timeout_ms = 4000, .max_body_bytes = 1 << 20 };
+        proven_net_addr_t at;
+        PROVEN_TEST_ASSERT(proven_http_server_create(&scfg, &g_server) == PROVEN_OK &&
+                           proven_http_server_listen(g_server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "an HTTPS server", "");
+        proven_job_group_t running;
+        proven_job_group_init(&running);
+        PROVEN_TEST_ASSERT(proven_job_group_submit(g_loop, &running, serve, NULL) == PROVEN_OK, "its loop runs on another thread", "");
+        /* No connection is kept: every request makes one, resuming the last one's session. */
+        proven_http_client_config_t ccfg = { .alloc = g_heap, .tls_wrap = proven_tls_http_wrap, .tls_ctx = client_tls };
+        proven_http_client_t *client = NULL;
+        PROVEN_TEST_ASSERT(proven_http_client_create(&ccfg, &client) == PROVEN_OK, "a client whose configuration asks for early data", "");
+        proven_http_client_response_t resp;
+        atomic_store(&g_early, 0);
+        PROVEN_TEST_ASSERT(proven_http_client_get(client, url("https", at.port, "/early"), &resp) == PROVEN_OK && resp.status == 200 && body_is(&resp, "late"),
+            "a first connection: a full handshake, nothing early", "");
+        proven_http_client_finish(&resp);
+        if (which == 0) {
+            PROVEN_TEST_ASSERT(proven_http_client_get(client, url("https", at.port, "/early"), &resp) == PROVEN_OK && resp.status == 200 && body_is(&resp, "early") && atomic_load(&g_early) == 1,
+                "the next one's GET went with its ClientHello: the handler saw proven_http_exchange_early, and answered before the client's Finished", "");
+            proven_http_client_finish(&resp);
+            PROVEN_TEST_ASSERT(proven_http_client_get(client, url("https", at.port, "/early"), &resp) == PROVEN_OK && resp.status == 200 && body_is(&resp, "early") && atomic_load(&g_early) == 2,
+                "and the one after: the ticket the last connection received with the server's flight is a fresh one", "");
+            proven_http_client_finish(&resp);
+            static proven_byte_t up[3000];
+            memset(up, 'u', sizeof up);
+            proven_http_client_request_t post = { .method = PROVEN_LIT("POST"), .url = url("https", at.port, "/upload"), .body = { .ptr = up, .size = sizeof up } };
+            PROVEN_TEST_ASSERT(proven_http_client_send(client, &post, &resp) == PROVEN_OK && resp.status == 200 && body_is(&resp, "3000 351000") && atomic_load(&g_early) == 2,
+                "a POST waits for the handshake: never early", "");
+            proven_http_client_finish(&resp);
+            PROVEN_TEST_ASSERT(proven_http_client_get(client, url("https", at.port, "/early-425"), &resp) == PROVEN_OK && resp.status == 200 && body_is(&resp, "late") && atomic_load(&g_early) == 3,
+                "a handler's 425 to an early GET: the client sends it again on a new connection, not early, and it is answered", "");
+            proven_http_client_finish(&resp);
+            /* The register holds the three tickets taken early so far (within its 10 s window):
+             * with room for four, the next early attempt fills it and the one after is refused. */
+            proven_tls_test_early_cap_(server_tls, 4);
+            PROVEN_TEST_ASSERT(proven_http_client_get(client, url("https", at.port, "/early"), &resp) == PROVEN_OK && resp.status == 200 && body_is(&resp, "early") && atomic_load(&g_early) == 4,
+                "early again, on the ticket the last connection left", "");
+            proven_http_client_finish(&resp);
+            PROVEN_TEST_ASSERT(proven_http_client_get(client, url("https", at.port, "/early"), &resp) == PROVEN_OK && resp.status == 200 && body_is(&resp, "late") && atomic_load(&g_early) == 4,
+                "refused (the register is full): the request goes again under the handshake's keys and is answered once, not early", "");
+            proven_http_client_finish(&resp);
+            proven_tls_test_early_cap_(server_tls, 0);
+            proven_http_client_destroy(client);
+            ccfg.tls_ctx = client_plain;
+            PROVEN_TEST_ASSERT(proven_http_client_create(&ccfg, &client) == PROVEN_OK, "a client whose configuration does not", "");
+            for (int k = 0; k < 2; ++k) {
+                PROVEN_TEST_ASSERT(proven_http_client_get(client, url("https", at.port, "/early"), &resp) == PROVEN_OK && resp.status == 200 && body_is(&resp, "late"),
+                    "sends nothing early", "");
+                proven_http_client_finish(&resp);
+            }
+        } else {
+            PROVEN_TEST_ASSERT(proven_http_client_get(client, url("https", at.port, "/early"), &resp) == PROVEN_OK && resp.status == 200 && body_is(&resp, "late") && atomic_load(&g_early) == 0,
+                "a server without early_data issues tickets that allow none: nothing early", "");
+            proven_http_client_finish(&resp);
+        }
+        proven_http_client_destroy(client);
+        proven_http_server_stop(g_server);
+        proven_job_group_wait(g_loop, &running);
+        proven_http_server_destroy(g_server);
+    }
 }
 
 static void https_cases(proven_job_sys_t *handlers, const char *how) {
@@ -423,6 +501,17 @@ int main(void) {
         https_cases(handlers, "TLS 1.2, handlers on workers");
         proven_tls_config_destroy(g_client_tls);
         g_client_tls = any;
+    }
+    PROVEN_TEST_SECTION("0-RTT over HTTPS, the blocking client and server",
+        "With early_data on both sides a GET on a second connection goes with the ClientHello and is answered before the client's Finished; a POST waits for the handshake; a handler's 425 sends the GET again; without early_data on either side nothing goes early.",
+        "Check tt_write, tt_settle and the session cache in src/proven/tls_transport.c and tls_config.c, the early branch of sv_service in http_server.c, and the 425 and no_early_now in http_client.c.");
+    {
+        proven_tls_options_t ce = co, se = so;
+        ce.early_data = true; se.early_data = true;
+        proven_tls_config_t *client_early = NULL, *server_early = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&ce, &client_early) == PROVEN_OK && proven_tls_config_create(&se, &server_early) == PROVEN_OK, "configurations with early_data", "");
+        early_cases(client_early, g_client_tls, server_early, g_server_tls);
+        proven_tls_config_destroy(client_early); proven_tls_config_destroy(server_early);
     }
     PROVEN_TEST_SECTION("an RSA key, signing on several threads", "Four threads completing handshakes against one configuration: the key's blinding pair is shared and changes with every signature.", "Check proven_tls_config_rsa_sign_ in src/proven/tls_config.c: the pair is copied and replaced under the flag, and the signature is made outside it. Run under ThreadSanitizer.");
     rsa_threads_case();

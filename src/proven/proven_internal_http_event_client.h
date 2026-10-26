@@ -117,6 +117,12 @@ struct proven_http_event_request {
     bool keep_out;                     /* ... and so `out` is kept after it is sent, for it may have to be sent again */
     bool sent;                         /* some of the request has been given to its connection */
     bool no_resend;                    /* ended by its caller or its client: not to be sent again */
+    /* 0-RTT over TCP (RFC-0027): the request may go as early data - GET, HEAD or OPTIONS with no
+     * body and no Upgrade; not again (it was answered 425); how much of `out` went early, and
+     * what came of it (proven_http_event_client_early_). */
+    bool early_ok, no_early, early_settled;
+    proven_u8 early_result;
+    proven_u32 early_len;
 };
 
 struct proven_http_event_client {
@@ -205,6 +211,13 @@ bool proven_http_event_client_h3_resumed_(proven_http_event_request_t *request);
  * and refused (sent again under 1-RTT), 3 and answered 425 (sent again after the handshake);
  * known once the server's answer to the handshake came. */
 int proven_http_event_client_h3_early_(proven_http_event_request_t *request);
+/* The same over TCP (RFC-0027), HTTP/1.1 and HTTP/2: 0 not early, 1 accepted, 2 refused (sent
+ * again under 1-RTT), 3 answered 425 and sent again after the handshake. */
+int proven_http_event_client_early_(proven_http_event_request_t *request);
+int proven_http_event_client_h2_early_(proven_http_event_request_t *request);
+bool proven_http_event_client_may_go_early_(proven_u8str_view_t method, const proven_http_event_request_options_t *o);
+/* For tests: over TCP, any request whose body is in memory may go early, as another client might. */
+void proven_http_event_client_test_early_any_(bool on);
 /* For tests: let any request with its body in memory go early, as another client might. */
 void proven_http_event_client_h3_test_early_any_(bool on);
 /* For tests: no new request on the HTTP/3 connections open now, as after a GOAWAY; they stay

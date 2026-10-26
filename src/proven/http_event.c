@@ -302,7 +302,7 @@ static bool ev_flush(proven_http_stream_t *c) {
             if (!ev_put(c, pending.ptr, pending.size)) return false;
             proven_tls_output_sent(c->tls, pending.size);
         }
-        if (buf_pending(&c->out) == 0 || !proven_tls_is_established(c->tls)) break;
+        if (buf_pending(&c->out) == 0 || !proven_tls_writable_(c->tls)) break;   /* from the server's Finished on, with early data taken */
         proven_size_t taken = 0;
         bool fallback = false;
         if (!ev_seal(c, c->out.ptr + c->out.off, buf_pending(&c->out), &taken, &fallback)) return false;
@@ -486,6 +486,15 @@ static void ev_process(proven_http_stream_t *c) {
             if (refuse) { ev_reject(c, refuse, PROVEN_ERR_INVALID_FORMAT); break; }
 
             bool no_body = framing.kind == PROVEN_HTTP_BODY_NONE || (framing.kind == PROVEN_HTTP_BODY_LENGTH && framing.length == 0);
+            /* A request whose head arrived in early data may be a replay (RFC 8446 section 8):
+             * only one that is safe to repeat - GET, HEAD or OPTIONS without a body - reaches its
+             * handler, which can tell (proven_http_stream_early); anything else is answered 425
+             * Too Early here, and the client sends it again after the handshake (RFC 8470). */
+            c->early_req = proven_http_event_early_ahead_(c) >= head;
+            if (c->early_req && !(no_body && (req.method == PROVEN_HTTP_GET || req.method == PROVEN_HTTP_HEAD || req.method == PROVEN_HTTP_OPTIONS))) {
+                ev_reject(c, 425, PROVEN_ERR_INVALID_STATE);
+                break;
+            }
             c->method = req.method;
             c->h.version_minor = (proven_u8)req.version_minor;
             c->keep = proven_http_request_keep_alive(&req);
@@ -681,6 +690,7 @@ static proven_err_t ev_take(proven_http_event_server_t *s, const proven_net_conn
     c->head_started = true;                        /* a new connection is expected to speak promptly */
     proven_err_t e = PROVEN_OK;
     if (s->cfg.tls) e = proven_tls_server_create(s->cfg.tls, &c->tls);
+    if (e == PROVEN_OK && c->tls && s->cfg.tls->early_data) proven_tls_server_take_early_(c->tls);   /* RFC-0027 */
     if (e == PROVEN_OK) e = proven_loop_attach(s->loop, &c->lsock, &c->sock, &ev_sock_fns, c);
     if (e == PROVEN_OK) {
         /* The server bounds what it queues by max_buffered_output itself; a response given
@@ -1388,11 +1398,22 @@ int proven_http_stream_protocol(const proven_http_stream_t *c) {
 }
 
 bool proven_http_stream_early(const proven_http_stream_t *c) {
+    if (!c) return false;
 #if !defined(PROVEN_NO_HTTP3)
-    if (c && PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_early_(c);
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_early_(c);
 #endif
-    (void)c;
-    return false;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_early_(c);
+    return c->early_req;
+}
+
+proven_size_t proven_http_event_early_ahead_(const proven_http_stream_t *c) {
+    if (!c || !c->tls) return 0;
+    proven_size_t early = 0, total = 0;
+    proven_tls_read_counts_(c->tls, &early, &total);
+    const proven_size_t unparsed = buf_pending(&c->stash);
+    if (early == 0 || unparsed > total) return 0;
+    const proven_size_t at = total - unparsed;    /* where the unconsumed input begins */
+    return at < early ? early - at : 0;
 }
 
 // -----------------------------------------------------------------------------

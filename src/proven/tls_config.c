@@ -264,6 +264,18 @@ proven_err_t proven_tls_config_create(const proven_tls_options_t *o, proven_tls_
             c->early_seen->cap = PROVEN_TLS_EARLY_SEEN;
         }
     }
+    /* A client that asks for early data keeps its sessions for the transport wrapper (RFC-0027):
+     * without one there is nothing to resume, and no early data. Nobody else's connections change. */
+    if (e == PROVEN_OK && o->early_data) {
+        m = a.alloc_fn(a.ctx, sizeof(proven_tls_client_cache_t), 16);
+        if (m.err != PROVEN_OK) e = m.err;
+        else {
+            c->client_cache = (proven_tls_client_cache_t *)m.value.ptr;
+            c->client_cache->clock = 0;
+            c->client_cache->e = NULL;
+            atomic_flag_clear(&c->client_cache->lock);
+        }
+    }
     if (o->pin_count > 0) {
         if (o->pin_count > 64) e = PROVEN_ERR_INVALID_ARG;
         else {
@@ -313,6 +325,13 @@ void proven_tls_config_destroy(proven_tls_config_t *c) {
     if (c->chain_mem) a.free_fn(a.ctx, c->chain_mem);
     if (c->rsa) { cfg_wipe(c->rsa, sizeof *c->rsa); a.free_fn(a.ctx, c->rsa); }
     if (c->early_seen) a.free_fn(a.ctx, c->early_seen);
+    if (c->client_cache) {
+        if (c->client_cache->e) {
+            cfg_wipe(c->client_cache->e, PROVEN_TLS_CLIENT_SESSIONS * sizeof(proven_tls_client_entry_t));
+            a.free_fn(a.ctx, c->client_cache->e);
+        }
+        a.free_fn(a.ctx, c->client_cache);
+    }
     cfg_wipe(c, sizeof *c);
     a.free_fn(a.ctx, c);
 }
@@ -501,4 +520,59 @@ bool proven_tls_ticket_open(const proven_tls_config_t *config, proven_mem_view_t
     }
     cfg_wipe(cur, sizeof cur); cfg_wipe(prev, sizeof prev); cfg_wipe(plain, sizeof plain);
     return ok;
+}
+
+/* ---- A client's sessions by server name (RFC-0027) ---- */
+
+static bool cache_name_is(const proven_tls_client_entry_t *x, proven_u8str_view_t name) {
+    if (x->used == 0 || x->name_len != name.size) return false;
+    for (proven_size_t i = 0; i < name.size; ++i) {
+        proven_byte_t a = x->name[i], b = name.ptr[i];
+        if (a >= 'A' && a <= 'Z') a = (proven_byte_t)(a + 32);
+        if (b >= 'A' && b <= 'Z') b = (proven_byte_t)(b + 32);
+        if (a != b) return false;
+    }
+    return true;
+}
+
+void proven_tls_client_cache_load_(const proven_tls_config_t *config, proven_u8str_view_t name, proven_tls_session_t *out) {
+    cfg_wipe(out->opaque, sizeof out->opaque);
+    proven_tls_client_cache_t *k = config ? config->client_cache : NULL;
+    if (!k || name.size == 0 || name.size > 253) return;
+    while (atomic_flag_test_and_set_explicit(&k->lock, memory_order_acquire)) { }
+    for (proven_size_t i = 0; k->e && i < PROVEN_TLS_CLIENT_SESSIONS; ++i) {
+        if (!cache_name_is(&k->e[i], name)) continue;
+        *out = k->e[i].s;
+        k->e[i].used = ++k->clock;
+        break;
+    }
+    atomic_flag_clear_explicit(&k->lock, memory_order_release);
+}
+
+void proven_tls_client_cache_store_(const proven_tls_config_t *config, proven_u8str_view_t name, const proven_tls_session_t *s) {
+    proven_tls_client_cache_t *k = config ? config->client_cache : NULL;
+    if (!k || !s || name.size == 0 || name.size > 253) return;
+    const proven_tls_session_data_t *d = (const proven_tls_session_data_t *)(const void *)s->opaque;
+    if (d->magic != PROVEN_TLS_SESSION_MAGIC) return;
+    proven_tls_client_entry_t *fresh = NULL;
+    if (!k->e) {
+        /* Allocated outside the lock; a second thread that got here too gives its own back. */
+        proven_result_mem_mut_t m = config->alloc.alloc_fn(config->alloc.ctx, PROVEN_TLS_CLIENT_SESSIONS * sizeof(proven_tls_client_entry_t), 16);
+        if (m.err != PROVEN_OK) return;
+        fresh = (proven_tls_client_entry_t *)(void *)m.value.ptr;
+        cfg_wipe(fresh, PROVEN_TLS_CLIENT_SESSIONS * sizeof *fresh);
+    }
+    while (atomic_flag_test_and_set_explicit(&k->lock, memory_order_acquire)) { }
+    if (!k->e && fresh) { k->e = fresh; fresh = NULL; }
+    proven_tls_client_entry_t *at = &k->e[0];
+    for (proven_size_t i = 0; i < PROVEN_TLS_CLIENT_SESSIONS; ++i) {
+        if (cache_name_is(&k->e[i], name)) { at = &k->e[i]; break; }
+        if (k->e[i].used < at->used) at = &k->e[i];
+    }
+    at->s = *s;
+    at->name_len = (proven_u8)name.size;
+    for (proven_size_t i = 0; i < name.size; ++i) at->name[i] = name.ptr[i];
+    at->used = ++k->clock;
+    atomic_flag_clear_explicit(&k->lock, memory_order_release);
+    if (fresh) { cfg_wipe(fresh, PROVEN_TLS_CLIENT_SESSIONS * sizeof *fresh); config->alloc.free_fn(config->alloc.ctx, fresh); }
 }

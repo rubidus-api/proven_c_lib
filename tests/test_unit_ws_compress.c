@@ -35,7 +35,7 @@ static proven_allocator_t g_heap;
 static proven_loop_t *g_loop;
 static proven_http_server_t *g_blocking;
 static proven_byte_t g_msg[MIB + 16];
-static atomic_int g_event_closed, g_refused, g_writable, g_bad_config;
+static atomic_int g_event_closed, g_refused, g_writable, g_bad_config, g_pushed;
 
 /* A message of `n` bytes: text with a two-byte character every so often (so that pieces cut
  * characters), or binary with stretches that do not compress. */
@@ -132,6 +132,7 @@ static void push_pump(peer_t *p) {
         if (e == PROVEN_ERR_AGAIN) { atomic_fetch_add(&g_refused, 1); return; }
         if (e != PROVEN_OK) return;
         p->pushed++;
+        atomic_store(&g_pushed, p->pushed);
     }
     proven_ws_stream_close(p->ws, 1000, sv("done"));
 }
@@ -685,10 +686,14 @@ int main(void) {
 
         atomic_store(&g_refused, 0);
         atomic_store(&g_writable, 0);
+        atomic_store(&g_pushed, 0);
         c = dial(eat.port, "/push", true);
-        /* Read nothing until the server has run into its limit: the system's own buffers
-         * take a few megabytes first. */
-        for (int waited = 0; atomic_load(&g_refused) == 0 && waited < 1000; ++waited) proven_time_sleep(10);
+        /* Read nothing until the server has run into its limit: the system's own buffers take a
+         * few megabytes first. Waited for by what the server did - refused, or done pushing -
+         * and not by the clock: under a sanitizer it is many times slower (a 10 s wait was too
+         * short once under ThreadSanitizer, v0.53.0 and again 2026-10-26). The bound is only
+         * against a server that hangs. */
+        for (int waited = 0; atomic_load(&g_refused) == 0 && atomic_load(&g_pushed) < 20000 && waited < 30000; ++waited) proven_time_sleep(10);
         int got = 0;
         bool in_order = true;
         for (;;) {

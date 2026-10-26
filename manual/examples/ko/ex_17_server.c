@@ -18,7 +18,7 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     ex_app_t *app = ctx;
     /* 요청은 어느 쪽이든 같아 보인다: 메서드, 대상, 필드 - 그 가운데 Host도 있다. HTTP/2는
      * 그것을 `:authority`로 싣고, 서버는 익숙한 이름으로 넘겨준다. */
-    /* HTTP/3에서 TLS 설정에 `early_data`가 있으면 요청은 조기 데이터로 올 수 있고(14장 6절),
+    /* TLS 설정에 `early_data`가 있으면 요청은 조기 데이터로 올 수 있고(14장 6절),
      * 공격자가 재전송한 사본일 수 있다. 이 답은 두 번 해도 괜찮다. 그렇지 않은 요청이라면 425로
      * 답하고, 클라이언트는 나중에 다시 보낸다. */
     if (proven_http_stream_early(stream) && head->method != PROVEN_HTTP_GET) {

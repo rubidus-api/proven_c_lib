@@ -1008,6 +1008,11 @@ reason to ask.
   older than 1.2, or on a 1.2 suite without forward secrecy and authenticated encryption -
   possible only with the legacy options of Chapter 14 switched on - is ended with
   `INADEQUATE_SECURITY`, as RFC 9113 requires.
+- **0-RTT, when the TLS configuration has `early_data`** (chapter 14, section 6; v0.84.0), as for
+  HTTP/1.1 and HTTP/3: a request whose HEADERS arrived in the client's early data reaches its
+  handler before the handshake is over, with `proven_http_stream_early` true, and may be
+  answered at once; only GET, HEAD and OPTIONS without a body get that far - anything else that
+  arrives early is answered 425 on its stream by the server.
 - **In the clear, the first bytes say.** A client that knows it wants HTTP/2 begins with the
   24-byte preface (curl's `--http2-prior-knowledge`); anything else is HTTP/1.1. The server
   decides at the first byte that differs, so `POST`, which shares the preface's first letter,
@@ -1082,8 +1087,8 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     ex_app_t *app = ctx;
     /* The request looks the same either way: a method, a target, fields - Host among them,
      * which HTTP/2 carries as `:authority` and the server hands on under its usual name. */
-    /* Over HTTP/3, with `early_data` in the TLS configuration, a request may come as early data
-     * (chapter 14, section 6) and may be a copy an attacker replayed. This answer is safe to give
+    /* With `early_data` in the TLS configuration, a request may come as early data (chapter 14,
+     * section 6) and may be a copy an attacker replayed. This answer is safe to give
      * twice; a handler whose request is not answers 425 and the client sends it again later. */
     if (proven_http_stream_early(stream) && head->method != PROVEN_HTTP_GET) {
         (void)proven_http_stream_respond(stream, 425, NULL, 0, (proven_mem_view_t){ 0 });
@@ -1285,7 +1290,11 @@ before it returns, and `on_done` comes exactly once, never from inside `start`.
   the handshake with each origin decides. An origin that chooses HTTP/1.1 is remembered as
   such and served one connection to a request, as before. (The last 64 such origins are
   remembered, at about 600 bytes each; one that has been forgotten costs a handshake to
-  learn again.)
+  learn again.) With `early_data` in the TLS configuration and a session made over `h2`, a new
+  connection begins HTTP/2 inside its first flight: the preface, the settings and one request
+  that is GET, HEAD or OPTIONS without a body go as early data (chapter 14, section 6; v0.84.0),
+  the rest after the handshake. What the server refused goes again, as it was; a 425 sends the
+  request once more on the same connection, now that it is up.
 - **In the clear**, `http2_cleartext`: every `http` request of that client is HTTP/2 by
   prior knowledge. There is no way to ask a server in the clear, so say this only of servers
   you know; a client that talks to both kinds in the clear is two clients. Said of a server

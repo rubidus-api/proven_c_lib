@@ -18,13 +18,13 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 128 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 129 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
 | `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 15 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
-| `docs` | Are the claims the documentation makes still true? | 13 |
+| `docs` | Are the claims the documentation makes still true? | 14 |
 | `bench` | How fast is it? (Not a correctness gate.) | 5 |
 
 ## Table of contents
@@ -348,7 +348,7 @@ Last run, 2026-10-26, Windows 11 test VM (v0.83.0): x86-64 366 PASS, 0 FAIL, 10 
 ## Test catalog
 
 
-The hosted full run builds and executes 196 registered tests plus the 180 runnable manual examples - 376 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 209 test files: the 192 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 198 registered tests plus the 182 runnable manual examples - 380 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 211 test files: the 194 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1004,6 +1004,7 @@ Intent: verify the TLS engine carried by real connections on the loopback interf
 Sub-checks:
 
 - The transport wrapper: a client and a server handshake over a socket with the server verified by its IP address; 1 to 150,000 bytes echoed intact; a read with nothing to read ends at its deadline; a close seen by the peer as `PROVEN_ERR_EOF`; a connection cut without a TLS close seen as `PROVEN_ERR_RESET`; another server name is `PROVEN_ERR_NAME_MISMATCH` and the server's handshake ends with the alert; a handshake nobody answers ends at its deadline; `proven_tls_transport_conn` on a TLS and on a plain transport.
+- 0-RTT over HTTPS, the blocking client and server (RFC-0027), both TLS configurations with `early_data`, no connection kept: a first GET makes a full handshake; the next one goes with its ClientHello and the handler sees `proven_http_exchange_early`; a POST waits for the handshake; a handler's 425 to an early GET has it sent again on a new connection, not early, and answered; with the server's register made full, a request refused as early data is sent again under the handshake's keys and answered once; a client without `early_data` and a server without it have nothing go early. Four planted breaks (the transport not sending a refused copy again, the exchange never marked early, no 425 retry, the server never taking early data) each fail one of these.
 - HTTPS, with handlers on the loop's thread and again on workers: three GETs over one kept connection; a 200,000-byte request body and a 300,000-byte response body; a `wss://` connection with a text and a 70,000-byte binary message echoed and a clean close; two pipelined requests in one TLS record both answered; a client that connects and says nothing does not delay another request and is closed after the head timeout; a plain `http://` request to the TLS port fails and reaches no handler; an `https://` URL on a client with no wrap is still `PROVEN_ERR_UNSUPPORTED`; a server whose CA the client does not hold is `PROVEN_ERR_UNTRUSTED` with nothing sent.
 
 - TLS 1.2 over sockets: the transport-wrapper cases and the HTTPS and `wss` cases (handlers on workers) once more, with a client configuration limited to TLS 1.2.
@@ -1277,6 +1278,22 @@ Sub-checks:
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
 Failure tip: inspect `r_early_ok`, `c_submit_waiting`, the 425 in `c_response` and `r_again` in `src/proven/http_event_client_h3.c`; the early branch of `d_request` in `src/proven/http_event_h3.c`. The QUIC side is `test_unit_quic_conn`'s 0-RTT section, the TLS side `test_unit_tls_quic`'s early data section.
+
+### `tests/test_unit_http_event_early_tcp` - 0-RTT over TCP, client and server
+
+Intent: verify RFC-0027's 0-RTT over TCP between the event-driven client and server on one loop, over loopback, in HTTP/1.1 (a client that offers `http/1.1` only) and in HTTP/2 (`h2`), both TLS configurations with `early_data`. What came of a request's early data is read through an internal hook (`proven_http_event_client_early_`); what the handler saw through `proven_http_stream_early`.
+
+Sub-checks, in each protocol:
+
+- A GET on a second connection (the first made a full handshake and closed, leaving a ticket) goes as early data, is taken, and is answered "early" - its handler saw `proven_http_stream_early`; a GET on that connection once it is up is not early.
+- A POST waits for the handshake and is answered; a POST and a GET started together: the POST waits, the GET goes early.
+- 425 from a handler to an early GET: not delivered; the request goes again after the handshake (HTTP/1.1 on a new connection, HTTP/2 on the same one) and is answered, two handler calls, the first early.
+- 425 from the server: a POST sent early (an internal switch lets this client do what another might) never reaches the handler; sent again, it is answered.
+- Refused (the server's register of early tickets made full): the request goes again under the handshake's keys and is answered once, not early.
+- A client without `early_data` sends nothing early; a server without it issues tickets that allow none.
+- Six planted breaks (the server never marking early, no 425 from the server in either protocol, the HTTP/1.1 client not rewinding a refused request, the HTTP/2 client not writing its early copy again, the HTTP/2 client picking an unsafe request for early data) each fail one of these.
+
+Failure tip: inspect `cl_flush` and `cl_settle_early` in `src/proven/http_event_client.c`; `c_settle_early`, `c_submit_waiting` and `c_response` in `src/proven/http_event_client_h2.c`; the early branches of `ev_process` in `src/proven/http_event.c` and `d_request` in `src/proven/http_event_h2.c`; the engine is `test_unit_tls`'s "early data over TCP, taken".
 
 ### `tests/test_unit_http_coding` - http: content codings
 
@@ -2982,6 +2999,16 @@ Sub-checks:
 - With no files it prints the OpenSSL command and exits 0; given the identity of the engine test's helper, every check passes.
 
 Failure tip: as for `test_docs_tls_example_engine`.
+
+### `tests/test_docs_tls_example_early` - chapter 14's early-data example, given an identity
+
+Intent: the same for `manual/examples/en/ex_14_tls_early.c`, which serves HTTPS with `early_data` on 127.0.0.1 and reaches it twice with the HTTP client.
+
+Sub-checks:
+
+- With no files it prints the OpenSSL command and exits 0; given the identity of the engine test's helper, every check passes - the first request is answered "after the handshake", the second, sent with the next connection's ClientHello, "early".
+
+Failure tip: check the example first; if it fails only here, `tests/test_docs_tls_identity.h`.
 
 ### `tests/test_docs_test_catalog` - the test catalog matches the build
 

@@ -103,7 +103,7 @@ typedef struct {
     proven_tls_now_fn now;                   /**< NULL: the wall clock. Required when freestanding. */
     void *now_ctx;
     bool no_resumption;                      /**< a server issues no tickets; a client offers none */
-    bool early_data;                         /**< 0-RTT, over QUIC only (HTTP/3): a server's tickets allow early data and it accepts it - once per ticket, fresh tickets only (a register of 4,096, 96 KiB); a client sends it with a session that allows it. Early data can be replayed: see the manual. Not with `no_resumption` */
+    bool early_data;                         /**< 0-RTT (manual chapter 14, section 6): for HTTP/3, and over TCP for the HTTP servers and clients of this library (HTTP/1.1, HTTP/2). A server's tickets allow early data and it takes it - once per ticket, fresh tickets only (a register of 4,096, 96 KiB); a client sends it with a session that allows it, and keeps the newest session of eight server names for the transport wrapper. A program that drives the engine itself neither sends nor takes it over TCP. Early data can be replayed: see the manual. Not with `no_resumption` */
     bool keep_peer_certificate;              /**< keep the peer's certificate for proven_tls_peer_certificate (costs its size per connection) */
     proven_u32 ticket_lifetime_s;            /**< server: how long a ticket is honoured; 0: 7200; at most 604800 */
     proven_size_t max_handshake_bytes;       /**< the largest handshake message accepted; 0: 65536 */
@@ -284,6 +284,13 @@ int proven_tls_alert_sent(const proven_tls_conn_t *conn);
  * On success `*out` owns `plain`: closing it sends close_notify and closes `plain`. On failure
  * `plain` is left open and yours.
  *
+ * `session` NULL with a configuration that has `early_data`: the configuration's newest session
+ * for `server_name` is resumed and the one this connection ends with is kept for the next. When
+ * that session allows early data, this returns without sending anything: the ClientHello goes
+ * with the first write, which goes with it as early data - unless it may not (the HTTP client
+ * says so for what is not safe to repeat); the handshake is completed by the reads and writes
+ * that follow, and what the server refused is sent again (manual chapter 14, section 6).
+ *
  * @return what proven_tls_feed returns, and the transport's own errors (PROVEN_ERR_TIMEOUT when
  *         `until` passes, PROVEN_ERR_RESET, PROVEN_ERR_EOF for a peer that hung up mid-handshake).
  */
@@ -303,8 +310,9 @@ proven_tls_conn_t *proven_tls_transport_conn(proven_transport_t tls);
 
 /**
  * @brief A `proven_http_tls_wrap_fn` for the HTTP client: set `tls_wrap` to this and `tls_ctx`
- *        to a `proven_tls_config_t *`, and `https` URLs work. Connections made this way do
- *        not resume earlier sessions.
+ *        to a `proven_tls_config_t *`, and `https` URLs work. Connections made this way resume
+ *        earlier sessions, and send a GET, HEAD or OPTIONS without a body as early data, only
+ *        when the configuration has `early_data`.
  */
 [[nodiscard]]
 proven_err_t proven_tls_http_wrap(void *config, proven_transport_t plain, proven_u8str_view_t host,

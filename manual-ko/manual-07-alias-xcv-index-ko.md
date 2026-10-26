@@ -720,6 +720,7 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_http_event_server_t` | `proven_http_event_server_t` |
 | `xcv_http_exchange_begin` | `proven_http_exchange_begin` |
 | `xcv_http_exchange_compress` | `proven_http_exchange_compress` |
+| `xcv_http_exchange_early` | `proven_http_exchange_early` |
 | `xcv_http_exchange_end` | `proven_http_exchange_end` |
 | `xcv_http_exchange_flush` | `proven_http_exchange_flush` |
 | `xcv_http_exchange_peer` | `proven_http_exchange_peer` |

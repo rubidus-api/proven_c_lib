@@ -65,6 +65,7 @@ typedef struct h2s {
     bool engine_done;                  /* the engine has seen this side's end already (a response with no body) */
     bool window_shut;                  /* the engine took less than it was offered: the peer's window, and only the engine knows when it opens */
     bool tunnel;                       /* an extended CONNECT (RFC 8441): what follows the head is a protocol's, not a body */
+    bool early;                        /* its request arrived in early data (RFC-0027) */
     /* A WebSocket on this stream, once its handler accepted the extended CONNECT: its object,
      * whose first member is its operations (proven_internal_http_event.h), and its timer. Null
      * when there is none, and from the moment it let go of the stream (close, kill). */
@@ -94,6 +95,7 @@ struct h2d {
     bool over;                         /* nothing more will be taken: write what is owed and close */
     bool eof;                          /* the peer closed its sending side */
     bool held;                         /* input is left where it is - the connection is not read - until the engine's output is under its bound again */
+    bool early_now;                    /* everything the engine has taken so far arrived as early data (RFC-0027) */
 };
 
 /* The engine's clock for growing windows: microseconds. */
@@ -337,6 +339,13 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
     }
     d->asked = true;
     if (bad) { (void)proven_h2_conn_reset(d->engine, ev->stream_id, PROVEN_H2_PROTOCOL_ERROR); return; }
+    /* A request that arrived in early data and is not safe to repeat: 425 Too Early, from here
+     * (RFC 8470); the client sends it again after the handshake. */
+    const proven_http_method_t m = proven_http_method_from_text(rq->method);
+    if (d->early_now && !(ev->end_stream && !tunnel && (m == PROVEN_HTTP_GET || m == PROVEN_HTTP_HEAD || m == PROVEN_HTTP_OPTIONS))) {
+        d_refuse(d, ev->stream_id, "425");
+        return;
+    }
     const proven_size_t add_host = !has_host && rq->authority.size > 0 ? 1 : 0;
     /* A handler tells whether a body is coming from the fields, as HTTP/1.1 taught it to:
      * a length, or "chunked". HTTP/2 may send a body with neither - the frames say where it
@@ -368,6 +377,7 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
     s->compress_coding = (proven_u8)proven_http_compress_choose_(sv->headers, n, sv->cfg.compress_zstd);
     s->in_done = ev->end_stream;
     s->tunnel = tunnel;
+    s->early = d->early_now;
     s_expect_body(s);
     s->active = true;
     s->next = d->streams;
@@ -551,6 +561,8 @@ static proven_size_t h2_on_input(void *raw, proven_mem_mut_t in) {
     h2d_t *d = raw;
     d_enter(d);
     proven_size_t pos = 0;
+    /* How much of this input arrived early: a request whose HEADERS ended inside it did. */
+    const proven_size_t early = proven_http_event_early_ahead_(d->conn);
     for (;;) {
         d->reading = true;
         /* Nothing is taken while the engine's output is at its bound - which is while the
@@ -564,6 +576,7 @@ static proven_size_t h2_on_input(void *raw, proven_mem_mut_t in) {
             proven_err_t e = proven_h2_conn_feed(d->engine, (proven_mem_view_t){ .ptr = in.ptr + pos, .size = in.size - pos }, &used, &ev);
             if (e != PROVEN_OK) { d_kill(d, e == PROVEN_ERR_NOMEM ? PROVEN_ERR_NOMEM : PROVEN_ERR_RESET); break; }
             pos += used;
+            d->early_now = used > 0 ? pos <= early : d->early_now;
             if (ev.kind != PROVEN_H2_EVENT_NONE) d_event(d, &ev);
             else if (pos == in.size) break;
         }
@@ -1299,6 +1312,11 @@ void proven_http_event_h2_set_max_streams_(proven_http_event_server_t *sv, prove
         d_pump(d);
         d_leave(d);
     }
+}
+
+bool proven_http_event_h2_early_(const proven_http_stream_t *stream) {
+    const proven_h2s_t *s = (const proven_h2s_t *)(const void *)stream;
+    return s && s->early;
 }
 
 #endif

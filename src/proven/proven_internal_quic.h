@@ -214,9 +214,6 @@ bool proven_tls_quic_early_limits_(const proven_tls_conn_t *c, proven_u64 out[7]
 proven_size_t proven_tls_session_token_take_(proven_tls_session_t *s, proven_byte_t *out, proven_size_t cap);
 void proven_tls_session_token_keep_(proven_tls_session_t *s, proven_mem_view_t token);
 /* A session whose next connection must not send early data: the ticket stays, its allowance goes. */
-void proven_tls_session_early_off_(proven_tls_session_t *s);
-/* Client: whether this connection has kept a ticket from its peer (for tests). */
-bool proven_tls_ticket_stored_(const proven_tls_conn_t *c);
 
 /* ---- Packets and frames (RFC 9000 sections 12, 17 and 19): quic_frame.c ----
  *

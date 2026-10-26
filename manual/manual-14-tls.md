@@ -86,7 +86,7 @@ Zero-initialise a `proven_tls_options_t`, set `alloc`, and set what applies:
 | `alpn`, `alpn_count` | both | Application protocol names, most preferred first (`http/1.1`). The server picks its first choice among what the client offers; if both sides have a list and nothing is common, the handshake fails |
 | `random`, `now` | both | Where unpredictable bytes and the time come from. Leave them null on a hosted system: the operating system's source and the wall clock are used. A freestanding build must supply both |
 | `no_resumption`, `ticket_lifetime_s` | both, a server | Section 6 |
-| `early_data` | both, over QUIC (HTTP/3) | Section 6, "Early data" |
+| `early_data` | both: HTTP/3, and HTTP/1.1 and HTTP/2 over TCP | Section 6, "Early data" |
 | `keep_peer_certificate` | whoever verifies | Keep the peer's certificate after the handshake, for `proven_tls_peer_certificate` |
 | `max_handshake_bytes` | both | The largest handshake message accepted. Default 65,536 |
 | `min_version`, `max_version` | both | The oldest and newest protocol version this side agrees to: `PROVEN_TLS_VERSION_1_2` or `PROVEN_TLS_VERSION_1_3`. Zero is the default - 1.2 for the minimum, 1.3 for the maximum. **`min_version = PROVEN_TLS_VERSION_1_3` is how to refuse TLS 1.2** (section 9). `PROVEN_TLS_VERSION_1_1` and `PROVEN_TLS_VERSION_1_0` are legacy (section 10) |
@@ -630,10 +630,13 @@ tickets do not survive a restart, and two processes do not accept each other's.
 
 What resumption does not do here:
 
-- **Early data only over QUIC** (next part). Over TCP a ticket never allows it and a client never
-  sends it; a server passes over what another client sends (next part).
-- **Not through `proven_tls_http_wrap`.** The HTTP client's connections do not resume; it
-  reuses open connections instead, which is cheaper still.
+- **Early data only where its owner asks** (next part): the HTTP servers and clients of this
+  library, with `early_data`. A program that drives the engine itself, or the transport wrapper
+  as a server, gets none.
+- **Through `proven_tls_http_wrap` only with `early_data`.** A client configuration that has it
+  keeps the newest session of each server name (eight names), and the transport wrapper resumes
+  with it when it is given no session; without it the HTTP client's connections do not resume,
+  and it reuses open connections instead.
 - A resumed connection's peer is the one verified when the session was made: the certificate is
   not sent again, so it is not checked again, and an expiry that has passed since is not
   noticed. The ticket lifetime bounds how long that can matter.
@@ -652,21 +655,28 @@ left, and a handshake that ends up in the other version is simply a full one.
 
 Resumption still waits one round trip for the handshake before the first request leaves. With
 **early data** a client sends that request in its first packet, under a key made from the
-ticket, and the server can answer in its first reply: one round trip instead of two for a new
-connection (measured: a GET over HTTP/3 with a 20 ms round trip, 43 ms to 22 ms). Here it exists
-**only in QUIC mode**, so only for HTTP/3 (chapter 17), and only when both configurations set
-`early_data` (it cannot be combined with `no_resumption`):
+ticket, and the server can answer in its first reply, before the client's Finished: one round
+trip fewer for a new connection (measured: a GET over HTTP/3 with a 20 ms round trip, 43 ms to
+22 ms; over TCP the saving is one round trip of three - TCP's own, the handshake's, the
+request's). It is there for HTTP/3 (chapter 17) and, since version 0.84.0, over TCP for HTTP/1.1
+and HTTP/2 - the event-driven server and client (chapters 15 and 17) and the blocking ones
+(chapter 11) - only when both configurations set `early_data` (it cannot be combined with
+`no_resumption`):
 
-- A server with `early_data` issues tickets that allow it - only on QUIC connections - and
-  accepts early data when all of these hold: the ticket allows it; it is the first identity and
-  its binder checks; the cipher suite and the protocol (ALPN) are the ticket's; the transport
-  limits this server promises are the ones it promised when it issued the ticket; no
-  HelloRetryRequest happened; the age the client reports is within 10 seconds of the time since
-  the ticket was issued; and **the ticket has not carried early data before**. Otherwise the
-  early data is refused and the handshake goes on as a resumption.
+- A server with `early_data` issues tickets that allow it - over TCP 16,384 bytes of it, in QUIC
+  as RFC 9001 asks - and accepts early data when all of these hold: the ticket allows it and was
+  made over the same transport; it is the first identity and its binder checks; the cipher suite
+  and the protocol (ALPN; over TCP, none for none) are the ticket's; in QUIC, the transport limits
+  this server promises are the ones it promised when it issued the ticket; no HelloRetryRequest
+  happened; the age the client reports is within 10 seconds of the time since the ticket was
+  issued; and **the ticket has not carried early data before**. Otherwise the early data is
+  refused and the handshake goes on as a resumption. Over TCP more early data than the ticket
+  allowed ends the connection (`unexpected_message`), and the client's `EndOfEarlyData` marks
+  where it stops.
 - A client with `early_data` sends early data when its session holds a ticket that allows it,
   for a protocol it still offers; a refusal costs it only the round trip it hoped to save - what
-  it sent goes again after the handshake.
+  it sent goes again after the handshake. A ticket that carried early data is not offered for it
+  again: the server would refuse it, and a newer ticket takes its place.
 
 **Early data can be replayed.** Whoever sees the client's first flight can send it again, and
 a server that accepts it acts on the request again. Each server configuration keeps a register
@@ -676,21 +686,149 @@ the register is full, early data is refused. Because tickets open only in the pr
 configuration that sealed them (above), that one register covers every server that could take
 the ticket. What no register prevents: an attacker who holds the client's flight back and sends
 it first makes the server act on the copy; the original's early data is then refused and sent
-again after the handshake, so the request is acted on twice. Hence the rule the HTTP/3 server
-and client follow (chapter 17): only requests that are safe to repeat - GET, HEAD and OPTIONS
+again after the handshake, so the request is acted on twice. Hence the rule the HTTP servers
+and clients follow: only requests that are safe to repeat - GET, HEAD and OPTIONS
 without a body - go early, a handler can ask `proven_http_stream_early` and answer **425 Too
 Early**, and anything else that arrives early is answered 425 by the server itself.
 
-**Early data sent over TCP.** A client of another make may present a ticket this server issued
-over QUIC on a TCP connection, with early data in its ClientHello. A server over TCP never takes
-early data, so it does what RFC 8446 section 4.2.10 asks of a server that refuses it: it passes
-over those records - after a HelloRetryRequest, every application_data record until the second
+**Who takes it over TCP.** Only a connection whose owner asks: the HTTP servers do when their
+`tls` configuration has `early_data`, and they mark each request that arrived early
+(`proven_http_exchange_early` in the blocking server, `proven_http_stream_early` in the
+event-driven one), answer 425 themselves to anything that is not safe to repeat, and may answer
+the rest before the client's Finished. The HTTP clients send early only what is safe to repeat;
+the blocking client's transport keeps the copy it sent early and sends it again, first, when the
+server refused it, and a 425 sends the request once more on a new connection, not early. A
+program that drives the engine or the transport wrapper itself as a server takes none, whatever
+its configuration says.
+
+<!-- example: manual/examples/en/ex_14_tls_early.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * Early data (0-RTT) over HTTPS, both ends in one program: the server of chapter 11 and the
+ * client of chapter 11, each with `early_data` in its TLS configuration. The first request makes
+ * a full handshake and leaves a ticket; the second goes with the next connection's ClientHello,
+ * and the handler can tell.
+ */
+
+static const char *const HOW_TO_MAKE =
+    "  openssl req -x509 -newkey ed25519 -nodes -days 30 -subj /CN=example.test \\\n"
+    "      -addext subjectAltName=DNS:example.test,IP:127.0.0.1 -keyout key.pem -out cert.pem\n";
+
+typedef struct {
+    proven_http_server_t *server;
+} ex_app_t;
+
+static void handle(void *ctx, proven_http_exchange_t *x) {
+    ex_app_t *app = ctx;
+    const proven_http_request_t *req = proven_http_exchange_request(x);
+    if (proven_u8str_view_eq(req->target, PROVEN_LIT("/quit"))) {
+        (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("bye\n")));
+        proven_http_server_stop(app->server);
+        return;
+    }
+    /* A request that came as early data may be a copy someone replayed. Only GET, HEAD and
+     * OPTIONS without a body get this far early - the server answers anything else 425 itself -
+     * and a GET that changes something should answer 425 too: the client sends it again after
+     * the handshake. */
+    const bool early = proven_http_exchange_early(x);
+    (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(early ? PROVEN_LIT("early\n") : PROVEN_LIT("after the handshake\n")));
+}
+
+static void serve(void *arg) {
+    (void)proven_http_server_run(((ex_app_t *)arg)->server);
+}
+
+/* GET `url` and return whether the body is `want`. */
+static bool get_is(proven_http_client_t *client, proven_allocator_t heap, proven_u8str_view_t url, proven_u8str_view_t want) {
+    proven_http_client_response_t response;
+    proven_u8str_t body = { 0 };
+    bool ok = proven_http_client_get(client, url, &response) == PROVEN_OK && response.status == 200 &&
+              proven_http_client_read_all(&response, heap, &body, 4096) == PROVEN_OK && proven_u8str_view_eq(proven_u8str_as_view(&body), want);
+    proven_u8str_destroy(heap, &body);
+    proven_http_client_finish(&response);
+    return ok;
+}
+
+int main(int argc, char **argv) {
+    proven_allocator_t heap = proven_heap_allocator();
+    if (argc < 3) {
+        printf("usage: %s CERTIFICATE.pem KEY.pem\nA self-signed pair for 127.0.0.1:\n%s", argv[0], HOW_TO_MAKE);
+        return 0;
+    }
+    proven_result_mem_mut_t cert = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[1]), 64 * 1024);
+    proven_result_mem_mut_t key = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[2]), 16 * 1024);
+    EXAMPLE_REQUIRE(cert.err == PROVEN_OK && key.err == PROVEN_OK, "the certificate and the key are read");
+    if (cert.err != PROVEN_OK || key.err != PROVEN_OK) return 1;
+
+    /* The server: `early_data` makes its tickets allow early data, and it takes it - once per
+     * ticket, within 10 seconds of the ticket's age. */
+    proven_tls_options_t server_options = {
+        .alloc = heap, .early_data = true,
+        .certificate_pem = { cert.value.ptr, cert.value.size }, .private_key_pem = { key.value.ptr, key.value.size },
+    };
+    proven_tls_config_t *server_tls = NULL;
+    EXAMPLE_REQUIRE(proven_tls_config_create(&server_options, &server_tls) == PROVEN_OK, "the server's TLS configuration");
+    ex_app_t app = { 0 };
+    proven_http_server_config_t server_config = { .alloc = heap, .handler = handle, .handler_ctx = &app, .tls = server_tls };
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_server_create(&server_config, &app.server) == PROVEN_OK &&
+                    proven_http_server_listen(app.server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "an HTTPS server on a free port");
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t running;
+    proven_job_group_init(&running);
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, 1, 4, &threads) == PROVEN_OK &&
+                    proven_job_group_submit(threads, &running, serve, &app) == PROVEN_OK, "its loop runs on another thread");
+
+    /* The client: `early_data` makes its configuration keep the newest session of each server,
+     * and send a request that is safe to repeat with the next connection's ClientHello. */
+    proven_cert_store_t *anchors = NULL;
+    EXAMPLE_REQUIRE(proven_cert_store_create(heap, &anchors) == PROVEN_OK &&
+                    proven_cert_store_add_pem(anchors, (proven_mem_view_t){ cert.value.ptr, cert.value.size }, NULL) == PROVEN_OK, "the anchors");
+    proven_tls_options_t client_options = { .alloc = heap, .anchors = anchors, .early_data = true };
+    proven_tls_config_t *client_tls = NULL;
+    EXAMPLE_REQUIRE(proven_tls_config_create(&client_options, &client_tls) == PROVEN_OK, "the client's TLS configuration");
+    /* No connection kept, so that each request makes a new one. */
+    proven_http_client_config_t client_config = { .alloc = heap, .tls_wrap = proven_tls_http_wrap, .tls_ctx = client_tls };
+    proven_http_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_client_create(&client_config, &client) == PROVEN_OK, "an HTTP client");
+
+    char url_text[64];
+    int url_len = snprintf(url_text, sizeof url_text, "https://127.0.0.1:%u/", (unsigned)at.port);
+    proven_u8str_view_t url = { (const proven_byte_t *)url_text, (proven_size_t)url_len };
+    EXAMPLE_REQUIRE(get_is(client, heap, url, PROVEN_LIT("after the handshake\n")), "the first connection: a full handshake, and a ticket");
+    EXAMPLE_REQUIRE(get_is(client, heap, url, PROVEN_LIT("early\n")), "the second: the GET went with its ClientHello");
+
+    url_len = snprintf(url_text, sizeof url_text, "https://127.0.0.1:%u/quit", (unsigned)at.port);
+    url.size = (proven_size_t)url_len;
+    (void)get_is(client, heap, url, PROVEN_LIT("bye\n"));
+    proven_job_group_wait(threads, &running);
+    proven_http_client_destroy(client);
+    proven_http_server_destroy(app.server);
+    proven_job_system_close(threads);
+    proven_job_system_destroy(threads);
+    proven_tls_config_destroy(client_tls);
+    proven_tls_config_destroy(server_tls);
+    proven_cert_store_destroy(anchors);
+    proven_mem_wipe(key.value);
+    heap.free_fn(heap.ctx, key.value.ptr);
+    heap.free_fn(heap.ctx, cert.value.ptr);
+    return EXAMPLE_OK();
+}
+```
+
+**Early data a server does not take.** A client may send early data that this server will not
+take - a ticket it cannot open, a server whose owner does not take early data, a retried hello.
+The server does what RFC 8446 section 4.2.10 asks of a server that refuses it: it passes over
+those records - after a HelloRetryRequest, every application_data record until the second
 ClientHello; otherwise every record that does not open under the handshake keys, until one
 does - and the handshake goes on as if they had not been sent. The client learns from the
-server's answer that its early data was not taken, and may send it again. What is passed over is
+server's answer that its early data was not taken, and sends it again. What is passed over is
 bounded: 64 KiB, each record counted with its 5-byte header. Past that the next record ends the
 connection, as any record that does not open would (bad_record_mac, or unexpected_message after
-a HelloRetryRequest). Before version 0.73.1 such a handshake failed.
+a HelloRetryRequest).
 
 ## 7. Client certificates and pins
 
@@ -875,8 +1013,9 @@ it is the one scheme this side signs with there.
   renegotiation; compression; session IDs kept on the server; `record_size_limit` in
   TLS 1.2. A peer that needs one of those fails with `PROVEN_ERR_PROTOCOL`.
 - **RSA keys above 4096 bits for this side**, and RSA-PSS keys (a certificate whose key is marked for PSS only).
-- **Early data over TCP.** It is offered and accepted only in QUIC mode (section 6); over TCP a
-  server passes over what a client sends of it, up to 64 KiB.
+- **Early data to a program that drives the engine itself.** Over TCP only the HTTP servers and
+  clients of this library send and take it (section 6); a server of your own over the engine or
+  the transport wrapper passes over what a client sends, up to 64 KiB.
 - **Revocation.** No CRL, no OCSP, no stapling. See Chapter 13.
 - **Choosing a certificate by the name the client asked for.** One config, one certificate.
 - **Encrypted ClientHello, post-handshake client authentication, external pre-shared keys.**

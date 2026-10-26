@@ -165,6 +165,7 @@ keep-alive 연결 이만 개를 쥔 채로도, 하나 더 있는 연결의 요�
 |---|---|---|
 | `proven_http_exchange_request(x)` | 요청: 메서드, 타깃, 헤더(10장의 `proven_http_request_t`). | 포인터. 뷰(view)는 핸들러가 돌아갈 때까지 유효하다. |
 | `proven_http_exchange_peer(x)` | 클라이언트의 주소. | `proven_net_addr_t`. |
+| `proven_http_exchange_early(x)` | 요청이 핸드셰이크가 끝나기 전에 TLS 조기 데이터(0-RTT)로 왔다 - `early_data`가 있는 `tls` 설정에서, 본문 없는 GET, HEAD, OPTIONS에만: 그 밖의 것이 조기에 오면 서버가 스스로 425로 답한다([14장](manual-14-tls-ko.md) 6절). GET이 무언가를 바꾸는 핸들러는 조기에 온 것에 425로 답하고, 클라이언트는 그것을 다시 보낸다. | `bool`. |
 | `proven_http_exchange_read(x, dest)` | 요청 본문을 더 읽는다. | `proven_result_size_t`: 본문이 끝나면 `.err`가 `EOF`. `TIMEOUT`. `max_body_bytes`를 넘으면 `OUT_OF_BOUNDS`. 청크 틀이 잘못되면 `INVALID_FORMAT`. 클라이언트가 떠났으면 `RESET`. |
 | `proven_http_exchange_respond(x, status, headers, count, body)` | 메모리에 있는 본문과 함께 응답 전체를 보낸다. | `proven_err_t`: 응답을 이미 시작했으면 `INVALID_STATE`. 서버가 맡은 헤더나 쓰기 함수가 거절하는 값이면 `INVALID_ARG`. 헤드가 들어가지 않으면 `OUT_OF_BOUNDS`. `TIMEOUT`, `RESET`. |
 | `proven_http_exchange_begin(x, status, headers, count, content_length)` | 본문이 조각조각 뒤따르는 응답을 시작한다. 길이를 모르면 `PROVEN_HTTP_LENGTH_UNKNOWN`: 본문은 청크로 나간다. | `respond`와 같다. |
@@ -683,6 +684,12 @@ typedef proven_err_t (*proven_http_tls_wrap_fn)(void *ctx, proven_transport_t pl
 동작 - 리다이렉트에서 내려가지 않기, 자격 증명을 원래 자리에 두기, 핸드셰이크보다 터널이 먼저 - 이
 뒤에 어떤 TLS가 있는지에 기대지 않게 하고, 다른 TLS 구현을 가진 프로그램이 대신 그것을 붙일 수
 있게 하기 위해서다.
+
+**조기 데이터.** 그 설정에 `early_data`가 있으면 wrap은 서버 이름의 가장 새 세션으로 재개하고, 티켓이
+허락하면 아무것도 보내지 않고 돌아온다: 이 클라이언트가 다음에 쓰는 요청 헤드가 ClientHello와 함께
+조기 데이터로 가서, 제 몫의 왕복 없이 답을 받는다. 본문 없는 GET, HEAD, OPTIONS만 조기에 간다 - 그 밖의 것은
+클라이언트가 핸드셰이크를 먼저 끝낸다 - 그리고 425 Too Early로 답한 서버에는 요청을 새 연결에서 조기가
+아니게 한 번 더 보낸다([14장](manual-14-tls-ko.md) 6절).
 
 **직접 쓴다면 반드시 서버를 검증해야 한다.** `host`를 넘기는 것은 인증서를 그것에 견주어 확인하라는
 뜻이다. 검증 없이 암호화만 하는 wrap은, 그 연결 한가운데 있는 누군가만 빼고 모두에게서 비밀인 연결을

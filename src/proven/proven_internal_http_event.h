@@ -52,6 +52,9 @@ void proven_http_event_raw_timer_(proven_http_stream_t *stream, proven_u32 ms);
 
 /* Stop or resume reading the connection. Resuming may deliver input inside the call. */
 void proven_http_event_raw_pause_(proven_http_stream_t *stream, bool paused);
+/* 0-RTT over TCP (RFC-0027): of the input not yet consumed, how many bytes at its start arrived as
+ * early data. */
+proven_size_t proven_http_event_early_ahead_(const proven_http_stream_t *stream);
 
 /* Let go of the connection: no operation is called after this. Then either close politely -
  * flush what is queued, say that nothing more will come, wait a moment for the client to
@@ -149,6 +152,9 @@ struct proven_http_stream {
     bool sock_gone;                    /* `closed` has come */
     bool compact_due;                  /* the timer is set for compacting the TLS keys, not for the idle timeout */
     proven_u16 local_port;             /* the port the connection came in on: the one `Alt-Svc` names */
+    /* 0-RTT over TCP (RFC-0027): the request being served arrived as early data (where its head
+     * ended among the plaintext the TLS engine counted says so: proven_tls_read_counts_). */
+    bool early_req;
 };
 
 /* One listener, allocated on its own: after stop_listening its accept may still be answered
@@ -318,6 +324,8 @@ proven_size_t proven_http_event_h3_buffered_(const proven_http_stream_t *stream)
 [[nodiscard]]
 bool proven_http_event_h3_early_(const proven_http_stream_t *stream);
 #endif
+/* An HTTP/2 stream whose request arrived in early data (RFC-0027). */
+bool proven_http_event_h2_early_(const proven_http_stream_t *stream);
 
 /* The server's compression settings, for http_coding.c. */
 static inline proven_http_compress_cfg_t_ proven_http_event_compress_cfg_(const proven_http_event_server_config_t *c) {

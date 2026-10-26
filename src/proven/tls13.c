@@ -139,6 +139,7 @@ typedef struct {
     proven_u32 client_age;                        /* server: the first identity's obfuscated_ticket_age */
     /* 0-RTT over TCP (RFC-0027). */
     bool want_early;                              /* client: offer it (proven_tls_client_create_early_) */
+    bool ticket_sent;                             /* server: its ticket went with its Finished (RFC 8446 section 4.6.1) */
     proven_byte_t c_early[PROVEN_HMAC_MAX_SIZE];  /* client_early_traffic_secret. SECRET */
     const proven_tls_suite_t *early_suite;        /* the ticket's suite, which the early keys belong to */
     proven_u32 early_left;                        /* client: early bytes it may still write; server: may still take */
@@ -218,6 +219,8 @@ struct proven_tls_conn {
     bool take_early;                              /* server, TCP: its owner takes early data (proven_tls_server_take_early_) */
     bool in_early;                                /* server: the application data waiting arrived as early data */
     proven_u8 early;                              /* TCP: PROVEN_TLS_EARLY_* */
+    proven_u16 early_read;                        /* server: application bytes read that arrived early (at most a ticket's 16,384) */
+    proven_u32 read_total;                        /* application bytes read, held at its largest */
     proven_u16 version;                           /* 0 until agreed */
     proven_tls_state_t state;
     proven_err_t error;                           /* the failure, to be returned once */
@@ -1928,6 +1931,30 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, proven_rd_t body, 
     for (proven_size_t i = 0; i < suite->hash_len; ++i) { c->write_secret[i] = server_ap[i]; c->read_secret[i] = client_ap[i]; }
     tls_wipe(client_ap, sizeof client_ap); tls_wipe(server_ap, sizeof server_ap);
     c->state = c->early == PROVEN_TLS_EARLY_ACCEPTED ? ST_S_WAIT_EOED : ask_cert ? ST_S_WAIT_CERT : ST_S_WAIT_FINISHED;
+    /* The ticket with this flight, not after the client's Finished (RFC 8446 section 4.6.1): with
+     * no client certificate asked for, the rest of the transcript is known - EndOfEarlyData when
+     * early data was taken, and the Finished the client must send - and so is the resumption
+     * secret. A client that reads its answer and closes at once still leaves with a ticket. The
+     * client's Finished is checked as before when it comes. Over TCP. */
+    if (!is_quic(c) && !ask_cert && !cfg->no_resumption) {
+        proven_tls_transcript_t t = h->transcript;
+        proven_byte_t th[PROVEN_HMAC_MAX_SIZE], fin[4 + PROVEN_HMAC_MAX_SIZE];
+        if (c->early == PROVEN_TLS_EARLY_ACCEPTED) {
+            static const proven_byte_t eoed[4] = { HS_END_OF_EARLY_DATA, 0, 0, 0 };
+            proven_tls_transcript_update(&t, (proven_mem_view_t){ .ptr = eoed, .size = 4 });
+        }
+        (void)proven_tls_transcript_hash(&t, th);
+        fin[0] = HS_FINISHED; fin[1] = 0; fin[2] = 0; fin[3] = (proven_byte_t)suite->hash_len;
+        proven_tls13_finished(suite->hash, h->client_hs, th, fin + 4);
+        proven_tls_transcript_update(&t, (proven_mem_view_t){ .ptr = fin, .size = 4 + suite->hash_len });
+        (void)proven_tls_transcript_hash(&t, th);
+        proven_tls13_derive_secret(suite->hash, h->master_secret, "res master", th, c->resumption_master);
+        tls_wipe(fin, sizeof fin);
+        tls_wipe(&t, sizeof t);
+        proven_err_t te = server_send_ticket(c);
+        if (te != PROVEN_OK) return te;
+        h->ticket_sent = true;
+    }
     return PROVEN_OK;
 }
 
@@ -1942,7 +1969,7 @@ static proven_err_t server_finished(proven_tls_conn_t *c, proven_rd_t body, prov
     keys_read(c, c->suite, c->read_secret);
     c->state = ST_ESTABLISHED;
     c->established = true;
-    e = c->config->no_resumption ? PROVEN_OK : server_send_ticket(c);
+    e = c->config->no_resumption || h->ticket_sent ? PROVEN_OK : server_send_ticket(c);
     hs_free(c);
     return e;
 }
@@ -3589,6 +3616,8 @@ proven_result_size_t proven_tls_read(proven_tls_conn_t *c, proven_mem_mut_t dest
         proven_size_t have = c->plain_len - c->plain_off, n = have < dest.size ? have : dest.size;
         proven_sys_mem_copy(dest.ptr, c->in.ptr + c->plain_off, n);
         c->plain_off += n;
+        c->read_total = n > 0xffffffffu - c->read_total ? 0xffffffffu : c->read_total + (proven_u32)n;
+        if (c->in_early) c->early_read = (proven_u16)(c->early_read + n > 0xffffu ? 0xffffu : c->early_read + n);
         if (c->plain_off == c->plain_len) { c->plain_off = 0; c->plain_len = 0; buf_free(c, &c->in); }
         return (proven_result_size_t){ .err = PROVEN_OK, .value = n };
     }
@@ -3748,3 +3777,21 @@ proven_size_t proven_tls_early_room_(const proven_tls_conn_t *c) {
 }
 
 bool proven_tls_pending_early_(const proven_tls_conn_t *c) { return c && c->in_early && c->plain_len > c->plain_off; }
+
+bool proven_tls_writable_(const proven_tls_conn_t *c) { return c && !c->dead && !c->close_sent && may_write(c) && (c->established || c->is_server); }
+
+bool proven_tls_session_alpn_is_(const proven_tls_session_t *session, proven_u8str_view_t name) {
+    if (!session) return false;
+    const proven_tls_session_data_t *s = (const proven_tls_session_data_t *)(const void *)session->opaque;
+    return s->magic == PROVEN_TLS_SESSION_MAGIC && s->alpn_len == name.size && bytes_eq(s->alpn, name.ptr, name.size);
+}
+
+void proven_tls_read_counts_(const proven_tls_conn_t *c, proven_size_t *early, proven_size_t *total) { *early = c ? c->early_read : 0; *total = c ? c->read_total : 0; }
+
+bool proven_tls_is_server_(const proven_tls_conn_t *c) { return c && c->is_server; }
+
+bool proven_tls_session_allows_early_(const proven_tls_session_t *session) {
+    if (!session) return false;
+    const proven_tls_session_data_t *s = (const proven_tls_session_data_t *)(const void *)session->opaque;
+    return s->magic == PROVEN_TLS_SESSION_MAGIC && s->early && s->early_max > 0;
+}

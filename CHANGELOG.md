@@ -18,8 +18,35 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **0-RTT over TCP** (RFC-0027): TLS early data for HTTP/1.1 and HTTP/2, in the event-driven
+  server and client and the blocking server and client, when both TLS configurations set
+  `early_data` (it was HTTP/3 only). A GET, HEAD or OPTIONS without a body on a new connection
+  that resumes goes with the ClientHello and is answered before the client's Finished - one
+  round trip of three saved. The server takes it under RFC-0021's rules (once per ticket, a
+  10 s freshness window, the same suite and protocol), at most 16,384 bytes per ticket
+  (`unexpected_message` past it), marks each request that arrived early
+  (`proven_http_stream_early`; new: `proven_http_exchange_early` for the blocking server) and
+  answers 425 itself to anything that is not safe to repeat. A client sends early only what
+  is safe to repeat; a refusal sends the same bytes again after the handshake, and a 425 the
+  request once more, not early. Over HTTP/2 the preface, the settings and one request go early.
+  The engine's TCP handshake gains EndOfEarlyData and 0.5-RTT writes; only a connection whose
+  owner asks sends or takes early data, so a program that drives the engine itself sees none.
+- **Sessions for the transport wrapper.** A client configuration with `early_data` keeps the
+  newest session of eight server names; `proven_tls_transport_client` given no session, and
+  so `proven_tls_http_wrap`, resumes with it and keeps the one the connection ends with.
+  Configurations without `early_data` behave as before.
+
 ### Changed
 
+- **A TLS 1.3 server over TCP sends its ticket with its Finished** when it asks for no client
+  certificate (RFC 8446 section 4.6.1): it computes the client's Finished, so the ticket no
+  longer waits a round trip for it. A client that reads its answer and closes at once still
+  leaves with a ticket - before this, one 0-RTT connection in fifteen went without one.
+- **Tests:** `test_unit_ws_compress` waits for the server to be refused, or to be done pushing,
+  instead of 10 s: under ThreadSanitizer the server was slower than that (seen at v0.53.0 and
+  again now).
 - **A response head over `max_head_bytes` is PROVEN_ERR_OUT_OF_BOUNDS over every protocol.** The
   event client said so over HTTP/1.1, as manual chapter 15 states; over HTTP/2 and HTTP/3 the
   stream was reset and the request ended with PROVEN_ERR_RESET. `proven_h2_event_t` gains

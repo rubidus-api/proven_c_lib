@@ -1,6 +1,7 @@
 #include "proven/http_event_client.h"
 #include "../../platform/proven_sys_mem.h"
 #include "proven_internal_http_event_client.h"
+#include "proven_internal_tls.h"
 #include "proven_internal_loop.h"
 #include "proven_internal_http_event.h"
 
@@ -66,6 +67,10 @@ typedef struct c2req {
     struct c2delay *delay;             /* waiting to be tried again: on no connection, and this says where it goes */
     bool got_head, head_only, held_last, any_decoded;
     bool host_is_ipv6, query_alone;    /* of the URL, read once when the request was started */
+    /* 0-RTT over TCP (RFC-0027): it may go as early data (GET, HEAD or OPTIONS with no body); not
+     * again (answered 425); it went; what came of it (proven_http_event_client_early_). */
+    bool early_ok, no_early, went_early;
+    proven_u8 early_result;
 } proven_c2req_t;
 
 struct c2conn {
@@ -97,6 +102,11 @@ struct c2conn {
     bool sock_gone;                    /* and `closed` has come */
     bool recv_armed;                   /* a receive of zero bytes is in flight */
     bool client_going;                 /* ended by proven_http_event_client_destroy, not by anything the server did */
+    /* 0-RTT over TCP (RFC-0027): the engine is up before the handshake, and what it wrote went as
+     * early data - kept here, to be written again should the server refuse it. */
+    bool early;
+    proven_byte_t *early_copy;
+    proven_size_t early_copy_len, early_copy_cap;
     proven_byte_t host[256];
 };
 
@@ -237,6 +247,7 @@ static void c_close_socket(c2conn_t *c) {
     }
     const bool established = c->tls && proven_tls_is_established(c->tls), resumed = established && proven_tls_resumed(c->tls);
     if (c->tls) { proven_tls_conn_destroy(c->tls); c->tls = (void *)0; }
+    if (c->early_copy) { cl->alloc.free_fn(cl->alloc.ctx, c->early_copy); c->early_copy = (void *)0; c->early_copy_len = c->early_copy_cap = 0; }
     if (c->https) {
         proven_http_event_client_session_keep_(cl, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, c->port, false, &c->session, c->session_mark, &c->session_stored, established, resumed);
         proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)(c->session.opaque), .size = sizeof c->session.opaque });
@@ -333,9 +344,12 @@ static proven_size_t c_offer(c2conn_t *c, proven_mem_view_t data) {
         if (n > data.size) n = data.size;
         if (c->tls) {
             proven_mem_view_t piece = { .ptr = data.ptr, .size = n < 16384 ? n : 16384 };
+            const bool early = c->early && !proven_tls_is_established(c->tls);
+            if (early && proven_tls_early_room_(c->tls) == 0) return 0;      /* the rest after the handshake */
             proven_result_size_t w = proven_tls_write(c->tls, piece);
             if (w.err != PROVEN_OK) { c_kill(c, PROVEN_ERR_RESET); return 0; }
             taken = w.value;
+            if (early && !c2_append(c->client->alloc, &c->early_copy, &c->early_copy_len, &c->early_copy_cap, data.ptr, taken)) { c_kill(c, PROVEN_ERR_NOMEM); return 0; }
             if (!c_flush_tls(c)) return 0;
         } else {
             proven_result_size_t w = proven_loop_send(c->client->loop, &c->ls, (proven_mem_view_t){ .ptr = data.ptr, .size = n });
@@ -358,7 +372,7 @@ static void c_on_timer(void *ctx);
  * have come. A server that takes the connection - and the TLS handshake - and then says
  * nothing has connect_timeout_ms to say it, like one that never answered the connect. */
 static bool c_connecting(const c2conn_t *c) {
-    return c->state != C2_UP || !proven_h2_conn_has_peer_settings(c->engine);
+    return c->state != C2_UP || c->early || !proven_h2_conn_has_peer_settings(c->engine);
 }
 
 static void c_arm(c2conn_t *c) {
@@ -535,7 +549,23 @@ static proven_err_t r_submit(proven_c2req_t *r) {
 static void c_submit_waiting(c2conn_t *c) {
     /* Not before the server has said what it allows: a burst sent ahead of its settings can
      * exceed its limit on streams, and the surplus comes back refused. */
-    if (c->dead || c->state != C2_UP || c->over || !proven_h2_conn_has_peer_settings(c->engine)) return;
+    if (c->dead || c->state != C2_UP || c->over) return;
+    if (c->early) {
+        /* Early data (RFC-0027): before the server's settings, one request that is safe to repeat,
+         * on the one stream every server allows; the rest wait for the handshake. */
+        bool any = false;
+        for (proven_c2req_t *r = c->reqs; r; r = r->next) any = any || r->went_early;
+        proven_c2req_t *first = (void *)0;
+        for (proven_c2req_t *r = c->reqs; r; r = r->next) if (r->id == 0 && !r->dead && r->early_ok && !r->no_early) first = r;
+        if (any || !first) return;
+        c_enter(c);
+        first->went_early = true;
+        const proven_err_t e = r_submit(first);
+        if (e != PROVEN_OK) { first->went_early = false; if (e != PROVEN_ERR_BUSY) r_finish(first, e); }
+        c_leave(c);
+        return;
+    }
+    if (!proven_h2_conn_has_peer_settings(c->engine)) return;
     c_enter(c);
     for (bool again = true; again && !c->dead;) {
         again = false;
@@ -635,6 +665,18 @@ static void c_response(c2conn_t *c, proven_c2req_t *r, const proven_h2_event_t *
     if (ev->field_count > cl->cfg.max_headers) { r_finish(r, PROVEN_ERR_OUT_OF_BOUNDS); return; }
     for (proven_size_t i = 0; i < ev->field_count; ++i) cl->headers[i] = ev->fields[i];
     proven_http_response_t res = { .status = ev->status, .version_minor = 1, .headers = cl->headers, .header_count = ev->field_count };
+    if (ev->status == 425 && r->early_result == 1 && !r->no_early) {
+        /* Too Early (RFC 8470): sent once more on this connection, now that its handshake is
+         * over; the stream that carried the early copy is let go of. */
+        r->no_early = true;
+        r->early_result = 3;
+        proven_h2_conn_stream_set_user(c->engine, r->id, (void *)0);
+        (void)proven_h2_conn_reset(c->engine, r->id, PROVEN_H2_CANCEL);
+        r->id = 0;
+        r->engine_done = false;
+        c_submit_waiting(c);
+        return;
+    }
     r->got_head = true;
     if (r->copy) { cl->alloc.free_fn(cl->alloc.ctx, r->copy); r->copy = (void *)0; }      /* answered: it will not be sent again */
     const bool no_body = ev->end_stream || r->head_only;
@@ -812,6 +854,34 @@ static void c_up(c2conn_t *c) {
     c_pump(c);
 }
 
+static void c_fall_back(c2conn_t *c);
+
+/* The handshake of a connection that began HTTP/2 inside it is over (RFC-0027). The server took
+ * what went early, or refused it - it never read those bytes, and they go again first, as they
+ * were, so that the stream and the header compression stay where both sides think they are. A
+ * server that did not agree h2 again cannot have taken them: its requests start again elsewhere. */
+static void c_settle_early(c2conn_t *c) {
+    proven_http_event_client_t *cl = c->client;
+    c->early = false;
+    if (!proven_tls_ticket_stored_(c->tls)) proven_tls_session_early_off_(&c->session);    /* a ticket that came since is fresh; a later one replaces it */
+    proven_u8str_view_t chosen = proven_tls_alpn(c->tls);
+    const bool h2 = chosen.size == 2 && chosen.ptr[0] == 'h' && chosen.ptr[1] == '2';
+    const bool taken = h2 && proven_tls_early_(c->tls) == PROVEN_TLS_EARLY_ACCEPTED;
+    for (proven_c2req_t *r = c->reqs; r; r = r->next) if (r->went_early) r->early_result = taken ? 1 : 2;
+    if (h2 && !taken) {
+        for (proven_size_t at = 0; at < c->early_copy_len && !c->dead;) {
+            const proven_size_t n = c->early_copy_len - at < 16384 ? c->early_copy_len - at : 16384;
+            proven_result_size_t w = proven_tls_write(c->tls, (proven_mem_view_t){ .ptr = c->early_copy + at, .size = n });
+            if (w.err != PROVEN_OK || w.value == 0) { c_kill(c, PROVEN_ERR_RESET); break; }
+            at += w.value;
+        }
+    }
+    if (c->early_copy) { cl->alloc.free_fn(cl->alloc.ctx, c->early_copy); c->early_copy = (void *)0; c->early_copy_len = c->early_copy_cap = 0; }
+    if (c->dead) return;
+    if (!h2) { c_fall_back(c); return; }
+    if (c_flush_tls(c)) c_pump(c);
+}
+
 /* The origin speaks HTTP/1.1. It is remembered as that, and every request that was waiting to
  * find out starts again as an ordinary one, known to its caller by the object it already has. */
 static void c_fall_back(c2conn_t *c) {
@@ -892,6 +962,10 @@ static void c_readable(c2conn_t *c) {
             else { c_fall_back(c); return; }
             if (c->dead) return;
         }
+        if (c->early && proven_tls_is_established(c->tls)) {
+            c_settle_early(c);
+            if (c->dead || c->state != C2_UP) return;
+        }
         while (c->state == C2_UP && !c->dead) {
             proven_result_size_t got = proven_tls_read(c->tls, (proven_mem_mut_t){ .ptr = cl->pbuf, .size = CL_PLAIN_BYTES });
             if (got.err == PROVEN_ERR_EOF) { c->peer_eof = true; c_end_requests(c, PROVEN_ERR_RESET); break; }
@@ -909,7 +983,15 @@ static void c_sock_connected(void *ctx, proven_err_t err) {
     c_enter(c);
     if (err == PROVEN_OK) {
         (void)proven_net_conn_set_nodelay(&c->sock, true);
-        if (c->tls) { c->state = C2_HANDSHAKE; if (c_flush_tls(c)) c_watch(c); }
+        if (c->tls) {
+            c->state = C2_HANDSHAKE;
+            /* With room for early data and a request that may use it, HTTP/2 begins now, inside
+             * the ClientHello's flight (RFC-0027). */
+            bool any = false;
+            for (proven_c2req_t *r = c->reqs; r; r = r->next) any = any || (r->id == 0 && !r->dead && r->early_ok && !r->no_early);
+            if (any && proven_tls_early_room_(c->tls) > 0) { c->early = true; c_up(c); }
+            if (!c->dead && c_flush_tls(c)) c_watch(c);
+        }
         else c_up(c);                              /* in the clear: by prior knowledge */
     } else {
         c_kill(c, err);
@@ -1029,7 +1111,10 @@ static proven_err_t c_open(proven_http_event_client_t *cl, bool https, proven_u8
     if (https) {
         c->session_mark = proven_http_event_client_session_start_(cl, host, port, false, &c->session);
         c->session_stored = c->session_mark;
-        e = proven_tls_client_create(cl->cfg.tls, host, &c->session, &c->tls);
+        /* Early data (RFC-0027) is offered with a session made over HTTP/2: what goes early is
+         * HTTP/2's preface, settings and a request, which only a server that agrees h2 again reads. */
+        e = cl->cfg.tls->early_data && proven_tls_session_alpn_is_(&c->session, c2_lit("h2")) ? proven_tls_client_create_early_(cl->cfg.tls, host, &c->session, &c->tls)
+                                                                                                : proven_tls_client_create(cl->cfg.tls, host, &c->session, &c->tls);
     }
     /* The loop makes the connection and says how it went from the loop, so that nothing is
      * reported from inside the call that began it. */
@@ -1386,6 +1471,7 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
     C2_KEEP(o->body.ptr, o->body.size, r->body);
     #undef C2_KEEP
     r->body_length = o->body_length;
+    r->early_ok = proven_http_event_client_may_go_early_(method, o);
     r->streamed = o->body.size == 0 && o->body_length != 0;
 
     if (!c) {
@@ -1643,6 +1729,11 @@ proven_u32 proven_http_event_client_h2_test_window_(proven_http_event_request_t 
     proven_c2req_t *r = request ? c2_of(request) : (proven_c2req_t *)0;
     if (!r || r->dead || r->id == 0 || !r->conn || !r->conn->engine) return 0;
     return proven_h2_conn_test_window_(r->conn->engine, PROVEN_H2_TEST_CAP);
+}
+
+int proven_http_event_client_h2_early_(proven_http_event_request_t *request) {
+    const proven_c2req_t *r = (const proven_c2req_t *)(const void *)request;
+    return r ? r->early_result : 0;
 }
 
 #endif

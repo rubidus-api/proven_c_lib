@@ -18,8 +18,8 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     ex_app_t *app = ctx;
     /* The request looks the same either way: a method, a target, fields - Host among them,
      * which HTTP/2 carries as `:authority` and the server hands on under its usual name. */
-    /* Over HTTP/3, with `early_data` in the TLS configuration, a request may come as early data
-     * (chapter 14, section 6) and may be a copy an attacker replayed. This answer is safe to give
+    /* With `early_data` in the TLS configuration, a request may come as early data (chapter 14,
+     * section 6) and may be a copy an attacker replayed. This answer is safe to give
      * twice; a handler whose request is not answers 425 and the client sends it again later. */
     if (proven_http_stream_early(stream) && head->method != PROVEN_HTTP_GET) {
         (void)proven_http_stream_respond(stream, 425, NULL, 0, (proven_mem_view_t){ 0 });

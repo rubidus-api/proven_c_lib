@@ -55,6 +55,7 @@ struct sv_conn {
     bool timed;                        /* on the timer wheel */
     bool dead;                         /* closed; freed at the end of the round */
     bool tls;                          /* `t` is a TLS transport over `sock` */
+    bool early;                        /* the request being served arrived as early data (RFC-0027) */
 
     /* One request. */
     proven_http_request_t req;
@@ -487,6 +488,8 @@ const proven_http_request_t *proven_http_exchange_request(const proven_http_exch
     return exchange ? &exchange->conn.req : (void *)0;
 }
 
+bool proven_http_exchange_early(const proven_http_exchange_t *exchange) { return exchange && exchange->conn.early; }
+
 proven_net_addr_t proven_http_exchange_peer(const proven_http_exchange_t *exchange) {
     proven_net_addr_t none = {0};
     return exchange ? exchange->conn.peer : none;
@@ -851,6 +854,20 @@ static bool sv_service(proven_http_server_t *s, proven_sv_conn_t *c) {
         c->head_size = head;
         c->body_pos = head;
         c->body_done = framing.kind == PROVEN_HTTP_BODY_NONE || (framing.kind == PROVEN_HTTP_BODY_LENGTH && framing.length == 0);
+        /* Early data (RFC-0027): a head that ends among the bytes that arrived early came early.
+         * The buffer begins with this request. Only one safe to repeat reaches the handler;
+         * anything else is answered 425 Too Early, and the client sends it again (RFC 8470). */
+        c->early = false;
+        if (c->tls) {
+            proven_size_t early = 0, total = 0;
+            proven_tls_read_counts_(proven_tls_transport_conn(c->t), &early, &total);
+            c->early = early > 0 && c->len <= total && total - c->len + head <= early;
+        }
+        if (c->early && !(c->body_done && (c->req.method == PROVEN_HTTP_GET || c->req.method == PROVEN_HTTP_HEAD || c->req.method == PROVEN_HTTP_OPTIONS))) {
+            sv_reject(c, 425);
+            sv_linger(s, c);
+            return false;
+        }
         c->expect_continue = c->req.version_minor >= 1 && !c->body_done &&
                              proven_http_header_has_token(c->headers, c->req.header_count, sv_lit("Expect"), sv_lit("100-continue"));
         c->handling = true;
@@ -932,6 +949,7 @@ static void sv_accept(proven_http_server_t *s, proven_net_listener_t *l) {
             if (proven_tls_transport_server_lazy_(c->t, s->cfg.tls, &tls) != PROVEN_OK) { (void)proven_net_close(&sock); sv_free(s->cfg.alloc, c); return; }
             c->t = tls;
             c->tls = true;
+            if (s->cfg.tls->early_data) proven_tls_server_take_early_(proven_tls_transport_conn(tls));   /* RFC-0027 */
         }
         c->peer = peer;
         c->headers = (proven_http_header_t *)(void *)(c + 1);

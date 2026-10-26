@@ -173,6 +173,7 @@ not been read: that is the handler's choice.
 |---|---|---|
 | `proven_http_exchange_request(x)` | The request: method, target, headers (Chapter 10's `proven_http_request_t`). | pointer; views are good until the handler returns. |
 | `proven_http_exchange_peer(x)` | The client's address. | `proven_net_addr_t`. |
+| `proven_http_exchange_early(x)` | The request arrived as TLS early data (0-RTT), before the handshake was over - only with a `tls` configuration that has `early_data`, and only for GET, HEAD or OPTIONS without a body: the server answers anything else that arrives early with 425 itself ([Chapter 14](manual-14-tls.md), section 6). A handler whose GET changes something answers 425 to an early one; the client sends it again. | `bool`. |
 | `proven_http_exchange_read(x, dest)` | Read more of the request body. | `proven_result_size_t`: `.err` is `EOF` when the body is complete; `TIMEOUT`; `OUT_OF_BOUNDS` past `max_body_bytes`; `INVALID_FORMAT` for bad chunk framing; `RESET` when the client left. |
 | `proven_http_exchange_respond(x, status, headers, count, body)` | Send a whole response, with a body held in memory. | `proven_err_t`: `INVALID_STATE` when a response was already begun; `INVALID_ARG` for a header the server owns or a value the writers refuse; `OUT_OF_BOUNDS` when the head does not fit; `TIMEOUT`, `RESET`. |
 | `proven_http_exchange_begin(x, status, headers, count, content_length)` | Begin a response whose body follows in pieces. `PROVEN_HTTP_LENGTH_UNKNOWN` when you do not know the length: the body is then sent chunked. | as `respond`. |
@@ -709,6 +710,13 @@ context ([Chapter 14](manual-14-tls.md), section 3). The seam stays an interface
 client's behaviour around it - no downgrade on redirect, credentials kept to their origin, the
 tunnel before the handshake - does not depend on which TLS is behind it, and so that a program
 with another TLS implementation can attach that instead.
+
+**Early data.** With `early_data` in that configuration the wrap resumes the newest session of
+the server's name and, when its ticket allows, returns without sending anything: the request
+head this client writes next goes with the ClientHello as early data, and is answered without
+a round trip of its own. Only a GET, HEAD or OPTIONS without a body goes early - for anything else
+the client completes the handshake first - and a server that answers 425 Too Early gets the
+request once more, on a new connection, not early ([Chapter 14](manual-14-tls.md), section 6).
 
 **If you write one, it must verify the server.** `host` is passed so that the certificate can be
 checked against it. A wrap that encrypts without verifying gives a connection that is private

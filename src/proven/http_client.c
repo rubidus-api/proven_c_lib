@@ -7,6 +7,7 @@
 #include "proven/random.h"
 #include "proven/time.h"
 #include "proven_internal_http_coding.h"
+#include "proven_internal_tls.h"
 
 /*
  * The HTTP/1.1 client driver. The message format is http.c's business and the sockets are
@@ -612,6 +613,11 @@ static proven_err_t cl_exchange(proven_cl_call_t *call, const proven_http_client
     if (e != PROVEN_OK) return e;
 
     proven_transport_t t = conn->transport;
+    /* Early data (RFC-0027) is for what is safe to repeat: GET, HEAD or OPTIONS with no body and
+     * no change of protocol. Anything else waits for the handshake. */
+    const bool safe = (proven_u8str_view_eq(at->method, cl_lit("GET")) || proven_u8str_view_eq(at->method, cl_lit("HEAD")) || proven_u8str_view_eq(at->method, cl_lit("OPTIONS"))) &&
+                      !wants_body && req->upgrade.size == 0;
+    if (!safe && conn->wrapped) proven_tls_transport_no_early_now_(t);
     proven_result_size_t w = proven_transport_write_all(t, (proven_mem_view_t){ .ptr = out.ptr, .size = len }, cl_io_deadline(c));
     if (w.err != PROVEN_OK) return w.err;
     call->buf_len = 0;
@@ -888,7 +894,7 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
     proven_size_t origin_host_len = 0;
     proven_u16 origin_port = 0;
     bool origin_https = false;
-    bool auth_tried = false, stale_retried = false;
+    bool auth_tried = false, stale_retried = false, too_early_retried = false;
     proven_u32 redirects = 0;
     proven_err_t e = PROVEN_OK;
 
@@ -969,6 +975,18 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
                 cl_release_conn(call);
                 continue;
             }
+        }
+
+        /* Too Early (RFC 8470): the request went as TLS early data and the server will not act
+         * on a copy that may be replayed. Once more, on a new connection, not as early data. */
+        if (status == 425 && !too_early_retried && replayable && call->conn && call->conn->wrapped &&
+            proven_tls_transport_early_(call->conn->transport) == PROVEN_TLS_EARLY_ACCEPTED) {
+            too_early_retried = true;
+            proven_tls_transport_no_early_next_(call->conn->transport);
+            cl_drain(call);
+            cl_conn_close(client, call->conn);
+            call->conn = (void *)0;
+            continue;
         }
 
         /* A redirect. */

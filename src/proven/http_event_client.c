@@ -313,7 +313,9 @@ static proven_err_t cl_conn_open(proven_http_event_request_t *c) {
     if (k->https) {
         k->session_mark = proven_http_event_client_session_start_(cl, cl_host(c), k->port, false, &k->session);
         k->session_stored = k->session_mark;
-        e = proven_tls_client_create(cl->cfg.tls, cl_host(c), &k->session, &k->tls);
+        /* A request that may go early goes with the ClientHello, when the session allows it (RFC-0027). */
+        e = cl->cfg.tls->early_data && c->early_ok && !c->no_early ? proven_tls_client_create_early_(cl->cfg.tls, cl_host(c), &k->session, &k->tls)
+                                                                   : proven_tls_client_create(cl->cfg.tls, cl_host(c), &k->session, &k->tls);
     }
     /* The loop makes the connection and says how it went from the loop (cl_sock_connected), so
      * that nothing - not even a refusal - is reported from inside the call that began it. */
@@ -640,11 +642,37 @@ static void cl_watch(proven_http_event_request_t *c) {
     if (proven_loop_send_wait(cl->loop, &k->ls, at_most) != PROVEN_OK) cl_kill(c, PROVEN_ERR_RESET);
 }
 
+/* Once the handshake is over, what came of a request sent as early data (RFC-0027): taken, or
+ * refused - the server never read it, and it goes again from its start, under the new keys.
+ * Before any of the response is read: a 425 means something only for a request that was taken. */
+static void cl_settle_early(proven_http_event_request_t *c) {
+    proven_cl_conn_t *k = c->k;
+    if (!k || !k->tls || c->early_len == 0 || c->early_settled || !proven_tls_is_established(k->tls)) return;
+    c->early_settled = true;
+    if (!proven_tls_ticket_stored_(k->tls)) proven_tls_session_early_off_(&k->session);    /* a ticket that came since is fresh; a later one replaces it */
+    const bool taken = proven_tls_early_(k->tls) == PROVEN_TLS_EARLY_ACCEPTED;
+    c->early_result = taken ? 1 : 2;
+    if (!taken) c->out.off -= c->early_len;
+    /* Taken, it is kept until it is answered: a 425 sends it again (a head and no body). */
+    c->keep_out = c->stale || taken;
+}
+
 /* Push what is waiting towards the socket, without waiting. False when the request ended. */
 static bool cl_flush(proven_http_event_request_t *c) {
     if (c->dead) return false;
     if (!c->k || c->state == CL_CONNECTING) return true;
     proven_cl_conn_t *k = c->k;
+    if (k->tls && !proven_tls_is_established(k->tls) && c->early_len == 0 && buf_pending(&c->out) > 0 && proven_tls_early_room_(k->tls) > 0) {
+        /* The request as early data (RFC-0027), up to what the ticket allows. Its bytes are kept
+         * until the server has said whether it read them. */
+        proven_result_size_t w = proven_tls_write(k->tls, (proven_mem_view_t){ .ptr = c->out.ptr + c->out.off, .size = buf_pending(&c->out) });
+        if (w.err != PROVEN_OK) { cl_kill(c, PROVEN_ERR_RESET); return false; }
+        c->early_len = (proven_u32)w.value;
+        c->out.off += w.value;
+        c->sent = c->sent || w.value > 0;
+        c->keep_out = true;
+    }
+    cl_settle_early(c);
     for (;;) {
         if (k->tls && buf_pending(&c->out) > 0 && proven_tls_is_established(k->tls)) {
             proven_result_size_t w = proven_tls_write(k->tls, (proven_mem_view_t){ .ptr = c->out.ptr + c->out.off, .size = buf_pending(&c->out) });
@@ -760,6 +788,16 @@ static void cl_process(proven_http_event_request_t *c) {
                 if (res.status == 101) { cl_kill(c, PROVEN_ERR_UNSUPPORTED); break; }
                 if (++c->interim > CL_MAX_INTERIM) { cl_kill(c, PROVEN_ERR_INVALID_FORMAT); break; }
                 continue;
+            }
+            if (res.status == 425 && c->early_result == 1 && !c->no_early) {
+                /* Too Early (RFC 8470): the server will not act on a copy that may be replayed.
+                 * Once more, on a connection of its own and not as early data. */
+                c->no_early = true;
+                c->early_result = 3;
+                c->early_len = 0; c->early_settled = false;
+                proven_err_t again = cl_send_again(c);
+                if (again != PROVEN_OK) cl_kill(c, again);
+                break;
             }
             proven_http_framing_t framing = { 0 };
             if (proven_http_response_framing(&res, c->method, &framing) != PROVEN_OK) { cl_kill(c, PROVEN_ERR_INVALID_FORMAT); break; }
@@ -880,6 +918,11 @@ static void cl_readable(proven_http_event_request_t *c) {
             cl_kill(c, e);
             return;
         }
+        cl_settle_early(c);
+        /* What the engine owes the server goes before any of the response is read: with early
+         * data the answer can come in the same read as the server's Finished, and a response
+         * that ends here must find the connection with nothing left unsent (cl_reusable). */
+        if (proven_tls_pending_output(k->tls).size > 0 && !cl_flush(c)) return;
         for (;;) {
             proven_result_size_t got = proven_tls_read(k->tls, (proven_mem_mut_t){ .ptr = cl->pbuf, .size = CL_PLAIN_BYTES });
             if (got.err == PROVEN_ERR_EOF) { c->peer_eof = true; cl_process(c); break; }
@@ -1182,6 +1225,7 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
         c->request_ended = true;
     }
     if (!buf_append(cl, &c->out, cl->hbuf, head_len) || !buf_append(cl, &c->out, o->body.ptr, o->body.size)) e = PROVEN_ERR_NOMEM;
+    c->early_ok = proven_http_event_client_may_go_early_(method, o);
     c->face = face ? face : c;
     if (e == PROVEN_OK) e = cl_place(c);
     if (e != PROVEN_OK) {
@@ -1195,6 +1239,30 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
     cl->request_count++;
     if (out) *out = c;
     return PROVEN_OK;
+}
+
+/* A request that is safe to repeat, and so may go as early data (RFC 8470, RFC-0027): GET,
+ * HEAD or OPTIONS with no body, and not asking to change protocol. */
+static bool g_cl_early_any;
+void proven_http_event_client_test_early_any_(bool on) { g_cl_early_any = on; }
+
+bool proven_http_event_client_may_go_early_(proven_u8str_view_t method, const proven_http_event_request_options_t *o) {
+    if (g_cl_early_any && !(o->body.size == 0 && o->body_length != 0)) return true;     /* a test: as another client might */
+    if (o->body.size > 0 || o->body_length != 0) return false;
+    static const char *const safe[] = { "GET", "HEAD", "OPTIONS" };
+    bool ok = false;
+    for (int i = 0; i < 3; ++i) {
+        const proven_size_t n = (proven_size_t)(i == 0 ? 3 : i == 1 ? 4 : 7);
+        if (method.size == n) { bool same = true; for (proven_size_t k = 0; k < n; ++k) same = same && method.ptr[k] == (proven_byte_t)safe[i][k]; ok = ok || same; }
+    }
+    for (proven_size_t i = 0; ok && i < o->header_count; ++i) if (proven_u8str_view_eq_ascii_ci(o->headers[i].name, cl_lit("Upgrade"))) ok = false;
+    return ok;
+}
+
+int proven_http_event_client_early_(proven_http_event_request_t *c) {
+    if (!c) return 0;
+    if (c->h.kind == CL_KIND_H2) return proven_http_event_client_h2_early_(c);
+    return c->early_result;
 }
 
 proven_result_size_t proven_http_event_request_write(proven_http_event_request_t *c, proven_mem_view_t data) {

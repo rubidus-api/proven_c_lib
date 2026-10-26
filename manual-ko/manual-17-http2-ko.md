@@ -969,6 +969,10 @@ int proven_http_stream_protocol(const proven_http_stream_t *stream);
   된다: 핸드셰이크에서 합의하고는 말하지 않을 수 있는 조합을 서버는 생성 때 거부한다. 1.2보다 오래된
   TLS에서, 또는 순방향 비밀성과 인증된 암호화가 없는 1.2 스위트에서 `h2`를 협상한 연결 - 14장의 구형
   옵션을 켰을 때만 가능하다 - 은 RFC 9113이 요구하는 대로 `INADEQUATE_SECURITY`로 끝낸다.
+- **TLS 설정에 `early_data`가 있으면 0-RTT**(14장 6절, v0.84.0). HTTP/1.1, HTTP/3과 같다: HEADERS가
+  클라이언트의 조기 데이터로 온 요청은 핸드셰이크가 끝나기 전에 핸들러에게 가고, `proven_http_stream_early`가
+  참이며, 바로 답할 수 있다. 본문 없는 GET, HEAD, OPTIONS만 거기까지 간다 - 그 밖의 것이 조기에 오면
+  서버가 그 스트림에 425로 답한다.
 - **평문에서는 첫 바이트들이 말한다.** HTTP/2를 원한다는 것을 아는 클라이언트는 24바이트 서문으로
   시작한다(curl의 `--http2-prior-knowledge`). 그 밖의 것은 HTTP/1.1이다. 서버는 달라지는 첫 바이트에서
   정하므로, 서문과 첫 글자가 같은 `POST`는 둘째 바이트에서 HTTP/1.1이 된다. `Upgrade: h2c`는 제공하지
@@ -1037,7 +1041,7 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     ex_app_t *app = ctx;
     /* 요청은 어느 쪽이든 같아 보인다: 메서드, 대상, 필드 - 그 가운데 Host도 있다. HTTP/2는
      * 그것을 `:authority`로 싣고, 서버는 익숙한 이름으로 넘겨준다. */
-    /* HTTP/3에서 TLS 설정에 `early_data`가 있으면 요청은 조기 데이터로 올 수 있고(14장 6절),
+    /* TLS 설정에 `early_data`가 있으면 요청은 조기 데이터로 올 수 있고(14장 6절),
      * 공격자가 재전송한 사본일 수 있다. 이 답은 두 번 해도 괜찮다. 그렇지 않은 요청이라면 425로
      * 답하고, 클라이언트는 나중에 다시 보낸다. */
     if (proven_http_stream_early(stream) && head->method != PROVEN_HTTP_GET) {
@@ -1232,7 +1236,10 @@ int proven_http_event_request_protocol(const proven_http_event_request_t *reques
 - **TLS에서는** `http2`와, `h2`를 (그리고 그 뒤에 `http/1.1`을) 내놓는 TLS 설정: 오리진마다 핸드셰이크가
   정한다. HTTP/1.1을 고른 오리진은 그렇게 기억되고, 전처럼 요청 하나에 연결 하나로 서비스된다. (그런
   오리진은 마지막 64개까지, 하나에 약 600바이트로 기억한다. 잊힌 오리진은 핸드셰이크 한 번을 들여 다시
-  알아낸다.)
+  알아낸다.) TLS 설정에 `early_data`가 있고 세션이 `h2`로 만들어졌으면, 새 연결은 첫 비행 안에서 HTTP/2를
+  시작한다: 서문, 설정, 그리고 본문 없는 GET, HEAD, OPTIONS 요청 하나가 조기 데이터로 가고(14장 6절,
+  v0.84.0) 나머지는 핸드셰이크 뒤에 간다. 서버가 거절한 것은 그대로 다시 가고, 425를 받으면 이제 열린 같은
+  연결에서 요청을 한 번 더 보낸다.
 - **평문에서는** `http2_cleartext`: 그 클라이언트의 모든 `http` 요청이 사전 지식 방식의 HTTP/2다.
   평문에서는 서버에 물어볼 방법이 없으니, 아는 서버에 대해서만 이렇게 말한다. 평문으로 두 종류와 모두
   말하는 클라이언트는 클라이언트 둘이다. HTTP/2를 말하지 않는 서버에 대해 이렇게 말하면 모든 요청이

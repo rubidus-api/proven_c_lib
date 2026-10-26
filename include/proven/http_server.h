@@ -192,6 +192,18 @@ const proven_http_request_t *proven_http_exchange_request(const proven_http_exch
 proven_net_addr_t proven_http_exchange_peer(const proven_http_exchange_t *exchange);
 
 /**
+ * @brief Whether the request arrived as TLS early data (0-RTT), before the handshake was over.
+ *
+ * Only with a `tls` configuration that has `early_data`, and only for a request that is safe to
+ * repeat - GET, HEAD or OPTIONS without a body: anything else that arrives early is answered
+ * 425 Too Early by the server itself, and the client sends it again after the handshake (RFC
+ * 8470). Early data can be replayed by someone who saw it (manual chapter 14): a handler whose
+ * GET changes something answers 425 to an early one, and the client sends it again.
+ */
+[[nodiscard]]
+bool proven_http_exchange_early(const proven_http_exchange_t *exchange);
+
+/**
  * @brief Read more of the request body into `dest`.
  *
  * `.err` is PROVEN_ERR_EOF when the body is complete (at once, for a request without one). A

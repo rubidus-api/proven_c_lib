@@ -80,7 +80,7 @@ void proven_tls_config_destroy(proven_tls_config_t *config);
 | `alpn`, `alpn_count` | 양쪽 | 애플리케이션 프로토콜 이름, 선호하는 순서(`http/1.1`). 서버가 클라이언트가 내민 것 가운데 자기 첫 선택을 고른다. 양쪽에 목록이 있고 겹치는 것이 없으면 핸드셰이크는 실패한다 |
 | `random`, `now` | 양쪽 | 예측할 수 없는 바이트와 시각의 출처. 호스티드 시스템에서는 널로 둔다: 운영체제의 원천과 벽시계를 쓴다. 프리스탠딩 빌드는 둘 다 공급해야 한다 |
 | `no_resumption`, `ticket_lifetime_s` | 양쪽, 서버 | 6절 |
-| `early_data` | 양쪽, QUIC(HTTP/3)에서 | 6절 "조기 데이터" |
+| `early_data` | 양쪽: HTTP/3, 그리고 TCP 위의 HTTP/1.1과 HTTP/2 | 6절 "조기 데이터" |
 | `keep_peer_certificate` | 검증하는 쪽 | 핸드셰이크 뒤에도 상대의 인증서를 보관한다(`proven_tls_peer_certificate`용) |
 | `max_handshake_bytes` | 양쪽 | 받아들이는 가장 큰 핸드셰이크 메시지. 기본 65,536 |
 | `min_version`, `max_version` | 양쪽 | 이쪽이 동의하는 가장 오래된, 가장 새로운 프로토콜 버전: `PROVEN_TLS_VERSION_1_2` 또는 `PROVEN_TLS_VERSION_1_3`. 0이 기본값이다 - 최소는 1.2, 최대는 1.3. **TLS 1.2를 거부하려면 `min_version = PROVEN_TLS_VERSION_1_3`으로 둔다**(9절). `PROVEN_TLS_VERSION_1_1`과 `PROVEN_TLS_VERSION_1_0`은 레거시다(10절) |
@@ -603,10 +603,11 @@ typedef struct { alignas(8) proven_byte_t opaque[PROVEN_TLS_SESSION_SIZE]; } pro
 
 여기서 재개가 하지 않는 것:
 
-- **조기 데이터는 QUIC에서만**(다음 부분). TCP에서는 티켓이 그것을 허용하지 않고 클라이언트도 보내지
-  않는다. 다른 클라이언트가 보낸 것은 서버가 건너뛴다(다음 부분).
-- **`proven_tls_http_wrap`을 통해서는 안 된다.** HTTP 클라이언트의 연결은 재개하지 않는다. 대신
-  열린 연결을 다시 쓰며, 그쪽이 더 싸다.
+- **조기 데이터는 그 주인이 요청할 때만**(다음 부분): 이 라이브러리의 HTTP 서버와 클라이언트가
+  `early_data`를 켰을 때. 엔진을 직접 다루거나 전송 래퍼를 서버로 쓰는 프로그램은 받지 않는다.
+- **`proven_tls_http_wrap`을 통해서는 `early_data`가 있을 때만.** 그것을 켠 클라이언트 설정은 서버
+  이름마다 가장 새 세션을 간직하고(이름 여덟 개), 전송 래퍼는 세션을 받지 않으면 그것으로 재개한다.
+  없으면 HTTP 클라이언트의 연결은 재개하지 않고, 대신 열린 연결을 다시 쓴다.
 - 재개된 연결의 상대는 세션이 만들어질 때 검증된 그 상대다. 인증서는 다시 보내지지 않으므로 다시
   검사되지 않고, 그 사이에 지난 만료는 알아채지 못한다. 티켓 수명이 그것이 문제될 수 있는 기간을
   제한한다.
@@ -622,18 +623,24 @@ typedef struct { alignas(8) proven_byte_t opaque[PROVEN_TLS_SESSION_SIZE]; } pro
 ### 조기 데이터(0-RTT)
 
 재개도 첫 요청을 보내기 전에 핸드셰이크 왕복 하나를 기다린다. **조기 데이터**를 쓰면 클라이언트는 그
-요청을 첫 패킷에 실어 티켓에서 만든 키로 보내고, 서버는 첫 응답에 답할 수 있다: 새 연결에서 왕복 둘이
-하나가 된다(측정: 왕복 20 ms에서 HTTP/3 GET이 43 ms에서 22 ms로). 여기서는 **QUIC 모드에서만**, 즉
-HTTP/3(17장)에서만 있고, 양쪽 설정이 모두 `early_data`를 켤 때만 쓴다(`no_resumption`과 함께 쓸 수
-없다):
+요청을 첫 패킷에 실어 티켓에서 만든 키로 보내고, 서버는 클라이언트의 Finished 전, 첫 응답에 답할 수
+있다: 새 연결에서 왕복 하나가 준다(측정: 왕복 20 ms에서 HTTP/3 GET이 43 ms에서 22 ms로. TCP에서는
+TCP 자신의 것, 핸드셰이크의 것, 요청의 것 셋 중 하나). HTTP/3(17장)에 있고, 0.84.0부터는 TCP 위의
+HTTP/1.1과 HTTP/2 - 이벤트 기반 서버와 클라이언트(15장, 17장), 블로킹 서버와 클라이언트(11장) - 에도
+있으며, 양쪽 설정이 모두 `early_data`를 켤 때만 쓴다(`no_resumption`과 함께 쓸 수 없다):
 
-- `early_data`를 켠 서버는 QUIC 연결에서만 그것을 허용하는 티켓을 발급하고, 다음을 모두 갖췄을 때만 조기
-  데이터를 받는다: 티켓이 허용함; 첫 번째 신원이고 binder가 맞음; cipher suite와 프로토콜(ALPN)이
-  티켓의 것과 같음; 이 서버가 약속하는 전송 한도가 티켓을 발급할 때 약속한 것과 같음; HelloRetryRequest가
-  없었음; 클라이언트가 알린 나이가 티켓 발급 뒤 흐른 시간과 10초 안에서 맞음; 그리고 **그 티켓으로 조기
-  데이터를 받은 적이 없음**. 그렇지 않으면 조기 데이터를 거절하고 핸드셰이크는 재개로 이어진다.
+- `early_data`를 켠 서버는 그것을 허용하는 티켓을 발급하고 - TCP에서는 16,384바이트, QUIC에서는 RFC
+  9001대로 - 다음을 모두 갖췄을 때만 조기 데이터를 받는다: 티켓이 허용하고 같은 전송에서 만들어짐; 첫
+  번째 신원이고 binder가 맞음; cipher suite와 프로토콜(ALPN. TCP에서는 없음이면 없음)이 티켓의 것과
+  같음; QUIC에서는 이 서버가 약속하는 전송 한도가 티켓을 발급할 때 약속한 것과 같음;
+  HelloRetryRequest가 없었음; 클라이언트가 알린 나이가 티켓 발급 뒤 흐른 시간과 10초 안에서 맞음;
+  그리고 **그 티켓으로 조기 데이터를 받은 적이 없음**. 그렇지 않으면 조기 데이터를 거절하고 핸드셰이크는
+  재개로 이어진다. TCP에서 티켓이 허용한 것보다 많은 조기 데이터는 연결을 끝내고(`unexpected_message`),
+  클라이언트의 `EndOfEarlyData`가 끝나는 곳을 알린다.
 - `early_data`를 켠 클라이언트는 세션의 티켓이 허용하고 그 프로토콜을 지금도 내밀 때 조기 데이터를
-  보낸다. 거절되어도 잃는 것은 아끼려던 왕복 하나뿐이다 - 보낸 것은 핸드셰이크 뒤에 다시 간다.
+  보낸다. 거절되어도 잃는 것은 아끼려던 왕복 하나뿐이다 - 보낸 것은 핸드셰이크 뒤에 다시 간다. 조기
+  데이터를 실었던 티켓은 다시 그것에 내밀지 않는다: 서버가 거절할 것이고, 더 새 티켓이 그 자리를
+  잇는다.
 
 **조기 데이터는 재전송될 수 있다.** 클라이언트의 첫 묶음을 본 사람은 그것을 다시 보낼 수 있고, 그것을
 받는 서버는 요청을 다시 처리한다. 서버 설정마다 조기 데이터를 받은 티켓의 기록부(4,096개, 96 KiB,
@@ -641,20 +648,144 @@ HTTP/3(17장)에서만 있고, 양쪽 설정이 모두 `early_data`를 켤 때�
 기록부가 차면 조기 데이터를 거절한다. 티켓은 그것을 봉인한 프로세스와 설정에서만 열리므로(위),
 기록부 하나가 그 티켓을 받을 수 있는 모든 서버를 덮는다. 기록부로 막을 수 없는 것: 공격자가
 클라이언트의 첫 묶음을 붙잡아 두고 사본을 먼저 보내면 서버는 사본을 처리한다. 원본의 조기 데이터는
-거절되어 핸드셰이크 뒤에 다시 가므로, 요청이 두 번 처리된다. 그래서 HTTP/3 서버와 클라이언트(17장)는
+거절되어 핸드셰이크 뒤에 다시 가므로, 요청이 두 번 처리된다. 그래서 HTTP 서버와 클라이언트는
 다음 규칙을 따른다: 반복해도 안전한 요청 - 본문 없는 GET, HEAD, OPTIONS - 만 조기에 보내고, 핸들러는
 `proven_http_stream_early`로 물어 **425 Too Early**로 답할 수 있으며, 그 밖의 것이 조기에 오면 서버가
 스스로 425로 답한다.
 
-**TCP로 온 조기 데이터.** 다른 클라이언트가 이 서버가 QUIC에서 발급한 티켓을 TCP 연결에 내밀며
-ClientHello에 조기 데이터를 넣을 수 있다. TCP의 서버는 조기 데이터를 받지 않으므로, RFC 8446
-4.2.10절이 조기 데이터를 거절하는 서버에게 요구하는 대로 그 레코드를 건너뛴다. HelloRetryRequest
+**TCP에서 누가 받는가.** 주인이 요청한 연결만: HTTP 서버는 `tls` 설정에 `early_data`가 있으면 받고,
+조기에 온 요청마다 표시하며(블로킹 서버의 `proven_http_exchange_early`, 이벤트 기반 서버의
+`proven_http_stream_early`), 반복해도 안전하지 않은 것에는 스스로 425로 답하고, 나머지에는
+클라이언트의 Finished 전에 답할 수 있다. HTTP 클라이언트는 반복해도 안전한 것만 조기에 보낸다. 블로킹
+클라이언트의 전송은 조기에 보낸 사본을 간직했다가 서버가 거절하면 먼저 다시 보내고, 425를 받으면 요청을
+새 연결에서 조기가 아니게 한 번 더 보낸다. 엔진이나 전송 래퍼를 서버로 직접 다루는 프로그램은 설정이
+무엇이든 받지 않는다.
+
+<!-- example: manual/examples/ko/ex_14_tls_early.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * HTTPS 위의 early data(0-RTT), 양쪽을 한 프로그램에: 11장의 서버와 11장의 클라이언트가 각자 TLS 설정에
+ * `early_data`를 둔다. 첫 요청은 전체 핸드셰이크를 하고 티켓을 남기고, 두 번째 요청은 다음 연결의
+ * ClientHello와 함께 가며, 핸들러는 그것을 알 수 있다.
+ */
+
+static const char *const HOW_TO_MAKE =
+    "  openssl req -x509 -newkey ed25519 -nodes -days 30 -subj /CN=example.test \\\n"
+    "      -addext subjectAltName=DNS:example.test,IP:127.0.0.1 -keyout key.pem -out cert.pem\n";
+
+typedef struct {
+    proven_http_server_t *server;
+} ex_app_t;
+
+static void handle(void *ctx, proven_http_exchange_t *x) {
+    ex_app_t *app = ctx;
+    const proven_http_request_t *req = proven_http_exchange_request(x);
+    if (proven_u8str_view_eq(req->target, PROVEN_LIT("/quit"))) {
+        (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(PROVEN_LIT("bye\n")));
+        proven_http_server_stop(app->server);
+        return;
+    }
+    /* early data로 온 요청은 누군가 다시 보낸 사본일 수 있다. 본문 없는 GET, HEAD, OPTIONS만 early로
+     * 여기까지 온다 - 그 밖의 것은 서버가 스스로 425로 답한다 - 그리고 무언가를 바꾸는 GET도 425로
+     * 답해야 한다: 클라이언트는 핸드셰이크 뒤에 그것을 다시 보낸다. */
+    const bool early = proven_http_exchange_early(x);
+    (void)proven_http_exchange_respond(x, 200, NULL, 0, proven_mem_view_from_u8(early ? PROVEN_LIT("early\n") : PROVEN_LIT("after the handshake\n")));
+}
+
+static void serve(void *arg) {
+    (void)proven_http_server_run(((ex_app_t *)arg)->server);
+}
+
+/* `url`을 GET하고 본문이 `want`인지 돌려준다. */
+static bool get_is(proven_http_client_t *client, proven_allocator_t heap, proven_u8str_view_t url, proven_u8str_view_t want) {
+    proven_http_client_response_t response;
+    proven_u8str_t body = { 0 };
+    bool ok = proven_http_client_get(client, url, &response) == PROVEN_OK && response.status == 200 &&
+              proven_http_client_read_all(&response, heap, &body, 4096) == PROVEN_OK && proven_u8str_view_eq(proven_u8str_as_view(&body), want);
+    proven_u8str_destroy(heap, &body);
+    proven_http_client_finish(&response);
+    return ok;
+}
+
+int main(int argc, char **argv) {
+    proven_allocator_t heap = proven_heap_allocator();
+    if (argc < 3) {
+        printf("usage: %s CERTIFICATE.pem KEY.pem\nA self-signed pair for 127.0.0.1:\n%s", argv[0], HOW_TO_MAKE);
+        return 0;
+    }
+    proven_result_mem_mut_t cert = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[1]), 64 * 1024);
+    proven_result_mem_mut_t key = proven_fs_read_all_bounded(heap, proven_u8str_view_from_cstr(argv[2]), 16 * 1024);
+    EXAMPLE_REQUIRE(cert.err == PROVEN_OK && key.err == PROVEN_OK, "the certificate and the key are read");
+    if (cert.err != PROVEN_OK || key.err != PROVEN_OK) return 1;
+
+    /* 서버: `early_data`가 있으면 티켓이 early data를 허락하고 서버가 그것을 받는다 - 티켓마다 한 번,
+     * 티켓 나이의 10초 안에서. */
+    proven_tls_options_t server_options = {
+        .alloc = heap, .early_data = true,
+        .certificate_pem = { cert.value.ptr, cert.value.size }, .private_key_pem = { key.value.ptr, key.value.size },
+    };
+    proven_tls_config_t *server_tls = NULL;
+    EXAMPLE_REQUIRE(proven_tls_config_create(&server_options, &server_tls) == PROVEN_OK, "the server's TLS configuration");
+    ex_app_t app = { 0 };
+    proven_http_server_config_t server_config = { .alloc = heap, .handler = handle, .handler_ctx = &app, .tls = server_tls };
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_server_create(&server_config, &app.server) == PROVEN_OK &&
+                    proven_http_server_listen(app.server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "an HTTPS server on a free port");
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t running;
+    proven_job_group_init(&running);
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, 1, 4, &threads) == PROVEN_OK &&
+                    proven_job_group_submit(threads, &running, serve, &app) == PROVEN_OK, "its loop runs on another thread");
+
+    /* 클라이언트: `early_data`가 있으면 설정이 서버마다 가장 새 세션을 간직하고, 반복해도 안전한
+     * 요청을 다음 연결의 ClientHello와 함께 보낸다. */
+    proven_cert_store_t *anchors = NULL;
+    EXAMPLE_REQUIRE(proven_cert_store_create(heap, &anchors) == PROVEN_OK &&
+                    proven_cert_store_add_pem(anchors, (proven_mem_view_t){ cert.value.ptr, cert.value.size }, NULL) == PROVEN_OK, "the anchors");
+    proven_tls_options_t client_options = { .alloc = heap, .anchors = anchors, .early_data = true };
+    proven_tls_config_t *client_tls = NULL;
+    EXAMPLE_REQUIRE(proven_tls_config_create(&client_options, &client_tls) == PROVEN_OK, "the client's TLS configuration");
+    /* 연결을 간직하지 않아, 요청마다 새 연결을 만든다. */
+    proven_http_client_config_t client_config = { .alloc = heap, .tls_wrap = proven_tls_http_wrap, .tls_ctx = client_tls };
+    proven_http_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_client_create(&client_config, &client) == PROVEN_OK, "an HTTP client");
+
+    char url_text[64];
+    int url_len = snprintf(url_text, sizeof url_text, "https://127.0.0.1:%u/", (unsigned)at.port);
+    proven_u8str_view_t url = { (const proven_byte_t *)url_text, (proven_size_t)url_len };
+    EXAMPLE_REQUIRE(get_is(client, heap, url, PROVEN_LIT("after the handshake\n")), "the first connection: a full handshake, and a ticket");
+    EXAMPLE_REQUIRE(get_is(client, heap, url, PROVEN_LIT("early\n")), "the second: the GET went with its ClientHello");
+
+    url_len = snprintf(url_text, sizeof url_text, "https://127.0.0.1:%u/quit", (unsigned)at.port);
+    url.size = (proven_size_t)url_len;
+    (void)get_is(client, heap, url, PROVEN_LIT("bye\n"));
+    proven_job_group_wait(threads, &running);
+    proven_http_client_destroy(client);
+    proven_http_server_destroy(app.server);
+    proven_job_system_close(threads);
+    proven_job_system_destroy(threads);
+    proven_tls_config_destroy(client_tls);
+    proven_tls_config_destroy(server_tls);
+    proven_cert_store_destroy(anchors);
+    proven_mem_wipe(key.value);
+    heap.free_fn(heap.ctx, key.value.ptr);
+    heap.free_fn(heap.ctx, cert.value.ptr);
+    return EXAMPLE_OK();
+}
+```
+
+**서버가 받지 않는 조기 데이터.** 클라이언트는 이 서버가 받지 않을 조기 데이터를 보낼 수 있다 - 열 수
+없는 티켓, 조기 데이터를 받지 않는 주인의 서버, 다시 보낸 hello. 서버는 RFC 8446 4.2.10절이 조기
+데이터를 거절하는 서버에게 요구하는 대로 그 레코드를 건너뛴다. HelloRetryRequest
 뒤라면 두 번째 ClientHello까지 오는 application_data 레코드를 모두, 그렇지 않으면 핸드셰이크 키로
 열리지 않는 레코드를 하나가 열릴 때까지 건너뛰고, 핸드셰이크는 그것들이 오지 않았던 것처럼
-이어진다. 클라이언트는 서버의 답에서 조기 데이터가 받아들여지지 않았음을 알고 다시 보낼 수 있다.
+이어진다. 클라이언트는 서버의 답에서 조기 데이터가 받아들여지지 않았음을 알고 다시 보낸다.
 건너뛰는 양에는 한도가 있다: 64 KiB이고, 레코드마다 5바이트 헤더도 센다. 그것을 넘으면 다음
 레코드는 열리지 않는 여느 레코드처럼 연결을 끝낸다(bad_record_mac, HelloRetryRequest 뒤라면
-unexpected_message). 0.73.1 전에는 이런 핸드셰이크가 실패했다.
+unexpected_message).
 
 ## 7. 클라이언트 인증서와 핀
 
@@ -818,8 +949,9 @@ P-256으로는 3,000개다. [15장](manual-15-event-loop-ko.md)의 이벤트 구
   서버에 보관하는 세션 ID. TLS 1.2의 `record_size_limit`. 그중 하나가 필요한 상대는
   `PROVEN_ERR_PROTOCOL`로 실패한다.
 - 이쪽을 위한 **4096비트를 넘는 RSA 키**, 그리고 RSA-PSS 키(키가 PSS 전용으로 표시된 인증서).
-- **TCP에서의 조기 데이터.** QUIC 모드에서만 내밀고 받는다(6절). TCP의 서버는 클라이언트가 보낸
-  것을 64 KiB까지 건너뛴다.
+- **엔진을 직접 다루는 프로그램에 오는 조기 데이터.** TCP에서는 이 라이브러리의 HTTP 서버와
+  클라이언트만 보내고 받는다(6절). 엔진이나 전송 래퍼 위에 직접 만든 서버는 클라이언트가 보낸 것을
+  64 KiB까지 건너뛴다.
 - **폐기.** CRL도, OCSP도, 스테이플링도 없다. 13장을 보라.
 - **클라이언트가 요청한 이름에 따라 인증서를 고르기.** 설정 하나에 인증서 하나.
 - **암호화된 ClientHello, 핸드셰이크 뒤의 클라이언트 인증, 외부 사전 공유 키.**

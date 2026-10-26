@@ -255,6 +255,26 @@ typedef struct {
     proven_size_t head, count, cap;               /* cap: PROVEN_TLS_EARLY_SEEN, smaller in a test */
     proven_tls_early_entry_t e[PROVEN_TLS_EARLY_SEEN];
 } proven_tls_early_seen_t;
+/* A client's sessions by server name, for the transport wrapper when it is given none
+ * (RFC-0027): resumption, and early data where a ticket allows it. The entries are allocated
+ * when the first session is kept. */
+#define PROVEN_TLS_CLIENT_SESSIONS 8
+typedef struct {
+    proven_u64 used;                              /* 0: free */
+    proven_u8 name_len;
+    proven_byte_t name[253];
+    proven_tls_session_t s;
+} proven_tls_client_entry_t;
+typedef struct proven_tls_client_cache {
+    atomic_flag lock;
+    proven_u64 clock;
+    proven_tls_client_entry_t *e;                 /* PROVEN_TLS_CLIENT_SESSIONS of them, or null */
+} proven_tls_client_cache_t;
+/* The session kept for `name`, copied to `out` (emptied when there is none). */
+void proven_tls_client_cache_load_(const proven_tls_config_t *config, proven_u8str_view_t name, proven_tls_session_t *out);
+/* Keep `s` as `name`'s newest; an empty one is not kept. */
+void proven_tls_client_cache_store_(const proven_tls_config_t *config, proven_u8str_view_t name, const proven_tls_session_t *s);
+
 /* Take a ticket's early data once: false when it was seen already, or the register is full. */
 [[nodiscard]] bool proven_tls_early_take_(const proven_tls_config_t *config, const proven_byte_t id[16], proven_i64 now);
 /* Tests: shrink a configuration's register (0 restores it). */
@@ -288,6 +308,7 @@ struct proven_tls_config {
     proven_u32 legacy;                            /* PROVEN_TLS_LEGACY_* */
     proven_tls_ticket_keys_t tickets;             /* the one part that changes: see the lock */
     proven_tls_early_seen_t *early_seen;          /* a server with early_data: the strike register (RFC-0021), which also changes under its lock */
+    struct proven_tls_client_cache *client_cache; /* a client: the newest session per server name (RFC-0027), under its own lock */
 };
 
 /* What a ticket holds, and what a client keeps of a session. */
@@ -442,6 +463,28 @@ proven_size_t proven_tls_early_written_(const proven_tls_conn_t *c);
 proven_size_t proven_tls_early_room_(const proven_tls_conn_t *c);
 /* Server: the application data waiting to be read arrived as early data. */
 bool proven_tls_pending_early_(const proven_tls_conn_t *c);
+/* Server: application bytes read so far that arrived early, and in all (held at its largest). */
+void proven_tls_read_counts_(const proven_tls_conn_t *c, proven_size_t *early, proven_size_t *total);
+/* Application data may be written now (established, or a server's 0.5-RTT). */
+bool proven_tls_writable_(const proven_tls_conn_t *c);
+bool proven_tls_is_server_(const proven_tls_conn_t *c);
+/* Client: this connection has kept a ticket from its peer since its handshake. */
+bool proven_tls_ticket_stored_(const proven_tls_conn_t *c);
+#if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
+/* What a transport made by the wrapper did with early data (PROVEN_TLS_EARLY_*), and: the next
+ * connection under its session is not to send early data (an HTTP 425 came, RFC 8470). */
+int proven_tls_transport_early_(proven_transport_t tls);
+void proven_tls_transport_no_early_next_(proven_transport_t tls);
+/* What is written next is not to go as early data: the handshake is completed first. */
+void proven_tls_transport_no_early_now_(proven_transport_t tls);
+#endif
+/* The protocol a stored session was made for is `name`. */
+bool proven_tls_session_alpn_is_(const proven_tls_session_t *session, proven_u8str_view_t name);
+/* A stored session whose ticket allows early data over TCP. */
+bool proven_tls_session_allows_early_(const proven_tls_session_t *session);
+/* A ticket that carried early data once is not offered for early data again (RFC 8446 section 8:
+ * the server's register refuses it); resumption with it goes on. */
+void proven_tls_session_early_off_(proven_tls_session_t *s);
 /* TLS 1.2 test knobs: bit 0, the server answers 1.2 whatever the client offers; bit 1, the
  * client omits the extended master secret; bit 2, the server omits it from its answer; bit 3,
  * the client adds the fallback signal of RFC 7507 to its suites. */

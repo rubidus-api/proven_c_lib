@@ -787,7 +787,11 @@ int main(void) {
             if (opened) { memcpy(flight + got, content.ptr, content.size); got += content.size; records++; }
             at += 5 + len;
         }
-        PROVEN_TEST_ASSERT(opened && records >= 1 && got > 0 && flight[0] == 8, "every record after the ServerHello opens under the client's Handshake read secret, an EncryptedExtensions first", "");
+        /* The server's handshake messages end with its Finished; what follows - its ticket, sent
+         * with its flight (RFC 8446 section 4.6.1) - is under the application keys. */
+        proven_byte_t last = 0;
+        for (proven_size_t m = 0; m + 4 <= got;) { last = flight[m]; m += 4 + (((proven_size_t)flight[m + 1] << 16) | ((proven_size_t)flight[m + 2] << 8) | flight[m + 3]); }
+        PROVEN_TEST_ASSERT(records >= 1 && got > 0 && flight[0] == 8 && last == 20, "every handshake record after the ServerHello opens under the client's Handshake read secret, an EncryptedExtensions first and the Finished last", "");
         PROVEN_TEST_ASSERT(proven_tls_quic_feed_(c, PROVEN_QUIC_LEVEL_HANDSHAKE, (proven_mem_view_t){ flight, got }) == PROVEN_ERR_PROTOCOL &&
                            proven_tls_quic_error_(c) == 0x016d, "and EncryptedExtensions with no quic_transport_parameters is missing_extension, 0x016d", "");
         proven_tls_conn_destroy(c); proven_tls_conn_destroy(tcp);
