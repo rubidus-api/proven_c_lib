@@ -151,12 +151,14 @@ static pair_t connect_pair(const proven_tls_config_t *cc, const proven_tls_confi
 /* A client's first flight with `n` records of `len` bytes after its ClientHello, all of type
  * application_data and none that the server can open (early data it has no keys for), then the
  * rest of the handshake as usual. */
+static bool g_offer_early;              /* early_pair's client offers early data (RFC-0027) */
 static pair_t early_pair(const proven_tls_config_t *cc, const proven_tls_config_t *sc, proven_tls_session_t *session, int n, proven_size_t len) {
     static proven_byte_t rec[PROVEN_TLS_RECORD_HEADER + PROVEN_TLS_MAX_CIPHERTEXT];
     pair_t p = { NULL, NULL };
     g_err_c = PROVEN_OK; g_err_s = PROVEN_OK;
     g_stash_len[0] = 0; g_stash_len[1] = 0;
-    PROVEN_TEST_ASSERT(proven_tls_client_create(cc, sv("example.test"), session, &p.c) == PROVEN_OK, "a client connection", "");
+    PROVEN_TEST_ASSERT((g_offer_early ? proven_tls_client_create_early_(cc, sv("example.test"), session, &p.c)
+                                      : proven_tls_client_create(cc, sv("example.test"), session, &p.c)) == PROVEN_OK, "a client connection", "");
     PROVEN_TEST_ASSERT(proven_tls_server_create(sc, &p.s) == PROVEN_OK, "a server connection", "");
     (void)move(p.c, p.s, &g_err_s, NULL, 0);
     rec[0] = 23; rec[1] = 3; rec[2] = 3; rec[3] = (proven_byte_t)(len >> 8); rec[4] = (proven_byte_t)len;
@@ -175,6 +177,73 @@ static pair_t early_pair(const proven_tls_config_t *cc, const proven_tls_config_
 }
 
 static void close_pair(pair_t *p) { proven_tls_conn_destroy(p->c); proven_tls_conn_destroy(p->s); p->c = NULL; p->s = NULL; }
+
+/* connect_pair with a server that takes early data (RFC-0027): its tickets allow it over TCP. */
+static pair_t connect_take(const proven_tls_config_t *cc, const proven_tls_config_t *sc, proven_tls_session_t *session) {
+    pair_t p = { NULL, NULL };
+    g_err_c = PROVEN_OK; g_err_s = PROVEN_OK;
+    g_stash_len[0] = 0; g_stash_len[1] = 0;
+    PROVEN_TEST_ASSERT(proven_tls_client_create(cc, sv("example.test"), session, &p.c) == PROVEN_OK && proven_tls_server_create(sc, &p.s) == PROVEN_OK, "a pair", "");
+    proven_tls_server_take_early_(p.s);
+    pump(p.c, p.s, NULL, NULL);
+    return p;
+}
+
+/* 0-RTT over TCP: a client that offers early data writes `early` before anything moves; a server
+ * that takes it (when `take`) reads what arrived early, then answers `answer` before the client's
+ * Finished when it can; the handshake is run to its end. */
+typedef struct {
+    pair_t p;
+    proven_size_t wrote;                   /* bytes the client could write early */
+    char got[32768]; proven_size_t got_len; /* what the server read as early data */
+    bool answered_early;                   /* the server's write before its handshake ended was taken */
+    int early_c, early_s;                  /* proven_tls_early_ on each side at the end */
+} zr_t;
+static zr_t g_zr;
+static proven_i64 g_zr_late;              /* seconds between the client's hello and the server's reading it */
+static void zrtt(const proven_tls_config_t *cc, const proven_tls_config_t *sc, proven_tls_session_t *session, bool take, proven_mem_view_t early, const char *answer) {
+    zr_t *z = &g_zr;
+    memset(z, 0, sizeof *z);
+    g_err_c = PROVEN_OK; g_err_s = PROVEN_OK;
+    g_stash_len[0] = 0; g_stash_len[1] = 0;
+    PROVEN_TEST_ASSERT(proven_tls_client_create_early_(cc, sv("example.test"), session, &z->p.c) == PROVEN_OK && proven_tls_server_create(sc, &z->p.s) == PROVEN_OK, "a pair", "");
+    if (take) proven_tls_server_take_early_(z->p.s);
+    if (early.size > 0) {
+        proven_result_size_t w = proven_tls_write(z->p.c, early);
+        if (w.err == PROVEN_OK) z->wrote = w.value;
+    }
+    g_now += g_zr_late;
+    for (int round = 0; round < 40; ++round) {
+        bool a = move(z->p.c, z->p.s, &g_err_s, NULL, 0);
+        bool any = false;
+        while (proven_tls_pending_early_(z->p.s) && z->got_len < sizeof z->got) {
+            proven_result_size_t r = proven_tls_read(z->p.s, (proven_mem_mut_t){ .ptr = (proven_byte_t *)z->got + z->got_len, .size = sizeof z->got - z->got_len });
+            if (r.err != PROVEN_OK) break;
+            z->got_len += r.value;
+            any = true;
+        }
+        if (any && answer && !proven_tls_is_established(z->p.s)) {
+            proven_result_size_t w = proven_tls_write(z->p.s, pem(answer));
+            z->answered_early = w.err == PROVEN_OK && w.value == strlen(answer);
+        }
+        bool b = move(z->p.s, z->p.c, &g_err_c, NULL, 1);
+        if (!a && !b && !any) break;
+    }
+    z->early_c = proven_tls_early_(z->p.c);
+    z->early_s = proven_tls_early_(z->p.s);
+    g_now -= g_zr_late;
+}
+
+/* What the client can read now. */
+static proven_size_t read_all(proven_tls_conn_t *c, char *out, proven_size_t cap) {
+    proven_size_t n = 0;
+    for (;;) {
+        proven_result_size_t r = proven_tls_read(c, (proven_mem_mut_t){ .ptr = (proven_byte_t *)out + n, .size = cap - n });
+        if (r.err != PROVEN_OK || r.value == 0) break;
+        n += r.value;
+    }
+    return n;
+}
 
 static bool both_up(const pair_t *p) {
     return g_err_c == PROVEN_OK && g_err_s == PROVEN_OK && proven_tls_is_established(p->c) && proven_tls_is_established(p->s);
@@ -1532,32 +1601,37 @@ int main(void) {
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("early data over TCP, passed over",
-        "A server over TCP takes no early data, but a client may send it after a hello that offers it: the server passes over those records, up to 64 KiB, and the handshake goes on (RFC 8446 section 4.2.10).",
+        "A server that does not take early data passes over the records a client sends after a hello that offers it, up to 64 KiB, and the handshake goes on (RFC 8446 section 4.2.10): this library's server when its owner did not ask for early data, and any server for a ticket it cannot open.",
         "Check early_skipped and its two callers in record_process, and where h->early_skip is set in the ClientHello's extensions.");
     {
-        proven_tls_options_t so = base_options();
-        so.ticket_lifetime_s = 600;
-        proven_tls_config_t *cc = client_config(NULL), *sc = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &so);
-        proven_tls_session_t session = { 0 }, saved;
-        pair_t p = connect_pair(cc, sc, "example.test", &session, NULL, NULL);
-        PROVEN_TEST_ASSERT(both_up(&p), "a first connection leaves a ticket", "");
+        proven_tls_options_t so = base_options(), co = base_options();
+        so.ticket_lifetime_s = 600; so.early_data = true; co.early_data = true;
+        proven_tls_config_t *cc = client_config(&co), *sc = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &so),
+                            *other = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &so);
+        proven_tls_session_t session = { 0 }, saved, foreign = { 0 };
+        pair_t p = connect_take(cc, sc, &session);
+        PROVEN_TEST_ASSERT(both_up(&p), "a first connection leaves a ticket that allows early data", "");
         close_pair(&p);
         saved = session;
-
-        proven_tls_test_early_tcp_(true);
-        p = early_pair(cc, sc, &session, 3, 300);
-        PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_resumed(p.s) && transfer(p.c, p.s, 3000, 1) && transfer(p.s, p.c, 3000, 2),
-            "three records of early data after a resuming hello are passed over: the handshake resumes and data flows", "");
+        p = connect_take(cc, other, &foreign);
+        PROVEN_TEST_ASSERT(both_up(&p), "and another server, with keys of its own, another", "");
         close_pair(&p);
-        p = early_pair(cc, sc, NULL, 3, 300);
-        PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_resumed(p.s), "and after a hello with no ticket, a full handshake", "");
+
+        g_offer_early = true;
+        p = early_pair(cc, sc, &session, 3, 300);
+        PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_resumed(p.s) && proven_tls_early_(p.c) == PROVEN_TLS_EARLY_REFUSED && transfer(p.c, p.s, 3000, 1) && transfer(p.s, p.c, 3000, 2),
+            "three records of early data to a server whose owner takes none are passed over: refused, the handshake resumes and data flows", "");
+        close_pair(&p);
+        p = early_pair(cc, sc, &foreign, 3, 300);
+        PROVEN_TEST_ASSERT(both_up(&p) && !proven_tls_resumed(p.s), "and with a ticket the server cannot open, a full handshake", "");
         close_pair(&p);
         session = saved;
         proven_tls_test_knobs(0, true);
         p = early_pair(cc, sc, &session, 3, 300);
         PROVEN_TEST_ASSERT(both_up(&p) && proven_tls_resumed(p.s), "and when the server asks for another hello, until that hello comes", "");
         close_pair(&p);
-        p = early_pair(cc, sc, NULL, 4, PROVEN_TLS_MAX_CIPHERTEXT);
+        session = saved;
+        p = early_pair(cc, sc, &session, 4, PROVEN_TLS_MAX_CIPHERTEXT);
         PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 10, "there, four full records are more than 64 KiB: unexpected_message", "");
         close_pair(&p);
         proven_tls_test_knobs(0, false);
@@ -1580,7 +1654,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 20, "but each is charged its header: fourteen thousand are past the bound", "");
         close_pair(&p);
 
-        proven_tls_test_early_tcp_(false);
+        g_offer_early = false;
         session = saved;
         p = early_pair(cc, sc, &session, 1, 300);
         PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 20, "after a hello that did not offer early data, such a record ends the connection", "");
@@ -1590,6 +1664,111 @@ int main(void) {
         PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 10, "and after a HelloRetryRequest too", "");
         close_pair(&p);
         proven_tls_test_knobs(0, false);
+        proven_tls_config_destroy(other); proven_tls_config_destroy(sc); proven_tls_config_destroy(cc);
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("early data over TCP, taken",
+        "0-RTT over TCP (RFC-0027): a ticket from a server that takes early data allows 16,384 bytes; the next connection's request goes with the ClientHello, is read by the server as early data before the handshake ends, and is answered before the client's Finished. Refused - and the handshake still completes - for a second use of the ticket, a server whose owner does not take it, a stale age, a retried hello; more than the ticket allows ends the connection.",
+        "Check tcp_early in client_hello_send, the TCP branch where the server decides in server_client_hello, ST_S_WAIT_EOED and EndOfEarlyData in client_finished, may_write, and the early branch of record_process.");
+    {
+        proven_tls_options_t so = base_options(), co = base_options();
+        so.ticket_lifetime_s = 600; so.early_data = true; co.early_data = true;
+        proven_tls_config_t *cc = client_config(&co), *sc = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &so);
+        proven_tls_session_t session = { 0 }, fresh;
+        pair_t p = connect_take(cc, sc, &session);
+        const proven_tls_session_data_t *sd = (const proven_tls_session_data_t *)(const void *)session.opaque;
+        PROVEN_TEST_ASSERT(both_up(&p) && sd->early == 1 && sd->early_max == PROVEN_TLS_EARLY_TCP_MAX, "a server that takes early data issues a ticket that allows 16,384 bytes of it", "");
+        close_pair(&p);
+        fresh = session;
+
+        static const char req[] = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
+        static char back[256];
+        zrtt(cc, sc, &session, true, pem(req), "HTTP/1.1 200 OK\r\n\r\nearly");
+        PROVEN_TEST_ASSERT(g_err_c == PROVEN_OK && g_err_s == PROVEN_OK && g_zr.wrote == strlen(req) && g_zr.got_len == strlen(req) && memcmp(g_zr.got, req, strlen(req)) == 0,
+            "a request written before the handshake is read by the server as early data, whole", "");
+        PROVEN_TEST_ASSERT(g_zr.early_c == PROVEN_TLS_EARLY_ACCEPTED && g_zr.early_s == PROVEN_TLS_EARLY_ACCEPTED && g_zr.answered_early,
+            "both sides say it was accepted, and the server answered before the client's Finished (0.5-RTT)", "");
+        PROVEN_TEST_ASSERT(both_up(&g_zr.p) && proven_tls_resumed(g_zr.p.s) && read_all(g_zr.p.c, back, sizeof back) == 24 && memcmp(back + 19, "early", 5) == 0,
+            "the handshake completes - EndOfEarlyData, then Finished - and the client reads the answer", "");
+        pump(g_zr.p.c, g_zr.p.s, NULL, NULL);       /* what waited behind the answer: the new ticket */
+        PROVEN_TEST_ASSERT(transfer(g_zr.p.c, g_zr.p.s, 30000, 3) && transfer(g_zr.p.s, g_zr.p.c, 30000, 4) && !proven_tls_pending_early_(g_zr.p.s),
+            "and data flows both ways after it, none of it marked early", "");
+        close_pair(&g_zr.p);
+
+        session = fresh;
+        zrtt(cc, sc, &session, true, pem(req), NULL);
+        PROVEN_TEST_ASSERT(g_zr.early_c == PROVEN_TLS_EARLY_REFUSED && g_zr.got_len == 0 && both_up(&g_zr.p) && proven_tls_resumed(g_zr.p.s),
+            "the same ticket again: refused by the register, nothing read early, the connection resumes", "");
+        close_pair(&g_zr.p);
+
+        session = fresh;
+        p = connect_take(cc, sc, &session);
+        close_pair(&p);
+        fresh = session;
+        zrtt(cc, sc, &session, false, pem(req), NULL);
+        PROVEN_TEST_ASSERT(g_zr.early_c == PROVEN_TLS_EARLY_REFUSED && g_zr.got_len == 0 && both_up(&g_zr.p),
+            "a server whose owner did not ask for early data refuses it, and the handshake completes", "");
+        close_pair(&g_zr.p);
+
+        session = fresh;
+        p = connect_take(cc, sc, &session);
+        close_pair(&p);
+        fresh = session;
+        g_zr_late = 12;
+        zrtt(cc, sc, &session, true, pem(req), NULL);
+        g_zr_late = 0;
+        PROVEN_TEST_ASSERT(g_zr.early_c == PROVEN_TLS_EARLY_REFUSED && g_zr.got_len == 0 && both_up(&g_zr.p),
+            "a hello read 12 s after it was made: its ticket's age is off by more than the 10 s window - refused", "");
+        close_pair(&g_zr.p);
+
+        session = fresh;
+        p = connect_take(cc, sc, &session);
+        close_pair(&p);
+        fresh = session;
+        proven_tls_test_knobs(0, true);
+        zrtt(cc, sc, &session, true, pem(req), NULL);
+        proven_tls_test_knobs(0, false);
+        PROVEN_TEST_ASSERT(g_zr.early_c == PROVEN_TLS_EARLY_REFUSED && g_zr.got_len == 0 && both_up(&g_zr.p),
+            "a server that asks for another hello: no early data after it, and the second hello goes in the clear", "");
+        close_pair(&g_zr.p);
+
+        session = fresh;
+        p = connect_take(cc, sc, &session);
+        close_pair(&p);
+        {
+            proven_tls_session_data_t *wd = (proven_tls_session_data_t *)(void *)session.opaque;
+            wd->early_max = 65536;                   /* a client that believes it may send more */
+            static proven_byte_t much[20000];
+            memset(much, 'x', sizeof much);
+            zrtt(cc, sc, &session, true, (proven_mem_view_t){ .ptr = much, .size = sizeof much }, NULL);
+            PROVEN_TEST_ASSERT(g_zr.wrote == sizeof much && g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(g_zr.p.s) == 10,
+                "20,000 bytes of early data against a ticket of 16,384: unexpected_message (RFC 8446 section 4.2.10)", "");
+            close_pair(&g_zr.p);
+        }
+
+        proven_tls_config_t *plain = client_config(NULL);
+        session = fresh;
+        p = connect_take(cc, sc, &session);
+        close_pair(&p);
+        PROVEN_TEST_ASSERT(proven_tls_client_create_early_(plain, sv("example.test"), &session, &p.c) == PROVEN_OK && proven_tls_early_(p.c) == PROVEN_TLS_EARLY_NONE &&
+                           proven_tls_early_room_(p.c) == 0, "a client configuration without early_data offers none", "");
+        proven_tls_conn_destroy(p.c); p.c = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_client_create(cc, sv("example.test"), &session, &p.c) == PROVEN_OK && proven_tls_early_(p.c) == PROVEN_TLS_EARLY_NONE,
+            "nor a client made without asking for it", "");
+        proven_tls_conn_destroy(p.c); p.c = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_client_create_early_(cc, sv("example.test"), &session, &p.c) == PROVEN_OK && proven_tls_early_(p.c) == PROVEN_TLS_EARLY_OFFERED &&
+                           proven_tls_early_room_(p.c) == PROVEN_TLS_EARLY_TCP_MAX, "one that asks offers it, with the ticket's 16,384 bytes of room", "");
+        proven_tls_conn_destroy(p.c); p.c = NULL;
+        proven_tls_config_destroy(plain);
+
+        proven_tls_config_t *quiet = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &(proven_tls_options_t){ .alloc = g_alloc, .random = test_random, .now = test_now, .now_ctx = &g_now, .ticket_lifetime_s = 600 });
+        memset(&session, 0, sizeof session);
+        p = connect_take(cc, quiet, &session);
+        sd = (const proven_tls_session_data_t *)(const void *)session.opaque;
+        PROVEN_TEST_ASSERT(both_up(&p) && sd->early == 0 && sd->early_max == 0, "a server without early_data issues tickets that allow none, even when its owner would take it", "");
+        close_pair(&p);
+        proven_tls_config_destroy(quiet);
         proven_tls_config_destroy(sc); proven_tls_config_destroy(cc);
     }
 

@@ -199,7 +199,6 @@ proven_u64 proven_tls_quic_error_(const proven_tls_conn_t *c);
 
 /* 0-RTT (RFC-0021). Early data is offered by a client whose configuration has `early_data` and
  * whose session allows it, and accepted by a server only as RFC-0021 section 10.1 P-5 lists. */
-enum { PROVEN_TLS_EARLY_NONE = 0, PROVEN_TLS_EARLY_OFFERED, PROVEN_TLS_EARLY_ACCEPTED, PROVEN_TLS_EARLY_REFUSED };
 int proven_tls_quic_early_(const proven_tls_conn_t *c);
 /* The early traffic secret: a client's for writing from its ClientHello on, a server's for
  * reading once it accepted. Its length and the suite it belongs to (the ticket's), or 0 when

@@ -242,6 +242,10 @@ typedef struct {
  * as long as the freshness window could still let it in. Oldest first in a ring; full: refused. */
 #define PROVEN_TLS_EARLY_SEEN 4096
 #define PROVEN_TLS_EARLY_WINDOW_S 10              /* the freshness window: a ticket's age as the client says it and as the server knows it */
+/* Over TCP (RFC-0027): the most early data a ticket allows (its max_early_data_size). */
+#define PROVEN_TLS_EARLY_TCP_MAX 16384
+/* Where a connection's early data stands, over TCP or in QUIC mode. */
+enum { PROVEN_TLS_EARLY_NONE = 0, PROVEN_TLS_EARLY_OFFERED, PROVEN_TLS_EARLY_ACCEPTED, PROVEN_TLS_EARLY_REFUSED };
 typedef struct {
     proven_byte_t id[16];                         /* the ticket's key id and nonce: unique to it */
     proven_i64 until;
@@ -340,6 +344,9 @@ typedef struct {
      * the ticket: a new ticket leaves it, and it is used once. */
     proven_u16 token_len;
     proven_byte_t token[PROVEN_TLS_SESSION_TOKEN_MAX];
+    /* TCP (RFC-0027): the most early data the ticket allows (its max_early_data_size); 0: none.
+     * After every field before it, so that a record written before it reads as 0. */
+    proven_u32 early_max;
 } proven_tls_session_data_t;
 #define PROVEN_TLS_SESSION_MAGIC ((proven_u32)0x70547333)      /* changed with the record's layout: an older record is simply empty */
 
@@ -414,12 +421,27 @@ void proven_crypto_rsa_test_min_bits(proven_size_t bits);
 /* Put one suite first in both roles' order (0: the normal order), and make the server ignore
  * an X25519 key share so that it has to ask for P-256. */
 void proven_tls_test_knobs(proven_u16 suite_first, bool server_refuses_x25519);
-/* A client over TCP offers early data in its first ClientHello and sends none of it, so that a
- * test can put records of its own after that hello. */
-void proven_tls_test_early_tcp_(bool on);
 /* For tests: a server over TCP passes over quic_transport_parameters instead of refusing it, so
  * that a QUIC-mode hello can be answered over TCP and the two key schedules compared. */
 void proven_tls_test_quic_tp_tcp_(bool on);
+/* 0-RTT over TCP (RFC-0027). Only a connection whose owner asks for it sends or takes early data:
+ * a client made by proven_tls_client_create_early_ offers it (with `early_data` in its
+ * configuration and a session whose ticket allows it); a server told proven_tls_server_take_early_
+ * before its first feed takes it (with `early_data`). Early data is written with proven_tls_write
+ * before the handshake, up to the ticket's allowance, and is read with proven_tls_read on the
+ * server, where proven_tls_pending_early_ says whether the bytes waiting arrived early. A server
+ * that took early data may write from its Finished on (0.5-RTT). */
+[[nodiscard]] proven_err_t proven_tls_client_create_early_(const proven_tls_config_t *config, proven_u8str_view_t server_name,
+                                                         proven_tls_session_t *session, proven_tls_conn_t **out);
+void proven_tls_server_take_early_(proven_tls_conn_t *c);
+/* PROVEN_TLS_EARLY_*: none offered; offered and not yet answered; accepted; refused (a client's
+ * early bytes did not arrive and are to be sent again). */
+int proven_tls_early_(const proven_tls_conn_t *c);
+/* Client: the bytes written as early data so far, and how many more the ticket allows. */
+proven_size_t proven_tls_early_written_(const proven_tls_conn_t *c);
+proven_size_t proven_tls_early_room_(const proven_tls_conn_t *c);
+/* Server: the application data waiting to be read arrived as early data. */
+bool proven_tls_pending_early_(const proven_tls_conn_t *c);
 /* TLS 1.2 test knobs: bit 0, the server answers 1.2 whatever the client offers; bit 1, the
  * client omits the extended master secret; bit 2, the server omits it from its answer; bit 3,
  * the client adds the fallback signal of RFC 7507 to its suites. */
