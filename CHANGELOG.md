@@ -20,6 +20,10 @@ written; their tags still exist.
 
 ### Changed
 
+- **TLS over TCP refuses `quic_transport_parameters`.** A server that receives the extension
+  in a ClientHello over TCP ends the handshake with a fatal `unsupported_extension` alert, as RFC
+  9001 section 8.2 requires; until now it passed it over. A client already refused it in a
+  server's EncryptedExtensions. No conforming client sends it over TCP.
 - **Tests:** `test_unit_http_event_early` waits for the open connection's new ticket instead of
   30 ms (an internal hook): under a load average of 34 the ticket came later, and the first
   connection could still be open with a ticket of its own; it failed once that way in a release

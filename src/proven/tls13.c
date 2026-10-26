@@ -491,6 +491,8 @@ void proven_tls_test_knobs(proven_u16 suite_first, bool server_refuses_x25519) {
 /* A client over TCP offers early data in its first ClientHello (and sends none: a test does). */
 static bool g_test_early_tcp;
 void proven_tls_test_early_tcp_(bool on) { g_test_early_tcp = on; }
+static bool g_test_quic_tp_tcp;
+void proven_tls_test_quic_tp_tcp_(bool on) { g_test_quic_tp_tcp = on; }
 
 /* Test knobs for TLS 1.2: bit 0, a server answers 1.2 though both sides could do 1.3 (what
  * interference with the hello would cause); bit 1, a client does not offer the extended
@@ -1575,9 +1577,12 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, proven_rd_t body, 
                 h->client_sent_record_limit = true;
                 break; }
             case EXT_QUIC_TRANSPORT_PARAMETERS:
-                /* Over TCP it means nothing and is passed over, as before RFC-0017 (its section 3:
-                 * TLS over TCP does not change); RFC 9001 section 8.2 would refuse it. */
-                if (!is_quic(c)) continue;
+                /* Never sent where the transport is not QUIC, and refused there with a fatal
+                 * unsupported_extension (RFC 9001 section 8.2). */
+                if (!is_quic(c)) {
+                    if (g_test_quic_tp_tcp) continue;             /* for a test: compare the key schedules */
+                    return tls_fail(c, AL_UNSUPPORTED_EXTENSION, PROVEN_ERR_PROTOCOL);
+                }
                 bit = 512;
                 quic_tp = data;
                 data.n = 0;

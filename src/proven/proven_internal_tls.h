@@ -417,6 +417,9 @@ void proven_tls_test_knobs(proven_u16 suite_first, bool server_refuses_x25519);
 /* A client over TCP offers early data in its first ClientHello and sends none of it, so that a
  * test can put records of its own after that hello. */
 void proven_tls_test_early_tcp_(bool on);
+/* For tests: a server over TCP passes over quic_transport_parameters instead of refusing it, so
+ * that a QUIC-mode hello can be answered over TCP and the two key schedules compared. */
+void proven_tls_test_quic_tp_tcp_(bool on);
 /* TLS 1.2 test knobs: bit 0, the server answers 1.2 whatever the client offers; bit 1, the
  * client omits the extended master secret; bit 2, the server omits it from its answer; bit 3,
  * the client adds the fallback signal of RFC 7507 to its suites. */

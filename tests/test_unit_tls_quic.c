@@ -738,10 +738,25 @@ int main(void) {
         proven_tls_config_destroy(cc_none);
     }
 
-    PROVEN_TEST_SECTION("the key schedule is TLS 1.3's", "A server over TCP answers the QUIC-mode client's hello; the client's Handshake secret opens its records, and their EncryptedExtensions, lacking the parameters, is refused.",
+    PROVEN_TEST_SECTION("the key schedule is TLS 1.3's", "A server over TCP refuses the QUIC-mode client's hello (quic_transport_parameters, RFC 9001 section 8.2); told by a test switch to pass it over, it answers, and the client's Handshake secret opens its records, and their EncryptedExtensions, lacking the parameters, is refused.",
         "If the records do not open, QUIC mode hands out a secret TLS over TCP would not derive.");
     {
         proven_tls_conn_t *c = NULL, *tcp = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_quic_client_create_(cc, sv("example.test"), NULL, (proven_mem_view_t){ g_ctp, g_ctp_len }, &c) == PROVEN_OK &&
+                           proven_tls_server_create(sc, &tcp) == PROVEN_OK, "a QUIC-mode client, a server over TCP", "");
+        {
+            proven_mem_view_t ch = proven_tls_quic_pending_(c, PROVEN_QUIC_LEVEL_INITIAL);
+            static proven_byte_t rec[4096];
+            rec[0] = 22; rec[1] = 3; rec[2] = 1; rec[3] = (proven_byte_t)(ch.size >> 8); rec[4] = (proven_byte_t)ch.size;
+            memcpy(rec + 5, ch.ptr, ch.size);
+            proven_size_t used = 0;
+            PROVEN_TEST_ASSERT(proven_tls_feed(tcp, (proven_mem_view_t){ rec, 5 + ch.size }, &used) == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(tcp) == 110,
+                "a server over TCP refuses quic_transport_parameters: unsupported_extension (110), RFC 9001 section 8.2", "");
+        }
+        proven_tls_conn_destroy(c);
+        proven_tls_conn_destroy(tcp);
+        c = NULL; tcp = NULL;
+        proven_tls_test_quic_tp_tcp_(true);
         PROVEN_TEST_ASSERT(proven_tls_quic_client_create_(cc, sv("example.test"), NULL, (proven_mem_view_t){ g_ctp, g_ctp_len }, &c) == PROVEN_OK &&
                            proven_tls_server_create(sc, &tcp) == PROVEN_OK, "a QUIC-mode client, a server over TCP", "");
         proven_mem_view_t ch = proven_tls_quic_pending_(c, PROVEN_QUIC_LEVEL_INITIAL);
@@ -750,7 +765,7 @@ int main(void) {
         memcpy(rec + 5, ch.ptr, ch.size);
         proven_size_t used = 0;
         PROVEN_TEST_ASSERT(proven_tls_feed(tcp, (proven_mem_view_t){ rec, 5 + ch.size }, &used) == PROVEN_OK && used == 5 + ch.size,
-            "the server over TCP takes the hello, passing over quic_transport_parameters as it always has", "");
+            "told to pass it over, the server over TCP takes the hello", "");
         proven_mem_view_t out = proven_tls_pending_output(tcp);
         PROVEN_TEST_ASSERT(out.size > 5 && out.ptr[0] == 22, "it answers with a ServerHello in the clear (and no ChangeCipherSpec: the session id was empty)", "");
         proven_size_t sh_len = ((proven_size_t)out.ptr[3] << 8) | out.ptr[4];
@@ -776,6 +791,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_tls_quic_feed_(c, PROVEN_QUIC_LEVEL_HANDSHAKE, (proven_mem_view_t){ flight, got }) == PROVEN_ERR_PROTOCOL &&
                            proven_tls_quic_error_(c) == 0x016d, "and EncryptedExtensions with no quic_transport_parameters is missing_extension, 0x016d", "");
         proven_tls_conn_destroy(c); proven_tls_conn_destroy(tcp);
+        proven_tls_test_quic_tp_tcp_(false);
     }
 
     PROVEN_TEST_SECTION("flights cut anywhere", "Handshake bytes a byte at a time, and in pieces of 7 and 64, complete as whole flights do.", "Check the reassembly in handshake_bytes.");
