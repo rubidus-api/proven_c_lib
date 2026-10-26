@@ -210,6 +210,9 @@ void proven_http_event_client_h3_test_early_any_(bool on);
 /* For tests: no new request on the HTTP/3 connections open now, as after a GOAWAY; they stay
  * until they close by themselves. */
 void proven_http_event_client_h3_test_retire_(proven_http_event_client_t *client);
+/* For tests: whether the newest HTTP/3 connection has had a ticket from the server - what the
+ * next connection to its origin will be given (an older one may still be open, with its own). */
+bool proven_http_event_client_h3_test_ticket_new_(proven_http_event_client_t *client);
 /* In http_event_client_h2.c: whether an HTTP/2 request waits for a place, and "a place can
  * be had" for those - called by the HTTP/1.1 side when none of its own took it. */
 bool proven_http_event_client_h2_waiting_(const proven_http_event_client_t *client);

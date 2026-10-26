@@ -18,6 +18,17 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **Tests:** `test_unit_http_event_early` waits for the open connection's new ticket instead of
+  30 ms (an internal hook): under a load average of 34 the ticket came later, and the first
+  connection could still be open with a ticket of its own; it failed once that way in a release
+  run. `test_unit_http_event` adds a head in three pieces whose leftover the server moves to the
+  front of a buffer it already holds, and `test_unit_ws_event` a compressed message whose handler
+  pauses in the middle of it: each fails if that copy is a byte short, which no test did before.
+  `test_unit_http_event_client_h3` adds a response head larger than `max_head_bytes`.
+- **Documentation:** README-ko's module list names `zstd` and `brotli`, as the English one does.
+
 ## [0.83.0] - 2026-10-26
 
 ### Removed

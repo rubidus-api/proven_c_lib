@@ -2666,6 +2666,7 @@ void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s)
 
 bool proven_quic_conn_resumed(const proven_quic_conn_t *c) { return c && c->tls && c->complete && proven_tls_resumed(c->tls); }
 bool proven_quic_conn_complete_(const proven_quic_conn_t *c) { return c && c->complete; }
+bool proven_quic_conn_ticket_stored_(const proven_quic_conn_t *c) { return c && c->tls && proven_tls_ticket_stored_(c->tls); }
 proven_u8str_view_t proven_quic_conn_alpn_(const proven_quic_conn_t *c) { return c && c->tls ? proven_tls_alpn(c->tls) : (proven_u8str_view_t){ 0 }; }
 
 /* ---- For tests: frames as if a packet carried them, and a key update started here ---- */

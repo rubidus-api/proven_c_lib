@@ -31,7 +31,7 @@ static proven_http_event_server_t *g_server;
 static proven_job_sys_t *g_threads;
 static proven_tls_config_t *g_server_tls, *g_client_tls;
 
-static atomic_int g_requests, g_done, g_accepted, g_closed, g_refused, g_writable, g_last_code, g_last_why, g_accept_error, g_messages, g_checks;
+static atomic_int g_requests, g_done, g_accepted, g_closed, g_refused, g_writable, g_last_code, g_last_why, g_accept_error, g_messages, g_checks, g_breaths;
 
 /* What the application keeps for one WebSocket connection. */
 typedef struct {
@@ -41,16 +41,21 @@ typedef struct {
     bool held_text, held_first, held_last;
     int pushed, to_push;               /* push: messages sent so far, and to send */
     bool abort_on_message;
+    bool breathe;                      /* pause in the middle of a message now and then, and resume */
+    int pieces;
+    proven_loop_timer_t timer;
 } peer_t;
 
 static void on_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
     (void)ctx;
     peer_t *p = proven_ws_stream_user(ws);
-    if (p) { free(p->held); free(p); }
+    if (p) { proven_loop_timer_cancel(g_loop, &p->timer); free(p->held); free(p); }
     atomic_store(&g_last_code, (int)code);
     atomic_store(&g_last_why, (int)why);
     atomic_fetch_add(&g_closed, 1);
 }
+
+static void breathe_out(void *ctx) { peer_t *p = ctx; if (!p->held) proven_ws_stream_resume(p->ws); }
 
 /* Echo each piece as it arrives. A piece the server refuses is kept, and reading stops until
  * there is room: the client is slowed, and nothing piles up here. */
@@ -60,6 +65,14 @@ static void echo_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_me
     atomic_fetch_add(&g_messages, last ? 1 : 0);
     if (p->abort_on_message) { proven_ws_stream_abort(ws); return; }
     proven_err_t e = proven_ws_stream_send_piece(ws, text, piece, first, last);
+    if (e == PROVEN_OK && p->breathe && !last && ++p->pieces % 8 == 0) {
+        /* Stop in the middle of the message for 5 ms: what has arrived and is not yet delivered
+         * waits for proven_ws_stream_resume. */
+        atomic_fetch_add(&g_breaths, 1);
+        proven_ws_stream_pause(ws);
+        proven_loop_timer_set(g_loop, &p->timer, 5, breathe_out, p);
+        return;
+    }
     if (e != PROVEN_ERR_AGAIN) return;
     atomic_fetch_add(&g_refused, 1);
     p->held = malloc(piece.size ? piece.size : 1);
@@ -108,6 +121,7 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     };
     if (strcmp(path, "/chat") == 0 && proven_ws_request_offers(head, sv("chat"))) cfg.subprotocol = sv("chat");
     if (strcmp(path, "/quiet") == 0) { cfg.ping_interval_ms = 100; cfg.pong_timeout_ms = 150; }
+    if (strcmp(path, "/echo-zip") == 0) cfg.compress = true;
     if (strcmp(path, "/bye-unanswered") == 0) cfg.close_timeout_ms = 300;
     peer_t *p = calloc(1, sizeof *p);
     proven_ws_stream_t *ws = NULL;
@@ -135,6 +149,7 @@ static void on_request(void *ctx, proven_http_stream_t *stream, const proven_htt
     /* From here `stream` is over (on_done has been called) and `ws` is what there is. */
     atomic_fetch_add(&g_accepted, 1);
     p->ws = ws;
+    p->breathe = strcmp(path, "/echo-zip") == 0;
     proven_ws_stream_set_user(ws, p);
     if (strcmp(path, "/checks") == 0) {
         /* What the stream calls refuse, asked from where they can be asked: on the loop's thread. */
@@ -268,6 +283,28 @@ static void cases(bool tls) {
     PROVEN_TEST_ASSERT(proven_ws_conn_close(ws, 1000, sv("thanks")) == PROVEN_OK && closed_is(++closed) && atomic_load(&g_last_code) == 1000 && atomic_load(&g_last_why) == PROVEN_OK,
         "a close from the client is answered, and on_closed says 1000 and PROVEN_OK", how);
     proven_ws_conn_destroy(ws);
+
+    /* A compressed message whose handler pauses now and then in the middle of it: the compressed
+     * bytes not yet inflated are set aside until it resumes. A byte lost there changes what
+     * comes back. */
+    {
+        enum { ZBIG = 180000 };
+        static proven_byte_t zbig[ZBIG];
+        /* Repetitive enough that a few thousand compressed bytes inflate to several pieces: a
+         * pause after one of them leaves compressed bytes of that frame undelivered. */
+        for (int i = 0; i < ZBIG; ++i) zbig[i] = (proven_byte_t)((i / 61) * 7 + (i % 5));
+        proven_ws_conn_config_t zcfg = wcfg;
+        zcfg.compress = true;
+        int breaths_before = atomic_load(&g_breaths);
+        PROVEN_TEST_ASSERT(proven_ws_conn_connect(client, url(tls, at.port, "/echo-zip"), NULL, 0, sv(""), &zcfg, &ws, NULL) == PROVEN_OK && proven_ws_conn_compressed(ws),
+            "a WebSocket with compression agreed", how);
+        PROVEN_TEST_ASSERT(proven_ws_conn_send_binary(ws, (proven_mem_view_t){ .ptr = zbig, .size = ZBIG }) == PROVEN_OK &&
+                           proven_ws_conn_receive(ws, proven_net_deadline_in(10000), &msg) == PROVEN_OK && !msg.text && msg.data.size == ZBIG && memcmp(msg.data.ptr, zbig, ZBIG) == 0,
+            "180,000 bytes, compressed, come back intact", how);
+        PROVEN_TEST_ASSERT(atomic_load(&g_breaths) > breaths_before, "and the handler paused in the middle of it, and resumed", how);
+        PROVEN_TEST_ASSERT(proven_ws_conn_close(ws, 1000, sv("")) == PROVEN_OK && closed_is(++closed), "closed", how);
+        proven_ws_conn_destroy(ws);
+    }
 
     /* A subprotocol, named only when offered. */
     PROVEN_TEST_ASSERT(proven_ws_conn_connect(client, url(tls, at.port, "/chat"), NULL, 0, sv("chat, other"), &wcfg, &ws, NULL) == PROVEN_OK &&

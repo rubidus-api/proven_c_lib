@@ -1129,6 +1129,11 @@ void proven_http_event_client_h3_test_retire_(proven_http_event_client_t *client
     for (c3conn_t *c = client->h3; c; c = c->next) c->over = true;
 }
 
+bool proven_http_event_client_h3_test_ticket_new_(proven_http_event_client_t *client) {
+    const c3conn_t *c = client->h3;                    /* the newest first */
+    return c && !c->dead && proven_quic_conn_ticket_stored_(c->q);
+}
+
 int proven_http_event_client_h3_early_(proven_http_event_request_t *request) {
     proven_c3req_t *r = c3_of(request);
     if (r->early_again) return 3;

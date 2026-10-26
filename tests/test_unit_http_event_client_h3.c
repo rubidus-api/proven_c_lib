@@ -285,14 +285,14 @@ static proven_size_t raw_frame(proven_byte_t *out, proven_u64 type, const proven
 static proven_size_t raw_headers(proven_byte_t *out, const char *const *f, proven_size_t count) {
     proven_http_header_t h[8];
     for (proven_size_t i = 0; i < count; ++i) h[i] = (proven_http_header_t){ sv(f[2 * i]), sv(f[2 * i + 1]) };
-    proven_byte_t block[512];
+    proven_byte_t block[1024];
     proven_size_t len = 0;
     PROVEN_TEST_ASSERT(proven_qpack_encode(h, count, NULL, (proven_mem_mut_t){ block, sizeof block }, &len) == PROVEN_OK, "a field section", "");
     return raw_frame(out, 1, block, len);
 }
 
 static void raw_answer(raw_t *x, proven_u64 id, const char *path) {
-    proven_byte_t out[1024];
+    proven_byte_t out[2048];
     proven_size_t n = 0;
     static const proven_byte_t ten[50] = "0123456789012345678901234567890123456789012345678";
     x->requests++;
@@ -325,6 +325,13 @@ static void raw_answer(raw_t *x, proven_u64 id, const char *path) {
     } else if (!strcmp(path, "/rejected") && x->rejected == 0) {
         x->rejected++;
         PROVEN_TEST_ASSERT(proven_quic_stream_reset(x->q, id, PROVEN_H3_REQUEST_REJECTED) == PROVEN_OK, "the scripted server refuses a request", "");
+    } else if (!strcmp(path, "/big-head")) {
+        /* A field of 700 bytes, to a client that takes heads of 600 at most. */
+        static char big[701];
+        memset(big, 'a', 700);
+        n += raw_headers(out + n, (const char *const[]){ ":status", "200", "x-big", big }, 2);
+        n += raw_frame(out + n, 0, (const proven_byte_t *)"hello", 5);
+        raw_write(x, id, out, n, true);
     } else if (!strcmp(path, "/trailers")) {
         n += raw_headers(out + n, (const char *const[]){ ":status", "200" }, 1);
         n += raw_frame(out + n, 0, (const proven_byte_t *)"hello", 5);
@@ -656,11 +663,12 @@ int main(void) {
         proven_http_event_server_destroy(server);
     }
 
-    PROVEN_TEST_SECTION("a server that breaks the rules", "A scripted server writes HTTP/3 by hand: an interim response before the answer, and one with nothing after it; a field name in capitals; no :status; a body shorter and longer than its Content-Length; a reset after part of a body; a request refused as not acted on, sent again; trailers; a br body. Each request ends as RFC 9114 section 4.1.2 asks, and the connection serves the next.", "Check c_response, the STREAM_RESET case of c_event and r_deliver in src/proven/http_event_client_h3.c, and the response checks of h3_conn.c (st_fault).");
+    PROVEN_TEST_SECTION("a server that breaks the rules", "A scripted server writes HTTP/3 by hand: an interim response before the answer, and one with nothing after it; a field name in capitals; no :status; a head larger than max_head_bytes; a body shorter and longer than its Content-Length; a reset after part of a body; a request refused as not acted on, sent again; trailers; a br body. Each request ends as RFC 9114 section 4.1.2 asks, and the connection serves the next.", "Check c_response, the STREAM_RESET case of c_event and r_deliver in src/proven/http_event_client_h3.c, and the response checks of h3_conn.c (st_fault).");
     {
         static raw_t x;
         raw_start(&x, g_server_tls);
         proven_http_event_client_config_t cfg = { .alloc = g_heap, .tls = g_client_tls, .http2 = true, .http3 = true, .retry_unsent = 1, .decompress = true,
+                                                  .max_head_bytes = 600,
 #ifndef PROVEN_NO_BROTLI
                                                   .decompress_brotli = true,
 #endif
@@ -688,6 +696,10 @@ int main(void) {
         RAW_GET("/rejected");
         PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.status == 200 && c.got == 5 && x.rejected == 1 && x.requests == before + 2,
             "H3_REQUEST_REJECTED: not acted on, so sent again (retry_unsent) and answered", "");
+        RAW_GET("/big-head");
+        /* Which error says so is not pinned here: over HTTP/1.1 it is PROVEN_ERR_OUT_OF_BOUNDS, over
+         * HTTP/2 and HTTP/3 the stream's reset (PROVEN_ERR_RESET) - an open question. */
+        PROVEN_TEST_ASSERT(c.done && c.why != PROVEN_OK && c.responses == 0 && c.got == 0, "a head larger than max_head_bytes: refused, nothing of it delivered", "");
         RAW_GET("/trailers");
         PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.got == 5 && c.last, "trailers end the body and are not passed on", "");
 #ifndef PROVEN_NO_BROTLI

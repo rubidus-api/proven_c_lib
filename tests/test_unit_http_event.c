@@ -347,6 +347,27 @@ static void cases(bool tls) {
     raw_close(&raw);
     expected += 3;
 
+    /* A head that arrives in three pieces, the first request whole in the second piece with the
+     * start of another behind it: the server keeps what it could not use of a buffer it already
+     * owns, moved to its front, and the rest is added behind it. A byte lost in that move changes
+     * the second request's Content-Length or its body. */
+    PROVEN_TEST_ASSERT(raw_open(&raw, tls, at.port) && raw_send(&raw, "GET / HTTP/1.1\r\nHo"), "a head in pieces: the first", how);
+    proven_time_sleep(50);
+    PROVEN_TEST_ASSERT(raw_send(&raw, "st: x\r\n\r\nPOST /upload HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 1"), "the second: the first head's end and most of another", how);
+    proven_time_sleep(50);
+    PROVEN_TEST_ASSERT(raw_send(&raw, "2\r\n\r\nabcdefghijkl"), "the third: the rest of that head and its body", how);
+    raw_read(&raw, text, sizeof text, 10000, &end);
+    {
+        unsigned sum = 0;
+        for (const char *p = "abcdefghijkl"; *p; ++p) sum += (unsigned char)*p;
+        char want[32];
+        snprintf(want, sizeof want, "\r\n\r\n12 %u", sum);
+        PROVEN_TEST_ASSERT(strstr(text, "hello") != NULL && strstr(text, want) != NULL && count_of(text, "HTTP/1.1 200") == 2 && end == PROVEN_ERR_EOF,
+            "both answered, the second with every byte of its head and body", how);
+    }
+    raw_close(&raw);
+    expected += 2;
+
     /* HEAD, HTTP/1.0, and a request whose answer comes before its body. */
     PROVEN_TEST_ASSERT(raw_open(&raw, tls, at.port) && raw_send(&raw, "HEAD / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"), "HEAD", how);
     raw_read(&raw, text, sizeof text, 10000, &end);

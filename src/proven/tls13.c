@@ -207,6 +207,7 @@ struct proven_tls_conn {
     bool v12;
     bool resumed;
     bool has_peer_key;
+    bool ticket_stored;                           /* client: a ticket has been kept since the handshake */
     proven_u16 version;                           /* 0 until agreed */
     proven_tls_state_t state;
     proven_err_t error;                           /* the failure, to be returned once */
@@ -2001,6 +2002,7 @@ static proven_err_t client_store_ticket(proven_tls_conn_t *c, proven_rd_t body) 
     (void)early;
 #endif
     s->magic = PROVEN_TLS_SESSION_MAGIC;
+    c->ticket_stored = true;
     return PROVEN_OK;
 }
 
@@ -3563,6 +3565,7 @@ proven_u8str_view_t proven_tls_alpn(const proven_tls_conn_t *c) {
 }
 
 bool proven_tls_resumed(const proven_tls_conn_t *c) { return c && c->resumed; }
+bool proven_tls_ticket_stored_(const proven_tls_conn_t *c) { return c && c->ticket_stored; }
 
 bool proven_tls_peer_key_sha256(const proven_tls_conn_t *c, proven_byte_t out[32]) {
     if (!c || !out || !c->has_peer_key) return false;

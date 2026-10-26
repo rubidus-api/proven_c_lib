@@ -132,7 +132,14 @@ int main(void) {
         /* That connection had a new ticket after its request ended; it is still open (no new
          * request may use it) when the next connection is made: the next one gets the new ticket,
          * not the one already spent on early data, and its GET is taken early again. */
-        spin(30);
+        /* Wait for that ticket itself, not for a time: under load it can come later than 30 ms,
+         * and the first connection may not have closed yet - its ticket is not the one meant. */
+        {
+            proven_net_deadline_t until = proven_net_deadline_in(5000);
+            while (!proven_http_event_client_h3_test_ticket_new_(client) && proven_time_monotonic_now() < until)
+                PROVEN_TEST_ASSERT(proven_loop_poll(g_loop, proven_net_deadline_in(10)) == PROVEN_OK, "a round", "");
+            PROVEN_TEST_ASSERT(proven_http_event_client_h3_test_ticket_new_(client), "the open connection had its new ticket", "");
+        }
         proven_http_event_client_h3_test_retire_(client);
         call_t f = ask(client, port, "GET", "/", NULL);
         PROVEN_TEST_ASSERT(f.status == 200 && f.early == 1, "a connection made while the last is still open: early again, on the ticket that one learned", "");

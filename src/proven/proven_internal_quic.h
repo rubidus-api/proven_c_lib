@@ -216,6 +216,8 @@ proven_size_t proven_tls_session_token_take_(proven_tls_session_t *s, proven_byt
 void proven_tls_session_token_keep_(proven_tls_session_t *s, proven_mem_view_t token);
 /* A session whose next connection must not send early data: the ticket stays, its allowance goes. */
 void proven_tls_session_early_off_(proven_tls_session_t *s);
+/* Client: whether this connection has kept a ticket from its peer (for tests). */
+bool proven_tls_ticket_stored_(const proven_tls_conn_t *c);
 
 /* ---- Packets and frames (RFC 9000 sections 12, 17 and 19): quic_frame.c ----
  *
@@ -497,6 +499,8 @@ bool proven_quic_conn_resumed(const proven_quic_conn_t *c);
 proven_u8str_view_t proven_quic_conn_alpn_(const proven_quic_conn_t *c);
 /* Whether the handshake is complete: before it, streams carry early data (RFC-0021). */
 bool proven_quic_conn_complete_(const proven_quic_conn_t *c);
+/* Client: whether a ticket has come on this connection (for tests). */
+bool proven_quic_conn_ticket_stored_(const proven_quic_conn_t *c);
 
 #endif /* PROVEN_NO_HTTP3 */
 #endif
