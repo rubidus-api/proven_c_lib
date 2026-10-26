@@ -1,6 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "test_unit_tls_pki.h"
+#include "../src/proven/proven_internal_tls.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -432,6 +433,44 @@ static void rsa_job(void *arg) {
     }
 }
 
+/* One configuration's session cache, from four threads at once (RFC-0027): what a blocking client
+ * used from several threads does. Each keeps and reads sessions under names of its own and one
+ * name they share; under ThreadSanitizer, nothing races. */
+static proven_tls_config_t *g_cache_cfg;
+static atomic_int g_cache_bad;
+static void cache_job(void *arg) {
+    const int me = (int)(proven_uintptr_t)arg;
+    for (int i = 0; i < 300; ++i) {
+        proven_tls_session_t s = { 0 }, got;
+        proven_tls_session_data_t *d = (proven_tls_session_data_t *)(void *)s.opaque;
+        d->magic = PROVEN_TLS_SESSION_MAGIC;
+        d->ticket_len = 1;
+        d->ticket[0] = (proven_byte_t)me;
+        char name[32];
+        int n = snprintf(name, sizeof name, i % 3 == 0 ? "shared.test" : "host%d-%d.test", me, i % 5);
+        proven_u8str_view_t v = { (const proven_byte_t *)name, (proven_size_t)n };
+        proven_tls_client_cache_store_(g_cache_cfg, v, &s);
+        proven_tls_client_cache_load_(g_cache_cfg, v, &got);
+        const proven_tls_session_data_t *gd = (const proven_tls_session_data_t *)(const void *)got.opaque;
+        /* Another thread may have put it out of the eight places since: empty is right, torn is not. */
+        if (gd->magic == PROVEN_TLS_SESSION_MAGIC ? gd->ticket_len != 1 || gd->ticket[0] == 0 || gd->ticket[0] > 4 : gd->magic != 0) atomic_fetch_add(&g_cache_bad, 1);
+    }
+}
+
+static void cache_threads_case(void) {
+    proven_tls_options_t co = { .alloc = g_heap, .anchors = g_anchors, .early_data = true };
+    PROVEN_TEST_ASSERT(proven_tls_config_create(&co, &g_cache_cfg) == PROVEN_OK, "a client configuration with early_data", "");
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t group;
+    proven_job_group_init(&group);
+    PROVEN_TEST_ASSERT(proven_job_system_init(g_heap, 4, 8, &threads) == PROVEN_OK, "four threads", "");
+    for (int i = 0; i < 4; ++i) PROVEN_TEST_ASSERT(proven_job_group_submit(threads, &group, cache_job, (void *)(proven_uintptr_t)(i + 1)) == PROVEN_OK, "a thread of sessions", "");
+    proven_job_group_wait(threads, &group);
+    PROVEN_TEST_ASSERT(atomic_load(&g_cache_bad) == 0, "1,200 sessions kept and read back from four threads at once: each whole, or already put out by another", "");
+    proven_job_system_close(threads); proven_job_system_destroy(threads);
+    proven_tls_config_destroy(g_cache_cfg);
+}
+
 static void rsa_threads_case(void) {
     PROVEN_TEST_ASSERT(tp_build_rsa(), "an RSA identity is made", "");
     proven_tls_options_t so = { .alloc = g_heap, .certificate_pem = pem(TP_SERVER_RSA), .private_key_pem = pem(TP_SERVER_RSA_KEY) };
@@ -513,6 +552,10 @@ int main(void) {
         early_cases(client_early, g_client_tls, server_early, g_server_tls);
         proven_tls_config_destroy(client_early); proven_tls_config_destroy(server_early);
     }
+    PROVEN_TEST_SECTION("the client's session cache on several threads",
+        "Four threads keep and read sessions in one configuration at once, as a blocking client used from several threads does.",
+        "Check proven_tls_client_cache_store_ and _load_ in src/proven/tls_config.c: the entries, and whether they exist, are read and written under the flag. Run under ThreadSanitizer.");
+    cache_threads_case();
     PROVEN_TEST_SECTION("an RSA key, signing on several threads", "Four threads completing handshakes against one configuration: the key's blinding pair is shared and changes with every signature.", "Check proven_tls_config_rsa_sign_ in src/proven/tls_config.c: the pair is copied and replaced under the flag, and the signature is made outside it. Run under ThreadSanitizer.");
     rsa_threads_case();
 

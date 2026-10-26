@@ -555,8 +555,12 @@ void proven_tls_client_cache_store_(const proven_tls_config_t *config, proven_u8
     const proven_tls_session_data_t *d = (const proven_tls_session_data_t *)(const void *)s->opaque;
     if (d->magic != PROVEN_TLS_SESSION_MAGIC) return;
     proven_tls_client_entry_t *fresh = NULL;
-    if (!k->e) {
-        /* Allocated outside the lock; a second thread that got here too gives its own back. */
+    /* Whether the entries exist is read under the lock - another thread may be making them - and
+     * they are allocated outside it; a thread that got there second gives its own back. */
+    while (atomic_flag_test_and_set_explicit(&k->lock, memory_order_acquire)) { }
+    const bool need = !k->e;
+    atomic_flag_clear_explicit(&k->lock, memory_order_release);
+    if (need) {
         proven_result_mem_mut_t m = config->alloc.alloc_fn(config->alloc.ctx, PROVEN_TLS_CLIENT_SESSIONS * sizeof(proven_tls_client_entry_t), 16);
         if (m.err != PROVEN_OK) return;
         fresh = (proven_tls_client_entry_t *)(void *)m.value.ptr;
