@@ -1,4 +1,4 @@
-[한국어](README-ko.md) | **English** - **Proven C library v0.82.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.82.0/proven_c_lib-v0.82.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.82.0/proven_c_lib-v0.82.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.82.0/proven_c_lib-v0.82.0-ko-manual.pdf)
+[한국어](README-ko.md) | **English** - **Proven C library v0.83.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.83.0/proven_c_lib-v0.83.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.83.0/proven_c_lib-v0.83.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.83.0/proven_c_lib-v0.83.0-ko-manual.pdf)
 
 # Proven C library
 
@@ -22,7 +22,12 @@ manual is published with a searchable index of every public function. It assumes
 one introductory C book, and it is the only document in this repository written to be read rather
 than looked up.
 
-- Version: proven_c_lib-v0.82.0 | Standard: C23 | License: MIT
+**Rather learn by typing?** The [tutorial](manual/manual-t-tutorial.md)
+([on the web](https://rubidus-api.github.io/proven_c_lib/en/manual-t-tutorial.html)) is nine short
+programs, each adding one idea: printing, text with a length, errors as values, allocators, arenas,
+a container and a file. Chapter 0 is the place to go after it.
+
+- Version: proven_c_lib-v0.83.0 | Standard: C23 | License: MIT
 - Versions are semantic, `MAJOR.MINOR.PATCH`, from v0.0.1 (2026-09-04); the releases before it carry
   date-based numbers (`v26.MM.DDx`) and stay as they were published.
 - Seven functions named `*_internal` or `*_impl` sit in public headers because macros call them;
@@ -719,6 +724,7 @@ What you accept, and should not expect:
 ## Documentation
 
 - User manual: `manual/manual.md` (the contents page; the chapters are the files beside it under `manual/`)
+- Tutorial: [`manual/manual-t-tutorial.md`](manual/manual-t-tutorial.md) (nine short programs, one new idea each)
 - Korean manual (한국어 매뉴얼): `manual-ko/manual-ko.md`
 - Freestanding guide: `manual/manual-freestanding.md`
 - Web and PDF editions: `docs/en/`, `docs/ko/`, built from the Markdown above by

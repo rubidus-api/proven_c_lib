@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.83.0] - 2026-10-26
+
 ### Removed
 
 - **The server's half of RSA key exchange** (the owner's decision of 2026-10-26). A server has
@@ -32,6 +34,10 @@ written; their tags still exist.
   outside the registered tests.
 
 ### Changed
+
+- **Documentation:** both READMEs link the tutorial (`manual/manual-t-tutorial.md`, nine short
+  programs, one new idea each) beside Chapter 0, with its web page, and list it
+  under Documentation; until now it was reached only from the manual's contents page and Chapter 0.
 
 - **Tests:** `test_unit_loop_ops` adds Unix-domain sockets through the loop (accepted, received
   on, connected by path) and batched datagrams received through the loop with URO/GRO asked for;

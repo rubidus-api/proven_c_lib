@@ -1,4 +1,4 @@
-**한국어** | [English](README.md) — **Proven C library v0.82.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.82.0/proven_c_lib-v0.82.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.82.0/proven_c_lib-v0.82.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.82.0/proven_c_lib-v0.82.0-ko-manual.pdf)
+**한국어** | [English](README.md) — **Proven C library v0.83.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.83.0/proven_c_lib-v0.83.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.83.0/proven_c_lib-v0.83.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.83.0/proven_c_lib-v0.83.0-ko-manual.pdf)
 
 # Proven C library
 
@@ -19,7 +19,12 @@ C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도
 공개 함수 전부를 이름으로 찾을 수 있는 검색이 함께 있습니다. 입문서 한 권 외에는 아무것도
 전제하지 않으며, 이 저장소에서 찾아보는 문서가 아니라 읽으라고 쓴 유일한 문서입니다.
 
-- 버전: proven_c_lib-v0.82.0 · 표준: C23 · 라이선스: MIT
+**직접 쳐 보며 익히고 싶다면** [튜토리얼](manual-ko/manual-t-tutorial-ko.md)
+([웹 판](https://rubidus-api.github.io/proven_c_lib/ko/manual-t-tutorial.html))부터 보십시오.
+짧은 프로그램 아홉 개가 출력, 길이를 아는 문자열, 값으로 오는 오류, allocator, arena, 컨테이너, 파일을
+하나씩 더해 갑니다. 다 읽은 뒤에는 0장으로 가면 됩니다.
+
+- 버전: proven_c_lib-v0.83.0 · 표준: C23 · 라이선스: MIT
 - 버전은 시맨틱 버전 `MAJOR.MINOR.PATCH`이며 v0.0.1(2026-09-04)부터 시작합니다. 그 이전 릴리스는
   날짜 기반 번호(`v26.MM.DDx`)이고, 발표된 그대로 둡니다.
 - `*_internal`이나 `*_impl`로 끝나는 함수 일곱 개는 매크로가 호출하기 때문에 공개 헤더에 있습니다.
@@ -690,6 +695,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 ## 문서
 
 - 사용자 매뉴얼: `manual/manual.md` (차례 페이지; 각 장은 `manual/` 아래 옆 파일들)
+- 튜토리얼: [`manual-ko/manual-t-tutorial-ko.md`](manual-ko/manual-t-tutorial-ko.md) (짧은 프로그램 아홉 개, 하나에 새 생각 하나)
 - 한국어 매뉴얼: `manual-ko/manual-ko.md` (차례 페이지; 각 장은 `manual-ko/` 아래)
 - freestanding 가이드: `manual/manual-freestanding.md`
 - 웹·PDF 판: `docs/en/`, `docs/ko/`. 위의 마크다운에서 `scripts/build-site.sh`가 생성합니다.
