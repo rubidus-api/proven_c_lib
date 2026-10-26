@@ -157,7 +157,7 @@ typedef struct {
     bool tr_old;                                  /* TLS 1.0/1.1: the handshake is hashed with MD5 and SHA-1 as well */
     proven_md5_t tr_md5;
     proven_sha1_t tr_sha1;
-    proven_u16 hello_version;                     /* server: the ClientHello's legacy_version, which an RSA premaster repeats */
+    proven_u16 hello_version;                     /* client: the version its hello offered, which an RSA premaster repeats */
     proven_byte_t dh_priv[PROVEN_TLS_DH_EXP_MAX]; /* DHE: this side's exponent. SECRET */
     proven_tls_buf_t dh;                                 /* DHE, client: its public value, then the shared secret */
     proven_size_t dh_pub_len;
@@ -496,8 +496,6 @@ void proven_tls_test_early_tcp_(bool on) { g_test_early_tcp = on; }
  * master secret; bit 2, a server does not answer it. */
 static unsigned g_test12;
 void proven_tls_test_knobs12(unsigned flags) { g_test12 = flags; }
-static bool g_test_server_rsa_kex;
-void proven_tls_test_server_rsa_kex_(bool on) { g_test_server_rsa_kex = on; }
 static proven_u16 g_test_only12;
 void proven_tls_test_only_suite12(proven_u16 id) { g_test_only12 = id; }
 /* The count of records this side has written and the count the other has read, put where a
@@ -1533,7 +1531,6 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, proven_rd_t body, 
      * is decided further down: a client that lists its versions means the list, not this. */
     if (version < PROVEN_TLS_VERSION_1_0) return tls_fail(c, AL_PROTOCOL_VERSION, PROVEN_ERR_PROTOCOL);
     if (version > PROVEN_TLS_VERSION_1_2 || sid.n > 32 || suites.n < 2 || suites.n % 2 != 0) return tls_illegal(c);
-    h->hello_version = version;
     if (compression.n != 1 || compression.p[0] != 0) return tls_illegal(c);
 
     const proven_rd_t all_exts = exts;
@@ -2597,9 +2594,7 @@ static proven_err_t client12_flight(proven_tls_conn_t *c) {
         proven_tls_config_random(c->config, pad, sizeof pad);
         proven_byte_t sent[48];
         for (int i = 0; i < 48; ++i) sent[i] = shared[i];
-        if (g_test12 & 1024u) sent[1] ^= 0x04;                        /* a test: another version inside */
         bool ok = proven_crypto_rsa_encrypt_pkcs1(leaf.rsa_n, leaf.rsa_e, (proven_mem_view_t){ .ptr = sent, .size = 48 }, pad, sealed, &sealed_len);
-        if (ok && (g_test12 & 2048u)) { for (proven_size_t i = 1; i < sealed_len; ++i) sealed[i] = pad[i]; sealed[0] = 0; }    /* a test: no encryption of anything */
         tls_wipe(sent, sizeof sent);
         tls_wipe(pad, sizeof pad);
         if (!ok) { tls_wipe(shared, sizeof shared); return tls_illegal(c); }
@@ -2787,30 +2782,29 @@ static proven_err_t server12_client_hello(proven_tls_conn_t *c, proven_u16 versi
     const proven_tls12_suite_t *suite = NULL;
     for (int i = 0; i < 3 && !suite && !old; ++i) if (list_has_u16(suites, suite12_for(order13[i], rsa))) suite = proven_tls12_suite_find(suite12_for(order13[i], rsa));
     /* Nothing of the six in common: then the first legacy suite, in the table's order, that
-     * this configuration allows, the client offers and this key can serve. */
+     * this configuration allows, the client offers and this key can serve - never one whose key
+     * exchange is by RSA, which is a client's only (proven_tls_server_create). */
     const proven_tls12_suite_t *s12;
     for (proven_size_t i = 0; !suite && (s12 = proven_tls12_suite_at(i)) != NULL; ++i) {
-        if (s12->legacy && suite12_allowed(cfg, s12) && s12->rsa_auth == rsa && (!old || s12->mac == PROVEN_TLS_LH_SHA1) && list_has_u16(suites, s12->id)) suite = s12;
+        if (s12->legacy && s12->kx != PROVEN_TLS_KX_RSA && suite12_allowed(cfg, s12) && s12->rsa_auth == rsa && (!old || s12->mac == PROVEN_TLS_LH_SHA1) && list_has_u16(suites, s12->id)) suite = s12;
     }
     if (!suite) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
 
     /* The group, and the scheme the key exchange is signed with. Both lists are required:
      * without signature_algorithms RFC 5246 would mean SHA-1, which is not signed with here. */
     proven_u16 group = 0, scheme = 0;
-    if (suite->kx != PROVEN_TLS_KX_RSA) {
-        /* From TLS 1.2 the client must say which signatures it takes; before, the key's kind says it. */
-        if (!old && (!sig_algs.ok || sig_algs.n % 2 != 0)) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
-        if (suite->kx == PROVEN_TLS_KX_ECDHE) {
-            if (!groups.ok || groups.n % 2 != 0) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
-            group = list_has_u16(groups, GROUP_X25519) && !g_test_server_refuses_x25519 ? GROUP_X25519 : list_has_u16(groups, GROUP_P256) ? GROUP_P256 : 0;
-            if (group == 0) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
-        }
-        scheme = our_scheme(cfg);
-        if (!old && !list_has_u16(sig_algs, scheme)) {
-            /* An RSA key may fall back to PKCS #1 v1.5 for a 1.2 client that predates PSS. */
-            scheme = rsa && list_has_u16(sig_algs, SIG_RSA_PKCS1_SHA256) ? SIG_RSA_PKCS1_SHA256 : 0;
-            if (scheme == 0) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
-        }
+    /* From TLS 1.2 the client must say which signatures it takes; before, the key's kind says it. */
+    if (!old && (!sig_algs.ok || sig_algs.n % 2 != 0)) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
+    if (suite->kx == PROVEN_TLS_KX_ECDHE) {
+        if (!groups.ok || groups.n % 2 != 0) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
+        group = list_has_u16(groups, GROUP_X25519) && !g_test_server_refuses_x25519 ? GROUP_X25519 : list_has_u16(groups, GROUP_P256) ? GROUP_P256 : 0;
+        if (group == 0) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
+    }
+    scheme = our_scheme(cfg);
+    if (!old && !list_has_u16(sig_algs, scheme)) {
+        /* An RSA key may fall back to PKCS #1 v1.5 for a 1.2 client that predates PSS. */
+        scheme = rsa && list_has_u16(sig_algs, SIG_RSA_PKCS1_SHA256) ? SIG_RSA_PKCS1_SHA256 : 0;
+        if (scheme == 0) return tls_fail(c, AL_HANDSHAKE_FAILURE, PROVEN_ERR_PROTOCOL);
     }
 
     c->alpn_index = -1;
@@ -2907,7 +2901,7 @@ static proven_err_t server12_client_hello(proven_tls_conn_t *c, proven_u16 versi
     if (!cert_build(c, true) || !hs_send(c)) return tls_nomem(c);
 
     /* ServerKeyExchange: a fresh key on the agreed curve, signed with both randoms so that it
-     * cannot be replayed into another handshake. A key exchange by RSA has none. */
+     * cannot be replayed into another handshake. */
     if (suite->kx == PROVEN_TLS_KX_ECDHE) {
     proven_byte_t pub[65], signed_part[64 + 4 + 65];
     proven_size_t pub_len, n = 0;
@@ -3038,14 +3032,6 @@ static proven_err_t server12_message(proven_tls_conn_t *c, proven_byte_t type, p
                 proven_rd_t theirs = rd_vec(&body, 2);
                 if (!body.ok || body.n != 0) return tls_decode(c);
                 if (!proven_tls_dh_shared(p, h->dh_priv, proven_tls_dh_exponent_len(p.size), (proven_mem_view_t){ .ptr = theirs.p, .size = theirs.n }, shared, &shared_len)) return tls_illegal(c);
-            } else if (c->suite12->kx == PROVEN_TLS_KX_RSA) {
-                /* Whatever arrived, a premaster comes out and the handshake goes on: a wrong
-                 * one fails at Finished like any other wrong key, and tells the sender nothing
-                 * about what was wrong with it. Only the framing is judged here. */
-                proven_rd_t sealed = rd_vec(&body, 2);
-                if (!body.ok || body.n != 0) return tls_decode(c);
-                proven_tls_config_rsa_decrypt_(c->config, (proven_mem_view_t){ .ptr = sealed.p, .size = sealed.n }, h->hello_version, shared);
-                shared_len = 48;
             } else {
                 proven_rd_t point = rd_vec(&body, 1);
                 if (!body.ok || body.n != 0) return tls_decode(c);
@@ -3210,7 +3196,7 @@ proven_err_t proven_tls_server_create(const proven_tls_config_t *config, proven_
     if (!out || !config || config->chain_count == 0 || config->key_kind == PROVEN_TLS_KEY_NONE) return PROVEN_ERR_INVALID_ARG;
     /* A server that decrypts what a client chose is one mistake away from signing anything with
      * its key, in every protocol the key serves (Bleichenbacher; ROBOT). The bit is a client's. */
-    if ((config->legacy & PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE) && !g_test_server_rsa_kex) return PROVEN_ERR_INVALID_ARG;
+    if (config->legacy & PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE) return PROVEN_ERR_INVALID_ARG;
     proven_tls_conn_t *c = NULL;
     proven_err_t e = conn_new(config, true, &c);
     if (e != PROVEN_OK) return e;

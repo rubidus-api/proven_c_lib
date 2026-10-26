@@ -404,8 +404,6 @@ proven_size_t proven_tls_rsa_key_der_(const proven_crypto_rsa_key_t *key, const 
  * RSASSA-PSS with a salt of 32 bytes, or - `pkcs1`, for TLS 1.2 peers that offer nothing
  * else - PKCS #1 v1.5. False when the config has no RSA key or the signature could not be made. */
 [[nodiscard]] bool proven_tls_config_rsa_sign_(const proven_tls_config_t *config, bool pkcs1, proven_mem_view_t digest, proven_byte_t *sig, proven_size_t *len);
-/* The premaster of a static-RSA ClientKeyExchange, or 48 random bytes when it is not one. */
-void proven_tls_config_rsa_decrypt_(const proven_tls_config_t *config, proven_mem_view_t cipher, proven_u16 version, proven_byte_t out[48]);
 /* PEM: the label between the dashes, the bytes in Base64, 64 to a line. */
 proven_err_t proven_tls_pem_write_(const char *label, proven_mem_view_t der, proven_mem_mut_t out, proven_size_t *len);
 /* 4 or 16 when `text` is an IP literal (cert.c). */
@@ -427,13 +425,8 @@ void proven_tls_test_knobs12(unsigned flags);
  * proven_tls_test_only_suite12 even when its configuration does not allow it; 32, the client
  * does not ask for encrypt_then_mac; 64, the server agrees to the oldest version the client
  * allows instead of the newest; 128, the server's Diffie-Hellman prime is not a known one;
- * 256, its value is 1; 512, the client's value is 1; 1024, the client's RSA premaster carries
- * another version; 2048, its ClientKeyExchange is no encryption of anything; 4096, the server
- * asks for a client certificate even on a connection without the extended master secret. */
-/* A server may be made over a configuration with PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE: the only
- * peer this library's own client has for that key exchange in its tests. Off by default, as a
- * server must be (owner decision 2026-10-23). */
-void proven_tls_test_server_rsa_kex_(bool on);
+ * 256, its value is 1; 512, the client's value is 1; 4096, the server asks for a client
+ * certificate even on a connection without the extended master secret. */
 /* The client offers only this TLS 1.2-family suite (0: everything, as usual). */
 void proven_tls_test_only_suite12(proven_u16 id);
 /* How often an RSA key's blinding pair has been used, put where a test says; returns what it was. */

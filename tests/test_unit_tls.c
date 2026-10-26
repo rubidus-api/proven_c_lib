@@ -1016,24 +1016,30 @@ int main(void) {
         static const proven_u16 VERS[3] = { PROVEN_TLS_VERSION_1_2, PROVEN_TLS_VERSION_1_1, PROVEN_TLS_VERSION_1_0 };
         proven_tls_options_t lo = base_options();
         lo.legacy = ALL; lo.min_version = PROVEN_TLS_VERSION_1_0; lo.max_version = PROVEN_TLS_VERSION_1_2;
-        proven_tls_config_t *l_rsa = server_config(TP_SERVER_RSA, TP_SERVER_RSA_KEY, &lo), *l_ec = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &lo),
-                            *l_ed = server_config(TP_SERVER_ED, TP_SERVER_ED_KEY, &lo);
+        /* Servers allow all of it but RSA key exchange, which is a client's (v0.78.0). */
+        proven_tls_options_t lso = lo;
+        lso.legacy = ALL & ~PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE;
+        proven_tls_config_t *l_rsa = server_config(TP_SERVER_RSA, TP_SERVER_RSA_KEY, &lso), *l_ec = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &lso),
+                            *l_ed = server_config(TP_SERVER_ED, TP_SERVER_ED_KEY, &lso);
         proven_tls_config_t *l_client[3];
         for (int v = 0; v < 3; ++v) { proven_tls_options_t co = lo; co.max_version = VERS[v]; l_client[v] = client_config(&co); }
         /* RSA key exchange is a client's (v0.78.0): a server over a configuration that names it
-         * is refused, a client is made. The test hook below lets this library's own server be
-         * the client's peer for the rest of this file. */
+         * is refused, a client is made. This library has no server for it: the client's side of
+         * it is checked against other implementations (RFC-0011's oracle), and its encryption in
+         * test_unit_tls_legacy. */
         {
+            proven_tls_config_t *k_rsa = server_config(TP_SERVER_RSA, TP_SERVER_RSA_KEY, &lo), *k_ec = server_config(TP_SERVER_P256, TP_SERVER_P256_KEY, &lo);
             proven_tls_conn_t *refused = NULL, *client = NULL;
-            PROVEN_TEST_ASSERT(proven_tls_server_create(l_rsa, &refused) == PROVEN_ERR_INVALID_ARG && refused == NULL &&
-                               proven_tls_server_create(l_ec, &refused) == PROVEN_ERR_INVALID_ARG && refused == NULL,
+            PROVEN_TEST_ASSERT(proven_tls_server_create(k_rsa, &refused) == PROVEN_ERR_INVALID_ARG && refused == NULL &&
+                               proven_tls_server_create(k_ec, &refused) == PROVEN_ERR_INVALID_ARG && refused == NULL,
                                "a server over a configuration with RSA key exchange is refused", "");
             PROVEN_TEST_ASSERT(proven_tls_client_create(l_client[0], sv("localhost"), NULL, &client) == PROVEN_OK, "and a client over one is made", "");
             proven_tls_conn_destroy(client);
-            proven_tls_test_server_rsa_kex_(true);
+            proven_tls_config_destroy(k_rsa); proven_tls_config_destroy(k_ec);
         }
         /* The twenty-one suites: its number, whether the server's key is RSA, whether it is CBC,
-         * and whether its MAC is SHA-1 - which is what TLS 1.0 and 1.1 can use. */
+         * and whether its MAC is SHA-1 - which is what TLS 1.0 and 1.1 can use. Bit 2 of `bits`
+         * is RSA key exchange: those six have no server here, and are left out of what needs one. */
         static const struct { proven_u16 id; bool rsa, cbc, sha1; proven_u32 bits; } L[21] = {
             { 0x009e, true, false, false, 4 }, { 0x009f, true, false, false, 4 }, { 0xccaa, true, false, false, 4 },
             { 0xc024, false, true, false, 1 }, { 0xc028, true, true, false, 1 }, { 0xc023, false, true, false, 1 }, { 0xc027, true, true, false, 1 }, { 0xc009, false, true, true, 1 }, { 0xc013, true, true, true, 1 },
@@ -1046,7 +1052,7 @@ int main(void) {
         bool all = true;
         for (int v = 0; v < 3; ++v) {
             for (int i = 0; i < 21; ++i) {
-                if (v > 0 && !L[i].sha1) continue;
+                if ((v > 0 && !L[i].sha1) || (L[i].bits & PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE)) continue;
                 for (int mte = 0; mte < (L[i].cbc ? 2 : 1); ++mte) {
                     proven_tls_test_only_suite12(L[i].id);
                     proven_tls_test_knobs12(mte ? 32u : 0u);
@@ -1062,7 +1068,7 @@ int main(void) {
             }
         }
         proven_tls_test_knobs12(0);
-        PROVEN_TEST_ASSERT(all && made == 37 + 16 + 16, "twenty-one suites in TLS 1.2 and the eight with a SHA-1 MAC in 1.1 and 1.0, the CBC ones with and without encrypt_then_mac: each agreed, and data of 1 to 20,000 bytes each way", "");
+        PROVEN_TEST_ASSERT(all && made == 27 + 12 + 12, "the fifteen suites without RSA key exchange in TLS 1.2 and the six of them with a SHA-1 MAC in 1.1 and 1.0, the CBC ones with and without encrypt_then_mac: each agreed, and data of 1 to 20,000 bytes each way", "");
         {
             /* An Ed25519 key serves the ECDSA suites of 1.2, and nothing older. */
             proven_tls_test_only_suite12(0xc023);
@@ -1096,7 +1102,9 @@ int main(void) {
             refused_by_server = refused_by_server && g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 40;
             close_pair(&p);
             /* A default client made (by the test) to offer it, to a server that would take it:
-             * the client must refuse the answer it did not really ask for. */
+             * the client must refuse the answer it did not really ask for. (No server here takes
+             * RSA key exchange.) */
+            if (L[i].bits & PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE) continue;
             proven_tls_test_knobs12(16);
             p = connect_pair(plain_client, L[i].rsa ? l_rsa : l_ec, "example.test", NULL, NULL, NULL);
             refused_by_client = refused_by_client && g_err_c == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.c) == 47;
@@ -1105,12 +1113,12 @@ int main(void) {
         }
         proven_tls_test_only_suite12(0);
         PROVEN_TEST_ASSERT(refused_by_server, "a default server refuses every one of the twenty-one: handshake_failure", "");
-        PROVEN_TEST_ASSERT(refused_by_client, "and a default client refuses a server that picks one: illegal_parameter", "");
+        PROVEN_TEST_ASSERT(refused_by_client, "and a default client refuses a server that picks one of the fifteen a server may: illegal_parameter", "");
         {
             /* One bit does not stand for another. */
-            static const struct { proven_u32 has; proven_u16 suite; } X[4] = { { 1, 0x009c }, { 2, 0xc013 }, { 4, 0xc013 }, { 3, 0x009e } };
+            static const struct { proven_u32 has; proven_u16 suite; } X[3] = { { 1, 0x009c }, { 4, 0xc013 }, { 1, 0x009e } };
             bool each = true;
-            for (int i = 0; i < 4; ++i) {
+            for (int i = 0; i < 3; ++i) {
                 proven_tls_options_t so = base_options();
                 so.legacy = X[i].has;
                 proven_tls_config_t *sc = server_config(TP_SERVER_RSA, TP_SERVER_RSA_KEY, &so);
@@ -1121,7 +1129,7 @@ int main(void) {
                 proven_tls_config_destroy(sc);
             }
             proven_tls_test_only_suite12(0);
-            PROVEN_TEST_ASSERT(each, "the CBC bit does not allow RSA key exchange, nor that bit CBC, nor the DHE bit CBC, nor those two DHE", "");
+            PROVEN_TEST_ASSERT(each, "the CBC bit does not allow RSA key exchange, nor the DHE bit CBC, nor the CBC bit DHE", "");
         }
         {
             /* With everything allowed on both sides, nothing legacy is chosen while better is there. */
@@ -1175,7 +1183,7 @@ int main(void) {
         /* A peer without the extended master secret. */
         {
             proven_tls_options_t eo = lo, ro = lo, qo = lo, ko = lo;
-            eo.legacy = ALL | PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET;
+            eo.legacy = lso.legacy | PROVEN_TLS_LEGACY_NO_EXTENDED_MASTER_SECRET;      /* servers among them: no RSA key exchange */
             ro.legacy = eo.legacy; ro.anchors = g_anchors; ro.client_auth = PROVEN_TLS_CLIENT_AUTH_REQUIRE;
             qo.legacy = eo.legacy; qo.anchors = g_anchors; qo.client_auth = PROVEN_TLS_CLIENT_AUTH_REQUEST;
             ko.legacy = eo.legacy; ko.certificate_pem = pem(TP_CLIENT); ko.private_key_pem = pem(TP_CLIENT_KEY);
@@ -1233,7 +1241,7 @@ int main(void) {
         /* Client certificates in the old versions, where the key's kind is the signature scheme. */
         {
             proven_crypto_rsa_test_min_bits(1024);
-            proven_tls_options_t so = lo, c1 = lo, c2 = lo, c3 = lo;
+            proven_tls_options_t so = lso, c1 = lo, c2 = lo, c3 = lo;
             so.anchors = g_anchors; so.client_auth = PROVEN_TLS_CLIENT_AUTH_REQUIRE;
             c1.certificate_pem = pem(TP_CLIENT); c1.private_key_pem = pem(TP_CLIENT_KEY);
             c2.certificate_pem = pem(TP_CLIENT_RSA); c2.private_key_pem = pem(TP_CLIENT_RSA_KEY);
@@ -1391,24 +1399,6 @@ int main(void) {
             PROVEN_TEST_ASSERT(g_err_s == PROVEN_ERR_PROTOCOL && proven_tls_alert_sent(p.s) == 47, "a client whose value is 1: illegal_parameter from the server", "");
             close_pair(&p);
             proven_tls_test_knobs12(0);
-        }
-
-        /* Key exchange by RSA that is not what it should be: the server must not say how. */
-        {
-            int alert[3] = { 0, 0, 0 };
-            proven_err_t err[3] = { PROVEN_OK, PROVEN_OK, PROVEN_OK };
-            bool completed[3] = { false, false, false };
-            for (int kind = 0; kind < 3; ++kind) {
-                proven_tls_test_only_suite12(0x009c);
-                proven_tls_test_knobs12(kind == 0 ? 1024u : kind == 1 ? 2048u : 0u);
-                pair_t p = connect_pair(l_client[0], l_rsa, "example.test", NULL, NULL, NULL);
-                alert[kind] = proven_tls_alert_sent(p.s); err[kind] = g_err_s; completed[kind] = both_up(&p);
-                close_pair(&p);
-            }
-            proven_tls_test_knobs12(0); proven_tls_test_only_suite12(0);
-            PROVEN_TEST_ASSERT(completed[2] && !completed[0] && !completed[1], "a premaster with another version in it, and bytes that encrypt nothing: neither handshake completes (a good one does)", "");
-            PROVEN_TEST_ASSERT(alert[0] == alert[1] && err[0] == err[1] && alert[0] == 20 && err[0] == PROVEN_ERR_PROTOCOL,
-                "and the server answers both the same way, at the client's Finished and not before: bad_record_mac, as for any key that is simply wrong", "");
         }
 
         /* What it costs in memory, and that the rest pays nothing. */

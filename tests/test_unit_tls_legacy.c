@@ -78,17 +78,24 @@ static bool record_setup(const char **at, proven_tls_keys_t *keys, proven_tls_cb
 
 static tp_stream_t g_stream = { .seed = "test_unit_tls_legacy bytes", .counter = 0 };
 
-/* em^e mod n for an encoding the test chose itself - the library's own encryption will not
- * make a malformed one. */
-static bool raw_encrypt(const proven_crypto_rsa_key_t *k, const proven_byte_t *em, proven_byte_t *out) {
+/* c^d mod n, the way no production code does it (not constant-time): to open what the client
+ * encrypted, in a test. `d` is the private exponent, as long as the modulus. */
+static bool raw_decrypt(const proven_crypto_rsa_key_t *k, const proven_byte_t *d, const proven_byte_t *c, proven_byte_t *out) {
     static proven_crypto_mp_mod_t mod;
-    static proven_crypto_limb_t x[PROVEN_CRYPTO_MP_MAX], e[2];
-    if (!proven_crypto_mp_mod_init(&mod, k->n, k->n_len) || !proven_crypto_mp_load_be(x, mod.limbs, em, k->n_len) || !proven_crypto_mp_load_be(e, 2, k->e, k->e_len)) return false;
+    static proven_crypto_limb_t x[PROVEN_CRYPTO_MP_MAX], dl[PROVEN_CRYPTO_MP_MAX];
+    if (!proven_crypto_mp_mod_init(&mod, k->n, k->n_len) || !proven_crypto_mp_load_be(x, mod.limbs, c, k->n_len) || !proven_crypto_mp_load_be(dl, mod.limbs, d, k->n_len)) return false;
     proven_crypto_mp_to_mont(&mod, x, x);
-    proven_crypto_mp_pow(&mod, x, x, e, 2);
+    proven_crypto_mp_pow(&mod, x, x, dl, mod.limbs);
     proven_crypto_mp_from_mont(&mod, x, x);
     proven_crypto_mp_store_be(out, k->n_len, x, mod.limbs);
     return true;
+}
+
+/* 00 02 | at least eight bytes, none zero | 00 | the 48-byte premaster, filling `k` bytes. */
+static bool pkcs1_type2_holds(const proven_byte_t *em, proven_size_t k, const proven_byte_t premaster[48]) {
+    if (k < 48 + 11 || em[0] != 0 || em[1] != 2 || em[k - 49] != 0) return false;
+    for (proven_size_t i = 2; i < k - 49; ++i) if (em[i] == 0) return false;
+    return memcmp(em + k - 48, premaster, 48) == 0;
 }
 
 int main(void) {
@@ -249,66 +256,34 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_tls_dh_exponent_len(256) == 32 && proven_tls_dh_exponent_len(384) == 36 && proven_tls_dh_exponent_len(512) == 44, "exponents are 256, 288 and 352 bits for primes of 2048, 3072 and 4096", "");
     }
 
-    PROVEN_TEST_SECTION("RSA for key exchange", "A premaster secret encrypted and recovered - and, for anything that is not one, the fallback instead, with no sign of which.", "Check proven_crypto_rsa_encrypt_pkcs1 and proven_crypto_rsa_decrypt_premaster in src/proven/crypto_rsa.c.");
+    PROVEN_TEST_SECTION("RSA for key exchange", "A client's premaster secret encrypted under the server's public key: opened here with the private exponent, it is 00 02, eight or more nonzero bytes, 00, and the premaster. (A server's half is not in this library.)", "Check proven_crypto_rsa_encrypt_pkcs1 in src/proven/crypto_rsa.c.");
     {
         static proven_crypto_rsa_key_t key;
         static proven_crypto_rsa_blind_t blind;
         static proven_byte_t d[512], seed[512], sealed[512], em[512], pad[512];
-        proven_byte_t premaster[48], fallback[48], got[48];
+        proven_byte_t premaster[48];
         proven_size_t sealed_len = 0;
         proven_crypto_rsa_test_min_bits(1024);
         PROVEN_TEST_ASSERT(proven_crypto_rsa_generate(1024, tp_stream, &g_stream, &key, d), "a 1024-bit key, made here", "");
         tp_stream(&g_stream, seed, key.n_len);
         PROVEN_TEST_ASSERT(proven_crypto_rsa_blind_make(&key, seed, &blind), "and a blinding pair for it", "");
         const proven_mem_view_t kn = { key.n, key.n_len }, ke = { key.e, key.e_len };
+        const proven_size_t k = key.n_len;
         tp_stream(&g_stream, premaster, 48); tp_stream(&g_stream, pad, sizeof pad);
         premaster[0] = 3; premaster[1] = 3;
-        memset(fallback, 0xee, sizeof fallback);
-        PROVEN_TEST_ASSERT(proven_crypto_rsa_encrypt_pkcs1(kn, ke, (proven_mem_view_t){ premaster, 48 }, pad, sealed, &sealed_len) && sealed_len == key.n_len, "a premaster encrypted under the public key is as long as the modulus", "");
-        proven_crypto_rsa_decrypt_premaster(&key, &blind, (proven_mem_view_t){ sealed, sealed_len }, 0x0303, fallback, got);
-        PROVEN_TEST_ASSERT(memcmp(got, premaster, 48) == 0, "and is recovered with the private one", "");
-        proven_crypto_rsa_decrypt_premaster(&key, NULL, (proven_mem_view_t){ sealed, sealed_len }, 0x0303, fallback, got);
-        PROVEN_TEST_ASSERT(memcmp(got, premaster, 48) == 0, "with or without blinding", "");
+        PROVEN_TEST_ASSERT(proven_crypto_rsa_encrypt_pkcs1(kn, ke, (proven_mem_view_t){ premaster, 48 }, pad, sealed, &sealed_len) && sealed_len == k, "a premaster encrypted under the public key is as long as the modulus", "");
+        PROVEN_TEST_ASSERT(raw_decrypt(&key, d, sealed, em) && pkcs1_type2_holds(em, k, premaster), "and opened with the private exponent it is 00 02 | nonzero padding | 00 | the premaster", "");
+        bool padding_is_random = true;
+        for (proven_size_t i = 0; i < k - 51; ++i) if (em[2 + i] != (pad[i] ? pad[i] : em[2 + i])) padding_is_random = false;
+        PROVEN_TEST_ASSERT(padding_is_random, "its padding is the random bytes given (those that are not zero)", "");
+        tp_stream(&g_stream, pad, sizeof pad);
+        PROVEN_TEST_ASSERT(proven_crypto_rsa_encrypt_pkcs1(kn, ke, (proven_mem_view_t){ premaster, 48 }, pad, em, &sealed_len) && memcmp(em, sealed, k) != 0,
+            "other random bytes, another encryption of the same premaster", "");
         memset(pad, 0, sizeof pad);
-        PROVEN_TEST_ASSERT(proven_crypto_rsa_encrypt_pkcs1(kn, ke, (proven_mem_view_t){ premaster, 48 }, pad, em, &sealed_len), "padding bytes that come out of the random source as zero are replaced", "");
-        proven_crypto_rsa_decrypt_premaster(&key, &blind, (proven_mem_view_t){ em, sealed_len }, 0x0303, fallback, got);
-        PROVEN_TEST_ASSERT(memcmp(got, premaster, 48) == 0, "so that what is sent still decrypts", "");
-        PROVEN_TEST_ASSERT(!proven_crypto_rsa_encrypt_pkcs1(kn, ke, (proven_mem_view_t){ pad, key.n_len - 10 }, pad, em, &sealed_len), "a message that leaves no room for eight bytes of padding is refused", "");
-
-        /* Everything below must give the fallback, and nothing else. */
-        int wrong = 0, cases = 0;
-#define FALLS_BACK(cipher, len, version) do { memset(got, 0, 48); proven_crypto_rsa_decrypt_premaster(&key, &blind, (proven_mem_view_t){ (cipher), (len) }, (version), fallback, got); \
-                                              cases++; if (memcmp(got, fallback, 48) != 0) { wrong++; fprintf(stderr, "premaster case %d did not fall back\n", cases); } } while (0)
-        FALLS_BACK(sealed, sealed_len, 0x0302);                       /* the client first offered another version */
-        FALLS_BACK(sealed, sealed_len - 1, 0x0303);                   /* a byte short */
-        FALLS_BACK(sealed, 0, 0x0303);
-        memset(em, 0xff, key.n_len);
-        FALLS_BACK(em, key.n_len, 0x0303);                            /* not below the modulus */
-        memcpy(em, sealed, key.n_len); em[key.n_len - 1] ^= 1;
-        FALLS_BACK(em, key.n_len, 0x0303);                            /* an encryption of nothing in particular */
-        static proven_byte_t shape[512];
-        /* Encodings that are wrong in one place each. The right one first, to prove the helper. */
-        for (int flaw = 0; flaw < 7; ++flaw) {
-            const proven_size_t k = key.n_len;
-            shape[0] = 0; shape[1] = 2;
-            for (proven_size_t i = 2; i < k - 49; ++i) shape[i] = (proven_byte_t)(i | 1);
-            shape[k - 49] = 0;
-            memcpy(shape + k - 48, premaster, 48);
-            if (flaw == 1) shape[0] = 1;                              /* does not start with 00 */
-            if (flaw == 2) shape[1] = 1;                              /* a signature's padding, not an encryption's */
-            if (flaw == 3) shape[10] = 0;                             /* a zero inside the padding */
-            if (flaw == 4) shape[k - 49] = 7;                         /* no separator where the premaster must start */
-            if (flaw == 5) { shape[k - 49] = 9; shape[k - 50] = 0; }  /* a 49-byte message */
-            if (flaw == 6) shape[k - 48] = 2;                         /* the wrong version inside */
-            if (!raw_encrypt(&key, shape, em)) { wrong++; continue; }
-            if (flaw == 0) {
-                proven_crypto_rsa_decrypt_premaster(&key, &blind, (proven_mem_view_t){ em, k }, 0x0303, fallback, got);
-                if (memcmp(got, premaster, 48) != 0) wrong++;
-            } else {
-                FALLS_BACK(em, k, 0x0303);
-            }
-        }
-        PROVEN_TEST_ASSERT(cases == 11 && wrong == 0, "another version, a wrong length, a value not below the modulus, a changed ciphertext, and six encodings each wrong in one place: the fallback, every time", "");
+        PROVEN_TEST_ASSERT(proven_crypto_rsa_encrypt_pkcs1(kn, ke, (proven_mem_view_t){ premaster, 48 }, pad, sealed, &sealed_len), "padding bytes that come out of the random source as zero are replaced", "");
+        PROVEN_TEST_ASSERT(raw_decrypt(&key, d, sealed, em) && pkcs1_type2_holds(em, k, premaster), "so that what is sent still has the shape: no zero inside the padding", "");
+        PROVEN_TEST_ASSERT(!proven_crypto_rsa_encrypt_pkcs1(kn, ke, (proven_mem_view_t){ pad, k - 10 }, pad, em, &sealed_len), "a message that leaves no room for eight bytes of padding is refused", "");
+        PROVEN_TEST_ASSERT(proven_crypto_rsa_encrypt_pkcs1(kn, ke, (proven_mem_view_t){ pad, k - 11 }, pad, em, &sealed_len), "and one that leaves exactly eight is taken", "");
 
         /* The signature of TLS 1.0 and 1.1: 36 bytes, no DigestInfo. */
         static proven_byte_t sig[512];

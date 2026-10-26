@@ -263,7 +263,7 @@ static bool rsa_half(const proven_crypto_mp_mod_t *prime, const proven_byte_t *x
 }
 
 /* c^d mod n for c of n_len bytes below n, into `sig`. False when the result does not verify. */
-static bool rsa_private(const proven_crypto_rsa_key_t *k, const proven_crypto_rsa_blind_t *blind, const proven_byte_t *c, proven_byte_t *sig, bool publish) {
+static bool rsa_private(const proven_crypto_rsa_key_t *k, const proven_crypto_rsa_blind_t *blind, const proven_byte_t *c, proven_byte_t *sig) {
     proven_rsa_mods_t m;
     proven_crypto_limb_t cl[RSA_SIGN_LIMBS], x[RSA_SIGN_LIMBS], f[RSA_SIGN_LIMBS], m1[RSA_PRIME_LIMBS], m2[RSA_PRIME_LIMBS], ex[RSA_E_LIMBS];
     proven_byte_t xb[RSA_SIGN_BYTES];
@@ -299,7 +299,7 @@ static bool rsa_private(const proven_crypto_rsa_key_t *k, const proven_crypto_rs
             ok = same != 0;
             if (ok) {
                 proven_crypto_mp_store_be(sig, k->n_len, x, sn);
-                if (publish) PROVEN_CT_PUBLIC(sig, k->n_len);     /* a signature is published; a decryption is not */
+                PROVEN_CT_PUBLIC(sig, k->n_len);                  /* a signature is published */
             }
         }
     }
@@ -393,7 +393,7 @@ bool proven_crypto_rsa_sign_pkcs1(const proven_crypto_rsa_key_t *k, const proven
     em[pad_end] = 0;
     for (proven_size_t i = 0; i < di_len; ++i) em[pad_end + 1 + i] = di[i];
     for (proven_size_t i = 0; i < hlen; ++i) em[pad_end + 1 + di_len + i] = digest.ptr[i];
-    return rsa_private(k, blind, em, sig, true);
+    return rsa_private(k, blind, em, sig);
 }
 
 bool proven_crypto_rsa_sign_pss(const proven_crypto_rsa_key_t *k, const proven_crypto_rsa_blind_t *blind, int hash,
@@ -425,7 +425,7 @@ bool proven_crypto_rsa_sign_pss(const proven_crypto_rsa_key_t *k, const proven_c
     em[0] &= (proven_byte_t)(0xffu >> (8 * em_len - em_bits));
     for (proven_size_t i = 0; i < hlen; ++i) em[db_len + i] = h[i];
     em[em_len - 1] = 0xbc;
-    return rsa_private(k, blind, em_full, sig, true);
+    return rsa_private(k, blind, em_full, sig);
 }
 
 // -----------------------------------------------------------------------------
@@ -446,7 +446,7 @@ bool proven_crypto_rsa_sign_pkcs1_raw(const proven_crypto_rsa_key_t *k, const pr
     for (proven_size_t i = 2; i < pad_end; ++i) em[i] = 0xff;
     em[pad_end] = 0;
     for (proven_size_t i = 0; i < data.size; ++i) em[pad_end + 1 + i] = data.ptr[i];
-    return rsa_private(k, blind, em, sig, true);
+    return rsa_private(k, blind, em, sig);
 }
 
 bool proven_crypto_rsa_verify_pkcs1_raw(proven_mem_view_t n, proven_mem_view_t e, proven_mem_view_t data, proven_mem_view_t sig) {
@@ -486,31 +486,6 @@ bool proven_crypto_rsa_encrypt_pkcs1(proven_mem_view_t n, proven_mem_view_t e, p
     rsa_wipe(em, sizeof em);
     *out_len = made;
     return made == k;
-}
-
-/* All-ones when the byte is zero. */
-static proven_u32 rsa_ct_zero(proven_u32 b) { return ((b | ((proven_u32)0 - b)) >> 31) - 1u; }
-
-void proven_crypto_rsa_decrypt_premaster(const proven_crypto_rsa_key_t *k, const proven_crypto_rsa_blind_t *blind, proven_mem_view_t cipher,
-                                         proven_u16 version, const proven_byte_t fallback[48], proven_byte_t out[48]) {
-    proven_byte_t em[RSA_SIGN_BYTES];
-    const proven_size_t len = k->n_len;
-    for (proven_size_t i = 0; i < sizeof em; ++i) em[i] = 0;
-    /* What is public: the ciphertext, and so whether it has the modulus's length and is below
-     * it. A fault in the private operation shows in the same place. None of these earns a
-     * different answer - the fallback is used - but they are not secrets either. */
-    proven_u32 good = (proven_u32)0 - (proven_u32)(cipher.ptr && cipher.size == len && len >= 48 + 11 && rsa_private(k, blind, cipher.ptr, em, false));
-    /* What is SECRET: every byte of `em`, and so whether it is 00 02 | nonzero ... | 00 | the
-     * 48-byte premaster starting with the version the client first offered. The premaster's
-     * place is fixed by its length, so nothing is searched for: every byte is examined. */
-    good &= rsa_ct_zero(em[0]);
-    good &= rsa_ct_zero(em[1] ^ 2u);
-    for (proven_size_t i = 2; i + 49 < len; ++i) good &= ~rsa_ct_zero(em[i]);
-    good &= rsa_ct_zero(em[len - 49]);
-    good &= rsa_ct_zero(em[len - 48] ^ (proven_u32)(version >> 8));
-    good &= rsa_ct_zero(em[len - 47] ^ (proven_u32)(version & 0xffu));
-    for (int i = 0; i < 48; ++i) out[i] = (proven_byte_t)((em[len - 48 + (proven_size_t)i] & good) | (fallback[i] & ~good));
-    rsa_wipe(em, sizeof em);
 }
 
 /* The k with 1 + k * f = 0 mod e, for f = (the modulus of the inverse) mod e, f not zero, e prime. */

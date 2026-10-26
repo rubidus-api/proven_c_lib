@@ -905,8 +905,9 @@ ones that exist (section 10 lists them); both roles were run against OpenSSL, an
 against GnuTLS's client, in TLS 1.0, 1.1 and 1.2 with each added key exchange and cipher, with
 and without encrypt_then_mac, with client certificates, and against peers without the extended
 master secret; and the two places where a wrong step gives a key away - opening a CBC record
-and recovering an RSA premaster - were run under the same checker as below, with what is
-decrypted marked secret, and reported nothing. The signing path, and
+and recovering an RSA premaster (while the server's half of RSA key exchange existed) - were
+run under the same checker as below, with what is decrypted marked secret, and reported
+nothing. The signing path, and
 the key derivation and record protection of both versions, were run under a checker that reports any branch or memory index
 that depends on a secret - the primes, the private exponents, the blinding values, the shared
 key and everything derived from it - and reported none,
@@ -990,15 +991,11 @@ client's, since the client decrypts nothing. Why a server may not:
   2017). That is not limited to this key exchange: a signature forged this way is as good in
   TLS 1.3. **A server with this key exchange puts its key at that risk for every protocol the
   key is used in**, and the clients it would serve - those with neither ECDHE nor DHE - are
-  very old. Before v0.78.0 a server could enable it; the code that did is kept, and reached
-  only by this library's own tests, as the peer its client is tested against. What it does:
-  48 random bytes are drawn before the decryption; the
-  decryption is the blinded, checked operation of section 9; the result is examined with
-  masks - every byte, in fixed order - and either it or the random bytes become the secret, by
-  mask; the handshake then continues identically and fails, if it fails, at the Finished
-  message, like any handshake with a wrong key. This path was run under a checker that reports
-  any branch or memory index that depends on the decrypted bytes, and it reported none, and
-  timed on one processor, where no difference showed.
+  very old. Before v0.78.0 a server could enable it. The code that did was kept for a while,
+  reached only by this library's own tests as the peer its client was tested against, and has
+  since been removed: the library holds no code that decrypts an RSA key exchange. The
+  client's side is run against other implementations' servers, and its encryption is checked
+  in the registered tests by opening it with the private key.
 
 ### Finite-field Diffie-Hellman
 
@@ -1063,7 +1060,7 @@ in every version and both MAC orders, Diffie-Hellman) against an independent imp
 and run every suite in every version it exists in, both roles, with each refusal described
 above. The six Diffie-Hellman primes were compared with two other implementations when they
 were added. Outside the registered tests, both roles were run against OpenSSL and the server
-against GnuTLS; and opening a CBC record and recovering an RSA premaster were each run under a
+against GnuTLS; and opening a CBC record and - while the server's half existed - recovering an RSA premaster were each run under a
 checker with the decrypted bytes marked secret, together with a deliberately wrong version of
 each that the checker must catch (it did).
 
@@ -1073,8 +1070,8 @@ random order, each run timed with the cycle counter, and the two sets of times c
 statistically. For a CBC record - each of the three MACs, with the processor's AES and with
 the portable one - a record with no padding against one with 255 bytes of it, a wrong MAC
 after each amount of padding, a wrong MAC against wrong padding, and against an impossible
-padding length; for the RSA premaster, a proper one against noise, against a wrong version and
-against a wrong length. Twice over. **No pair showed a difference that repeated.** Over all
+padding length; for the RSA premaster, while that code existed, a proper one against noise,
+against a wrong version and against a wrong length. Twice over. **No pair showed a difference that repeated.** Over all
 runs as measured the test statistic stayed below 3 for every pair, where 4.5 is the usual
 line; with the slowest tenth of runs set aside, as is customary to remove interruptions, it
 rose to between 4.5 and 7.7 for ten pairs in one run or the other and for no pair in both -

@@ -18,6 +18,19 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Removed
+
+- **The server's half of RSA key exchange** (the owner's decision of 2026-10-26). A server has
+  refused `PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE` since v0.78.0; the code that decrypted a
+  ClientKeyExchange stayed, reached only through an internal test hook as the peer the client
+  was tested against. It is gone, with the hook: nothing in the library decrypts an RSA key
+  exchange. No public API changes; a client still offers and performs RSA key exchange when its
+  configuration names it. Tests: `test_unit_tls` runs the legacy suites against this library's
+  server without the six of RSA key exchange (51 handshakes, was 69), and drops the two cases of
+  a malformed RSA premaster; `test_unit_tls_legacy` checks the client's encryption by opening
+  it with the private exponent. The client's RSA key exchange is run against OpenSSL's server
+  outside the registered tests.
+
 ### Changed
 
 - **Tests:** `test_unit_loop_ops` adds Unix-domain sockets through the loop (accepted, received

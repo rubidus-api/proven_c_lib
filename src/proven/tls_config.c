@@ -360,23 +360,6 @@ proven_u32 proven_tls_config_test_rsa_uses_(const proven_tls_config_t *c, proven
     return was;
 }
 
-/* The premaster secret of a static-RSA key exchange. Takes a blinding pair exactly as signing
- * does. Always "succeeds": see proven_crypto_rsa_decrypt_premaster. */
-void proven_tls_config_rsa_decrypt_(const proven_tls_config_t *c, proven_mem_view_t cipher, proven_u16 version, proven_byte_t out[48]) {
-    proven_byte_t fallback[48];
-    proven_tls_config_random(c, fallback, sizeof fallback);          /* before anything is known about the ciphertext */
-    if (!c->rsa) { for (int i = 0; i < 48; ++i) out[i] = fallback[i]; cfg_wipe(fallback, sizeof fallback); return; }
-    proven_tls_rsa_t *r = c->rsa;
-    proven_crypto_rsa_blind_t mine;
-    while (atomic_flag_test_and_set_explicit(&r->lock, memory_order_acquire)) { }
-    mine = r->blind;
-    ++r->uses;                                                       /* the next signature renews the pair when it is due */
-    proven_crypto_rsa_blind_next(&r->key, &r->blind);
-    atomic_flag_clear_explicit(&r->lock, memory_order_release);
-    proven_crypto_rsa_decrypt_premaster(&r->key, &mine, cipher, version, fallback, out);
-    cfg_wipe(&mine, sizeof mine); cfg_wipe(fallback, sizeof fallback);
-}
-
 /* ---- Tickets ----
  *
  * A ticket is the session's state sealed under a key only this process holds:

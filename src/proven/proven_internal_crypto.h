@@ -352,14 +352,6 @@ typedef void (*proven_crypto_random_fn)(void *ctx, proven_byte_t *out, proven_si
  * is as many unpredictable bytes as the modulus has. `out` receives the modulus's length. */
 [[nodiscard]] bool proven_crypto_rsa_encrypt_pkcs1(proven_mem_view_t n, proven_mem_view_t e, proven_mem_view_t msg, const proven_byte_t *random,
                                                    proven_byte_t *out, proven_size_t *out_len);
-/* The server's half: decrypt a ClientKeyExchange and give back the 48-byte premaster - or, if
- * anything at all is wrong with what came out, `fallback` instead (48 random bytes drawn
- * BEFORE this call). There is no return value on purpose: nothing may be done differently for
- * a bad ciphertext than for a good one, or the key can be used by anyone who can ask
- * (Bleichenbacher 1998; ROBOT, 2017). The selection is by mask; `version` is the one the
- * ClientHello carried. SECRET: the key, the blinding pair, `fallback`, `out`. */
-void proven_crypto_rsa_decrypt_premaster(const proven_crypto_rsa_key_t *key, const proven_crypto_rsa_blind_t *blind, proven_mem_view_t cipher,
-                                         proven_u16 version, const proven_byte_t fallback[48], proven_byte_t out[48]);
 [[nodiscard]] bool proven_crypto_rsa_generate(proven_size_t bits, proven_crypto_random_fn random, void *ctx,
                                               proven_crypto_rsa_key_t *out, proven_byte_t *d);
 
