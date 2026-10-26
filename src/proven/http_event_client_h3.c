@@ -661,7 +661,7 @@ static void c_event(c3conn_t *c, const proven_h3_event_t *ev) {
                 r->has_id = false;                     /* the engine has let it go */
                 /* Not acted on: safe to send again (RFC 9114 section 4.1.1). */
                 if (ev->code == PROVEN_H3_REQUEST_REJECTED) r_unsent(r);
-                else r_finish(r, PROVEN_ERR_RESET);
+                else r_finish(r, ev->too_large ? PROVEN_ERR_OUT_OF_BOUNDS : PROVEN_ERR_RESET);   /* a head over max_head_bytes */
             }
             break;
         case PROVEN_H3_EV_STOP_SENDING:

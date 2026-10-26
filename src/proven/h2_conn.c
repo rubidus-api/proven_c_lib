@@ -630,6 +630,7 @@ static void h2c_on_block(proven_h2_conn_t *c, proven_mem_view_t block, proven_h2
         proven_size_t rest_count = 0;
         if (too_big || proven_h2_response_head(fields, count, &status, &rest, &rest_count) != PROVEN_OK || status == 101) {
             h2c_stream_fault(c, id, s, PROVEN_H2_PROTOCOL_ERROR, !fin, ev);
+            ev->too_large = too_big;
             return;
         }
         if (status < 200) {
@@ -654,6 +655,7 @@ static void h2c_on_block(proven_h2_conn_t *c, proven_mem_view_t block, proven_h2
     /* Trailers: a second block, and it has to be the end. */
     if (!fin || too_big || proven_h2_trailers_check(fields, count) != PROVEN_OK) {
         h2c_stream_fault(c, id, s, PROVEN_H2_PROTOCOL_ERROR, !fin, ev);
+        ev->too_large = too_big;
         return;
     }
     h2c_event_stream(ev, PROVEN_H2_EVENT_TRAILERS, s);

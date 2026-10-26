@@ -121,6 +121,7 @@ typedef struct {
     proven_size_t field_count;
     proven_mem_view_t data;                        /* DATA */
     proven_u64 code;                               /* STREAM_RESET, STOP_SENDING, CLOSED */
+    bool too_large;                                /* STREAM_RESET: this side reset it for a field section over its limit */
     bool app, remote;                              /* CLOSED */
     proven_u64 id;                                 /* GOAWAY */
     proven_quic_event_t quic;                      /* QUIC */

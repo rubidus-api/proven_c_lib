@@ -335,7 +335,7 @@ static bool req_end(proven_h3_conn_t *h, proven_h3s_t *s, proven_h3_event_t *ev)
         const int d = h3_decode(h, section, &count);
         if (d < 0) { h3_fail(h, PROVEN_QPACK_DECOMPRESSION_FAILED); return false; }
         const proven_http_header_t *fields = (const proven_http_header_t *)(void *)h->hbuf;
-        if (d == 0 || proven_h2_trailers_check(fields, count) != PROVEN_OK) return st_fault(h, s, PROVEN_H3_MESSAGE_ERROR, ev);
+        if (d == 0 || proven_h2_trailers_check(fields, count) != PROVEN_OK) { const bool known = st_fault(h, s, PROVEN_H3_MESSAGE_ERROR, ev); if (known) ev->too_large = d == 0; return known; }
         *ev = (proven_h3_event_t){ .kind = PROVEN_H3_EV_TRAILERS, .stream_id = s->id, .end_stream = true, .fields = fields, .field_count = count };
     } else {
         *ev = (proven_h3_event_t){ .kind = PROVEN_H3_EV_DATA, .stream_id = s->id, .end_stream = true };
@@ -372,7 +372,7 @@ static bool req_headers(proven_h3_conn_t *h, proven_h3s_t *s, proven_h3_event_t 
     if (d < 0) { h3_fail(h, PROVEN_QPACK_DECOMPRESSION_FAILED); return false; }
     if (h->oom) return false;
     const proven_http_header_t *fields = (const proven_http_header_t *)(void *)h->hbuf;
-    if (d == 0) return st_fault(h, s, PROVEN_H3_MESSAGE_ERROR, ev);
+    if (d == 0) { const bool known = st_fault(h, s, PROVEN_H3_MESSAGE_ERROR, ev); if (known) ev->too_large = true; return known; }
     if (h->server) {
         proven_h2_request_head_t head;
         proven_u64 length = H3_NO_LENGTH;

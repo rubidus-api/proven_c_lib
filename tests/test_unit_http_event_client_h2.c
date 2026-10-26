@@ -467,6 +467,43 @@ static bool call_ok(const call_t *c) { return c->done && c->why == PROVEN_OK && 
 /* A server that ends a response with RST_STREAM and NO_ERROR where END_STREAM belongs, after
  * every byte its content-length declared: the response is complete. One byte short, without a
  * length or with another code, it is not. */
+/* A response head over the client's max_head_bytes, written by hand past the engine (which would
+ * honour the client's SETTINGS_MAX_HEADER_LIST_SIZE and refuse to send it): :status 200 from the
+ * static table and a literal field of 700 bytes, not indexed. */
+static void big_head(void) {
+    proven_net_listener_t l;
+    proven_net_addr_t at;
+    static h2peer_t a;
+    static call_t c;
+    PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 8, &l, &at) == PROVEN_OK, "a listener the test answers on, as an HTTP/2 server", "");
+    g_port = at.port; g_https = false;
+    proven_http_event_client_config_t ccfg = { .alloc = g_heap, .http2_cleartext = true, .max_head_bytes = 600 };
+    proven_http_event_client_t *client = NULL;
+    PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client that takes heads of 600 bytes", "");
+    PROVEN_TEST_ASSERT(start(client, &c, "GET", "/big-head", mv(""), 0) == PROVEN_OK, "a request is started", "");
+    c.plain = true;
+    PROVEN_TEST_ASSERT(h2peer_accept(&l, &a, 16, 400) && h2peer_has(&a, 1), "it reaches the server", "");
+    static proven_byte_t frame[9 + 1 + 7 + 3 + 700];
+    proven_size_t n = 9;
+    frame[n++] = 0x88;                                       /* :status 200 */
+    frame[n++] = 0x00; frame[n++] = 5; memcpy(frame + n, "x-big", 5); n += 5;
+    frame[n++] = 0x7f; frame[n++] = 0xbd; frame[n++] = 0x04; /* 700 = 127 + 573 */
+    memset(frame + n, 'a', 700); n += 700;
+    const proven_size_t len = n - 9;
+    const proven_u32 id = a.ids[0];
+    frame[0] = (proven_byte_t)(len >> 16); frame[1] = (proven_byte_t)(len >> 8); frame[2] = (proven_byte_t)len;
+    frame[3] = 0x01; frame[4] = 0x05;                        /* HEADERS, END_STREAM | END_HEADERS */
+    frame[5] = (proven_byte_t)(id >> 24); frame[6] = (proven_byte_t)(id >> 16); frame[7] = (proven_byte_t)(id >> 8); frame[8] = (proven_byte_t)id;
+    PROVEN_TEST_ASSERT(proven_net_write_all(&a.conn, (proven_mem_view_t){ frame, n }, proven_net_deadline_in(5000)).err == PROVEN_OK, "the server sends a head with a 700-byte field", "");
+    spin_until(&c.done, 5000);
+    PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_OUT_OF_BOUNDS && c.dones == 1 && c.responses == 0 && c.got == 0,
+        "a head over max_head_bytes: PROVEN_ERR_OUT_OF_BOUNDS, as over HTTP/1.1 and HTTP/3, nothing delivered", "");
+    h2peer_end(&a);
+    proven_http_event_client_destroy(client);
+    (void)proven_net_listener_close(&l);
+    spin(20);
+}
+
 static void reset_after_length(void) {
     proven_net_listener_t l;
     proven_net_addr_t at;
@@ -1524,6 +1561,8 @@ int main(void) {
     retries();
     PROVEN_TEST_SECTION("a reset where the end belongs", "A server that sends every byte its content-length declared and then RST_STREAM with NO_ERROR instead of END_STREAM.", "Check the RST_STREAM case of h2c_read in h2_conn.c (`declared_all`) and the STREAM_RESET case of c_event in http_event_client_h2.c.");
     reset_after_length();
+    PROVEN_TEST_SECTION("a head too large", "A server that sends a response head larger than the client's max_head_bytes. The test is the server.", "Check `too_big` in h2c_headers in h2_conn.c (ev->too_large) and the STREAM_RESET case of c_event in http_event_client_h2.c.");
+    big_head();
 
     PROVEN_TEST_SECTION("time, for a body and for output", "A response body that stops coming, and a server that stops reading.", "Check r_expect for a request's own deadline (body_timeout_ms once the head has come) and c_arm for the connection's (write_timeout_ms while output is queued).");
     time_limits();

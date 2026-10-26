@@ -571,7 +571,7 @@ many it used. Call it again with the rest; `PROVEN_H2_EVENT_NONE` means everythi
 | `PROVEN_H2_EVENT_HEADERS` | A server: a request began, already checked by section 4's rules and taken apart. A client: a response head (`status` below 200 is an interim one; more follow) | `stream_id`, `request` or `status` and `fields`, `end_stream`, `user` |
 | `PROVEN_H2_EVENT_DATA` | A piece of a body, as a view into `in` | `stream_id`, `data`, `end_stream`, `user` |
 | `PROVEN_H2_EVENT_TRAILERS` | Trailer fields: the peer's side of the stream is over | `stream_id`, `fields`, `user` |
-| `PROVEN_H2_EVENT_STREAM_RESET` | The stream is over before its end: the peer reset it, broke a rule on it, or said goodbye without acting on it | `stream_id`, `code`, `user`; on a client, `end_stream` when the response is nonetheless complete (below) |
+| `PROVEN_H2_EVENT_STREAM_RESET` | The stream is over before its end: the peer reset it, broke a rule on it, or said goodbye without acting on it | `stream_id`, `code`, `user`; on a client, `end_stream` when the response is nonetheless complete (below); `too_large` when this side reset it because the peer's header list was over `max_header_list_bytes` |
 | `PROVEN_H2_EVENT_STREAM_WRITABLE` | A send that was cut short can go on | `stream_id`, `user` |
 | `PROVEN_H2_EVENT_PONG` | The answer to `proven_h2_conn_ping` | `data`: the eight bytes |
 | `PROVEN_H2_EVENT_GOAWAY` | The peer will take no new stream | `code`, `last_stream_id`, `data` (the text it sent with that: the first 256 bytes, for a log) |

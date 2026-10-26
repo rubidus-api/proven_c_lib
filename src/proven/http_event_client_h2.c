@@ -671,7 +671,7 @@ static void c_event(c2conn_t *c, const proven_h2_event_t *ev) {
                  * else: it may have been acted on. */
                 if (ev->code == PROVEN_H2_REFUSED_STREAM) r_unsent(r, true);
                 else if (ev->code == PROVEN_H2_NO_ERROR && ev->end_stream && r->got_head && !r->dead) c_body(c, r, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true);
-                else r_finish(r, PROVEN_ERR_RESET);
+                else r_finish(r, ev->too_large ? PROVEN_ERR_OUT_OF_BOUNDS : PROVEN_ERR_RESET);   /* a head over max_head_bytes */
             }
             break;
         case PROVEN_H2_EVENT_STREAM_WRITABLE: if (r) { r->window_shut = false; r_push(r); } break;

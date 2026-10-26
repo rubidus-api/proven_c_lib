@@ -326,6 +326,7 @@ typedef struct {
     proven_size_t field_count;
     proven_mem_view_t data;                /**< DATA: the piece, inside the buffer you fed. PONG: the eight bytes. GOAWAY: the frame's debug text - its first 256 bytes, empty when there was none or no memory for it; bytes from the peer, for a log and not for a decision */
     proven_u32 code;                       /**< STREAM_RESET, GOAWAY, CLOSED: a proven_h2_error_t, or a code this library does not know */
+    bool too_large;                        /**< STREAM_RESET: this side reset the stream because a header list from the peer was larger than `max_header_list_bytes` (`code` is PROVEN_H2_PROTOCOL_ERROR) */
     proven_u32 last_stream_id;             /**< GOAWAY */
 } proven_h2_event_t;
 

@@ -553,7 +553,7 @@ void proven_h2_conn_output_sent(proven_h2_conn_t *conn, proven_size_t n);
 | `PROVEN_H2_EVENT_HEADERS` | 서버: 요청이 시작되었다. 이미 4절의 규칙으로 검사되고 나뉘어 있다. 클라이언트: 응답의 머리(`status`가 200 미만이면 중간 응답이고, 더 온다) | `stream_id`, `request` 또는 `status`와 `fields`, `end_stream`, `user` |
 | `PROVEN_H2_EVENT_DATA` | 본문의 한 조각. `in` 안을 가리키는 뷰다 | `stream_id`, `data`, `end_stream`, `user` |
 | `PROVEN_H2_EVENT_TRAILERS` | 트레일러 필드: 상대 쪽의 스트림은 끝났다 | `stream_id`, `fields`, `user` |
-| `PROVEN_H2_EVENT_STREAM_RESET` | 스트림이 끝나기 전에 끝났다: 상대가 리셋했거나, 그 스트림에서 규칙을 어겼거나, 처리하지 않은 채 작별했다 | `stream_id`, `code`, `user`; 클라이언트에서는 그래도 응답이 완전할 때 `end_stream`(아래) |
+| `PROVEN_H2_EVENT_STREAM_RESET` | 스트림이 끝나기 전에 끝났다: 상대가 리셋했거나, 그 스트림에서 규칙을 어겼거나, 처리하지 않은 채 작별했다 | `stream_id`, `code`, `user`; 클라이언트에서는 그래도 응답이 완전할 때 `end_stream`(아래); 상대의 헤더 목록이 `max_header_list_bytes`를 넘어 이쪽이 리셋했을 때 `too_large` |
 | `PROVEN_H2_EVENT_STREAM_WRITABLE` | 잘렸던 전송을 이어 갈 수 있다 | `stream_id`, `user` |
 | `PROVEN_H2_EVENT_PONG` | `proven_h2_conn_ping`의 답 | `data`: 그 여덟 바이트 |
 | `PROVEN_H2_EVENT_GOAWAY` | 상대가 새 스트림을 받지 않는다 | `code`, `last_stream_id`, `data` (함께 보낸 텍스트: 처음 256바이트, 로그용) |

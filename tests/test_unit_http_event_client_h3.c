@@ -697,9 +697,8 @@ int main(void) {
         PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.status == 200 && c.got == 5 && x.rejected == 1 && x.requests == before + 2,
             "H3_REQUEST_REJECTED: not acted on, so sent again (retry_unsent) and answered", "");
         RAW_GET("/big-head");
-        /* Which error says so is not pinned here: over HTTP/1.1 it is PROVEN_ERR_OUT_OF_BOUNDS, over
-         * HTTP/2 and HTTP/3 the stream's reset (PROVEN_ERR_RESET) - an open question. */
-        PROVEN_TEST_ASSERT(c.done && c.why != PROVEN_OK && c.responses == 0 && c.got == 0, "a head larger than max_head_bytes: refused, nothing of it delivered", "");
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_OUT_OF_BOUNDS && c.responses == 0 && c.got == 0,
+            "a head larger than max_head_bytes: PROVEN_ERR_OUT_OF_BOUNDS, as over HTTP/1.1 and HTTP/2, nothing of it delivered", "");
         RAW_GET("/trailers");
         PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.got == 5 && c.last, "trailers end the body and are not passed on", "");
 #ifndef PROVEN_NO_BROTLI

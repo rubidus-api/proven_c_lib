@@ -20,6 +20,11 @@ written; their tags still exist.
 
 ### Changed
 
+- **A response head over `max_head_bytes` is PROVEN_ERR_OUT_OF_BOUNDS over every protocol.** The
+  event client said so over HTTP/1.1, as manual chapter 15 states; over HTTP/2 and HTTP/3 the
+  stream was reset and the request ended with PROVEN_ERR_RESET. `proven_h2_event_t` gains
+  `too_large`: a STREAM_RESET this side sent because the peer's header list was over
+  `max_header_list_bytes` (the reset's code is still PROTOCOL_ERROR on the wire).
 - **TLS over TCP refuses `quic_transport_parameters`.** A server that receives the extension
   in a ClientHello over TCP ends the handshake with a fatal `unsupported_extension` alert, as RFC
   9001 section 8.2 requires; until now it passed it over. A client already refused it in a
@@ -30,7 +35,6 @@ written; their tags still exist.
   run. `test_unit_http_event` adds a head in three pieces whose leftover the server moves to the
   front of a buffer it already holds, and `test_unit_ws_event` a compressed message whose handler
   pauses in the middle of it: each fails if that copy is a byte short, which no test did before.
-  `test_unit_http_event_client_h3` adds a response head larger than `max_head_bytes`.
 - **Documentation:** README-ko's module list names `zstd` and `brotli`, as the English one does.
 
 ## [0.83.0] - 2026-10-26
