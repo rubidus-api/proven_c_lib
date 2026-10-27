@@ -133,6 +133,8 @@ proven_crypto_limb_t proven_crypto_mp_eq(const proven_crypto_limb_t *a, const pr
 void proven_crypto_mp_select(proven_crypto_limb_t *out, const proven_crypto_limb_t *a, const proven_crypto_limb_t *b, proven_crypto_limb_t mask, proven_size_t limbs);
 /* out = a * b / R mod n. Inputs below n; `out` may be either input. */
 void proven_crypto_mp_montmul(const proven_crypto_mp_mod_t *mod, proven_crypto_limb_t *out, const proven_crypto_limb_t *a, const proven_crypto_limb_t *b);
+/* out = a * a / R mod n, as montmul(a, a) with about three quarters of its multiplications. */
+void proven_crypto_mp_montsqr(const proven_crypto_mp_mod_t *mod, proven_crypto_limb_t *out, const proven_crypto_limb_t *a);
 void proven_crypto_mp_to_mont(const proven_crypto_mp_mod_t *mod, proven_crypto_limb_t *out, const proven_crypto_limb_t *a);
 void proven_crypto_mp_from_mont(const proven_crypto_mp_mod_t *mod, proven_crypto_limb_t *out, const proven_crypto_limb_t *a);
 void proven_crypto_mp_add(const proven_crypto_mp_mod_t *mod, proven_crypto_limb_t *out, const proven_crypto_limb_t *a, const proven_crypto_limb_t *b);

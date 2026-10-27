@@ -989,12 +989,13 @@ Diffie-Hellman are then held in 64-bit limbs, and a number of Curve25519's field
 limbs of 51 bits, two of which multiply into the compiler's 128-bit integer. A 32-bit build,
 and any build with `-DPROVEN_CRYPTO_MP_LIMB_BITS=32`, holds them in limbs of 32 bits and of
 26 and 25, and takes two to four times as long over the same arithmetic - 0.83 ms and 1.1 ms
-for the handshake with a P-256 certificate, 0.59 ms and 0.75 ms with Ed25519, and 6, 19 and
-44 ms for the RSA signatures below. The results are the same bytes either way.
+for the handshake with a P-256 certificate, 0.59 ms and 0.75 ms with Ed25519, and 3.4, 11 and
+25 ms for the RSA signatures below. The results are the same bytes either way.
 
-**With an RSA key the signature dominates.** On the same core one signature takes about 1.7 ms
-with a 2048-bit key, 5 ms with 3072 bits and 12 ms with 4096: a server with a 2048-bit RSA key
-completes about 500 new connections a second per core, against 3,000 with P-256.
+**With an RSA key the signature dominates.** On the same core one signature takes about 1.25 ms
+with a 2048-bit key, 3.7 ms with 3072 bits and 8.4 ms with 4096 (since v0.88.0, which squares
+in about three quarters of a multiplication's work; 1.5, 4.7 and 11 ms before): a server with a
+2048-bit RSA key completes about 650 new connections a second per core, against 3,000 with P-256.
 On the event-driven server of [Chapter 15](manual-15-event-loop.md) that time is spent on the
 loop's thread, where nothing else is served meanwhile. The signing is done modulo the two
 primes with a constant-time exponentiation, its input blinded, and its result checked with

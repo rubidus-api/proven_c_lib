@@ -18,6 +18,19 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **RSA and finite-field Diffie-Hellman are about 16 to 24 % faster** (RFC-0028 S-4): a
+  Montgomery squaring of its own (each product of two different limbs computed once and
+  doubled: about three quarters of a multiplication's work), used for every squaring of the
+  exponentiations; a multiplication whose product and reduction go in one pass; the inner
+  loops four limbs a turn. With 64-bit limbs, RSA-2048 signing went from about 1,500 to 1,250 us,
+  RSA-4096 from 11.0 to 8.4 ms, verification by 21 to 24 %, an ffdhe2048 shared secret from 727
+  to 560 us; with 32-bit limbs RSA-2048 signing went from 5.9 to 3.4 ms. Signatures are the same
+  bytes; nothing branches on or indexes by secret data (`ct-poison`, both limb sizes).
+  **Tests:** `test_unit_crypto` checks the squaring against the product of a value with itself,
+  in place too, on every modulus case and at operands of all ones and n - 1.
+
 ## [0.87.0] - 2026-10-27
 
 ### Changed

@@ -534,7 +534,7 @@ static bool rsa_is_prime(const proven_byte_t *bytes, proven_size_t len, int roun
         if (proven_crypto_mp_eq(y, one, s) || proven_crypto_mp_eq(y, minus, s)) continue;
         bool witness = true;
         for (proven_size_t i = 1; i < r && witness; ++i) {
-            proven_crypto_mp_montmul(&mod, y, y, y);
+            proven_crypto_mp_montsqr(&mod, y, y);
             if (proven_crypto_mp_eq(y, minus, s)) witness = false;
         }
         if (witness) return false;

@@ -14,6 +14,15 @@ __extension__ typedef unsigned __int128 wide_t;
 typedef proven_u64 wide_t;
 #endif
 #define W PROVEN_CRYPTO_MP_LIMB_BITS
+/* The inner loops of the products, four limbs a turn: the loop's own counting was a quarter of
+ * the squaring's instructions (RFC-0028 S-4). Only a hint; the work is the same. */
+#if defined(__clang__)
+#define PROVEN_MP_UNROLL _Pragma("clang loop unroll_count(4)")
+#elif defined(__GNUC__)
+#define PROVEN_MP_UNROLL _Pragma("GCC unroll 4")
+#else
+#define PROVEN_MP_UNROLL
+#endif
 #define LB PROVEN_CRYPTO_MP_LIMB_BYTES
 
 static proven_limb_t mp_mask_from_bit(proven_limb_t bit) { return (proven_limb_t)0 - (bit & 1u); }
@@ -148,7 +157,7 @@ static void mp_mod_finish(proven_crypto_mp_mod_t *mod, bool top_limb_set) {
     int top = 0;
     for (int bit = 0; bit < 16; ++bit) if ((limbs >> bit) & 1u) top = bit;
     for (int bit = top - 1; bit >= 0; --bit) {
-        proven_crypto_mp_montmul(mod, r, r, r);
+        proven_crypto_mp_montsqr(mod, r, r);
         if ((limbs >> bit) & 1u) proven_crypto_mp_montmul(mod, r, r, c);
     }
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)t, .size = sizeof t });
@@ -158,35 +167,91 @@ static void mp_mod_finish(proven_crypto_mp_mod_t *mod, bool top_limb_set) {
 void proven_crypto_mp_montmul(const proven_crypto_mp_mod_t *mod, proven_limb_t *out, const proven_limb_t *a, const proven_limb_t *b) {
     const proven_size_t s = mod->limbs;
     const proven_limb_t *n = mod->n;
-    proven_limb_t t[PROVEN_CRYPTO_MP_MAX + 2];
-    for (proven_size_t i = 0; i < s + 2; ++i) t[i] = 0;
+    const proven_limb_t n0inv = mod->n0inv;
+    /* t stays below 2n: s limbs and one bit in t[s]. For each limb of b, t + a b_i + m n,
+     * shifted down a limb, in one pass: m is known from the lowest limb before the pass, so
+     * the product and the reduction go side by side, two carries kept. */
+    proven_limb_t t[PROVEN_CRYPTO_MP_MAX + 1];
+    for (proven_size_t i = 0; i <= s; ++i) t[i] = 0;
     for (proven_size_t i = 0; i < s; ++i) {
-        wide_t c = 0;
         const wide_t bi = b[i];
-        for (proven_size_t j = 0; j < s; ++j) {
-            wide_t v = (wide_t)a[j] * bi + t[j] + c;
-            t[j] = (proven_limb_t)v;
-            c = v >> W;
-        }
-        wide_t v = (wide_t)t[s] + c;
-        t[s] = (proven_limb_t)v;
-        t[s + 1] = (proven_limb_t)(v >> W);
-        const wide_t m = (proven_limb_t)(t[0] * mod->n0inv);
-        v = m * n[0] + t[0];
-        c = v >> W;
+        wide_t v = (wide_t)a[0] * bi + t[0];
+        wide_t c1 = v >> W;
+        const wide_t m = (proven_limb_t)((proven_limb_t)v * n0inv);
+        wide_t c2 = (m * n[0] + (proven_limb_t)v) >> W;
+        PROVEN_MP_UNROLL
         for (proven_size_t j = 1; j < s; ++j) {
-            v = m * n[j] + t[j] + c;
-            t[j - 1] = (proven_limb_t)v;
-            c = v >> W;
+            v = (wide_t)a[j] * bi + t[j] + c1;
+            c1 = v >> W;
+            const wide_t u = m * n[j] + (proven_limb_t)v + c2;
+            t[j - 1] = (proven_limb_t)u;
+            c2 = u >> W;
         }
-        v = (wide_t)t[s] + c;
+        v = (wide_t)t[s] + c1 + c2;
         t[s - 1] = (proven_limb_t)v;
-        t[s] = t[s + 1] + (proven_limb_t)(v >> W);
+        t[s] = (proven_limb_t)(v >> W);
     }
     /* The result is below 2n: one subtraction, chosen by mask. */
     proven_limb_t d[PROVEN_CRYPTO_MP_MAX];
     proven_limb_t borrow = proven_crypto_mp_sub_raw(d, t, n, s);
     proven_crypto_mp_select(out, d, t, mp_mask_from_bit(t[s] | (borrow ^ 1u)), s);
+}
+
+/* out = a * a / R mod n: the square of a Montgomery-form value. Each product of two different
+ * limbs is computed once and doubled, so the square takes about half the multiplications of
+ * montmul's; then the reduction, a limb at a time, as montmul's. The same loops for every
+ * value: nothing here depends on a's digits but the arithmetic. */
+void proven_crypto_mp_montsqr(const proven_crypto_mp_mod_t *mod, proven_limb_t *out, const proven_limb_t *a) {
+    const proven_size_t s = mod->limbs;
+    const proven_limb_t *n = mod->n;
+    proven_limb_t t[2 * PROVEN_CRYPTO_MP_MAX];
+    for (proven_size_t i = 0; i < 2 * s; ++i) t[i] = 0;
+    /* The products a_i a_j for i < j, each once. */
+    for (proven_size_t i = 0; i + 1 < s; ++i) {
+        wide_t c = 0;
+        const wide_t ai = a[i];
+        PROVEN_MP_UNROLL
+        for (proven_size_t j = i + 1; j < s; ++j) {
+            const wide_t v = ai * a[j] + t[i + j] + c;
+            t[i + j] = (proven_limb_t)v;
+            c = v >> W;
+        }
+        t[i + s] = (proven_limb_t)c;
+    }
+    /* Doubled, then the squares a_i^2 added on the diagonal. */
+    t[2 * s - 1] = t[2 * s - 2] >> (W - 1);
+    for (proven_size_t k = 2 * s - 2; k > 0; --k) t[k] = (t[k] << 1) | (t[k - 1] >> (W - 1));
+    t[0] <<= 1;
+    wide_t c = 0;
+    for (proven_size_t i = 0; i < s; ++i) {
+        const wide_t sq = (wide_t)a[i] * a[i];
+        wide_t v = (wide_t)t[2 * i] + (proven_limb_t)sq + c;
+        t[2 * i] = (proven_limb_t)v;
+        v = (wide_t)t[2 * i + 1] + (proven_limb_t)(sq >> W) + (v >> W);
+        t[2 * i + 1] = (proven_limb_t)v;
+        c = v >> W;
+    }
+    /* The reduction: m n added at each of the low s limbs makes it zero; what carries past the
+     * top is kept in `top` and added at the next position. */
+    proven_limb_t top = 0;
+    for (proven_size_t i = 0; i < s; ++i) {
+        const wide_t m = (proven_limb_t)(t[i] * mod->n0inv);
+        wide_t cc = 0;
+        PROVEN_MP_UNROLL
+        for (proven_size_t j = 0; j < s; ++j) {
+            const wide_t v = m * n[j] + t[i + j] + cc;
+            t[i + j] = (proven_limb_t)v;
+            cc = v >> W;
+        }
+        const wide_t v = (wide_t)t[i + s] + cc + top;
+        t[i + s] = (proven_limb_t)v;
+        top = (proven_limb_t)(v >> W);
+    }
+    /* t[s..2s) plus top is below 2n: one subtraction, chosen by mask. */
+    proven_limb_t d[PROVEN_CRYPTO_MP_MAX];
+    const proven_limb_t borrow = proven_crypto_mp_sub_raw(d, t + s, n, s);
+    proven_crypto_mp_select(out, d, t + s, mp_mask_from_bit(top | (borrow ^ 1u)), s);
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)t, .size = 2 * s * sizeof t[0] });     /* the part used: the whole is 2 KiB */
 }
 
 void proven_crypto_mp_to_mont(const proven_crypto_mp_mod_t *mod, proven_limb_t *out, const proven_limb_t *a) {
@@ -256,16 +321,16 @@ void proven_crypto_mp_pow(const proven_crypto_mp_mod_t *mod, proven_limb_t *out,
          * four bits long and ends at a set bit, so its value is odd. */
         proven_limb_t odd[8][MP_POW_WINDOW_LIMBS], sq[MP_POW_WINDOW_LIMBS];
         for (proven_size_t i = 0; i < s; ++i) odd[0][i] = b[i];
-        proven_crypto_mp_montmul(mod, sq, b, b);
+        proven_crypto_mp_montsqr(mod, sq, b);
         for (int j = 1; j < 8; ++j) proven_crypto_mp_montmul(mod, odd[j], odd[j - 1], sq);
         bool started = false;
         for (proven_size_t i = top; i-- > 0;) {
-            if (((exp[i / W] >> (i % W)) & 1u) == 0) { proven_crypto_mp_montmul(mod, acc, acc, acc); continue; }
+            if (((exp[i / W] >> (i % W)) & 1u) == 0) { proven_crypto_mp_montsqr(mod, acc, acc); continue; }
             proven_size_t low = i >= 3 ? i - 3 : 0;
             while (((exp[low / W] >> (low % W)) & 1u) == 0) low++;
             proven_limb_t v = 0;
             for (proven_size_t k = i + 1; k-- > low;) v = (v << 1) | ((exp[k / W] >> (k % W)) & 1u);
-            if (started) { for (proven_size_t k = low; k <= i; ++k) proven_crypto_mp_montmul(mod, acc, acc, acc); }
+            if (started) { for (proven_size_t k = low; k <= i; ++k) proven_crypto_mp_montsqr(mod, acc, acc); }
             proven_crypto_mp_montmul(mod, acc, acc, odd[v >> 1]);
             started = true;
             i = low;
@@ -276,7 +341,7 @@ void proven_crypto_mp_pow(const proven_crypto_mp_mod_t *mod, proven_limb_t *out,
     bool started = false;
     for (proven_size_t i = top; i-- > 0;) {
         const bool set = ((exp[i / W] >> (i % W)) & 1u) != 0;
-        if (started) proven_crypto_mp_montmul(mod, acc, acc, acc);
+        if (started) proven_crypto_mp_montsqr(mod, acc, acc);
         if (set) { proven_crypto_mp_montmul(mod, acc, acc, b); started = true; }
     }
     for (proven_size_t i = 0; i < s; ++i) out[i] = acc[i];
@@ -296,7 +361,7 @@ bool proven_crypto_mp_pow_ct(const proven_crypto_mp_mod_t *mod, proven_limb_t *o
      * the wanted entry by mask, one multiplication - by 1 when the window is zero. */
     for (proven_size_t i = s; i-- > 0;) {
         for (int nibble = W / 4 - 1; nibble >= 0; --nibble) {
-            for (int q = 0; q < 4; ++q) proven_crypto_mp_montmul(mod, acc, acc, acc);
+            for (int q = 0; q < 4; ++q) proven_crypto_mp_montsqr(mod, acc, acc);
             const proven_limb_t w = (exp[i] >> (4 * nibble)) & 15u;
             for (proven_size_t j = 0; j < s; ++j) sel[j] = 0;
             for (proven_limb_t k = 0; k < 16; ++k) {
@@ -330,7 +395,7 @@ bool proven_crypto_mp_pow_ct_short(const proven_crypto_mp_mod_t *mod, proven_lim
     for (proven_size_t j = 0; j < s; ++j) acc[j] = table[j];
     for (proven_size_t i = exp_limbs; i-- > 0;) {
         for (int shift = W - (int)wbits; shift >= 0; shift -= (int)wbits) {
-            for (unsigned q = 0; q < wbits; ++q) proven_crypto_mp_montmul(mod, acc, acc, acc);
+            for (unsigned q = 0; q < wbits; ++q) proven_crypto_mp_montsqr(mod, acc, acc);
             const proven_limb_t w = (exp[i] >> shift) & (entries - 1);
             for (proven_size_t j = 0; j < s; ++j) sel[j] = 0;
             for (proven_limb_t k = 0; k < entries; ++k) {

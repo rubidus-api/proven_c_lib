@@ -349,7 +349,7 @@ int main(void) {
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("multi-precision arithmetic",
-        "Multiplication, addition, subtraction, exponentiation, inversion and reduction modulo primes and odd composites of many sizes.",
+        "Multiplication, squaring, addition, subtraction, exponentiation, inversion and reduction modulo primes and odd composites of many sizes.",
         "Check src/proven/crypto_mp.c.");
     {
         proven_size_t good = 0;
@@ -376,6 +376,16 @@ int main(void) {
             proven_crypto_mp_to_mont(&m, am, a); proven_crypto_mp_to_mont(&m, bm, b);
             proven_crypto_mp_montmul(&m, r, am, bm); proven_crypto_mp_from_mont(&m, r, r); proven_crypto_mp_store_be(g_out, nl, r, s);
             ok = ok && memcmp(g_out, g_bytes[5], nl) == 0;
+            /* The squaring against the product with itself, and in place. */
+            static proven_crypto_limb_t sq[PROVEN_CRYPTO_MP_MAX], pq[PROVEN_CRYPTO_MP_MAX];
+            for (int k = 0; k < 2; ++k) {
+                const proven_crypto_limb_t *xm = k ? bm : am;
+                proven_crypto_mp_montsqr(&m, sq, xm); proven_crypto_mp_montmul(&m, pq, xm, xm);
+                ok = ok && proven_crypto_mp_eq(sq, pq, s) != 0;
+                for (proven_size_t j = 0; j < s; ++j) sq[j] = xm[j];
+                proven_crypto_mp_montsqr(&m, sq, sq);
+                ok = ok && proven_crypto_mp_eq(sq, pq, s) != 0;
+            }
             proven_crypto_mp_add(&m, r, a, b); proven_crypto_mp_store_be(g_out, nl, r, s); ok = ok && memcmp(g_out, g_bytes[6], nl) == 0;
             proven_crypto_mp_sub(&m, r, a, b); proven_crypto_mp_store_be(g_out, nl, r, s); ok = ok && memcmp(g_out, g_bytes[7], nl) == 0;
             proven_crypto_mp_pow(&m, r, am, e, s); proven_crypto_mp_from_mont(&m, r, r); proven_crypto_mp_store_be(g_out, nl, r, s);
@@ -425,9 +435,14 @@ int main(void) {
                     memset(xb, 0xff, len); xb[0] = len == 1 ? 0x03 : 0x7f;
                     proven_crypto_mp_reduce_be(&m, x, xb, len);
                     proven_crypto_mp_to_mont(&m, u, neg); proven_crypto_mp_to_mont(&m, v, x);
-                    /* (n-1)(n-1) = 1 */
+                    /* (n-1)(n-1) = 1, by product and by squaring */
                     proven_crypto_mp_montmul(&m, y, u, u); proven_crypto_mp_from_mont(&m, y, y);
                     ok = ok && proven_crypto_mp_eq(y, one, s) != 0;
+                    proven_crypto_mp_montsqr(&m, y, u); proven_crypto_mp_from_mont(&m, y, y);
+                    ok = ok && proven_crypto_mp_eq(y, one, s) != 0;
+                    /* x x, every low limb full: squaring and product agree */
+                    proven_crypto_mp_montsqr(&m, y, v); proven_crypto_mp_montmul(&m, a, v, v);
+                    ok = ok && proven_crypto_mp_eq(y, a, s) != 0;
                     /* (n-1) x = -x, so adding x gives zero */
                     proven_crypto_mp_montmul(&m, y, u, v); proven_crypto_mp_from_mont(&m, y, y);
                     proven_crypto_mp_add(&m, y, y, x);
