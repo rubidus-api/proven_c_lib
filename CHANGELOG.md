@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.89.0] - 2026-10-27
+
 ### Changed
 
 - **The Zstandard encoder is about 6 % faster on x86 processors with BMI2** (RFC-0028 S-5): its
