@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.88.0] - 2026-10-27
+
 ### Changed
 
 - **RSA and finite-field Diffie-Hellman are about 16 to 24 % faster** (RFC-0028 S-4): a
