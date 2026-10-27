@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.87.0] - 2026-10-27
+
 ### Changed
 
 - **The Brotli decoder is 1.1 to 1.2 times faster** (RFC-0028 S-3): a copy inside the history
