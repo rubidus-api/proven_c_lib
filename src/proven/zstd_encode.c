@@ -1,5 +1,11 @@
 #include "proven/zstd.h"
 #include "proven_internal_zstd.h"
+#if !defined(PROVEN_FREESTANDING) && (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__))
+#define ZSTD_BMI2 1
+#include "../../platform/proven_sys_cpu.h"
+#else
+#define ZSTD_BMI2 0
+#endif
 
 /* Zstandard compression (RFC 8878).
  *
@@ -416,7 +422,7 @@ static proven_size_t huf_describe(proven_byte_t *d, proven_size_t cap, const pro
 
 /* One Huffman stream: the last symbol first, so that a decoder reading backwards meets the
  * first one first. */
-static proven_size_t huf_stream(proven_byte_t *d, proven_size_t cap, const proven_byte_t *src, proven_size_t n, const proven_huf_tab_t *t) {
+ZSTD_HOT proven_size_t huf_stream(proven_byte_t *d, proven_size_t cap, const proven_byte_t *src, proven_size_t n, const proven_huf_tab_t *t) {
     proven_bw_t b;
     if (!bw_init(&b, d, cap)) return 0;
     const proven_u32 *const e = t->both;
@@ -965,7 +971,7 @@ ZSTD_HOT proven_size_t match_lazy_mls(proven_zstd_encoder_t *z, const proven_byt
     return full ? (proven_size_t)(anchor - base) : end;
 }
 
-static proven_size_t match_block(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end, proven_size_t low, proven_size_t *last_from) {
+ZSTD_HOT proven_size_t match_block(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end, proven_size_t low, proven_size_t *last_from) {
     z->fresh = false;
     if (z->p.strategy == 0) {
         return match_fast_mls(z, base, start, end, low, last_from, 6);
@@ -1012,7 +1018,7 @@ static proven_size_t lits_raw(proven_byte_t *d, proven_size_t cap, const proven_
 
 /* The literals section (section 3.1.1.3.1). `e` is the entropy in force; the code it makes,
  * if any, goes into the other slot and `*huf_next` says which slot the next block will have. */
-static proven_size_t write_literals(proven_zstd_encoder_t *z, proven_byte_t *d, proven_size_t cap, int *huf_next) {
+ZSTD_HOT proven_size_t write_literals(proven_zstd_encoder_t *z, proven_byte_t *d, proven_size_t cap, int *huf_next) {
     const proven_byte_t *lit = z->lits;
     const proven_size_t n = z->nlit;
     proven_entropy_t *e = &z->ent;
@@ -1149,7 +1155,7 @@ static int choose_table(proven_zstd_encoder_t *z, int kind, const proven_u32 *co
 }
 
 /* The sequences section (section 3.1.1.3.2), into `d`. */
-static proven_size_t write_sequences(proven_zstd_encoder_t *z, proven_byte_t *d, proven_size_t cap, int next[3]) {
+ZSTD_HOT proven_size_t write_sequences(proven_zstd_encoder_t *z, proven_byte_t *d, proven_size_t cap, int next[3]) {
     const proven_size_t nseq = z->nseq;
     next[0] = z->ent.cur[0]; next[1] = z->ent.cur[1]; next[2] = z->ent.cur[2];
     if (cap < 4) return 0;
@@ -1221,7 +1227,7 @@ static bool all_same(const proven_byte_t *p, proven_size_t n) {
  * into `d`. Returns the bytes written, or 0 when `cap` is too small. A block that does not
  * shrink goes out stored, a run of one byte as such; the decoder's state from the last block
  * is then left as it was. */
-static proven_size_t write_block(proven_zstd_encoder_t *z, const proven_byte_t *src, proven_size_t n, bool last, const proven_u32 rep_before[3],
+ZSTD_HOT proven_size_t write_block(proven_zstd_encoder_t *z, const proven_byte_t *src, proven_size_t n, bool last, const proven_u32 rep_before[3],
                                  proven_byte_t *d, proven_size_t cap) {
     if (cap < 3) return 0;
     int huf_next = z->ent.huf_cur, next[3] = { z->ent.cur[0], z->ent.cur[1], z->ent.cur[2] };
@@ -1260,7 +1266,7 @@ static proven_size_t write_block(proven_zstd_encoder_t *z, const proven_byte_t *
 
 /* Match and write one block: `base` + [start, end). Returns the bytes written into `d` (0:
  * `cap` too small) and where the block ended. */
-static proven_size_t compress_block(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end, bool last,
+ZSTD_HOT proven_size_t compress_block(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end, bool last,
                                     proven_byte_t *d, proven_size_t cap, proven_size_t *ended) {
     const proven_u32 rep_before[3] = { z->rep[0], z->rep[1], z->rep[2] };
     z->nseq = 0;
@@ -1274,6 +1280,48 @@ static proven_size_t compress_block(proven_zstd_encoder_t *z, const proven_byte_
     z->nlit += tail;
     *ended = stop;
     return write_block(z, base + start, stop - start, last && stop == end, rep_before, d, cap);
+}
+
+/* The block coder twice: as the build compiles it, and on x86 once more with BMI2 allowed - the
+ * hash and the bit writer shift by amounts in registers, which BMI2 does without the flags
+ * (about 6 % faster, RFC-0028 S-5). The same C and the same output; which one runs is asked of
+ * the processor once. */
+static proven_size_t block_plain(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end, bool last,
+                                 proven_byte_t *d, proven_size_t cap, proven_size_t *ended) {
+    return compress_block(z, base, start, end, last, d, cap, ended);
+}
+
+#if ZSTD_BMI2
+__attribute__((target("bmi2")))
+static proven_size_t block_bmi2(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end, bool last,
+                                proven_byte_t *d, proven_size_t cap, proven_size_t *ended) {
+    return compress_block(z, base, start, end, last, d, cap, ended);
+}
+
+static int g_zstd_bmi2 = -1;                     /* -1: not asked yet */
+
+void proven_zstd_encode_force_plain_(bool on) {
+    __atomic_store_n(&g_zstd_bmi2, on ? 0 : -1, __ATOMIC_RELAXED);
+}
+
+static bool use_bmi2(void) {
+    int v = __atomic_load_n(&g_zstd_bmi2, __ATOMIC_RELAXED);
+    if (v < 0) {
+        v = proven_sys_cpu_bmi2() ? 1 : 0;
+        __atomic_store_n(&g_zstd_bmi2, v, __ATOMIC_RELAXED);
+    }
+    return v != 0;
+}
+#else
+void proven_zstd_encode_force_plain_(bool on) { (void)on; }
+#endif
+
+static proven_size_t encode_block(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end, bool last,
+                                  proven_byte_t *d, proven_size_t cap, proven_size_t *ended) {
+#if ZSTD_BMI2
+    if (use_bmi2()) return block_bmi2(z, base, start, end, last, d, cap, ended);
+#endif
+    return block_plain(z, base, start, end, last, d, cap, ended);
 }
 
 // -----------------------------------------------------------------------------
@@ -1338,7 +1386,7 @@ static proven_err_t emit(proven_zstd_encoder_t *z, proven_size_t upto, bool last
         proven_size_t ended = to;
         const proven_byte_t *base = z->buf;
         proven_size_t k;
-        k = compress_block(z, base, z->pos, to, last && to == upto, z->pend + z->pend_len, z->pend_cap - z->pend_len, &ended);
+        k = encode_block(z, base, z->pos, to, last && to == upto, z->pend + z->pend_len, z->pend_cap - z->pend_len, &ended);
         if (k == 0) return PROVEN_ERR_INVALID_STATE;
         z->pend_len += k;
         z->pos = ended;
@@ -1493,11 +1541,11 @@ proven_err_t proven_zstd_encode_all(const proven_zstd_encoder_options_t *options
         const proven_size_t to = n - pos > z->block_size ? pos + z->block_size : n;
         proven_size_t ended = to, k;
         if (out.size - o >= block_out_max(z)) {
-            k = compress_block(z, in.ptr, pos, to, to == n, out.ptr + o, out.size - o, &ended);
+            k = encode_block(z, in.ptr, pos, to, to == n, out.ptr + o, out.size - o, &ended);
         } else {
             e = grow(z, (void **)&z->pend, &z->pend_cap, block_out_max(z), 1);
             if (e != PROVEN_OK) break;
-            k = compress_block(z, in.ptr, pos, to, to == n, z->pend, z->pend_cap, &ended);
+            k = encode_block(z, in.ptr, pos, to, to == n, z->pend, z->pend_cap, &ended);
             if (k > out.size - o) { e = PROVEN_ERR_OUT_OF_BOUNDS; break; }
             (void)proven_mem_copy(out.ptr + o, k, (proven_mem_view_t){ .ptr = z->pend, .size = k });
         }

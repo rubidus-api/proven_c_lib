@@ -1062,6 +1062,11 @@ within a third of a point of the size. Level 6 looks at 12 candidates where libz
 about half the speed. On inputs of megabytes libzstd's higher levels also use a larger window
 and tables, and are 0.3 to 0.5 points smaller there.
 
+The table was measured before v0.89.0. Since then, on an x86 processor with BMI2 (shifts by a
+register without the flags), the encoder runs a second build of its block coder compiled for
+it - the same C, the same output, chosen when the processor is first asked: on four other
+inputs of 0.4 to 3.9 MB, levels 1 to 3 went from 0.76-0.88 of libzstd's speed to 0.82-0.96.
+
 **Memory.** `proven_zstd_encode_all` compresses the caller's buffer where it is, with tables
 and block buffers sized to it: a few kilobytes for a short input. A stream keeps the window in
 its own buffer, and at most holds:

@@ -18,6 +18,17 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **The Zstandard encoder is about 6 % faster on x86 processors with BMI2** (RFC-0028 S-5): its
+  block coder - matching, literals, sequences - is compiled a second time with BMI2 allowed
+  (shifts by a register without the flags) and that build runs where the processor has it,
+  asked once through the platform layer (new `platform/proven_sys_cpu.c`); elsewhere, and in
+  the freestanding build, the plain build runs as before. The same C, the same frames. Levels 1
+  to 3 went from 0.76-0.88 of libzstd's speed to 0.82-0.96 on four inputs; the target of 0.9 is
+  met for text, not quite for C source, JSON or an executable (0.82-0.89). Tests:
+  `test_unit_zstd_encode` checks its thirteen pinned frames from both builds.
+
 ## [0.88.0] - 2026-10-27
 
 ### Changed

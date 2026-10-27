@@ -1,5 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
+#include "../src/proven/proven_internal_zstd.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -356,7 +357,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(nomem >= 5 && other == 0, "each allocation that fails is PROVEN_ERR_NOMEM", "");
     }
 
-    PROVEN_TEST_SECTION("pinned output", "The size and CRC-32 of thirteen frames - eight whole, five streamed after a reset with a sliding buffer, at levels 3, 4, 6 and 8 - which libzstd decoded when they were pinned: a change here is a change of output, to be looked at and re-pinned.", "If the change was meant, run the private check again and update the numbers.");
+    PROVEN_TEST_SECTION("pinned output", "The size and CRC-32 of thirteen frames - eight whole, five streamed after a reset with a sliding buffer, at levels 3, 4, 6 and 8 - which libzstd decoded when they were pinned, from the processor's build of the block coder and from the plain one: a change here is a change of output, to be looked at and re-pinned.", "If the change was meant, run the private check again and update the numbers.");
     {
         static const struct { int input, level; proven_size_t size; proven_u32 crc; } PIN[] = {
             { 3, 1, 91849, 0xd24793b3u }, { 3, 2, 97612, 0x7367ffaeu }, { 3, 3, 97699, 0xb8b0492eu },
@@ -364,6 +365,11 @@ int main(void) {
             { 3, 6, 88115, 0x7fbcdd68u }, { 3, 9, 83927, 0xfdcda819u },
         };
         int differ = 0;
+        /* Twice: on the build the processor gets (with BMI2 where it has it) and on the plain one -
+         * the same C compiled twice must give the same bytes. */
+        for (int plain = 0; plain < 2; ++plain) {
+        proven_zstd_encode_force_plain_(plain != 0);
+        printf("  the %s build of the block coder:\n", plain ? "plain" : "processor's");
         for (proven_size_t i = 0; i < sizeof PIN / sizeof PIN[0]; ++i) {
             const proven_size_t n = corpus(PIN[i].input, g_in);
             proven_size_t made = 0;
@@ -393,7 +399,9 @@ int main(void) {
             if (made != SPIN[i].size || crc != SPIN[i].crc) differ++;
             proven_zstd_encoder_destroy(z);
         }
-        PROVEN_TEST_ASSERT(differ == 0, "the frames are what they were when pinned", "");
+        }
+        proven_zstd_encode_force_plain_(false);
+        PROVEN_TEST_ASSERT(differ == 0, "the frames are what they were when pinned, from both builds of the block coder", "Check block_plain and block_bmi2 in src/proven/zstd_encode.c: the same C, so a difference is the compiler's.");
     }
 
     PROVEN_TEST_SECTION("what every function refuses", "Arguments that cannot be right.", "");
