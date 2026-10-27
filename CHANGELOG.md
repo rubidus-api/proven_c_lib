@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.84.0] - 2026-10-27
+
 ### Added
 
 - **0-RTT over TCP** (RFC-0027): TLS early data for HTTP/1.1 and HTTP/2, in the event-driven
