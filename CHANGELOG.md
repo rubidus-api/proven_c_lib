@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.85.0] - 2026-10-27
+
 ### Changed
 
 - **ChaCha20-Poly1305 is about four times faster on x86** (RFC-0028 S-1). ChaCha20 runs four
