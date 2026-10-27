@@ -25,6 +25,10 @@
 #define PROVEN_CRYPTO_AEAD_NONCE   12
 #define PROVEN_CRYPTO_AEAD_TAG     16
 
+/* Tests: true makes P-256 use the general field code instead of its own (the results are the
+ * same values); false gives it its own back. */
+void proven_crypto_ec_force_general_(bool on);
+
 /* ---- ChaCha20 and Poly1305 (RFC 8439) ---- */
 
 /* XOR `len` bytes of keystream into `out` from `in` (they may be the same), starting at block

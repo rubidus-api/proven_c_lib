@@ -32,6 +32,7 @@ typedef struct {
     proven_crypto_limb_t one[EC_LIMBS];
     proven_crypto_limb_t gx[EC_LIMBS], gy[EC_LIMBS];
     const proven_byte_t *gtab;                              /* EC_GTAB_POINTS entries of 2 * bytes: x then y, plain, big-endian */
+    bool p256;                                              /* the field code of P-256 alone may be used */
 } proven_ec_curve_t;
 
 #define EC_GTAB_POINTS 16
@@ -311,8 +312,203 @@ static const proven_byte_t EC_P384_GTAB[16][96] = {
     }
 };
 
+/* ---- The field of P-256 alone (RFC-0028 S-6, RFC-0014 C-7) ----
+ *
+ * p = 2^256 - 2^224 + 2^192 + 2^96 - 1 in four 64-bit limbs, Montgomery form with R = 2^256 -
+ * the representation of the general code, so every value, table and result is the same and
+ * either may be used on any value. What the prime's shape gives: -p^-1 mod 2^64 is 1, so the
+ * multiple of p a reduction step adds is the lowest limb itself; that limb's product with p's
+ * lowest limb (2^64 - 1) only carries the limb on, the next (2^32 - 1) is a shift, the third
+ * is zero - one multiplication a step where the general code has four. Fixed sizes, no loops
+ * the compiler must count: a product is sixteen multiplications and the reduction four, a
+ * square ten and four. Branch-free throughout, as the general code. 64-bit limbs only.
+ *
+ * The carries are 128-bit sums, written out: branch-free at every optimisation level with every
+ * compiler, and GCC 16 and Clang make good add-with-carry chains of them. (Tried and dropped,
+ * RFC-0028 S-6: GCC's __builtin_addcll, which becomes conditional jumps on the values at -O0
+ * and -Og - ct-poison found them; carries as comparisons, slower; helper functions for the
+ * carries, and forcing the field functions inline, both slower with GCC 16.) */
+
+#if PROVEN_CRYPTO_MP_LIMB_BITS == 64 && defined(__SIZEOF_INT128__)
+#define EC_P256_FIELD 1
+__extension__ typedef unsigned __int128 ec_u128;
+#define P256_P3 0xffffffff00000001ull
+static const proven_u64 P256_P[4] = { 0xffffffffffffffffull, 0x00000000ffffffffull, 0, P256_P3 };
+
+/* t[0..8) = a value below p^2: t / 2^256 mod p into o, fully reduced. */
+static inline void p256_reduce(proven_u64 o[4], proven_u64 t[8]) {
+    proven_u64 top = 0;
+    for (int i = 0; i < 4; ++i) {
+        const proven_u64 m = t[i];
+        ec_u128 v = (ec_u128)t[i + 1] + ((ec_u128)m << 32);
+        t[i + 1] = (proven_u64)v;
+        v = (ec_u128)t[i + 2] + (proven_u64)(v >> 64);
+        t[i + 2] = (proven_u64)v;
+        v = (ec_u128)t[i + 3] + (ec_u128)m * P256_P3 + (proven_u64)(v >> 64);
+        t[i + 3] = (proven_u64)v;
+        v = (ec_u128)t[i + 4] + (proven_u64)(v >> 64) + top;
+        t[i + 4] = (proven_u64)v;
+        top = (proven_u64)(v >> 64);
+    }
+    /* t[4..8) and top: below 2p. One subtraction, chosen by mask. */
+    proven_u64 d[4], borrow = 0;
+    for (int i = 0; i < 4; ++i) {
+        const ec_u128 v = (ec_u128)t[4 + i] - P256_P[i] - borrow;
+        d[i] = (proven_u64)v;
+        borrow = (proven_u64)(v >> 64) & 1u;
+    }
+    const proven_u64 keep = (proven_u64)0 - ((top | (borrow ^ 1u)) & 1u);       /* all ones: take d */
+    for (int i = 0; i < 4; ++i) o[i] = (d[i] & keep) | (t[4 + i] & ~keep);
+}
+
+static void p256_mul(proven_u64 o[4], const proven_u64 a[4], const proven_u64 b[4]) {
+    proven_u64 t[8] = { 0 };
+    for (int i = 0; i < 4; ++i) {
+        proven_u64 c = 0;
+        for (int j = 0; j < 4; ++j) {
+            const ec_u128 v = (ec_u128)a[j] * b[i] + t[i + j] + c;
+            t[i + j] = (proven_u64)v;
+            c = (proven_u64)(v >> 64);
+        }
+        t[i + 4] = c;
+    }
+    p256_reduce(o, t);
+}
+
+static void p256_sqr(proven_u64 o[4], const proven_u64 a[4]) {
+    proven_u64 t[8] = { 0 };
+    /* The six products of different limbs once, doubled, then the four squares. */
+    for (int i = 0; i < 3; ++i) {
+        proven_u64 c = 0;
+        for (int j = i + 1; j < 4; ++j) {
+            const ec_u128 v = (ec_u128)a[i] * a[j] + t[i + j] + c;
+            t[i + j] = (proven_u64)v;
+            c = (proven_u64)(v >> 64);
+        }
+        t[i + 4] = c;
+    }
+    t[7] = t[6] >> 63;
+    for (int k = 6; k > 0; --k) t[k] = (t[k] << 1) | (t[k - 1] >> 63);
+    t[0] <<= 1;
+    proven_u64 c = 0;
+    for (int i = 0; i < 4; ++i) {
+        const ec_u128 sq = (ec_u128)a[i] * a[i];
+        ec_u128 v = (ec_u128)t[2 * i] + (proven_u64)sq + c;
+        t[2 * i] = (proven_u64)v;
+        v = (ec_u128)t[2 * i + 1] + (proven_u64)(sq >> 64) + (proven_u64)(v >> 64);
+        t[2 * i + 1] = (proven_u64)v;
+        c = (proven_u64)(v >> 64);
+    }
+    p256_reduce(o, t);
+}
+
+static void p256_add(proven_u64 o[4], const proven_u64 a[4], const proven_u64 b[4]) {
+    proven_u64 r[4], d[4], carry = 0, borrow = 0;
+    for (int i = 0; i < 4; ++i) {
+        const ec_u128 v = (ec_u128)a[i] + b[i] + carry;
+        r[i] = (proven_u64)v;
+        carry = (proven_u64)(v >> 64);
+    }
+    for (int i = 0; i < 4; ++i) {
+        const ec_u128 v = (ec_u128)r[i] - P256_P[i] - borrow;
+        d[i] = (proven_u64)v;
+        borrow = (proven_u64)(v >> 64) & 1u;
+    }
+    const proven_u64 keep = (proven_u64)0 - ((carry | (borrow ^ 1u)) & 1u);
+    for (int i = 0; i < 4; ++i) o[i] = (d[i] & keep) | (r[i] & ~keep);
+}
+
+static void p256_sub(proven_u64 o[4], const proven_u64 a[4], const proven_u64 b[4]) {
+    proven_u64 r[4], borrow = 0, carry = 0;
+    for (int i = 0; i < 4; ++i) {
+        const ec_u128 v = (ec_u128)a[i] - b[i] - borrow;
+        r[i] = (proven_u64)v;
+        borrow = (proven_u64)(v >> 64) & 1u;
+    }
+    const proven_u64 mask = (proven_u64)0 - borrow;                  /* add p back when it borrowed */
+    for (int i = 0; i < 4; ++i) {
+        const ec_u128 v = (ec_u128)r[i] + (P256_P[i] & mask) + carry;
+        o[i] = (proven_u64)v;
+        carry = (proven_u64)(v >> 64);
+    }
+}
+
+static void p256_sqr_n(proven_u64 o[4], const proven_u64 a[4], int n) {
+    p256_sqr(o, a);
+    while (--n > 0) p256_sqr(o, o);
+}
+
+/* x^(p - 2) = 1 / x (0 for 0): 255 squarings and 12 multiplications over the fixed chain of
+ * p - 2's bits (its 32-bit words from the top: FFFFFFFF 00000001 0 0 0 FFFFFFFF FFFFFFFF
+ * FFFFFFFD). The exponent is public; the chain is the same for every x. */
+static void p256_inv(proven_u64 o[4], const proven_u64 x[4]) {
+    proven_u64 x2[4], x3[4], x6[4], x12[4], x15[4], x30[4], x32[4], t[4];
+    p256_sqr(t, x); p256_mul(x2, t, x);                    /* 2^2 - 1 */
+    p256_sqr(t, x2); p256_mul(x3, t, x);                   /* 2^3 - 1 */
+    p256_sqr_n(t, x3, 3); p256_mul(x6, t, x3);             /* 2^6 - 1 */
+    p256_sqr_n(t, x6, 6); p256_mul(x12, t, x6);            /* 2^12 - 1 */
+    p256_sqr_n(t, x12, 3); p256_mul(x15, t, x3);           /* 2^15 - 1 */
+    p256_sqr_n(t, x15, 15); p256_mul(x30, t, x15);         /* 2^30 - 1 */
+    p256_sqr_n(t, x30, 2); p256_mul(x32, t, x2);           /* 2^32 - 1: FFFFFFFF */
+    p256_sqr_n(t, x32, 32); p256_mul(t, t, x);             /* 00000001 */
+    p256_sqr_n(t, t, 96 + 32); p256_mul(t, t, x32);        /* 0 0 0, FFFFFFFF */
+    p256_sqr_n(t, t, 32); p256_mul(t, t, x32);             /* FFFFFFFF */
+    p256_sqr_n(t, t, 30); p256_mul(t, t, x30);             /* FFFFFFFD: 2^30 - 1, then */
+    p256_sqr_n(t, t, 2); p256_mul(o, t, x);                /* times 4, plus 1 */
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)x2, .size = sizeof x2 });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)x3, .size = sizeof x3 });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)x6, .size = sizeof x6 });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)x12, .size = sizeof x12 });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)x15, .size = sizeof x15 });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)x30, .size = sizeof x30 });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)x32, .size = sizeof x32 });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)t, .size = sizeof t });
+}
+#else
+#define EC_P256_FIELD 0
+#endif
+
 proven_size_t proven_crypto_ec_size(proven_crypto_ec_curve_t curve) {
     return curve == PROVEN_CRYPTO_EC_P256 ? 32 : curve == PROVEN_CRYPTO_EC_P384 ? 48 : 0;
+}
+
+/* The curve's field operations: P-256's own where the build has them, the general code
+ * otherwise. `f` is the curve's field for the general code. A product of a value with itself
+ * is taken as a square. */
+static bool g_ec_general;                        /* tests: the general code for P-256 too */
+
+void proven_crypto_ec_force_general_(bool on) { g_ec_general = on; }
+
+static inline void ec_fmul(const proven_ec_curve_t *c, const proven_crypto_mp_mod_t *f, proven_crypto_limb_t *o, const proven_crypto_limb_t *a, const proven_crypto_limb_t *b) {
+#if EC_P256_FIELD
+    if (c->p256) { if (a == b) p256_sqr(o, a); else p256_mul(o, a, b); return; }
+#endif
+    (void)c;
+    if (a == b) proven_crypto_mp_montsqr(f, o, a); else proven_crypto_mp_montmul(f, o, a, b);
+}
+
+static inline void ec_fadd(const proven_ec_curve_t *c, const proven_crypto_mp_mod_t *f, proven_crypto_limb_t *o, const proven_crypto_limb_t *a, const proven_crypto_limb_t *b) {
+#if EC_P256_FIELD
+    if (c->p256) { p256_add(o, a, b); return; }
+#endif
+    (void)c;
+    proven_crypto_mp_add(f, o, a, b);
+}
+
+static inline void ec_fsub(const proven_ec_curve_t *c, const proven_crypto_mp_mod_t *f, proven_crypto_limb_t *o, const proven_crypto_limb_t *a, const proven_crypto_limb_t *b) {
+#if EC_P256_FIELD
+    if (c->p256) { p256_sub(o, a, b); return; }
+#endif
+    (void)c;
+    proven_crypto_mp_sub(f, o, a, b);
+}
+
+/* 1 / a in the field (0 for 0), Montgomery form in and out. */
+static inline void ec_finv(const proven_ec_curve_t *c, proven_crypto_limb_t *o, const proven_crypto_limb_t *a) {
+#if EC_P256_FIELD
+    if (c->p256) { p256_inv(o, a); return; }
+#endif
+    proven_crypto_mp_inv_prime(&c->p, o, a);
 }
 
 static bool ec_curve_init(proven_ec_curve_t *c, proven_crypto_ec_curve_t id) {
@@ -321,6 +517,7 @@ static bool ec_curve_init(proven_ec_curve_t *c, proven_crypto_ec_curve_t id) {
     else if (id == PROVEN_CRYPTO_EC_P384) { c->bytes = 48; p = EC_P384_P; n = EC_P384_N; b = EC_P384_B; gx = EC_P384_GX; gy = EC_P384_GY; c->gtab = &EC_P384_GTAB[0][0]; }
     else return false;
     c->limbs = PROVEN_CRYPTO_MP_LIMBS(c->bytes);
+    c->p256 = EC_P256_FIELD && id == PROVEN_CRYPTO_EC_P256 && !g_ec_general;
     if (!proven_crypto_mp_mod_init(&c->p, p, c->bytes) || !proven_crypto_mp_mod_init(&c->n, n, c->bytes)) return false;
     proven_crypto_limb_t t[EC_LIMBS], three[EC_LIMBS], zero[EC_LIMBS];
     for (proven_size_t i = 0; i < c->limbs; ++i) { t[i] = 0; three[i] = 0; zero[i] = 0; }
@@ -346,9 +543,9 @@ static void ec_set_infinity(const proven_ec_curve_t *c, proven_ec_point_t *p) {
     ec_copy(p->y, c->one, c->limbs);
 }
 
-#define M(o, a, b) proven_crypto_mp_montmul(f, o, a, b)
-#define A(o, a, b) proven_crypto_mp_add(f, o, a, b)
-#define S(o, a, b) proven_crypto_mp_sub(f, o, a, b)
+#define M(o, a, b) ec_fmul(c, f, o, a, b)
+#define A(o, a, b) ec_fadd(c, f, o, a, b)
+#define S(o, a, b) ec_fsub(c, f, o, a, b)
 
 /* Algorithm 4 of Renes-Costello-Batina: complete addition for y^2 = x^3 - 3x + b. Twelve
  * multiplications and two by b. `out` may be either input. */
@@ -521,9 +718,9 @@ static void ec_mul_base(const proven_ec_curve_t *c, proven_ec_point_t *out, cons
  * outputs are then zero). */
 static proven_crypto_limb_t ec_affine(const proven_ec_curve_t *c, proven_crypto_limb_t *x, proven_crypto_limb_t *y, const proven_ec_point_t *p) {
     proven_crypto_limb_t zi[EC_LIMBS];
-    proven_crypto_mp_inv_prime(&c->p, zi, p->z);
-    proven_crypto_mp_montmul(&c->p, x, p->x, zi);
-    proven_crypto_mp_montmul(&c->p, y, p->y, zi);
+    ec_finv(c, zi, p->z);
+    ec_fmul(c, &c->p, x, p->x, zi);
+    ec_fmul(c, &c->p, y, p->y, zi);
     proven_crypto_mp_from_mont(&c->p, x, x);
     proven_crypto_mp_from_mont(&c->p, y, y);
     proven_crypto_limb_t inf = proven_crypto_mp_is_zero(p->z, c->limbs);
@@ -542,11 +739,11 @@ static bool ec_decode(const proven_ec_curve_t *c, proven_ec_point_t *out, proven
     proven_crypto_mp_to_mont(&c->p, x, x);
     proven_crypto_mp_to_mont(&c->p, y, y);
     /* y^2 == x^3 + ax + b */
-    proven_crypto_mp_montmul(&c->p, lhs, y, y);
-    proven_crypto_mp_montmul(&c->p, rhs, x, x);
-    proven_crypto_mp_add(&c->p, rhs, rhs, c->a);
-    proven_crypto_mp_montmul(&c->p, rhs, rhs, x);
-    proven_crypto_mp_add(&c->p, rhs, rhs, c->b);
+    ec_fmul(c, &c->p, lhs, y, y);
+    ec_fmul(c, &c->p, rhs, x, x);
+    ec_fadd(c, &c->p, rhs, rhs, c->a);
+    ec_fmul(c, &c->p, rhs, rhs, x);
+    ec_fadd(c, &c->p, rhs, rhs, c->b);
     if (!proven_crypto_mp_eq(lhs, rhs, c->limbs)) return false;
     for (proven_size_t i = 0; i < EC_LIMBS; ++i) { out->x[i] = 0; out->y[i] = 0; out->z[i] = 0; }
     ec_copy(out->x, x, c->limbs); ec_copy(out->y, y, c->limbs); ec_copy(out->z, c->one, c->limbs);
@@ -625,9 +822,9 @@ typedef struct { proven_crypto_limb_t x[EC_LIMBS], y[EC_LIMBS], z[EC_LIMBS]; } p
 #define EC_WNAF_WIDTH 5                     /* digits odd in [-15, 15]: eight multiples of Q */
 #define EC_WNAF_POINTS (1 << (EC_WNAF_WIDTH - 2))
 
-#define M(o, a, b) proven_crypto_mp_montmul(f, o, a, b)
-#define A(o, a, b) proven_crypto_mp_add(f, o, a, b)
-#define S(o, a, b) proven_crypto_mp_sub(f, o, a, b)
+#define M(o, a, b) ec_fmul(c, f, o, a, b)
+#define A(o, a, b) ec_fadd(c, f, o, a, b)
+#define S(o, a, b) ec_fsub(c, f, o, a, b)
 
 static void ec_jac_set_infinity_vartime(const proven_ec_curve_t *c, proven_ec_jac_t *p) {
     for (proven_size_t i = 0; i < EC_LIMBS; ++i) { p->x[i] = 0; p->y[i] = 0; p->z[i] = 0; }

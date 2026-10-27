@@ -683,6 +683,57 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("P-256's own field against the general code",
+        "Public keys, shared secrets, signatures and verifications on P-256 with the field code of P-256 alone and with the general one: the same bytes and verdicts, for scalars at the ends of the range and random ones.",
+        "Check the p256_* functions in src/proven/crypto_ec.c (the general code is crypto_mp.c's).");
+    {
+        static const proven_byte_t n_minus_1[32] = { 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                                                     0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x50 };
+        proven_size_t same = 0, cases = 0;
+        static proven_byte_t k[40][32];
+        for (int i = 0; i < 40; ++i) {
+            if (i == 0) { memset(k[i], 0, 32); k[i][31] = 1; }                        /* 1 */
+            else if (i == 1) { memset(k[i], 0, 32); k[i][31] = 2; }                   /* 2 */
+            else if (i == 2) memcpy(k[i], n_minus_1, 32);                             /* n - 1: -G */
+            else if (i == 3) { memcpy(k[i], n_minus_1, 32); k[i][31] -= 1; }          /* n - 2 */
+            else if (i == 4) { memset(k[i], 0, 32); k[i][0] = 0x7f; memset(k[i] + 1, 0xff, 31); }   /* below n, nearly all ones */
+            else for (int j = 0; j < 32; ++j) k[i][j] = (proven_byte_t)(i * 37 + j * 101 + (i * j) % 251);
+            if (i >= 5 && k[i][0] >= 0xff) k[i][0] = 0x7e;
+        }
+        static proven_byte_t pub_a[2][65], pub_b[2][65], sh[2][32], sig[2][64], digest[32];
+        for (int i = 0; i < 40; ++i) {
+            const int j = (i + 7) % 40;
+            for (int j2 = 0; j2 < 32; ++j2) digest[j2] = (proven_byte_t)(i + j2 * 3);
+            bool ok[2][5];
+            for (int general = 0; general < 2; ++general) {
+                proven_crypto_ec_force_general_(general != 0);
+                ok[general][0] = proven_crypto_ec_public(PROVEN_CRYPTO_EC_P256, k[i], pub_a[general]);
+                ok[general][1] = proven_crypto_ec_public(PROVEN_CRYPTO_EC_P256, k[j], pub_b[general]);
+                ok[general][2] = proven_crypto_ecdh(PROVEN_CRYPTO_EC_P256, k[i], (proven_mem_view_t){ pub_b[general], 65 }, sh[general]);
+                ok[general][3] = proven_crypto_ecdsa_sign(PROVEN_CRYPTO_EC_P256, PROVEN_HMAC_SHA256, k[i], (proven_mem_view_t){ digest, 32 }, sig[general]);
+                ok[general][4] = proven_crypto_ecdsa_verify(PROVEN_CRYPTO_EC_P256, (proven_mem_view_t){ pub_a[general], 65 }, (proven_mem_view_t){ digest, 32 },
+                                                            (proven_mem_view_t){ sig[general], 32 }, (proven_mem_view_t){ sig[general] + 32, 32 });
+            }
+            proven_crypto_ec_force_general_(false);
+            cases++;
+            bool row = memcmp(ok[0], ok[1], sizeof ok[0]) == 0 && ok[0][0] && ok[0][1] && ok[0][2] && ok[0][3] && ok[0][4];
+            row = row && memcmp(pub_a[0], pub_a[1], 65) == 0 && memcmp(pub_b[0], pub_b[1], 65) == 0 && memcmp(sh[0], sh[1], 32) == 0 && memcmp(sig[0], sig[1], 64) == 0;
+            if (row) same++;
+        }
+        PROVEN_TEST_ASSERT(cases == 40 && same == cases, "every public key, shared secret, signature and verification is the same from both", "");
+        /* A point off the curve is refused by both. */
+        static proven_byte_t bad[65];
+        memcpy(bad, pub_a[0], 65); bad[64] ^= 1;
+        bool refused = true;
+        for (int general = 0; general < 2; ++general) {
+            proven_crypto_ec_force_general_(general != 0);
+            refused = refused && !proven_crypto_ecdh(PROVEN_CRYPTO_EC_P256, k[5], (proven_mem_view_t){ bad, 65 }, sh[0]);
+        }
+        proven_crypto_ec_force_general_(false);
+        PROVEN_TEST_ASSERT(refused, "a point off the curve is refused by both", "");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("X25519 and Ed25519",
         "RFC 7748's and RFC 8032's own examples first, then more; a small-order point and every changed part of a signature are refused.",
         "Check src/proven/crypto_25519.c.");

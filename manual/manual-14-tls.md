@@ -966,11 +966,12 @@ server's own per-connection request buffer is Chapter 11's and is separate. (A T
 connection holds the same.)
 
 **What a handshake costs.** On one x86-64 core of the development machine, a full handshake
-with X25519 and a P-256 certificate is about 0.33 ms of processor time on the server and
-about 0.47 ms on a client that holds that certificate as its anchor; each certificate whose
+with X25519 and a P-256 certificate is about 0.31 ms of processor time on the server and
+about 0.41 ms on a client that holds that certificate as its anchor; each certificate whose
 signature the client checks on the way to an anchor - one, for a certificate an anchor
-issued - adds about 0.3 ms. For a server that is some 3,000 new connections a second per
-core. With an Ed25519 certificate the two figures are 0.21 ms and 0.25 ms, a further
+issued - adds about 0.25 ms. For a server that is some 3,200 new connections a second per
+core. (Built with GCC 14. Since v0.90.0 P-256 has a field code of its own, which GCC 16 and
+Clang compile to about twice the speed of the general code - GCC 14 to about 1.15 times.) With an Ed25519 certificate the two figures are 0.21 ms and 0.25 ms, a further
 certificate 0.08 ms, and a core serves some 4,800 new connections a second. Resumption
 (section 6) removes the signatures; keeping connections open removes the handshake.
 
@@ -982,7 +983,8 @@ twice as fast. The functions that do so are reachable from verification alone, a
 fails if anything else calls them (`scripts/check-vartime.py`). Against `openssl speed`
 (OpenSSL 3.5) on the same machine, Ed25519 here signs in about three quarters of OpenSSL's
 time and verifies in about two thirds; X25519 and the NIST curves take 1.2 to 7 times as
-long, P-384 verification the least and P-256 key agreement the most.
+long, P-384 verification the least and P-256 key agreement the most (P-256 2.1 to 4 times
+when built with GCC 16 or Clang, since v0.90.0).
 
 Those figures are a 64-bit build's, by GCC or Clang: the numbers of P-256, RSA and
 Diffie-Hellman are then held in 64-bit limbs, and a number of Curve25519's field in five

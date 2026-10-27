@@ -18,6 +18,21 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **P-256 has a field code of its own** (RFC-0028 S-6; RFC-0014's C-7, reopened by the owner):
+  four 64-bit limbs, the multiplication, squaring, addition and subtraction written out for
+  P-256's prime - whose shape makes each step of the Montgomery reduction one multiplication
+  where the general code has four - and the inversion by a fixed chain of 255 squarings and
+  12 multiplications. Same representation as the general code, so every value and result is
+  the same; branch-free at every optimisation level, as before. Built with GCC 16 or Clang,
+  P-256 key agreement, signing and verification take 0.43 to 0.56 of the time they did (ECDH
+  350-390 to 150-170 us, signature 160 to 86-91, verification 280-300 to 140-170); with GCC
+  14, whose add-with-carry chains are weaker, 0.82 to 0.88. 64-bit builds with a 128-bit integer only; the
+  32-bit-limb build and P-384 keep the general code. Tests: `test_unit_crypto` compares public
+  keys, shared secrets, signatures and verifications from P-256's own field and from the
+  general code at scalars 1, 2, n - 1, n - 2 and others.
+
 ## [0.89.0] - 2026-10-27
 
 ### Changed
