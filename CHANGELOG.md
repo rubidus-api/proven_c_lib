@@ -18,6 +18,25 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **The Zstandard decoder is 1.3 to 1.7 times faster** (RFC-0028 S-2): matches and literals
+  copied sixteen bytes at a time into the output's slack (and a match closer than eight bytes
+  from a multiple of its distance, eight at a time, instead of a byte at a time), each sequence
+  table entry carrying its base value and extra bits, the repeat offsets kept in locals through
+  the loop, and a second reload only where the bits could run out. On four inputs at levels 3
+  and 19, `proven_zstd_decode_all` went from 0.40-0.51 of libzstd's speed (same process) to
+  0.63-0.74, and a decoder given everything in one call from 0.40-0.50 to 0.51-0.72. A made
+  decoder holds about 20 KiB of tables (14 before).
+- **`proven_zstd_decode_all` decodes in place**: a frame that states its size and fits in what
+  is left of `out` is decoded straight into `out`, with no window of its own - a 200,000-byte
+  frame now holds about 20 KiB instead of more than 200 KiB. Bytes of `out` past `*written` may now
+  be written (at most 32 past each such frame, inside `out`). What is accepted and refused is
+  unchanged: 67,032 damaged streams gave libzstd's verdicts as before.
+- **Tests:** `test_unit_zstd` adds `decode_all` into the caller's buffer - the memory held, no
+  byte written past `out`, frames with and without a stated size in one input, a frame that
+  does not fit after one that does, and matches one to 40 bytes back, whole and in steps.
+
 ## [0.85.0] - 2026-10-27
 
 ### Changed

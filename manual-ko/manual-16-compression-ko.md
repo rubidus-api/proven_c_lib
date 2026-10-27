@@ -833,8 +833,8 @@ Zstandard(RFC 8878)는 DEFLATE보다 새 형식이다: `.zst` 파일, HTTP의 `C
 
 | | 메모리 |
 |---|---|
-| 만든 디코더 | 표에 약 16 KiB |
-| 프레임을 푸는 동안 | 그 창(최대 여러분의 상한)과, 풀고 있는 블록에 최대 384 KiB |
+| 만든 디코더 | 표에 약 20 KiB |
+| 프레임을 푸는 동안 | 그 창(최대 여러분의 상한)과, 풀고 있는 블록에 최대 384 KiB. `proven_zstd_decode_all`로 풀 때 크기를 밝히고 들어가는 프레임은 창을 잡지 않는다 - 그 자리에서 풀린다 |
 
 **스트림은 프레임의 연속이다.** `*done`은 프레임이 끝나는 곳에서 참이 되고, 그 호출은 거기서 멈춘다:
 가져간 것이 그 프레임이다. 나머지로 다시 부르면 다음 프레임이 시작된다 - reset은 필요 없다. 건너뛸 수
@@ -929,7 +929,7 @@ int main(void) {
 | `proven_zstd_decode(z, in, &consumed, out, &produced, &done)` | `in`의 일부를 가져가고 `out`의 일부를 채운다. 프레임 끝에서 멈춘다. 낸다고 알린 바이트만 쓴다. | `INVALID_FORMAT`(손상, 맞지 않는 체크섬이나 밝힌 크기), `OUT_OF_BOUNDS`(상한을 넘는 창), `UNSUPPORTED`(사전), `NOMEM`, `INVALID_ARG`. 오류 뒤에는 reset까지 같은 오류. |
 | `proven_zstd_decoder_reset(z)` | 진행 중인 스트림을 잊는다. 버퍼는 남긴다. | 없음. |
 | `proven_zstd_decoder_destroy(z)` | 해제한다. NULL도 된다. | 없음. |
-| `proven_zstd_decode_all(alloc, in, out, &written)` | `in`의 모든 프레임을 `out`으로, 기본 상한으로. `out`의 크기가 출력의 한도다. | 들어가지 않으면 `OUT_OF_BOUNDS`. `in`이 비었거나 프레임 중간에서 끝나도 `INVALID_FORMAT`. |
+| `proven_zstd_decode_all(alloc, in, out, &written)` | `in`의 모든 프레임을 `out`으로, 기본 상한으로. `out`의 크기가 출력의 한도다. 크기를 밝히고 들어가는 프레임은 `out`에 바로 풀며 자기 창을 따로 잡지 않는다(v0.86.0부터). 그때 `out`의 `*written` 뒤 바이트가 쓰일 수 있다. | 들어가지 않으면 `OUT_OF_BOUNDS`. `in`이 비었거나 프레임 중간에서 끝나도 `INVALID_FORMAT`. |
 
 ### 주의할 점과, 잘못되는 경우
 
@@ -952,9 +952,11 @@ int main(void) {
 Huffman 스트림 중 하나가 정확히 읽히지 않아서, 25개는 프레임 뒤의 바이트 때문에(libzstd를 부른 방식인
 Node는 그것을 무시한다), 8개는 바이트가 없는 압축 블록이어서, 4개는 리터럴을 담기에 너무 짧은 블록이어서다.
 
-**속도.** 개발 기계에서, 이 라이브러리의 C 소스(2.2 MiB)를 libzstd가 레벨 1, 3, 19로 압축한 것은 각각 약
-380, 395, 455 MiB/s로 풀린다. 같은 데이터를 gzip으로 해서 3절의 해제기로 풀면 약 335 MiB/s, libzstd 자신은
-Node에서 불러 약 760 MiB/s다.
+**속도.** 개발 기계에서, 이 라이브러리의 C 소스(2.9 MiB)를 libzstd가 레벨 1, 3, 19로 압축한 것은
+`proven_zstd_decode_all`로 각각 약 650, 650, 750 MiB/s, 디코더에 한 번에 다 주면 약 590, 570, 730 MiB/s로
+풀린다. 같은 프로세스의 libzstd는 약 1,020, 940, 1,030 MiB/s - 이 디코더는 libzstd 속도의 0.6-0.7이다
+(v0.86.0. 그 전에는 절반쯤). v0.86.0 전에, 같은 소스 2.2 MiB를 gzip으로 해서 3절의 해제기로 풀면 약
+335 MiB/s였다.
 
 ### Zstandard 쓰기
 

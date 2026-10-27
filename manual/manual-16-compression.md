@@ -882,8 +882,8 @@ allocated for it.
 
 | | Memory |
 |---|---|
-| A decoder, made | about 16 KiB of tables |
-| While decoding a frame | its window (at most your limit), plus up to 384 KiB for the block being decoded |
+| A decoder, made | about 20 KiB of tables |
+| While decoding a frame | its window (at most your limit), plus up to 384 KiB for the block being decoded; through `proven_zstd_decode_all`, a frame that states its size and fits holds no window - it is decoded in place |
 
 **A stream is a sequence of frames.** `*done` becomes true where a frame ends, and that call
 stops there: what it consumed is that frame. Call again with the rest and the next frame
@@ -979,7 +979,7 @@ int main(void) {
 | `proven_zstd_decode(z, in, &consumed, out, &produced, &done)` | Take some of `in`, fill some of `out`; stop at a frame's end. Only the bytes reported produced are written. | `INVALID_FORMAT` (damaged, a checksum or stated size that does not match), `OUT_OF_BOUNDS` (window above the limit), `UNSUPPORTED` (a dictionary), `NOMEM`, `INVALID_ARG`; after an error, the same until a reset. |
 | `proven_zstd_decoder_reset(z)` | Forget the stream in progress; keep the buffers. | none. |
 | `proven_zstd_decoder_destroy(z)` | Free it. NULL is allowed. | none. |
-| `proven_zstd_decode_all(alloc, in, out, &written)` | Every frame of `in` into `out`, with the default limit. `out`'s size is the limit on output. | `OUT_OF_BOUNDS` when it does not fit; `INVALID_FORMAT` also when `in` is empty or ends inside a frame. |
+| `proven_zstd_decode_all(alloc, in, out, &written)` | Every frame of `in` into `out`, with the default limit. `out`'s size is the limit on output. A frame that states its size and fits is decoded straight into `out`, holding no window of its own (since v0.86.0); bytes of `out` past `*written` may then be written. | `OUT_OF_BOUNDS` when it does not fit; `INVALID_FORMAT` also when `in` is empty or ends inside a frame. |
 
 ### Cautions, and what goes wrong
 
@@ -1007,10 +1007,12 @@ none that libzstd refused was accepted here, none that both accepted came out di
 exactly, 25 for bytes after the frame (which Node, the way libzstd was called, ignores), 8 for
 a compressed block of no bytes, and 4 for a block too short to hold its literal.
 
-**Speed.** On the development machine, the C sources of this library (2.2 MiB) compressed by
-libzstd at levels 1, 3 and 19 decode at about 380, 395 and 455 MiB/s; the same data as gzip,
-through section 3's decompressor, at about 335 MiB/s; libzstd itself, called from Node, at
-about 760 MiB/s.
+**Speed.** On the development machine, the C sources of this library (2.9 MiB) compressed by
+libzstd at levels 1, 3 and 19 decode through `proven_zstd_decode_all` at about 650, 650 and
+750 MiB/s, and through a decoder given all of it in one call at about 590, 570 and 730 MiB/s;
+libzstd, in the same process, at about 1,020, 940 and 1,030 MiB/s - so this decoder runs at
+0.6 to 0.7 of libzstd's speed (v0.86.0; about half before it). Before v0.86.0, 2.2 MiB of the
+same sources as gzip went through section 3's decompressor at about 335 MiB/s.
 
 ### Writing Zstandard
 

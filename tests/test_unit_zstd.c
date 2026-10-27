@@ -343,6 +343,81 @@ int main(void) {
         PROVEN_TEST_ASSERT(nomem >= 3 && other == 0, "each allocation that fails is PROVEN_ERR_NOMEM", "");
     }
 
+    PROVEN_TEST_SECTION("decode_all into the caller's buffer",
+        "A frame that states its size and fits is decoded straight into the caller's buffer: no history buffer is allocated, nothing past the buffer is written, and matches at every short distance copy right.",
+        "Check `lent` in src/proven/zstd.c (Z_HEADER, make_room, Z_DRAIN) and copy_match's short distances.");
+    {
+        /* Memory: a 200,000-byte frame that states its size (proven_zstd_encode_all's do), so
+         * decode_all holds the decoder and a block's literals, not 200,000 bytes of history. */
+        corpus(6, g_plain);
+        proven_size_t big = 0, w = 0;
+        PROVEN_TEST_ASSERT(proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap }, (proven_mem_view_t){ g_plain, 200000 },
+                                                  (proven_mem_mut_t){ g_out2, sizeof g_out2 }, &big) == PROVEN_OK && (g_out2[4] & 0xc0) != 0,
+            "a frame that states its size", "");
+        PROVEN_TEST_ASSERT(proven_zstd_decode_all(counting(0), (proven_mem_view_t){ g_out2, big }, (proven_mem_mut_t){ g_out, 200000 }, &w) == PROVEN_OK &&
+                           w == 200000 && memcmp(g_out, g_plain, w) == 0, "a 200,000-byte frame decodes into exactly 200,000 bytes", "");
+        printf("  decode_all of the 200,000-byte frame: at most %u bytes held\n", (unsigned)g_count.peak);
+        PROVEN_TEST_ASSERT(g_count.peak < 160 * 1024 && g_count.live == 0, "holding the decoder and one block's literals, not the frame", "");
+        /* Nothing past the buffer: guard bytes after an exact buffer, and after one a little larger
+         * (the copies sixteen at a time may use what lies past the frame inside the buffer). */
+        const proven_size_t text = zstream(zline(5, 9, 1), g_in);
+        corpus(5, g_plain);
+        for (proven_size_t extra = 0; extra <= 40; extra += 5) {
+            memset(g_out, 0xa5, 16000 + extra + 64);
+            PROVEN_TEST_ASSERT(proven_zstd_decode_all(g_heap, (proven_mem_view_t){ g_in, text }, (proven_mem_mut_t){ g_out, 16000 + extra }, &w) == PROVEN_OK &&
+                               w == 16000 && memcmp(g_out, g_plain, w) == 0, "a buffer of the size, or a little more", "");
+            bool kept = true;
+            for (proven_size_t k = 16000 + extra; k < 16000 + extra + 64; ++k) kept = kept && g_out[k] == 0xa5;
+            PROVEN_TEST_ASSERT(kept, "no byte past the buffer given is written", "");
+        }
+        /* Frames that state no size go through the decoder's own history, and the two kinds may
+         * follow each other in one input: a frame of this library's streaming encoder, which
+         * states none, then libzstd's, which states its size, then the first again. */
+        proven_zstd_encoder_t *enc = NULL;
+        PROVEN_TEST_ASSERT(proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap }, &enc) == PROVEN_OK, "an encoder", "");
+        proven_size_t c = 0, p = 0, n = 0, got = 0;
+        bool fin = false;
+        for (int k = 0; k < 100 && !fin; ++k) {
+            if (proven_zstd_encode(enc, (proven_mem_view_t){ g_plain + c, 16000 - c }, &got, (proven_mem_mut_t){ g_cat + p, sizeof g_cat - p }, &n, PROVEN_ZSTD_FLUSH_FINISH, &fin) != PROVEN_OK) break;
+            c += got; p += n;
+        }
+        PROVEN_TEST_ASSERT(fin && c == 16000, "a streamed frame", "");
+        proven_zstd_encoder_destroy(enc);
+        n = p;
+        PROVEN_TEST_ASSERT((g_cat[4] & 0xc0) == 0 && (g_cat[4] & 0x20) == 0, "it states no size", "");
+        memcpy(g_cat + n, g_in, text); n += text;
+        memcpy(g_cat + n, g_cat, p); n += p;
+        PROVEN_TEST_ASSERT(proven_zstd_decode_all(g_heap, (proven_mem_view_t){ g_cat, n }, (proven_mem_mut_t){ g_out, 48000 }, &w) == PROVEN_OK && w == 48000 &&
+                           memcmp(g_out, g_plain, 16000) == 0 && memcmp(g_out + 16000, g_plain, 16000) == 0 && memcmp(g_out + 32000, g_plain, 16000) == 0,
+            "a frame without a size, one with, one without again: each where it belongs", "");
+        /* A frame that fits, then one that states a size that does not fit what is left: the
+         * second goes to the decoder's own buffer, and the whole is PROVEN_ERR_OUT_OF_BOUNDS. */
+        memcpy(g_cat, g_in, text); memcpy(g_cat + text, g_in, text);
+        PROVEN_TEST_ASSERT(proven_zstd_decode_all(g_heap, (proven_mem_view_t){ g_cat, 2 * text }, (proven_mem_mut_t){ g_out, 31999 }, &w) == PROVEN_ERR_OUT_OF_BOUNDS && w == 0 &&
+                           proven_zstd_decode_all(g_heap, (proven_mem_view_t){ g_cat, 2 * text }, (proven_mem_mut_t){ g_out, 32000 }, &w) == PROVEN_OK && w == 32000 &&
+                           memcmp(g_out, g_plain, 16000) == 0 && memcmp(g_out + 16000, g_plain, 16000) == 0,
+            "two frames that state their size into one byte too few: PROVEN_ERR_OUT_OF_BOUNDS; into enough, both", "");
+        /* Matches one to 40 bytes back, each 3 to 300 long: a repeated pattern of that period,
+         * every so often changed, compressed by this library's encoder, decoded both ways. */
+        proven_size_t bad = 0;
+        for (proven_size_t period = 1; period <= 40; ++period) {
+            g_x = (proven_u32)(period * 2654435761u) | 1;
+            proven_size_t len = 0;
+            while (len < 6000) {
+                const proven_size_t run = 3 + xs() % 298;
+                for (proven_size_t k = 0; k < run && len < 6000; ++k, ++len) g_plain[len] = len < period ? (proven_byte_t)xs() : g_plain[len - period];
+                if (len < 6000) g_plain[len++] = (proven_byte_t)xs();
+            }
+            proven_size_t zn = 0;
+            if (proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 1 + (int)(period % 9) }, (proven_mem_view_t){ g_plain, len },
+                                       (proven_mem_mut_t){ g_in, sizeof g_in }, &zn) != PROVEN_OK) { bad++; continue; }
+            if (proven_zstd_decode_all(g_heap, (proven_mem_view_t){ g_in, zn }, (proven_mem_mut_t){ g_out, len }, &w) != PROVEN_OK || w != len || memcmp(g_out, g_plain, len) != 0) bad++;
+            bool ended = false;
+            if (decode_steps(g_heap, 0, g_in, zn, 7, 13, g_out2, sizeof g_out2, &w, &ended) != PROVEN_OK || w != len || memcmp(g_out2, g_plain, len) != 0) bad++;
+        }
+        PROVEN_TEST_ASSERT(bad == 0, "every distance from 1 to 40: decode_all and seven-byte steps give the data back", "Check copy_match: closer than eight, the pattern is copied from `step` back.");
+    }
+
     PROVEN_TEST_SECTION("what every function refuses", "Arguments that cannot be right.", "");
     {
         proven_zstd_decoder_t *z = NULL;

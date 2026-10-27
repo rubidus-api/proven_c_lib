@@ -97,7 +97,9 @@ proven_err_t proven_zstd_decode(proven_zstd_decoder_t *z, proven_mem_view_t in, 
  * @brief Decompress every frame of a whole buffer into a buffer of the caller's.
  *
  * The size of `out` is the limit: a stream that would produce more is refused, however
- * small it is itself. The window limit is the default.
+ * small it is itself. The window limit is the default. A frame that states its size, when
+ * that fits in what is left of `out`, is decoded straight into `out` and holds no window of
+ * its own; bytes of `out` past `*written` may then be written.
  *
  * @param written  Out: how many bytes were produced.
  * @return PROVEN_ERR_OUT_OF_BOUNDS when the data does not fit in `out` (or a window is above

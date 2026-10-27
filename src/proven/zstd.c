@@ -32,6 +32,16 @@ typedef struct {
     proven_u8 bits;
 } proven_fse_t;
 
+/* One state of a sequence table: the FSE state as above, with what its symbol means made out -
+ * the base value of the literal length, match length or offset, and how many more bits are
+ * added to it - so that decoding a sequence looks nothing else up. */
+typedef struct {
+    proven_u32 base;
+    proven_u16 next;
+    proven_u8 bits;
+    proven_u8 extra;
+} proven_seq_t;
+
 /* One entry of a Huffman table indexed by the next `log` bits: the symbol and its code's
  * length. */
 typedef struct {
@@ -62,16 +72,22 @@ struct proven_zstd_decoder {
     /* buffers, grown on demand and kept */
     proven_byte_t *hist, *inbuf, *lits;
     proven_size_t hist_cap, inbuf_cap, lits_cap;
+    /* proven_zstd_decode_all: a frame whose size is stated and fits is decoded straight into the
+     * caller's buffer - `hist` is then lent (`lent`), its own buffer kept in `own`, and `slack`
+     * is what of the caller's buffer lies past the frame (WILD at most) for the wide copies. */
+    bool direct, lent;
+    proven_byte_t *own;
+    proven_size_t own_cap, slack;
     proven_size_t hist_pos;             /* what this frame has produced and `hist` still holds ends here */
     proven_size_t drain;                /* and what has not been handed out yet begins here */
     /* entropy tables: what the last block left, for the next to repeat */
     bool huf_ok;
     unsigned huf_log;
-    const proven_fse_t *llt, *oft, *mlt;
+    const proven_seq_t *llt, *oft, *mlt;
     unsigned lll, ofl, mll;
     proven_huf_t huf[1u << HUF_LOG_MAX];
-    proven_fse_t ll_dyn[1u << LL_LOG], of_dyn[1u << OF_LOG], ml_dyn[1u << ML_LOG];
-    proven_fse_t ll_def[64], of_def[32], ml_def[64];
+    proven_seq_t ll_dyn[1u << LL_LOG], of_dyn[1u << OF_LOG], ml_dyn[1u << ML_LOG];
+    proven_seq_t ll_def[64], of_def[32], ml_def[64];
 };
 
 // -----------------------------------------------------------------------------
@@ -119,8 +135,9 @@ static bool bits_init(proven_bits_t *b, const proven_byte_t *src, proven_size_t 
 
 /* The next `n` bits (at most 56) without taking them. */
 static inline proven_u64 bits_look(const proven_bits_t *b, unsigned n) {
-    if (b->used >= 64) return 0;
-    return ((b->c << b->used) >> 1) >> (63 - n);
+    /* Past 63 the stream is damaged and every caller finds out (bits_exact, bits_over); what
+     * is returned meanwhile only has to stay in range - at most `n` bits - which it does. */
+    return ((b->c << (b->used & 63)) >> 1) >> (63 - n);
 }
 
 static inline proven_u64 bits_read(proven_bits_t *b, unsigned n) {
@@ -251,6 +268,21 @@ static bool fse_build(proven_fse_t *t, const proven_i16 *norm, unsigned nsym, un
     return true;
 }
 
+/* A sequence table from an FSE table of `1 << al` states: each symbol's base and extra bits
+ * from the code tables of RFC 8878 section 3.1.1.3.2.1 (offsets: base 2^code, code bits). */
+enum { SEQ_LL, SEQ_ML, SEQ_OF };
+
+static void seq_from(proven_seq_t *dst, const proven_fse_t *src, unsigned al, int kind) {
+    for (proven_u32 u = 0; u < (1u << al); ++u) {
+        const unsigned c = src[u].symbol;
+        dst[u].next = src[u].next;
+        dst[u].bits = src[u].bits;
+        if (kind == SEQ_LL) { dst[u].base = LL_BASE[c]; dst[u].extra = LL_BITS[c]; }
+        else if (kind == SEQ_ML) { dst[u].base = ML_BASE[c]; dst[u].extra = ML_BITS[c]; }
+        else { dst[u].base = (proven_u32)1 << c; dst[u].extra = (proven_u8)c; }
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Making, freeing, starting over
 // -----------------------------------------------------------------------------
@@ -272,11 +304,12 @@ proven_err_t proven_zstd_decoder_create(proven_allocator_t alloc, proven_u64 win
     proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, sizeof(proven_zstd_decoder_t), 16);
     if (m.err != PROVEN_OK) return PROVEN_ERR_NOMEM;
     proven_zstd_decoder_t *z = (proven_zstd_decoder_t *)(void *)m.value.ptr;
-    *z = (proven_zstd_decoder_t){ .alloc = alloc, .window_max = window_max };
+    *z = (proven_zstd_decoder_t){ .alloc = alloc, .window_max = window_max, .slack = WILD };
     /* The predefined distributions are valid by construction. */
-    (void)fse_build(z->ll_def, LL_DEFAULT, 36, 6);
-    (void)fse_build(z->of_def, OF_DEFAULT, 29, 5);
-    (void)fse_build(z->ml_def, ML_DEFAULT, 53, 6);
+    proven_fse_t t[64];
+    (void)fse_build(t, LL_DEFAULT, 36, 6); seq_from(z->ll_def, t, 6, SEQ_LL);
+    (void)fse_build(t, OF_DEFAULT, 29, 5); seq_from(z->of_def, t, 5, SEQ_OF);
+    (void)fse_build(t, ML_DEFAULT, 53, 6); seq_from(z->ml_def, t, 6, SEQ_ML);
     start(z);
     *out = z;
     return PROVEN_OK;
@@ -284,7 +317,8 @@ proven_err_t proven_zstd_decoder_create(proven_allocator_t alloc, proven_u64 win
 
 void proven_zstd_decoder_destroy(proven_zstd_decoder_t *z) {
     if (!z) return;
-    if (z->hist) z->alloc.free_fn(z->alloc.ctx, z->hist);
+    proven_byte_t *h = z->lent ? z->own : z->hist;
+    if (h) z->alloc.free_fn(z->alloc.ctx, h);
     if (z->inbuf) z->alloc.free_fn(z->alloc.ctx, z->inbuf);
     if (z->lits) z->alloc.free_fn(z->alloc.ctx, z->lits);
     z->alloc.free_fn(z->alloc.ctx, z);
@@ -311,6 +345,7 @@ static proven_err_t grow(proven_zstd_decoder_t *z, proven_byte_t **buf, proven_s
  * can need, and once it is that large, keep only the window's worth of history. */
 static proven_err_t make_room(proven_zstd_decoder_t *z, proven_size_t room) {
     if (z->hist_cap - z->hist_pos >= room) return PROVEN_OK;
+    if (z->lent) return PROVEN_ERR_INVALID_FORMAT;     /* not reached: no block passes the stated size */
     const proven_size_t want = z->hist_pos + room;
     if (z->hist_cap < z->full) {
         proven_size_t to = z->hist_cap < z->full / 2 ? z->hist_cap * 2 : z->full;
@@ -538,28 +573,30 @@ static proven_err_t literals(proven_zstd_decoder_t *z, const proven_byte_t *src,
 // Sequences (RFC 8878, section 3.1.1.3.2) and their execution
 // -----------------------------------------------------------------------------
 
-static bool seq_table(proven_zstd_decoder_t *z, unsigned mode, const proven_byte_t *p, proven_size_t n, proven_size_t *at,
-                      const proven_fse_t **cur, unsigned *curlog, proven_fse_t *dyn, const proven_fse_t *def, unsigned deflog,
-                      unsigned max_sym, unsigned max_log) {
-    (void)z;
+static bool seq_table(unsigned mode, const proven_byte_t *p, proven_size_t n, proven_size_t *at,
+                      const proven_seq_t **cur, unsigned *curlog, proven_seq_t *dyn, const proven_seq_t *def, unsigned deflog,
+                      unsigned max_sym, unsigned max_log, int kind) {
     switch (mode) {
         case 0:
             *cur = def;
             *curlog = deflog;
             return true;
-        case 1:
+        case 1: {
             if (*at >= n || p[*at] > max_sym) return false;
-            dyn[0] = (proven_fse_t){ .next = 0, .symbol = p[*at], .bits = 0 };
+            const proven_fse_t one = { .next = 0, .symbol = p[*at], .bits = 0 };
+            seq_from(dyn, &one, 0, kind);
             (*at)++;
             *cur = dyn;
             *curlog = 0;
-            return true;
+            return true; }
         case 2: {
             proven_i16 norm[64];
+            proven_fse_t t[1u << LL_LOG];
             unsigned nsym = 0, al = 0;
             proven_size_t u = 0;
             if (!fse_read(p + *at, n - *at, max_sym, max_log, norm, &nsym, &al, &u)) return false;
-            if (!fse_build(dyn, norm, nsym, al)) return false;
+            if (!fse_build(t, norm, nsym, al)) return false;
+            seq_from(dyn, t, al, kind);
             *at += u;
             *cur = dyn;
             *curlog = al;
@@ -575,20 +612,33 @@ static void copy_bytes(proven_byte_t *d, const proven_byte_t *s, proven_size_t n
     for (proven_size_t i = 0; i < n; ++i) d[i] = s[i];
 }
 
-static inline void copy8(proven_byte_t *d, const proven_byte_t *s) {
-    const proven_u64 w = le64(s);
-    d[0] = (proven_byte_t)w; d[1] = (proven_byte_t)(w >> 8); d[2] = (proven_byte_t)(w >> 16); d[3] = (proven_byte_t)(w >> 24);
-    d[4] = (proven_byte_t)(w >> 32); d[5] = (proven_byte_t)(w >> 40); d[6] = (proven_byte_t)(w >> 48); d[7] = (proven_byte_t)(w >> 56);
+/* Eight and sixteen bytes at once; the compiler makes each one load and one store. */
+static inline void copy8(proven_byte_t *d, const proven_byte_t *s) { __builtin_memcpy(d, s, 8); }
+static inline void copy16(proven_byte_t *d, const proven_byte_t *s) { __builtin_memcpy(d, s, 16); }
+
+/* `n` bytes from `s` to `d`, sixteen at a time: up to fifteen beyond the end are written, and
+ * read. The caller has checked that both have that slack and that they do not overlap. */
+static inline void copy_wild(proven_byte_t *d, const proven_byte_t *s, proven_size_t n) {
+    copy16(d, s);                                /* most are sixteen or fewer: one copy, no loop */
+    for (proven_size_t i = 16; i < n; i += 16) copy16(d + i, s + i);
 }
 
 /* A match: `off` back, `len` long. When `off` is shorter than `len` the copy reads what it
- * has just written, and that is what it means: eight at a time only when they are eight
- * apart, so that each eight read were written before. `room`: bytes that may be written
- * from `d`, the slack included - eight at a time writes up to seven beyond the match. */
+ * has just written, and that is what it means: each block copied at once must lie wholly in
+ * what was written before it. So 16 at a time from 16 back, 8 at a time from 8 back, and
+ * closer than 8 the first bytes one at a time, until the pattern of period `off` is written
+ * out to `step` bytes - the smallest multiple of `off` that is at least 8 - and the rest eight
+ * at a time from `step` back, which repeats the same pattern. `room`: bytes that may be
+ * written from `d`, the slack included - the wide copies write up to fifteen beyond the match. */
 static inline void copy_match(proven_byte_t *d, proven_size_t off, proven_size_t len, proven_size_t room) {
     const proven_byte_t *s = d - off;
-    if (off >= 8 && len + 8 <= room) {
-        for (proven_size_t i = 0; i < len; i += 8) copy8(d + i, s + i);
+    if (len + 16 <= room) {
+        if (off >= 16) { copy_wild(d, s, len); return; }
+        if (off >= 8) { for (proven_size_t i = 0; i < len; i += 8) copy8(d + i, s + i); return; }
+        const proven_size_t step = off * ((8 + off - 1) / off);
+        proven_size_t i = 0;
+        for (; i < step && i < len; ++i) d[i] = s[i];
+        for (; i < len; i += 8) copy8(d + i, d + i - step);
         return;
     }
     for (proven_size_t i = 0; i < len; ++i) d[i] = s[i];
@@ -619,63 +669,68 @@ static proven_err_t sequences(proven_zstd_decoder_t *z, const proven_byte_t *p, 
         if (at >= n) return PROVEN_ERR_INVALID_FORMAT;
         const unsigned modes = p[at++];
         if ((modes & 3) != 0) return PROVEN_ERR_INVALID_FORMAT;
-        if (!seq_table(z, modes >> 6, p, n, &at, &z->llt, &z->lll, z->ll_dyn, z->ll_def, 6, LL_MAX, LL_LOG) ||
-            !seq_table(z, (modes >> 4) & 3, p, n, &at, &z->oft, &z->ofl, z->of_dyn, z->of_def, 5, OF_MAX, OF_LOG) ||
-            !seq_table(z, (modes >> 2) & 3, p, n, &at, &z->mlt, &z->mll, z->ml_dyn, z->ml_def, 6, ML_MAX, ML_LOG)) {
+        if (!seq_table(modes >> 6, p, n, &at, &z->llt, &z->lll, z->ll_dyn, z->ll_def, 6, LL_MAX, LL_LOG, SEQ_LL) ||
+            !seq_table((modes >> 4) & 3, p, n, &at, &z->oft, &z->ofl, z->of_dyn, z->of_def, 5, OF_MAX, OF_LOG, SEQ_OF) ||
+            !seq_table((modes >> 2) & 3, p, n, &at, &z->mlt, &z->mll, z->ml_dyn, z->ml_def, 6, ML_MAX, ML_LOG, SEQ_ML)) {
             return PROVEN_ERR_INVALID_FORMAT;
         }
         proven_bits_t b;
         if (!bits_init(&b, p + at, n - at)) return PROVEN_ERR_INVALID_FORMAT;
-        const proven_fse_t *llt = z->llt, *oft = z->oft, *mlt = z->mlt;
+        const proven_seq_t *llt = z->llt, *oft = z->oft, *mlt = z->mlt;
         proven_u32 ls = (proven_u32)bits_read(&b, z->lll), os = (proven_u32)bits_read(&b, z->ofl), ms = (proven_u32)bits_read(&b, z->mll);
         /* What may be written from `h` and read from `lit`, the slack included. */
-        const proven_size_t wend = z->hist ? z->hist_cap + WILD : 0, lend = lit && lit == z->lits ? z->lits_cap + WILD : nlit;
+        const proven_size_t wend = z->hist ? z->hist_cap + z->slack : 0, lend = lit && lit == z->lits ? z->lits_cap + WILD : nlit;
         lp = 0;
+        /* In locals for the loop: every byte stored through `h` might, for the compiler, be a
+         * store to `*z`, which would make it read these again on every sequence. */
+        proven_u64 rep0 = z->rep[0], rep1 = z->rep[1], rep2 = z->rep[2];
+        const proven_u64 window = z->window;
+        proven_err_t verdict = PROVEN_OK;
         for (proven_size_t i = 0; i < nseq; ++i) {
-            /* At most 31 bits, then 32, then 26: a reload before each. */
+            /* At most 31 bits, then 32, then 26. After a reload at least 56 are held (`used`
+             * at most 7), so a second reload is needed only when what follows would run past
+             * 64 - rarely: long offsets with long extra bits. */
             bits_reload(&b);
-            const unsigned oc = oft[os].symbol, mc = mlt[ms].symbol, lc = llt[ls].symbol;
-            const proven_u64 ofv = ((proven_u64)1 << oc) + bits_read(&b, oc);
-            bits_reload(&b);
-            const proven_size_t ml = ML_BASE[mc] + (proven_size_t)bits_read(&b, ML_BITS[mc]);
-            const proven_size_t ll = LL_BASE[lc] + (proven_size_t)bits_read(&b, LL_BITS[lc]);
+            const proven_seq_t o = oft[os], m = mlt[ms], l = llt[ls];
+            const proven_u64 ofv = (proven_u64)o.base + bits_read(&b, o.extra);
+            if (b.used + m.extra + l.extra > 64) bits_reload(&b);
+            const proven_size_t ml = m.base + (proven_size_t)bits_read(&b, m.extra);
+            const proven_size_t ll = l.base + (proven_size_t)bits_read(&b, l.extra);
             proven_u64 off;
             if (ofv > 3) {
                 off = ofv - 3;
-                z->rep[2] = z->rep[1]; z->rep[1] = z->rep[0]; z->rep[0] = off;
+                rep2 = rep1; rep1 = rep0; rep0 = off;
             } else {
                 const unsigned idx = (unsigned)ofv - 1 + (ll == 0);
                 if (idx == 0) {
-                    off = z->rep[0];
+                    off = rep0;
                 } else {
-                    off = idx == 3 ? z->rep[0] - 1 : z->rep[idx];
-                    if (idx != 1) z->rep[2] = z->rep[1];
-                    z->rep[1] = z->rep[0];
-                    z->rep[0] = off;
+                    off = idx == 1 ? rep1 : idx == 2 ? rep2 : rep0 - 1;
+                    if (idx != 1) rep2 = rep1;
+                    rep1 = rep0;
+                    rep0 = off;
                 }
             }
             if (i + 1 < nseq) {
-                bits_reload(&b);
-                ls = llt[ls].next + (proven_u32)bits_read(&b, llt[ls].bits);
-                ms = mlt[ms].next + (proven_u32)bits_read(&b, mlt[ms].bits);
-                os = oft[os].next + (proven_u32)bits_read(&b, oft[os].bits);
+                if (b.used + LL_LOG + ML_LOG + OF_LOG > 64) bits_reload(&b);
+                ls = l.next + (proven_u32)bits_read(&b, l.bits);
+                ms = m.next + (proven_u32)bits_read(&b, m.bits);
+                os = o.next + (proven_u32)bits_read(&b, o.bits);
             }
-            if (ll > nlit - lp || ll > limit - op) return PROVEN_ERR_INVALID_FORMAT;
+            if (ll > nlit - lp || ll > limit - op) { verdict = PROVEN_ERR_INVALID_FORMAT; break; }
             if (ll > 0) {
-                if (ll <= 16 && op + 16 <= wend && lp + 16 <= lend) {
-                    copy8(h + op, lit + lp);
-                    copy8(h + op + 8, lit + lp + 8);
-                } else {
-                    copy_bytes(h + op, lit + lp, ll);
-                }
+                if (op + ll + 16 <= wend && lp + ll + 16 <= lend) copy_wild(h + op, lit + lp, ll);
+                else copy_bytes(h + op, lit + lp, ll);
             }
             op += ll;
             lp += ll;
             /* Further back than this frame has produced, or than its window reaches. */
-            if (ml > limit - op || off == 0 || off > op || off > z->window) return PROVEN_ERR_INVALID_FORMAT;
+            if (ml > limit - op || off == 0 || off > op || off > window) { verdict = PROVEN_ERR_INVALID_FORMAT; break; }
             if (ml > 0) copy_match(h + op, (proven_size_t)off, ml, wend - op);
             op += ml;
         }
+        z->rep[0] = rep0; z->rep[1] = rep1; z->rep[2] = rep2;
+        if (verdict != PROVEN_OK) return verdict;
         if (!bits_exact(&b)) return PROVEN_ERR_INVALID_FORMAT;
         nlit -= lp;
     } else {
@@ -834,6 +889,15 @@ proven_err_t proven_zstd_decode(proven_zstd_decoder_t *z, proven_mem_view_t in, 
                 z->have = 0;
                 proven_err_t e = frame_header(z);
                 if (e != PROVEN_OK) { result = bad(z, e); going = false; break; }
+                if (z->direct && out.ptr && z->has_fcs && z->fcs <= out.size - oa) {
+                    if (!z->lent) { z->own = z->hist; z->own_cap = z->hist_cap; z->lent = true; }
+                    z->hist = out.ptr + oa;
+                    z->hist_cap = (proven_size_t)z->fcs;
+                    const proven_size_t past = out.size - oa - z->hist_cap;
+                    z->slack = past < WILD ? past : WILD;
+                } else if (z->lent) {
+                    z->hist = z->own; z->hist_cap = z->own_cap; z->lent = false; z->slack = WILD;
+                }
                 z->state = Z_BLOCK;
                 break; }
             case Z_BLOCK: {
@@ -913,7 +977,7 @@ proven_err_t proven_zstd_decode(proven_zstd_decoder_t *z, proven_mem_view_t in, 
             case Z_DRAIN: {
                 const proven_size_t pending = z->hist_pos - z->drain, space = out.size - oa;
                 const proven_size_t k = pending < space ? pending : space;
-                if (k > 0) copy_bytes(out.ptr + oa, z->hist + z->drain, k);
+                if (k > 0 && out.ptr + oa != z->hist + z->drain) copy_bytes(out.ptr + oa, z->hist + z->drain, k);
                 oa += k;
                 z->drain += k;
                 if (z->drain < z->hist_pos) { going = false; break; }
@@ -949,6 +1013,7 @@ proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t 
     proven_zstd_decoder_t *z = NULL;
     proven_err_t e = proven_zstd_decoder_create(alloc, 0, &z);
     if (e != PROVEN_OK) return e;
+    z->direct = true;
     proven_size_t ia = 0, oa = 0;
     for (;;) {
         proven_size_t used = 0, made = 0;
