@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.90.0] - 2026-10-27
+
 ### Changed
 
 - **P-256 has a field code of its own** (RFC-0028 S-6; RFC-0014's C-7, reopened by the owner):
