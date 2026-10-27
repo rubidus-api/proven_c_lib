@@ -32,6 +32,23 @@
 void proven_crypto_chacha20(const proven_byte_t key[32], proven_u32 counter, const proven_byte_t nonce[12],
                             const proven_byte_t *in, proven_byte_t *out, proven_size_t len);
 
+/* Tests: 0 forces the portable ChaCha20, 4 or 8 at most that many blocks a call on the vector
+ * path (never more than the processor has), -1 the processor's widest again. The width in use. */
+int proven_crypto_chacha_force_width(int width);
+
+/* Poly1305's state: three limbs of 44, 44 and 42 bits where the compiler has 128-bit products,
+ * five of 26 bits elsewhere - and in the build with 32-bit limbs (PROVEN_CRYPTO_MP_LIMB_BITS=32),
+ * so that its gates run the 26-bit code on a 64-bit machine too. */
+#if defined(__SIZEOF_INT128__) && !(defined(PROVEN_CRYPTO_MP_LIMB_BITS) && PROVEN_CRYPTO_MP_LIMB_BITS == 32)
+#define PROVEN_CRYPTO_POLY1305_64 1
+typedef struct {
+    proven_u64 r[3];
+    proven_u64 h[3];
+    proven_u64 pad[2];
+    proven_byte_t buf[16];
+    proven_size_t buf_len;
+} proven_crypto_poly1305_t;
+#else
 typedef struct {
     proven_u32 r[5];
     proven_u32 h[5];
@@ -39,6 +56,7 @@ typedef struct {
     proven_byte_t buf[16];
     proven_size_t buf_len;
 } proven_crypto_poly1305_t;
+#endif
 
 void proven_crypto_poly1305_init(proven_crypto_poly1305_t *st, const proven_byte_t key[32]);
 void proven_crypto_poly1305_update(proven_crypto_poly1305_t *st, const proven_byte_t *m, proven_size_t len);

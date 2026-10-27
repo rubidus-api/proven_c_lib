@@ -1,4 +1,7 @@
 #include "proven_internal_crypto.h"
+#ifndef PROVEN_FREESTANDING
+#include "../../platform/proven_sys_chacha.h"
+#endif
 
 /* ChaCha20, Poly1305 and their AEAD (RFC 8439). Additions, rotations and XORs only: there is
  * no table and no data-dependent branch in any of it. */
@@ -45,11 +48,46 @@ static void cc_setup(proven_u32 st[16], const proven_byte_t key[32], proven_u32 
     for (int i = 0; i < 3; ++i) st[13 + i] = cc_load32(nonce + 4 * i);
 }
 
+/* The vector path's width: what the processor has, or what a test asked for. Read once. */
+#ifndef PROVEN_FREESTANDING
+static int g_cc_width = -2;                      /* -2: not asked yet; -1: asked for the widest */
+
+static int cc_width(void) {
+    int w = __atomic_load_n(&g_cc_width, __ATOMIC_RELAXED);
+    if (w < 0) {
+        w = proven_sys_chacha_width();
+        __atomic_store_n(&g_cc_width, w, __ATOMIC_RELAXED);
+    }
+    return w;
+}
+#endif
+
+int proven_crypto_chacha_force_width(int width) {
+#ifdef PROVEN_FREESTANDING
+    (void)width;
+    return 0;
+#else
+    int have = proven_sys_chacha_width();
+    int w = width < 0 ? have : width >= 8 && have >= 8 ? 8 : width >= 4 && have >= 4 ? 4 : 0;
+    __atomic_store_n(&g_cc_width, w, __ATOMIC_RELAXED);
+    return w;
+#endif
+}
+
 void proven_crypto_chacha20(const proven_byte_t key[32], proven_u32 counter, const proven_byte_t nonce[12],
                             const proven_byte_t *in, proven_byte_t *out, proven_size_t len) {
     proven_u32 st[16];
     proven_byte_t ks[64];
     cc_setup(st, key, counter, nonce);
+#ifndef PROVEN_FREESTANDING
+    /* Groups of blocks on the vector path; at most two blocks left, the portable way below. */
+    int w = len > 128 ? cc_width() : 0;
+    if (w > 0) {
+        proven_size_t done = proven_sys_chacha20_xor(st, in, out, len, w);
+        st[12] += (proven_u32)(done / 64);
+        in += done; out += done; len -= done;
+    }
+#endif
     while (len > 0) {
         cc_block(st, ks);
         st[12]++;
@@ -60,6 +98,59 @@ void proven_crypto_chacha20(const proven_byte_t key[32], proven_u32 counter, con
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)st, .size = sizeof st });
     proven_mem_wipe((proven_mem_mut_t){ .ptr = ks, .size = sizeof ks });
 }
+
+#ifdef PROVEN_CRYPTO_POLY1305_64
+
+/* Poly1305 over three limbs of 44, 44 and 42 bits: a product of a limb and r is at most 2^88,
+ * five of the reduced ones summed fit 128 bits with room (poly1305-donna's 64-bit layout). */
+
+__extension__ typedef unsigned __int128 poly_wide_t;
+
+static proven_u64 cc_load64(const proven_byte_t *p) {
+    return (proven_u64)cc_load32(p) | ((proven_u64)cc_load32(p + 4) << 32);
+}
+
+static void cc_store64(proven_byte_t *p, proven_u64 v) { cc_store32(p, (proven_u32)v); cc_store32(p + 4, (proven_u32)(v >> 32)); }
+
+#define M44 0xfffffffffffull
+#define M42 0x3ffffffffffull
+
+void proven_crypto_poly1305_init(proven_crypto_poly1305_t *st, const proven_byte_t key[32]) {
+    proven_u64 t0 = cc_load64(key), t1 = cc_load64(key + 8);
+    st->r[0] = t0 & 0xffc0fffffffull;
+    st->r[1] = ((t0 >> 44) | (t1 << 20)) & 0xfffffc0ffffull;
+    st->r[2] = (t1 >> 24) & 0x00ffffffc0full;
+    for (int i = 0; i < 3; ++i) st->h[i] = 0;
+    st->pad[0] = cc_load64(key + 16); st->pad[1] = cc_load64(key + 24);
+    st->buf_len = 0;
+}
+
+static void poly_blocks(proven_crypto_poly1305_t *st, const proven_byte_t *m, proven_size_t blocks, proven_u64 hibit) {
+    const proven_u64 r0 = st->r[0], r1 = st->r[1], r2 = st->r[2];
+    const proven_u64 s1 = r1 * (5 << 2), s2 = r2 * (5 << 2);
+    proven_u64 h0 = st->h[0], h1 = st->h[1], h2 = st->h[2];
+    while (blocks-- > 0) {
+        proven_u64 t0 = cc_load64(m), t1 = cc_load64(m + 8);
+        h0 += t0 & M44;
+        h1 += ((t0 >> 44) | (t1 << 20)) & M44;
+        h2 += ((t1 >> 24) & M42) | hibit;
+        poly_wide_t d0 = (poly_wide_t)h0 * r0 + (poly_wide_t)h1 * s2 + (poly_wide_t)h2 * s1;
+        poly_wide_t d1 = (poly_wide_t)h0 * r1 + (poly_wide_t)h1 * r0 + (poly_wide_t)h2 * s2;
+        poly_wide_t d2 = (poly_wide_t)h0 * r2 + (poly_wide_t)h1 * r1 + (poly_wide_t)h2 * r0;
+        proven_u64 c;
+        c = (proven_u64)(d0 >> 44); h0 = (proven_u64)d0 & M44; d1 += c;
+        c = (proven_u64)(d1 >> 44); h1 = (proven_u64)d1 & M44; d2 += c;
+        c = (proven_u64)(d2 >> 42); h2 = (proven_u64)d2 & M42;
+        h0 += c * 5; c = h0 >> 44; h0 &= M44;
+        h1 += c;
+        m += 16;
+    }
+    st->h[0] = h0; st->h[1] = h1; st->h[2] = h2;
+}
+
+#define POLY_HIBIT (1ull << 40)
+
+#else
 
 /* Poly1305 over five 26-bit limbs: every product fits 64 bits with room for the sums. */
 
@@ -102,15 +193,57 @@ static void poly_blocks(proven_crypto_poly1305_t *st, const proven_byte_t *m, pr
     st->h[0] = h0; st->h[1] = h1; st->h[2] = h2; st->h[3] = h3; st->h[4] = h4;
 }
 
+#define POLY_HIBIT (1u << 24)
+
+#endif
+
+/* Long runs of whole blocks on the AVX2 path, four lanes at a time; it works on five 26-bit
+ * limbs, so the 64-bit layout is carried there and back. Returns the blocks it did. */
+static proven_size_t poly_vector(proven_crypto_poly1305_t *st, const proven_byte_t *m, proven_size_t blocks) {
+#ifdef PROVEN_FREESTANDING
+    (void)st; (void)m; (void)blocks;
+    return 0;
+#else
+    if (blocks < 16 || cc_width() < 8) return 0;
+    blocks &= ~(proven_size_t)3;
+#ifdef PROVEN_CRYPTO_POLY1305_64
+    proven_u64 h0 = st->h[0], h1 = st->h[1], h2 = st->h[2], c;
+    c = h0 >> 44; h0 &= M44; h1 += c;
+    c = h1 >> 44; h1 &= M44; h2 += c;
+    c = h2 >> 42; h2 &= M42; h0 += c * 5;
+    c = h0 >> 44; h0 &= M44; h1 += c;
+    c = h1 >> 44; h1 &= M44; h2 += c;
+    const proven_u64 r0 = st->r[0], r1 = st->r[1], r2 = st->r[2];
+    proven_u32 h[5] = { (proven_u32)(h0 & 0x3ffffff), (proven_u32)(((h0 >> 26) | (h1 << 18)) & 0x3ffffff), (proven_u32)((h1 >> 8) & 0x3ffffff),
+                        (proven_u32)(((h1 >> 34) | (h2 << 10)) & 0x3ffffff), (proven_u32)(h2 >> 16) };
+    proven_u32 r[5] = { (proven_u32)(r0 & 0x3ffffff), (proven_u32)(((r0 >> 26) | (r1 << 18)) & 0x3ffffff), (proven_u32)((r1 >> 8) & 0x3ffffff),
+                        (proven_u32)(((r1 >> 34) | (r2 << 10)) & 0x3ffffff), (proven_u32)(r2 >> 16) };
+    proven_sys_poly1305_blocks(h, r, m, blocks);
+    /* Back to 44, 44 and 42 bits, the carries kept: the limbs may be a little over 26 bits. */
+    h0 = (proven_u64)h[0] + ((proven_u64)h[1] << 26);
+    h1 = (h0 >> 44) + ((proven_u64)h[2] << 8) + ((proven_u64)h[3] << 34); h0 &= M44;
+    h2 = (h1 >> 44) + ((proven_u64)h[4] << 16); h1 &= M44;
+    st->h[0] = h0; st->h[1] = h1; st->h[2] = h2;
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)h, .size = sizeof h });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)r, .size = sizeof r });
+#else
+    proven_sys_poly1305_blocks(st->h, st->r, m, blocks);
+#endif
+    return blocks;
+#endif
+}
+
 void proven_crypto_poly1305_update(proven_crypto_poly1305_t *st, const proven_byte_t *m, proven_size_t len) {
     if (st->buf_len > 0) {
         while (len > 0 && st->buf_len < 16) { st->buf[st->buf_len++] = *m++; len--; }
         if (st->buf_len < 16) return;
-        poly_blocks(st, st->buf, 1, 1u << 24);
+        poly_blocks(st, st->buf, 1, POLY_HIBIT);
         st->buf_len = 0;
     }
     proven_size_t blocks = len / 16;
-    if (blocks > 0) { poly_blocks(st, m, blocks, 1u << 24); m += blocks * 16; len -= blocks * 16; }
+    proven_size_t fast = poly_vector(st, m, blocks);
+    m += fast * 16; len -= fast * 16; blocks -= fast;
+    if (blocks > 0) { poly_blocks(st, m, blocks, POLY_HIBIT); m += blocks * 16; len -= blocks * 16; }
     while (len > 0) { st->buf[st->buf_len++] = *m++; len--; }
 }
 
@@ -121,6 +254,31 @@ void proven_crypto_poly1305_final(proven_crypto_poly1305_t *st, proven_byte_t ta
         while (st->buf_len < 16) st->buf[st->buf_len++] = 0;
         poly_blocks(st, st->buf, 1, 0);
     }
+#ifdef PROVEN_CRYPTO_POLY1305_64
+    proven_u64 h0 = st->h[0], h1 = st->h[1], h2 = st->h[2];
+    proven_u64 c;
+    c = h1 >> 44; h1 &= M44; h2 += c;
+    c = h2 >> 42; h2 &= M42; h0 += c * 5;
+    c = h0 >> 44; h0 &= M44; h1 += c;
+    c = h1 >> 44; h1 &= M44; h2 += c;
+    c = h2 >> 42; h2 &= M42; h0 += c * 5;
+    c = h0 >> 44; h0 &= M44; h1 += c;
+    /* g = h + 5 - 2^130, kept when it did not borrow; a mask, not a branch (h is SECRET). */
+    proven_u64 g0 = h0 + 5; c = g0 >> 44; g0 &= M44;
+    proven_u64 g1 = h1 + c; c = g1 >> 44; g1 &= M44;
+    proven_u64 g2 = h2 + c - (1ull << 42);
+    proven_u64 mask = (g2 >> 63) - 1u;           /* all ones when g2 did not go negative */
+    g0 &= mask; g1 &= mask; g2 &= mask;
+    mask = ~mask;
+    h0 = (h0 & mask) | g0; h1 = (h1 & mask) | g1; h2 = (h2 & mask) | g2;
+    /* h + pad mod 2^128. */
+    proven_u64 t0 = st->pad[0], t1 = st->pad[1];
+    h0 += t0 & M44; c = h0 >> 44; h0 &= M44;
+    h1 += (((t0 >> 44) | (t1 << 20)) & M44) + c; c = h1 >> 44; h1 &= M44;
+    h2 += ((t1 >> 24) & M42) + c; h2 &= M42;
+    cc_store64(tag, h0 | (h1 << 44));
+    cc_store64(tag + 8, (h1 >> 20) | (h2 << 24));
+#else
     proven_u32 h0 = st->h[0], h1 = st->h[1], h2 = st->h[2], h3 = st->h[3], h4 = st->h[4];
     proven_u32 c;
     c = h1 >> 26; h1 &= 0x3ffffffu; h2 += c;
@@ -149,6 +307,7 @@ void proven_crypto_poly1305_final(proven_crypto_poly1305_t *st, proven_byte_t ta
     f = (proven_u64)h2 + st->pad[2] + (f >> 32); h2 = (proven_u32)f;
     f = (proven_u64)h3 + st->pad[3] + (f >> 32); h3 = (proven_u32)f;
     cc_store32(tag + 0, h0); cc_store32(tag + 4, h1); cc_store32(tag + 8, h2); cc_store32(tag + 12, h3);
+#endif
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)st, .size = sizeof *st });
 }
 

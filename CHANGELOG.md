@@ -18,6 +18,20 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **ChaCha20-Poly1305 is about four times faster on x86** (RFC-0028 S-1). ChaCha20 runs four
+  blocks at a time with SSE2 and eight with AVX2, and Poly1305 four blocks at a time with AVX2,
+  in the platform layer (`platform/proven_sys_chacha.c`), chosen at run time as the AES
+  instructions are; where neither exists, and in the freestanding build, the portable code runs
+  as before. The portable Poly1305 uses three 64-bit limbs with 128-bit products where the
+  compiler has them (five 26-bit limbs elsewhere, and in the build with 32-bit limbs). Sealing
+  16 KiB went from 376 to 1,503 MiB/s on the development machine (AVX2), and 1,400 bytes from
+  about 370 to 883 MiB/s. Output is bit-identical; no branch or index depends on the key or the
+  text on any path. Tests: `test_unit_crypto` runs every ChaCha20-Poly1305 case on the portable
+  code and on each width the processor has, adds ChaCha20 alone (counters to 2^32, and the wrap
+  past it compared between the paths) and Poly1305 alone (RFC 8439 appendix A.3's edge cases).
+
 ## [0.84.0] - 2026-10-27
 
 ### Added

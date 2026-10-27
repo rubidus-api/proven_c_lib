@@ -100,6 +100,7 @@ PROVEN_BUILD_SOURCE("platform/proven_sys_net.c", PROVEN_SOURCE_HOSTED_ONLY)
 PROVEN_BUILD_SOURCE("platform/proven_sys_env.c", PROVEN_SOURCE_HOSTED_ONLY)
 PROVEN_BUILD_SOURCE("platform/proven_sys_trust.c", PROVEN_SOURCE_HOSTED_ONLY)
 PROVEN_BUILD_SOURCE("platform/proven_sys_aes.c", PROVEN_SOURCE_HOSTED_ONLY)   /* hardware AES; the freestanding build is portable only */
+PROVEN_BUILD_SOURCE("platform/proven_sys_chacha.c", PROVEN_SOURCE_HOSTED_ONLY)   /* ChaCha20 on vector lanes; the freestanding build is portable only */
 PROVEN_BUILD_SOURCE("platform/proven_sys_random.c", PROVEN_SOURCE_HOSTED_ONLY)   /* no OS CSPRNG on bare metal */
 PROVEN_BUILD_SOURCE("platform/proven_sys_thread.c", PROVEN_SOURCE_HOSTED_ONLY)
 PROVEN_BUILD_SOURCE("platform/proven_sys_io.c", PROVEN_SOURCE_HOSTED_ONLY)

@@ -908,7 +908,7 @@ In TLS 1.3:
 | What | Which |
 |---|---|
 | Cipher suites | `TLS_AES_128_GCM_SHA256` (0x1301), `TLS_AES_256_GCM_SHA384` (0x1302), `TLS_CHACHA20_POLY1305_SHA256` (0x1303) |
-| Their order | AES-128, AES-256, ChaCha20 on a processor with AES instructions (x86 with AES-NI - 64-bit, and 32-bit too - and AArch64 with the cryptography extension). **ChaCha20 first everywhere else**: without those instructions this library's AES is constant-time and some thirty times slower than its ChaCha20 |
+| Their order | AES-128, AES-256, ChaCha20 on a processor with AES instructions (x86 with AES-NI - 64-bit, and 32-bit too - and AArch64 with the cryptography extension). **ChaCha20 first everywhere else**: without those instructions this library's AES is constant-time and at least thirty times slower than its ChaCha20, which on x86 runs four blocks at a time with SSE2 and eight with AVX2 (since v0.85.0; the processor is asked at run time) |
 | Key exchange | X25519; P-256 when the peer insists (one extra round trip) |
 | This side's key | ECDSA with P-256, Ed25519, or RSA of 2048 to 4096 bits (signing with RSA-PSS and SHA-256) |
 | A peer's key | Those, ECDSA with P-384, and RSA (2048 to 8192 bits, RSA-PSS) |

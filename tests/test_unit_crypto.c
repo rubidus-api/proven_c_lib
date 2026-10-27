@@ -3,6 +3,7 @@
 #include "../src/proven/proven_internal_crypto.h"
 #include "test_unit_crypto_vectors.h"
 #include "../platform/proven_sys_aes.h"
+#include "../platform/proven_sys_chacha.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,6 +51,61 @@ static int split(const char *line) {
 
 static proven_byte_t g_out[2100], g_out2[2100];
 
+/* ChaCha20-Poly1305, ChaCha20 alone and Poly1305 alone over every case, on whichever ChaCha20
+ * path is in force: each case seals to the expected bytes, opens again, and refuses a forgery
+ * leaving zeros. Returns the number of cases that failed. */
+static proven_size_t run_chacha(void) {
+    proven_size_t bad = 0;
+    for (proven_size_t i = 0; i < COUNT(CRV_CHACHA); ++i) {
+        split(CRV_CHACHA[i]);
+        proven_byte_t tag[16];
+        proven_crypto_chacha20poly1305_seal(g_bytes[0], g_bytes[1], V(2), V(3), g_out, tag);
+        bool ok = memcmp(g_out, g_bytes[4], g_len[3]) == 0 && memcmp(tag, g_bytes[5], 16) == 0;
+        ok = ok && proven_crypto_chacha20poly1305_open(g_bytes[0], g_bytes[1], V(2), V(4), g_bytes[5], g_out2) && memcmp(g_out2, g_bytes[3], g_len[3]) == 0;
+        /* In place. */
+        memcpy(g_out2, g_bytes[3], g_len[3]);
+        proven_crypto_chacha20poly1305_seal(g_bytes[0], g_bytes[1], V(2), (proven_mem_view_t){ g_out2, g_len[3] }, g_out2, tag);
+        ok = ok && memcmp(g_out2, g_bytes[4], g_len[3]) == 0;
+        tag[0] ^= 1;
+        memset(g_out2, 0xee, sizeof g_out2);
+        ok = ok && !proven_crypto_chacha20poly1305_open(g_bytes[0], g_bytes[1], V(2), V(4), tag, g_out2);
+        for (proven_size_t k = 0; k < g_len[4]; ++k) ok = ok && g_out2[k] == 0;
+        if (g_len[2] > 0) { g_bytes[2][g_len[2] - 1] ^= 0x80; ok = ok && !proven_crypto_chacha20poly1305_open(g_bytes[0], g_bytes[1], V(2), V(4), g_bytes[5], g_out2); }
+        if (!ok) bad++;
+    }
+    for (proven_size_t i = 0; i < COUNT(CRV_CHACHA20); ++i) {
+        split(CRV_CHACHA20[i]);
+        proven_u32 counter = (proven_u32)strtoul(g_field[1], NULL, 16);
+        proven_crypto_chacha20(g_bytes[0], counter, g_bytes[2], g_bytes[3], g_out, g_len[3]);
+        if (memcmp(g_out, g_bytes[4], g_len[4]) != 0) bad++;
+    }
+    for (proven_size_t i = 0; i < COUNT(CRV_POLY1305); ++i) {
+        split(CRV_POLY1305[i]);
+        proven_byte_t tag[16];
+        proven_crypto_poly1305_t st;
+        proven_crypto_poly1305_init(&st, g_bytes[0]);
+        /* In uneven pieces, so that the buffered partial block is crossed too. */
+        for (proven_size_t at = 0, step = 1; at < g_len[1]; at += step, step = step * 3 % 37 + 1)
+            proven_crypto_poly1305_update(&st, g_bytes[1] + at, step < g_len[1] - at ? step : g_len[1] - at);
+        proven_crypto_poly1305_final(&st, tag);
+        if (memcmp(tag, g_bytes[2], 16) != 0) bad++;
+        /* And whole, so that long runs of blocks take the vector path where there is one; then
+         * one block first, so that they start from a state that is not zero. */
+        proven_crypto_poly1305_init(&st, g_bytes[0]);
+        proven_crypto_poly1305_update(&st, g_bytes[1], g_len[1]);
+        proven_crypto_poly1305_final(&st, tag);
+        if (memcmp(tag, g_bytes[2], 16) != 0) bad++;
+        if (g_len[1] > 17) {
+            proven_crypto_poly1305_init(&st, g_bytes[0]);
+            proven_crypto_poly1305_update(&st, g_bytes[1], 16);
+            proven_crypto_poly1305_update(&st, g_bytes[1] + 16, g_len[1] - 16);
+            proven_crypto_poly1305_final(&st, tag);
+            if (memcmp(tag, g_bytes[2], 16) != 0) bad++;
+        }
+    }
+    return bad;
+}
+
 /* AES-GCM over every case, on whichever implementation contexts get now. */
 static proven_size_t run_gcm(void) {
     proven_size_t good = 0;
@@ -88,24 +144,37 @@ int main(void) {
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("ChaCha20-Poly1305",
-        "RFC 8439's example and lengths on each side of every block boundary; a changed tag, text or header is refused.",
-        "Check src/proven/crypto_chacha.c.");
+        "RFC 8439's example and lengths on each side of every block boundary and of the vector path's groups, on the portable code and each vector width; a changed tag, text or header is refused.",
+        "Check src/proven/crypto_chacha.c (portable, Poly1305) and platform/proven_sys_chacha.c (vector).");
     {
-        proven_size_t good = 0;
-        for (proven_size_t i = 0; i < COUNT(CRV_CHACHA); ++i) {
-            split(CRV_CHACHA[i]);
-            proven_byte_t tag[16];
-            proven_crypto_chacha20poly1305_seal(g_bytes[0], g_bytes[1], V(2), V(3), g_out, tag);
-            bool ok = memcmp(g_out, g_bytes[4], g_len[3]) == 0 && memcmp(tag, g_bytes[5], 16) == 0;
-            ok = ok && proven_crypto_chacha20poly1305_open(g_bytes[0], g_bytes[1], V(2), V(4), g_bytes[5], g_out2) && memcmp(g_out2, g_bytes[3], g_len[3]) == 0;
-            tag[0] ^= 1;
-            memset(g_out2, 0xee, sizeof g_out2);
-            ok = ok && !proven_crypto_chacha20poly1305_open(g_bytes[0], g_bytes[1], V(2), V(4), tag, g_out2);
-            for (proven_size_t k = 0; k < g_len[4]; ++k) ok = ok && g_out2[k] == 0;
-            if (g_len[2] > 0) { g_bytes[2][g_len[2] - 1] ^= 0x80; ok = ok && !proven_crypto_chacha20poly1305_open(g_bytes[0], g_bytes[1], V(2), V(4), g_bytes[5], g_out2); }
-            if (ok) good++;
+        PROVEN_TEST_ASSERT(COUNT(CRV_CHACHA) >= 31 && COUNT(CRV_CHACHA20) >= 10 && COUNT(CRV_POLY1305) >= 25, "the vectors are all there", "");
+        PROVEN_TEST_ASSERT(proven_crypto_chacha_force_width(0) == 0, "the test hook forces the portable code", "");
+        PROVEN_TEST_ASSERT(run_chacha() == 0, "the portable code: every case of the AEAD, ChaCha20 alone (counters up to 2^32) and Poly1305 alone (RFC 8439 A.3)", "");
+        int widest = proven_sys_chacha_width();
+        for (int w = 4; w <= widest; w *= 2) {
+            PROVEN_TEST_ASSERT(proven_crypto_chacha_force_width(w) == w, "the hook selects the vector width", "");
+            proven_size_t bad = run_chacha();
+            char what[96];
+            snprintf(what, sizeof what, "%d blocks a call: every case (%zu failed)", w, (size_t)bad);
+            PROVEN_TEST_ASSERT(bad == 0, what, "platform/proven_sys_chacha.c");
+            /* Against the portable code on every length to 1,100 bytes, with counters that wrap past 2^32. */
+            static proven_byte_t key[32], nonce[12], text[1100], a[1100], b[1100];
+            for (int k = 0; k < 32; ++k) key[k] = (proven_byte_t)(k * 7 + w);
+            for (int k = 0; k < 12; ++k) nonce[k] = (proven_byte_t)(k * 13 + 1);
+            for (int k = 0; k < 1100; ++k) text[k] = (proven_byte_t)(k * 31 + 5);
+            proven_size_t differ = 0;
+            for (proven_size_t len = 0; len <= sizeof text; len += len < 600 ? 1 : 37) {
+                proven_u32 counter = (proven_u32)(0xfffffff0u + len % 23);
+                proven_crypto_chacha_force_width(w);
+                proven_crypto_chacha20(key, counter, nonce, text, a, len);
+                proven_crypto_chacha_force_width(0);
+                proven_crypto_chacha20(key, counter, nonce, text, b, len);
+                if (memcmp(a, b, len) != 0) differ++;
+            }
+            PROVEN_TEST_ASSERT(differ == 0, "the vector path and the portable code give the same keystream at every length", "");
         }
-        PROVEN_TEST_ASSERT(good == COUNT(CRV_CHACHA) && good >= 16, "every case seals to the expected bytes, opens again, and refuses a forgery leaving zeros", "");
+        if (widest == 0) PROVEN_TEST_INFO("no vector path on this processor or build; the portable code alone was checked");
+        PROVEN_TEST_ASSERT(proven_crypto_chacha_force_width(-1) == widest, "the hook restores the processor's widest", "");
     }
 
     // ---------------------------------------------------------------
