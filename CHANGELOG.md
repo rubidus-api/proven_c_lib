@@ -18,6 +18,18 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **The Brotli decoder is 1.1 to 1.2 times faster** (RFC-0028 S-3): a copy inside the history
+  goes sixteen bytes at a time at any length where the ring does not wrap (eight from 8 to 15
+  back, and closer than 8 from a multiple of the distance), each as one load and one store - a
+  loop of byte stores had stayed a loop; the bit reader no longer clears the bits above its
+  count on every fill (they are the input's own next bits), and a code's table is built with a
+  byte-table bit reversal. On four inputs at qualities 5 to 11, from 0.53-0.73 of libbrotli's
+  speed (same process) to 0.62-0.84; the target of 0.7 is met for the executable and JSON at
+  11, not for text (0.62-0.66). Output and verdicts unchanged: 2,362 streams decode byte-equal
+  under the sanitizers, and libbrotli's verdicts on 1,437,490 damaged streams are as before.
+
 ## [0.86.0] - 2026-10-27
 
 ### Changed

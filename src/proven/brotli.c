@@ -179,10 +179,28 @@ static bool symbol(proven_brotli_decoder_t *b, proven_io_t *io, const proven_u16
 
 /* --- prefix codes --- */
 
+/* The low `len` bits of `code` (len at most 15) in reverse order, a byte at a time. */
+static const proven_u8 REV8[256] = {
+    0, 128, 64, 192, 32, 160, 96, 224, 16, 144, 80, 208, 48, 176, 112, 240,
+    8, 136, 72, 200, 40, 168, 104, 232, 24, 152, 88, 216, 56, 184, 120, 248,
+    4, 132, 68, 196, 36, 164, 100, 228, 20, 148, 84, 212, 52, 180, 116, 244,
+    12, 140, 76, 204, 44, 172, 108, 236, 28, 156, 92, 220, 60, 188, 124, 252,
+    2, 130, 66, 194, 34, 162, 98, 226, 18, 146, 82, 210, 50, 178, 114, 242,
+    10, 138, 74, 202, 42, 170, 106, 234, 26, 154, 90, 218, 58, 186, 122, 250,
+    6, 134, 70, 198, 38, 166, 102, 230, 22, 150, 86, 214, 54, 182, 118, 246,
+    14, 142, 78, 206, 46, 174, 110, 238, 30, 158, 94, 222, 62, 190, 126, 254,
+    1, 129, 65, 193, 33, 161, 97, 225, 17, 145, 81, 209, 49, 177, 113, 241,
+    9, 137, 73, 201, 41, 169, 105, 233, 25, 153, 89, 217, 57, 185, 121, 249,
+    5, 133, 69, 197, 37, 165, 101, 229, 21, 149, 85, 213, 53, 181, 117, 245,
+    13, 141, 77, 205, 45, 173, 109, 237, 29, 157, 93, 221, 61, 189, 125, 253,
+    3, 131, 67, 195, 35, 163, 99, 227, 19, 147, 83, 211, 51, 179, 115, 243,
+    11, 139, 75, 203, 43, 171, 107, 235, 27, 155, 91, 219, 59, 187, 123, 251,
+    7, 135, 71, 199, 39, 167, 103, 231, 23, 151, 87, 215, 55, 183, 119, 247,
+    15, 143, 79, 207, 47, 175, 111, 239, 31, 159, 95, 223, 63, 191, 127, 255,
+};
 static unsigned reverse(unsigned code, unsigned len) {
-    unsigned r = 0;
-    for (unsigned i = 0; i < len; ++i) { r = (r << 1) | (code & 1u); code >>= 1; }
-    return r;
+    const unsigned r16 = ((unsigned)REV8[code & 0xffu] << 8) | REV8[(code >> 8) & 0xffu];
+    return r16 >> (16 - len);
 }
 
 /* Build the table of a complete code from the lengths of `n` symbols into `t`, or with `t`
@@ -684,7 +702,7 @@ static unsigned context(const proven_brotli_decoder_t *b, unsigned mode) {
 }
 
 /* The distance of the command (section 4) from its code and extra bits; 0 if invalid. */
-static proven_u32 distance_of(proven_brotli_decoder_t *b, unsigned code, proven_u32 extra) {
+static inline proven_u32 distance_of(const proven_brotli_decoder_t *b, unsigned code, proven_u32 extra) {
     if (code < 16) {
         static const proven_u8 WHICH[16] = { 0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1 };
         static const proven_i8 DELTA[16] = { 0, 0, 0, 0, -1, 1, -2, 2, -3, 3, -1, 1, -2, 2, -3, 3 };
@@ -698,7 +716,7 @@ static proven_u32 distance_of(proven_brotli_decoder_t *b, unsigned code, proven_
     return ((offset + extra) << b->npostfix) + (c & ((1u << b->npostfix) - 1u)) + b->ndirect + 1;
 }
 
-static unsigned distance_extra(const proven_brotli_decoder_t *b, unsigned code) {
+static inline unsigned distance_extra(const proven_brotli_decoder_t *b, unsigned code) {
     if (code < 16 + b->ndirect) return 0;
     return 1 + ((code - b->ndirect - 16) >> (b->npostfix + 1));
 }
@@ -716,9 +734,10 @@ HOT proven_u64 get64(const proven_byte_t *p) {
     return (proven_u64)p[0] | ((proven_u64)p[1] << 8) | ((proven_u64)p[2] << 16) | ((proven_u64)p[3] << 24) |
            ((proven_u64)p[4] << 32) | ((proven_u64)p[5] << 40) | ((proven_u64)p[6] << 48) | ((proven_u64)p[7] << 56);
 }
-HOT void put64(proven_byte_t *p, proven_u64 v) {
-    for (unsigned i = 0; i < 8; ++i) p[i] = (proven_byte_t)(v >> (8 * i));
-}
+/* Bytes moved as they are, eight and sixteen at once: one load and one store each (a loop of
+ * byte stores was left a loop at -O2). */
+HOT void copy8(proven_byte_t *d, const proven_byte_t *s) { __builtin_memcpy(d, s, 8); }
+HOT void copy16(proven_byte_t *d, const proven_byte_t *s) { __builtin_memcpy(d, s, 16); }
 
 /* The bit reader of the fast path, in locals: the bits, how many, and where the input is. */
 typedef struct {
@@ -727,13 +746,14 @@ typedef struct {
     const proven_byte_t *p;
 } proven_brotli_reader_t;
 
-/* At least 56 bits, from eight bytes of input that are there. Zero above `n`. */
+/* At least 56 bits, from eight bytes of input that are there. Above `n` the bits are those of
+ * the input bytes from `p` on - what the next fill ORs in again, unchanged - so they need not
+ * be cleared here; sync_out clears them for the step-by-step path, which keeps zeros there. */
 HOT void fill(proven_brotli_reader_t *r) {
     const unsigned k = (63u - r->n) >> 3;
     r->bits |= get64(r->p) << r->n;
     r->n += 8 * k;
     r->p += k;
-    r->bits &= ((proven_u64)1 << r->n) - 1u;
 }
 
 HOT unsigned take_sym(proven_brotli_reader_t *r, const proven_u16 *t) {
@@ -753,7 +773,7 @@ HOT proven_u32 take_bits(proven_brotli_reader_t *r, unsigned n) {
 
 /* The reader into the decoder and the call's input, and back. */
 static void sync_out(proven_brotli_decoder_t *b, proven_io_t *io, const proven_brotli_reader_t *r) {
-    b->bitbuf = r->bits;
+    b->bitbuf = r->n < 64 ? r->bits & (((proven_u64)1 << r->n) - 1u) : r->bits;
     b->bitcnt = r->n;
     io->in_at = (proven_size_t)(r->p - io->in);
 }
@@ -768,14 +788,27 @@ static void sync_in(const proven_brotli_decoder_t *b, const proven_io_t *io, pro
  * written past its end (into them, or into the SLACK after the history's last byte). */
 static proven_u64 copy_back(proven_byte_t *ring, proven_size_t cap, proven_u64 pos, proven_u64 d, proven_u32 n, bool spare) {
     const proven_size_t mask = cap - 1;
-    if (spare && d >= 16 && n <= 48) {
+    if (spare) {
         const proven_size_t to = (proven_size_t)(pos & mask), from = (proven_size_t)((pos - d) & mask);
         if (to + n <= cap && from + n <= cap) {
-            /* Sixteen at a time: each sixteen read were written at least sixteen bytes before. */
-            for (proven_size_t i = 0; i < n; i += 16) {
-                put64(ring + to + i, get64(ring + from + i));
-                put64(ring + to + i + 8, get64(ring + from + i + 8));
+            proven_byte_t *dst = ring + to;
+            const proven_byte_t *src = ring + from;
+            if (d >= 16) {
+                /* Sixteen at a time: each sixteen read were written at least sixteen bytes before. */
+                for (proven_size_t i = 0; i < n; i += 16) copy16(dst + i, src + i);
+                return pos + n;
             }
+            if (d >= 8) {
+                for (proven_size_t i = 0; i < n; i += 8) copy8(dst + i, src + i);
+                return pos + n;
+            }
+            /* Closer than eight: the first bytes one at a time until the pattern of period `d`
+             * is written out to `step`, the smallest multiple of `d` that is at least eight;
+             * then eight at a time from `step` back, which repeats it. */
+            const proven_size_t step = (proven_size_t)d * ((8 + (proven_size_t)d - 1) / (proven_size_t)d);
+            proven_size_t i = 0;
+            for (; i < step && i < n; ++i) dst[i] = src[i];
+            for (; i < n; i += 8) copy8(dst + i, dst + i - step);
             return pos + n;
         }
     }
@@ -789,7 +822,7 @@ static proven_u64 copy_back(proven_byte_t *ring, proven_size_t cap, proven_u64 p
         proven_size_t i = 0;
         if (d >= 8) {
             /* Eight at a time: each eight read were written at least eight bytes before. */
-            for (; i + 8 <= k; i += 8) put64(dst + i, get64(src + i));
+            for (; i + 8 <= k; i += 8) copy8(dst + i, src + i);
         }
         for (; i < k; ++i) dst[i] = src[i];
         pos += k;

@@ -1335,10 +1335,10 @@ out different, and 11,242 that it accepted were refused here - each a stream tha
 the input does, with the same output, whose remaining bytes libbrotli's one-call decoder
 ignores and `proven_brotli_decode_all` (like Python's binding of libbrotli) does not.
 
-**Speed.** On the development machine, the C sources of this library (2.2 MB) compressed by
-libbrotli at qualities 1, 5 and 11 decode at about 170, 215 and 235 MiB/s - 0.54 to 0.68 of
-libbrotli's own decoder in the same process (about 260, 390 and 410 MiB/s); an uncompressed
-meta-block or a long run is copied at libbrotli's speed.
+**Speed.** On the development machine, the C sources of this library (2.9 MiB) compressed by
+libbrotli at qualities 1, 5 and 11 decode at about 195, 265 and 290 MiB/s - 0.65 to 0.73 of
+libbrotli's own decoder in the same process (about 270, 410 and 435 MiB/s; v0.87.0, from 0.57
+to 0.65 before); an uncompressed meta-block or a long run is copied at libbrotli's speed.
 
 ## 9. What is accepted, what is not here, and how this was tested
 
