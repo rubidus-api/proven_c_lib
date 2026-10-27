@@ -50,8 +50,10 @@ int main(void) {
     ex_app_t app = { 0 };
 
     // ---- 루프 ---------------------------------------------------------------------
-    /* 루프는 완료되는 소켓 작업들, 타이머 묶음, 그리고 다른 스레드가 게시할 수 있는 큐다. */
-    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "루프");
+    /* 루프는 완료되는 소켓 작업들, 타이머 묶음, 그리고 다른 스레드가 게시할 수 있는 큐다.
+     * 옵션은 루프가 일을 하는 방식을 고른다. AUTO는 proven_loop_create가 주는 것과 같다. */
+    EXAMPLE_REQUIRE(proven_loop_create_ex(heap, &(proven_loop_options_t){ .backend = PROVEN_LOOP_BACKEND_AUTO }, &app.loop) == PROVEN_OK, "루프");
+    EXAMPLE_REQUIRE(proven_loop_backend(app.loop) != PROVEN_LOOP_BACKEND_AUTO, "어느 백엔드가 일하는지 말한다");
 
     // ---- 타이머 --------------------------------------------------------------------
     /* 타이머 구조체는 여러분의 것이다: 여러분의 상태 안에 살고, 맞추는 데 아무것도 할당하지

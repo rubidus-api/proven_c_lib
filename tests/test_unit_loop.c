@@ -100,6 +100,43 @@ int main(void) {
     memset(scratch.ptr, 0xa5, scratch.size);
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("backends",
+        "proven_loop_create_ex makes the loop with the backend asked for, or says PROVEN_ERR_UNSUPPORTED; AUTO is the port on Windows and a working backend elsewhere.",
+        "Check loop_create and loop_pick in src/proven/loop.c.");
+    {
+        const proven_loop_backend_t got = proven_loop_backend(g_loop);
+#if defined(_WIN32) || defined(_WIN64)
+        PROVEN_TEST_ASSERT(got == PROVEN_LOOP_BACKEND_IOCP, "AUTO is the completion port on Windows", "");
+#else
+        PROVEN_TEST_ASSERT(got == PROVEN_LOOP_BACKEND_SELECTOR || got == PROVEN_LOOP_BACKEND_URING, "AUTO is never AUTO", "");
+#endif
+        proven_loop_t *x = (proven_loop_t *)1;
+        PROVEN_TEST_ASSERT(proven_loop_create_ex(heap, &(proven_loop_options_t){ .backend = (proven_loop_backend_t)9 }, &x) == PROVEN_ERR_INVALID_ARG && x == NULL,
+            "an unknown backend is PROVEN_ERR_INVALID_ARG", "");
+        PROVEN_TEST_ASSERT(proven_loop_create_ex(heap, NULL, &x) == PROVEN_OK && proven_loop_backend(x) == got, "no options: proven_loop_create's", "");
+        proven_loop_destroy(x);
+        const proven_loop_backend_t kinds[] = { PROVEN_LOOP_BACKEND_SELECTOR, PROVEN_LOOP_BACKEND_URING, PROVEN_LOOP_BACKEND_IOCP };
+        int made = 0;
+        for (size_t i = 0; i < sizeof kinds / sizeof kinds[0]; ++i) {
+            x = (proven_loop_t *)1;
+            const proven_err_t e = proven_loop_create_ex(heap, &(proven_loop_options_t){ .backend = kinds[i] }, &x);
+            PROVEN_TEST_ASSERT(e == PROVEN_OK || (e == PROVEN_ERR_UNSUPPORTED && x == NULL), "made, or PROVEN_ERR_UNSUPPORTED", "");
+            if (e != PROVEN_OK) continue;
+            made++;
+            PROVEN_TEST_ASSERT(proven_loop_backend(x) == kinds[i], "the backend asked for", "");
+            PROVEN_TEST_ASSERT(proven_loop_poll(x, PROVEN_NET_DONT_WAIT) == PROVEN_OK, "a round of it", "");
+            proven_loop_destroy(x);
+        }
+        PROVEN_TEST_ASSERT(made >= 1, "at least one backend everywhere", "");
+#if defined(_WIN32) || defined(_WIN64)
+        PROVEN_TEST_ASSERT(proven_loop_create_ex(heap, &(proven_loop_options_t){ .backend = PROVEN_LOOP_BACKEND_URING }, &x) == PROVEN_ERR_UNSUPPORTED, "no io_uring on Windows", "");
+#elif !defined(__linux__)
+        PROVEN_TEST_ASSERT(proven_loop_create_ex(heap, &(proven_loop_options_t){ .backend = PROVEN_LOOP_BACKEND_URING }, &x) == PROVEN_ERR_UNSUPPORTED, "no io_uring off Linux", "");
+#endif
+        PROVEN_TEST_ASSERT(proven_loop_backend(NULL) != PROVEN_LOOP_BACKEND_AUTO, "a null loop answers too", "");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("timers",
         "They fire once, in the order of their times; a timer may cancel another or set itself again from its callback.",
         "Check loop_timers_advance: due timers are moved to their own list before any is fired.");

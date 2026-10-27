@@ -256,10 +256,26 @@ proven_sys_net_result_t proven_sys_net_selector_remove(proven_uintptr_t selector
 proven_sys_net_result_t proven_sys_net_selector_wait(proven_uintptr_t selector, proven_sys_net_event_t *events,
                                                      proven_size_t cap, int timeout_ms, proven_size_t *count);
 
-#if defined(_WIN32) || defined(_WIN64)
+/* io_uring on Linux (RFC-0029): the same port, its operations entries of a ring of the kernel's.
+ * Built where the kernel's header is there; whether the running kernel has what is needed is
+ * asked at run time (proven_sys_net_port_available). PROVEN_SYS_NO_URING leaves it out. */
+#if defined(__linux__) && !defined(PROVEN_SYS_NO_URING) && defined(__has_include)
+#if __has_include(<linux/io_uring.h>)
+#define PROVEN_SYS_RING 1
+#endif
+#endif
+#ifndef PROVEN_SYS_RING
+#define PROVEN_SYS_RING 0
+#endif
+
+#if defined(_WIN32) || defined(_WIN64) || PROVEN_SYS_RING
 /*
- * I/O completion ports, on Windows only (RFC-0025 step 6): what the event loop is built on
- * there. Nothing else calls them.
+ * I/O completion ports, on Windows (RFC-0025 step 6), and the same on Linux over io_uring
+ * (RFC-0029): what the event loop's completion operations are built on. Nothing else calls them.
+ *
+ * On Linux an operation is an entry of the ring, submitted with the next wait, and never
+ * finishes at once: every start that does not fail says IN_PROGRESS. What an entry points at -
+ * a buffer, the message of a send, the OVERLAPPED - must stay put until the port reports it.
  *
  * An operation is started with an OVERLAPPED of the caller's (proven_sys_net_ov_t), which must
  * stay where it is, untouched, until the port has reported it. `skip` is what
@@ -268,7 +284,11 @@ proven_sys_net_result_t proven_sys_net_selector_wait(proven_uintptr_t selector, 
  *   IN_PROGRESS   under way (or finished, on a socket without `skip`): the port reports it.
  *   anything else failed at once; the port reports nothing for it.
  */
+#if defined(_WIN32) || defined(_WIN64)
 typedef struct { proven_uintptr_t w[sizeof(void *) == 8 ? 4 : 5]; } proven_sys_net_ov_t;
+#else
+typedef struct { proven_u64 w; } proven_sys_net_ov_t;   /* io_uring: the kind, and the result */
+#endif
 
 /** One report of a port: the operation's OVERLAPPED (null for a proven_sys_net_port_post),
  *  the bytes it moved, and whether it failed - proven_sys_net_ov_result says why. */
@@ -278,6 +298,10 @@ typedef struct {
     bool failed;
 } proven_sys_net_done_t;
 
+/** Whether proven_sys_net_port_open can work here: on Windows always; on Linux when io_uring is
+ *  there and allowed (a container's seccomp filter may refuse it) and the kernel has every
+ *  operation used (5.19 or later: cancelling all of a socket's operations). Asked once. */
+bool proven_sys_net_port_available(void);
 proven_sys_net_result_t proven_sys_net_port_open(proven_uintptr_t *out);
 void proven_sys_net_port_close(proven_uintptr_t port);
 /** Bind `sock` to the port for the rest of its life. A socket bound already is taken to be bound
@@ -293,22 +317,36 @@ proven_sys_net_result_t proven_sys_net_port_wait(proven_uintptr_t port, proven_s
                                                  int timeout_ms, proven_size_t *count);
 /** Why a reported operation failed: CANCELLED, RESET, REFUSED, TRUNCATED (a datagram cut), ... */
 proven_sys_net_result_t proven_sys_net_ov_result(proven_sys_socket_t sock, proven_sys_net_ov_t *ov);
-/** Cancel `ov`'s operation on `sock`, or every one of them (`ov` null); each is still reported. */
-void proven_sys_net_ov_cancel(proven_sys_socket_t sock, proven_sys_net_ov_t *ov);
+/** Cancel `ov`'s operation on `sock`, or every one of them (`ov` null); each is still reported.
+ *  The operations take the port they are reported to (Windows: the socket is bound to it). */
+void proven_sys_net_ov_cancel(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov);
+#if PROVEN_SYS_RING
+/** io_uring: cancel every operation of the port, each still reported (for a loop's end). */
+void proven_sys_net_port_cancel_all(proven_uintptr_t port);
+#endif
 
 /** A receive of at most `cap` bytes (0: done when data has arrived, nothing taken). */
-proven_sys_net_result_t proven_sys_net_ov_recv(proven_sys_socket_t sock, proven_sys_net_ov_t *ov, void *buf, proven_size_t cap,
+proven_sys_net_result_t proven_sys_net_ov_recv(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov, void *buf, proven_size_t cap,
                                                bool skip, proven_u32 *bytes);
+/** What a send keeps while it is in flight: on Linux its message and the list of its buffers,
+ *  which the kernel reads when the entry is submitted - after the call. Kept with the bytes. */
+#if PROVEN_SYS_RING
+typedef struct { proven_u64 w[8 + 2 * PROVEN_SYS_NET_VEC_MAX]; } proven_sys_net_keep_t;
+#else
+typedef struct { proven_u8 unused; } proven_sys_net_keep_t;
+#endif
 /** A send of the buffers in order (at most PROVEN_SYS_NET_VEC_MAX). */
-proven_sys_net_result_t proven_sys_net_ov_send(proven_sys_socket_t sock, proven_sys_net_ov_t *ov, const proven_sys_net_vec_t *vec,
-                                               proven_size_t count, bool skip, proven_u32 *bytes);
+proven_sys_net_result_t proven_sys_net_ov_send(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov, proven_sys_net_keep_t *keep,
+                                               const proven_sys_net_vec_t *vec, proven_size_t count, bool skip, proven_u32 *bytes);
 
-/** The room an accept needs for the two addresses it writes. */
+/** The room an accept needs for the two addresses it writes. On Linux `*accepted` is not known
+ *  until the report: it says IN_PROGRESS with `*accepted` invalid, and the report's `bytes` is
+ *  the new socket. */
 #define PROVEN_SYS_NET_ACCEPT_AREA 288
 /** An accept: `*accepted` is the socket made for it (open from OK or IN_PROGRESS on, and the
  *  caller's to close if the accept fails or is cancelled); call proven_sys_net_ov_accept_done
  *  on it when the accept has finished well. */
-proven_sys_net_result_t proven_sys_net_ov_accept(proven_sys_socket_t listener, proven_sys_net_family_t family, proven_sys_net_ov_t *ov,
+proven_sys_net_result_t proven_sys_net_ov_accept(proven_uintptr_t port, proven_sys_socket_t listener, proven_sys_net_family_t family, proven_sys_net_ov_t *ov,
                                                  void *area, bool skip, proven_sys_socket_t *accepted);
 proven_sys_net_result_t proven_sys_net_ov_accept_done(proven_sys_socket_t listener, proven_sys_socket_t accepted);
 
@@ -317,7 +355,7 @@ proven_sys_net_result_t proven_sys_net_ov_accept_done(proven_sys_socket_t listen
  *  operation of the port: it is made at once (OK) or fails. A connect reported by the port is
  *  finished with proven_sys_net_ov_connect_done; one that finished at once is finished already. */
 proven_sys_net_result_t proven_sys_net_ov_connect_socket(const proven_sys_net_addr_t *addr, proven_sys_socket_t *out);
-proven_sys_net_result_t proven_sys_net_ov_connect(proven_sys_socket_t sock, const proven_sys_net_addr_t *addr, proven_sys_net_ov_t *ov,
+proven_sys_net_result_t proven_sys_net_ov_connect(proven_uintptr_t port, proven_sys_socket_t sock, const proven_sys_net_addr_t *addr, proven_sys_net_ov_t *ov,
                                                   bool skip);
 proven_sys_net_result_t proven_sys_net_ov_connect_done(proven_sys_socket_t sock);
 
@@ -326,10 +364,13 @@ proven_sys_net_result_t proven_sys_net_ov_connect_done(proven_sys_socket_t sock)
 typedef struct { proven_u64 w[40]; } proven_sys_net_msg_t;
 /** A datagram receive into `buf`. When it has finished, proven_sys_net_ov_msg_done reads the
  *  size of each datagram (`*seg`, 0 for one) and the sender. */
-proven_sys_net_result_t proven_sys_net_ov_recv_msg(proven_sys_socket_t sock, proven_sys_net_ov_t *ov, proven_sys_net_msg_t *msg,
+proven_sys_net_result_t proven_sys_net_ov_recv_msg(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov, proven_sys_net_msg_t *msg,
                                                    void *buf, proven_size_t cap, bool skip, proven_u32 *bytes);
 void proven_sys_net_ov_msg_done(const proven_sys_net_msg_t *msg, proven_u32 bytes, proven_size_t *seg, proven_sys_net_addr_t *from);
 
+#endif
+
+#if defined(_WIN32) || defined(_WIN64)
 /*
  * What the selector of the IOCP kind needs besides the above (RFC-0025 step 7).
  */

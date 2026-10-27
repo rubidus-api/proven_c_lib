@@ -675,9 +675,17 @@ static void case_udp_segments(void) {
 
 /* Destroyed with things in flight: nothing is called, and nothing leaks (the sanitizer runs
  * say so). */
-static void case_destroy(proven_allocator_t heap, bool poll_kind) {
+/* The loops the cases run on: the system's default, the poll kind of selector, and io_uring. */
+enum { ON_DEFAULT, ON_POLL, ON_URING };
+static proven_err_t make_loop(proven_allocator_t heap, int on, proven_loop_t **out) {
+    if (on == ON_POLL) return proven_loop_create_poll_(heap, out);
+    if (on == ON_URING) return proven_loop_create_ex(heap, &(proven_loop_options_t){ .backend = PROVEN_LOOP_BACKEND_URING }, out);
+    return proven_loop_create(heap, out);
+}
+
+static void case_destroy(proven_allocator_t heap, int on) {
     proven_loop_t *l = NULL;
-    PROVEN_TEST_ASSERT((poll_kind ? proven_loop_create_poll_(heap, &l) : proven_loop_create(heap, &l)) == PROVEN_OK, "a second loop", g_kind);
+    PROVEN_TEST_ASSERT(make_loop(heap, on, &l) == PROVEN_OK, "a second loop", g_kind);
     proven_loop_t *saved = g_loop;
     g_loop = l;
     conn_t c;
@@ -707,9 +715,9 @@ static void case_destroy(proven_allocator_t heap, bool poll_kind) {
     (void)proven_net_close(&gone_far);
 }
 
-static void run_all(proven_allocator_t heap, bool poll_kind) {
-    g_kind = poll_kind ? "on the poll kind of selector" : "on the system's selector";
-    PROVEN_TEST_ASSERT((poll_kind ? proven_loop_create_poll_(heap, &g_loop) : proven_loop_create(heap, &g_loop)) == PROVEN_OK, "a loop", g_kind);
+static void run_all(proven_allocator_t heap, int on) {
+    g_kind = on == ON_POLL ? "on the poll kind of selector" : on == ON_URING ? "on io_uring" : "on the system's default";
+    PROVEN_TEST_ASSERT(make_loop(heap, on, &g_loop) == PROVEN_OK, "a loop", g_kind);
 
     PROVEN_TEST_SECTION("receives", "Zero bytes, into a buffer, cancelled, at the end; each answered once, never inside the call.", g_kind);
     case_receive();
@@ -728,7 +736,7 @@ static void run_all(proven_allocator_t heap, bool poll_kind) {
     PROVEN_TEST_SECTION("batched datagrams", "Datagrams of one size sent in one call, received through the loop with URO/GRO asked for and with the one-at-a-time way forced: every datagram whole, in order, of its size (internal, for HTTP/3).", g_kind);
     case_udp_segments();
     PROVEN_TEST_SECTION("destroy", "A loop destroyed with a receive and bytes in flight calls nothing.", g_kind);
-    case_destroy(heap, poll_kind);
+    case_destroy(heap, on);
 
     proven_loop_destroy(g_loop);
     g_loop = NULL;
@@ -736,12 +744,14 @@ static void run_all(proven_allocator_t heap, bool poll_kind) {
 
 int main(void) {
     PROVEN_TEST_SUITE("the event loop's operations",
-        "Receives, sends, accepts and connects that complete (RFC-0025): each answered exactly once, from the loop, never inside the call that started it; on the system's selector and on the poll kind.",
+        "Receives, sends, accepts and connects that complete (RFC-0025): each answered exactly once, from the loop, never inside the call that started it; on the system's default, on the poll kind of selector, and on io_uring where the system has it.",
         "Inspect src/proven/loop.c: loop_run_done for delivery, sock_flush for sends, sock_event and acc_event for the selector's reports.");
 
     /* RFC-0025 section 12: the socket holds what the loop needs per connection. */
 #if defined(_WIN32) || defined(_WIN64)
     PROVEN_TEST_ASSERT(sizeof(proven_loop_sock_t) == 120, "a socket of the loop is 120 bytes on Windows: its OVERLAPPED included", "");
+#elif defined(__linux__)
+    PROVEN_TEST_ASSERT(sizeof(proven_loop_sock_t) == 80, "a socket of the loop is 80 bytes on Linux: what an io_uring operation keeps included", "");
 #else
     PROVEN_TEST_ASSERT(sizeof(proven_loop_sock_t) == 72, "a socket of the loop is 72 bytes", "");
 #endif
@@ -751,8 +761,16 @@ int main(void) {
     proven_net_conn_t closed_conn = { 0 };
     PROVEN_TEST_ASSERT(proven_loop_attach(NULL, &s, &closed_conn, &g_fns, NULL) == PROVEN_ERR_INVALID_ARG, "no loop is PROVEN_ERR_INVALID_ARG", "");
 
-    run_all(heap, false);
-    run_all(heap, true);
+    run_all(heap, ON_DEFAULT);
+    run_all(heap, ON_POLL);
+    /* io_uring where this system lets the process have it (Linux; RFC-0029). */
+    proven_loop_t *probe = NULL;
+    if (proven_loop_create_ex(heap, &(proven_loop_options_t){ .backend = PROVEN_LOOP_BACKEND_URING }, &probe) == PROVEN_OK) {
+        proven_loop_destroy(probe);
+        run_all(heap, ON_URING);
+    } else {
+        PROVEN_TEST_INFO("io_uring is not available here: its run is left out");
+    }
 
     PROVEN_TEST_PASS("every operation was answered once, from the loop, on both kinds of selector.");
     return 0;

@@ -59,6 +59,8 @@
 
 ```c
 proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out);
+proven_err_t proven_loop_create_ex(proven_allocator_t alloc, const proven_loop_options_t *options, proven_loop_t **out);
+proven_loop_backend_t proven_loop_backend(const proven_loop_t *loop);
 void proven_loop_destroy(proven_loop_t *loop);
 proven_err_t proven_loop_run(proven_loop_t *loop);
 proven_err_t proven_loop_poll(proven_loop_t *loop, proven_net_deadline_t until);
@@ -71,6 +73,8 @@ void proven_loop_stop(proven_loop_t *loop);
 | 호출 | 하는 일 | 반환 |
 |---|---|---|
 | `proven_loop_create(alloc, &loop)` | 루프를 만든다. | `proven_err_t`: `INVALID_ARG`. `NOMEM`. 셀렉터를 여는 호출이 돌려준 것. |
+| `proven_loop_create_ex(alloc, &options, &loop)` | `options.backend`가 가리키는 백엔드(아래)로 루프를 만든다. `options`는 널이어도 되며, 그러면 `proven_loop_create`와 같다. | `proven_err_t`: `proven_loop_create`와 같고, 이 시스템에 없는 백엔드면 `UNSUPPORTED`. |
+| `proven_loop_backend(loop)` | 루프가 어느 백엔드로 만들어졌는지. | `proven_loop_backend_t`. `AUTO`는 돌려주지 않는다. |
 | `proven_loop_run(loop)` | 기다리고, 준비된 것을 부르고, 때가 된 것을 울리고, 반복한다 - `proven_loop_stop`까지. | 멈춘 뒤 `PROVEN_OK`. 기다리는 일 자체가 실패하면 오류. |
 | `proven_loop_poll(loop, until)` | 한 바퀴: 무언가 준비되거나 `until`이 지날 때까지 기다리고 처리한다. `PROVEN_NET_DONT_WAIT`는 지금 준비된 것만 처리한다. | `proven_err_t`. |
 | `proven_loop_stop(loop)` | `proven_loop_run`이 돌아오게 한다. 어느 스레드에서든, 콜백 안에서든 안전하다. | 없음. |
@@ -78,6 +82,20 @@ void proven_loop_stop(proven_loop_t *loop);
 
 `proven_loop_run`은 다른 일을 하지 않는 스레드를 위한 것이다. `proven_loop_poll`은 이미 자신의 메인
 루프가 있어서 그 안에서 이 루프에 차례를 주는 프로그램을 위한 것이다.
+
+**백엔드.** 루프가 일을 하는 방식은 만들 때 고르며, 그 밖의 것은 고른 것에 따라 바뀌지 않는다.
+호출도 같고, 답이 오는 순서의 규칙도 같다.
+
+| `proven_loop_backend_t` | 어디서 | 어떻게 |
+|---|---|---|
+| `PROVEN_LOOP_BACKEND_AUTO` | 어디서나 | Windows에서는 완료 포트, 그 밖에서는 셀렉터 - `proven_loop_create`가 주는 것. |
+| `PROVEN_LOOP_BACKEND_SELECTOR` | POSIX | epoll, kqueue, poll([9장](manual-09-networking-ko.md)): 소켓이 준비됐다는 말을 듣고 루프가 직접 호출한다. |
+| `PROVEN_LOOP_BACKEND_URING` | Linux 5.19 이상 | io_uring: 수신, 송신, accept, connect를 커널에 맡기고 커널이 끝났다고 알린다. 더 오래된 커널이나 시스템이 io_uring을 꺼 둔 곳(컨테이너의 seccomp 필터, `io_uring_disabled`)에서는 거절된다(`UNSUPPORTED`). 데이터그램은 다른 백엔드처럼 보통 호출로 보낸다. |
+| `PROVEN_LOOP_BACKEND_IOCP` | Windows | I/O 완료 포트. |
+
+Linux에서 io_uring은 기본값이 아니다. 실제 기계에서 이 라이브러리의 서버가 그것으로 더 빠르다는
+측정이 아직 없고, 더 자주 거절되는 백엔드이기 때문이다. io_uring으로 만든 루프는 커널이 아직 쥔
+것을 Windows처럼 정리한다 - 루프를 없앨 때 취소하고 최대 2초까지 기다린다.
 
 **스레드 규칙.** 이 장에서 `proven_loop_stop`과 `proven_loop_post`를 뺀 모든 것은 루프 자신의
 스레드 - `proven_loop_run`이나 `proven_loop_poll` 안에 있는 스레드 - 에서, 또는 루프가 시작하기 전에
@@ -176,8 +194,10 @@ int main(void) {
     ex_app_t app = { 0 };
 
     // ---- 루프 ---------------------------------------------------------------------
-    /* 루프는 완료되는 소켓 작업들, 타이머 묶음, 그리고 다른 스레드가 게시할 수 있는 큐다. */
-    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "루프");
+    /* 루프는 완료되는 소켓 작업들, 타이머 묶음, 그리고 다른 스레드가 게시할 수 있는 큐다.
+     * 옵션은 루프가 일을 하는 방식을 고른다. AUTO는 proven_loop_create가 주는 것과 같다. */
+    EXAMPLE_REQUIRE(proven_loop_create_ex(heap, &(proven_loop_options_t){ .backend = PROVEN_LOOP_BACKEND_AUTO }, &app.loop) == PROVEN_OK, "루프");
+    EXAMPLE_REQUIRE(proven_loop_backend(app.loop) != PROVEN_LOOP_BACKEND_AUTO, "어느 백엔드가 일하는지 말한다");
 
     // ---- 타이머 --------------------------------------------------------------------
     /* 타이머 구조체는 여러분의 것이다: 여러분의 상태 안에 살고, 맞추는 데 아무것도 할당하지
@@ -2036,10 +2056,10 @@ int main(void) {
 
 **연결 하나가 붙드는 것.** 요청이 없는 연결은 자기 구조체를 붙들 뿐 버퍼는 붙들지 않는다: 요청은
 루프의 임시 작업용 버퍼로 읽히고, 바이트는 요청이 아직 완전하지 않을 때에만 따로 복사된다. x86-64
-Linux에서 등록된 테스트는 한가한 평문 HTTP 연결 하나에 힙 488바이트를 재고 512를 넘으면 실패하며,
-한가한 평문 WebSocket 연결 하나에 984바이트를 재고 1 KiB를 넘으면 실패한다. TLS 연결은 엔진의 상태를
-더한다. 한가할 때 약 1.25 KiB다(14장 9절). 요청 사이에서 1초 조용하면 서버는 레코드 키의 펼친 형태를 (지워서) 돌려주고 원래 키만 남긴다. 다음 요청이 그것을 다시 만드는데, AES 명령이 있는 프로세서에서 방향마다 약 0.1마이크로초 걸린다. 1초 조용한 TLS 연결은 모두 합쳐 1,080바이트를 재고, 테스트는
-2 KiB에서 실패한다 - 평문 연결의 목표가 1 KiB인 것과 달리 TLS의 목표다. **HTTP/2 연결은 크기가 다르다**: 작은 요청 하나 뒤 한가할 때 2,368바이트를 재고
+Linux에서 등록된 테스트는 한가한 평문 HTTP 연결 하나에 힙 480바이트를 재고 512를 넘으면 실패하며,
+한가한 평문 WebSocket 연결 하나에 976바이트를 재고 1 KiB를 넘으면 실패한다. TLS 연결은 엔진의 상태를
+더한다. 한가할 때 약 1.25 KiB다(14장 9절). 요청 사이에서 1초 조용하면 서버는 레코드 키의 펼친 형태를 (지워서) 돌려주고 원래 키만 남긴다. 다음 요청이 그것을 다시 만드는데, AES 명령이 있는 프로세서에서 방향마다 약 0.1마이크로초 걸린다. 1초 조용한 TLS 연결은 모두 합쳐 1,088바이트를 재고, 테스트는
+2 KiB에서 실패한다 - 평문 연결의 목표가 1 KiB인 것과 달리 TLS의 목표다. **HTTP/2 연결은 크기가 다르다**: 작은 요청 하나 뒤 한가할 때 2,360바이트를 재고
 3 KiB를 넘으면 실패하며, 기억하게 된 헤더 필드만큼 자라 두 압축 테이블이 가득 차면 약 12.8 KiB가 된다
 ([17장 6절](manual-17-http2-ko.md#6-이벤트-구동-서버의-http2)). 아래 수치는 HTTP/1.1의 것이다.
 같은 부하 아래 HTTP/2의 수치는 [17장 8절](manual-17-http2-ko.md#8-무엇을-받아들이고-무엇이-없으며-어떻게-시험했는가)에 있다.

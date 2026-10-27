@@ -102,6 +102,9 @@ typedef struct proven_loop_sock_fns {
 #if defined(_WIN32) || defined(_WIN64)
 #define PROVEN_LOOP_SOCK_WORDS_ 15
 #define PROVEN_LOOP_ACCEPT_WORDS_ 50
+#elif defined(__linux__)
+#define PROVEN_LOOP_SOCK_WORDS_ 10
+#define PROVEN_LOOP_ACCEPT_WORDS_ 48
 #else
 #define PROVEN_LOOP_SOCK_WORDS_ 9
 #define PROVEN_LOOP_ACCEPT_WORDS_ 48
@@ -110,7 +113,7 @@ typedef struct proven_loop_sock_fns {
 /**
  * @brief A connection given to a loop. Yours to hold - inside your connection struct, say -
  *        from proven_loop_attach (or proven_loop_connect) until its `closed`. Do not copy or move
- *        it in between. Opaque: 72 bytes, 120 on Windows, which hold everything the loop needs for
+ *        it in between. Opaque: 72 bytes, 80 on Linux and 120 on Windows, which hold everything the loop needs for
  *        the connection, its receive included; the loop allocates nothing per connection except
  *        the buffers of bytes waiting to be sent.
  */
@@ -136,14 +139,42 @@ typedef struct proven_loop_accept {
 [[nodiscard]]
 proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out);
 
+/** @brief How a loop does its work. AUTO: the completion port on Windows, the selector (epoll,
+ *         kqueue, poll) elsewhere. URING: io_uring, on Linux 5.19 or later where the kernel lets
+ *         the process use it. */
+typedef enum proven_loop_backend {
+    PROVEN_LOOP_BACKEND_AUTO = 0,
+    PROVEN_LOOP_BACKEND_SELECTOR = 1,
+    PROVEN_LOOP_BACKEND_URING = 2,
+    PROVEN_LOOP_BACKEND_IOCP = 3,
+} proven_loop_backend_t;
+
+/** @brief Options of proven_loop_create_ex; zero-initialised, they are proven_loop_create's. */
+typedef struct proven_loop_options {
+    proven_loop_backend_t backend;
+} proven_loop_options_t;
+
+/**
+ * @brief proven_loop_create with options; `options` may be null. Everything else about the loop
+ *        is the same whichever backend does the work.
+ * @return PROVEN_ERR_UNSUPPORTED for a backend this build or this system does not have - io_uring
+ *         off Linux, too old a kernel, or refused (a seccomp filter, io_uring_disabled); and
+ *         proven_loop_create's errors.
+ */
+[[nodiscard]]
+proven_err_t proven_loop_create_ex(proven_allocator_t alloc, const proven_loop_options_t *options, proven_loop_t **out);
+
+/** @brief The backend a loop was made with: never AUTO. */
+proven_loop_backend_t proven_loop_backend(const proven_loop_t *loop);
+
 /**
  * @brief Free the loop. What has already ended gets its last answer now, so that its memory can
  *        go: `closed` of a socket given to proven_loop_close, and the PROVEN_ERR_CANCELLED of an
  *        accept that was cancelled - those functions must only free, not start anything on the
  *        loop. Whatever else is still attached, in flight or set is simply forgotten: nothing is
- *        called, and the bytes waiting to be sent are freed. On Windows what the system still
- *        holds - a receive, a send, an accept - is cancelled first and waited for, up to two
- *        seconds, so that it writes into no memory after the loop is gone. Null is accepted.
+ *        called, and the bytes waiting to be sent are freed. On Windows and over io_uring what the
+ *        system still holds - a receive, a send, an accept - is cancelled first and waited for, up
+ *        to two seconds, so that it writes into no memory after the loop is gone. Null is accepted.
  */
 void proven_loop_destroy(proven_loop_t *loop);
 

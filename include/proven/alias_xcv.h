@@ -239,6 +239,10 @@
 #define XCV_LIST_FOR_EACH PROVEN_LIST_FOR_EACH
 #define XCV_LIST_FOR_EACH_SAFE PROVEN_LIST_FOR_EACH_SAFE
 #define XCV_LIT PROVEN_LIT
+#define XCV_LOOP_BACKEND_AUTO PROVEN_LOOP_BACKEND_AUTO
+#define XCV_LOOP_BACKEND_IOCP PROVEN_LOOP_BACKEND_IOCP
+#define XCV_LOOP_BACKEND_SELECTOR PROVEN_LOOP_BACKEND_SELECTOR
+#define XCV_LOOP_BACKEND_URING PROVEN_LOOP_BACKEND_URING
 #define XCV_MAP_DESTROY PROVEN_MAP_DESTROY
 #define XCV_MAP_GET_INT PROVEN_MAP_GET_INT
 #define XCV_MAP_GET_MUT_INT PROVEN_MAP_GET_MUT_INT
@@ -813,11 +817,15 @@
 #define xcv_loop_accept_t proven_loop_accept_t
 #define xcv_loop_allocator proven_loop_allocator
 #define xcv_loop_attach proven_loop_attach
+#define xcv_loop_backend proven_loop_backend
+#define xcv_loop_backend_t proven_loop_backend_t
 #define xcv_loop_close proven_loop_close
 #define xcv_loop_connect proven_loop_connect
 #define xcv_loop_create proven_loop_create
+#define xcv_loop_create_ex proven_loop_create_ex
 #define xcv_loop_destroy proven_loop_destroy
 #define xcv_loop_fn proven_loop_fn
+#define xcv_loop_options_t proven_loop_options_t
 #define xcv_loop_poll proven_loop_poll
 #define xcv_loop_post proven_loop_post
 #define xcv_loop_recv proven_loop_recv

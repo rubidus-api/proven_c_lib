@@ -20,8 +20,8 @@ proven_err_t proven_net_connect_result_(const proven_net_conn_t *conn);
  * byte can be made on demand. Not thread-safe; set it around a test's own sends. */
 void proven_net_write_cap_for_test_(proven_size_t cap);
 
-#if defined(_WIN32) || defined(_WIN64)
-/* For the loop's completion port (RFC-0025 step 6), which talks to the platform layer itself:
+#if defined(_WIN32) || defined(_WIN64) || defined(__linux__)
+/* For the loop's completion port (RFC-0025 step 6; io_uring on Linux, RFC-0029), which talks to the platform layer itself:
  * a reason as an error, addresses both ways, and the milliseconds left until a deadline (-1:
  * none; 0: passed; rounded up). */
 #include "../../platform/proven_sys_net.h"

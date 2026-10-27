@@ -18,6 +18,28 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **io_uring under the loop on Linux, by the caller's choice** (RFC-0029):
+  `proven_loop_create_ex(alloc, &(proven_loop_options_t){ .backend = PROVEN_LOOP_BACKEND_URING }, &loop)`
+  makes a loop whose receives, sends, accepts and connects are entries of an io_uring ring -
+  the completion model the Windows port already had, on Linux 5.19 or later.
+  `proven_loop_backend(loop)` says which backend a loop has. `PROVEN_LOOP_BACKEND_AUTO` (and
+  `proven_loop_create`) stays the selector on POSIX and the completion port on Windows: in an
+  emulated machine the HTTP/1.1 event server made the same number of system calls per request
+  on both (2.07: one send, one receive, and the wait shared among requests) at the same rate,
+  so nothing yet says io_uring is the better default. Asked for where the kernel refuses it -
+  too old, a seccomp filter, `io_uring_disabled` - it is `PROVEN_ERR_UNSUPPORTED`; built
+  without `<linux/io_uring.h>`, or with `PROVEN_SYS_NO_URING`, there is none. The event server
+  and clients need nothing new: they run on the loop they are given. Chapter 15, section 2.
+
+### Changed
+
+- **`proven_loop_sock_t` is 80 bytes on Linux** (72 before; 120 on Windows, unchanged): it
+  holds what an io_uring operation keeps. The server's connection record packs its flags into
+  bits and gives the 8 bytes back and 8 more: an idle plain connection measures 480 bytes (488
+  before), an idle WebSocket 976 (984), an idle HTTP/2 connection 2,360 (2,368).
+
 ## [0.90.0] - 2026-10-27
 
 ### Changed

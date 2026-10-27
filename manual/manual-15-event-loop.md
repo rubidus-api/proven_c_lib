@@ -61,6 +61,8 @@ same code of [Chapter 10](manual-10-http.md) and refuse the same malformed reque
 
 ```c
 proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out);
+proven_err_t proven_loop_create_ex(proven_allocator_t alloc, const proven_loop_options_t *options, proven_loop_t **out);
+proven_loop_backend_t proven_loop_backend(const proven_loop_t *loop);
 void proven_loop_destroy(proven_loop_t *loop);
 proven_err_t proven_loop_run(proven_loop_t *loop);
 proven_err_t proven_loop_poll(proven_loop_t *loop, proven_net_deadline_t until);
@@ -73,6 +75,8 @@ a queue that other threads can post to, and a scratch buffer.
 | Call | What it does | Returns |
 |---|---|---|
 | `proven_loop_create(alloc, &loop)` | Make a loop. | `proven_err_t`: `INVALID_ARG`; `NOMEM`; what opening the selector returned. |
+| `proven_loop_create_ex(alloc, &options, &loop)` | Make a loop with the backend `options.backend` names (below). `options` may be null: then it is `proven_loop_create`. | `proven_err_t`: as `proven_loop_create`; `UNSUPPORTED` for a backend this system does not have. |
+| `proven_loop_backend(loop)` | Which backend a loop was made with. | `proven_loop_backend_t`, never `AUTO`. |
 | `proven_loop_run(loop)` | Wait, call what is ready, fire what is due, repeat - until `proven_loop_stop`. | `PROVEN_OK` after a stop; an error if waiting itself failed. |
 | `proven_loop_poll(loop, until)` | One round: wait until something is ready or `until` passes, and handle it. `PROVEN_NET_DONT_WAIT` handles only what is ready now. | `proven_err_t`. |
 | `proven_loop_stop(loop)` | Make `proven_loop_run` return. Safe from any thread and from a callback. | nothing. |
@@ -80,6 +84,21 @@ a queue that other threads can post to, and a scratch buffer.
 
 `proven_loop_run` is for a thread that does nothing else. `proven_loop_poll` is for a program
 that already has a main loop of its own and gives this one a turn in it.
+
+**Backends.** How a loop does its work is chosen when it is made, and nothing else about it
+changes with the choice: the same calls, the same answers in the same order rules.
+
+| `proven_loop_backend_t` | Where | How |
+|---|---|---|
+| `PROVEN_LOOP_BACKEND_AUTO` | everywhere | The completion port on Windows, the selector elsewhere - what `proven_loop_create` gives. |
+| `PROVEN_LOOP_BACKEND_SELECTOR` | POSIX | epoll, kqueue or poll ([Chapter 9](manual-09-networking.md)): the loop is told a socket is ready and makes the call itself. |
+| `PROVEN_LOOP_BACKEND_URING` | Linux 5.19 or later | io_uring: the receives, sends, accepts and connects are given to the kernel, which reports them done. Refused (`UNSUPPORTED`) on an older kernel, and where the system turns io_uring off - a container's seccomp filter, `io_uring_disabled`. Datagrams are sent with a plain call, as on the other backends. |
+| `PROVEN_LOOP_BACKEND_IOCP` | Windows | The I/O completion port. |
+
+io_uring is not the default on Linux: no measurement here has yet shown it faster for this
+library's servers on a real machine, and it is the backend more often refused. A loop made with
+it frees what the kernel still holds the way Windows does - cancelled and waited for, up to two
+seconds, when the loop is destroyed.
 
 **The thread rule.** Everything in this chapter except `proven_loop_stop` and
 `proven_loop_post` must be called on the loop's own thread - the one inside `proven_loop_run`
@@ -182,8 +201,10 @@ int main(void) {
     ex_app_t app = { 0 };
 
     // ---- a loop -------------------------------------------------------------------
-    /* A loop is operations on sockets that complete, a set of timers, and a queue other threads can post to. */
-    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
+    /* A loop is operations on sockets that complete, a set of timers, and a queue other threads can post to.
+     * The options choose how it does its work; AUTO is what proven_loop_create gives. */
+    EXAMPLE_REQUIRE(proven_loop_create_ex(heap, &(proven_loop_options_t){ .backend = PROVEN_LOOP_BACKEND_AUTO }, &app.loop) == PROVEN_OK, "a loop");
+    EXAMPLE_REQUIRE(proven_loop_backend(app.loop) != PROVEN_LOOP_BACKEND_AUTO, "it says which backend does the work");
 
     // ---- timers --------------------------------------------------------------------
     /* The timer structs are yours: they live in your own state, and setting one allocates
@@ -2096,14 +2117,14 @@ int main(void) {
 **What a connection holds.** A connection with no request on it holds its struct and no buffer:
 requests are read into the loop's scratch buffer, and bytes are copied aside only when a
 request is incomplete. (A compressor exists only while a compressed response is being
-written.) On x86-64 Linux the registered tests measure 488 bytes of heap for an
-idle plain HTTP connection, failing above 512, and 984 bytes for an idle plain WebSocket
+written.) On x86-64 Linux the registered tests measure 480 bytes of heap for an
+idle plain HTTP connection, failing above 512, and 976 bytes for an idle plain WebSocket
 connection, failing above 1 KiB. A TLS connection adds the engine's state, about 1.25 KiB while
 idle (Chapter 14, section 9). After a quiet second between requests the server gives back the
 expanded form of its record keys (wiped) and keeps the keys they were made from; the next
 request remakes them, which takes about a tenth of a microsecond per direction on a processor
-with AES instructions. An idle TLS connection quiet for a second measures 1,080 bytes in all,
-and the test fails at 2 KiB - the target for TLS, where a plain connection's is 1 KiB. **An HTTP/2 connection is another size**: 2,368 bytes idle after
+with AES instructions. An idle TLS connection quiet for a second measures 1,088 bytes in all,
+and the test fails at 2 KiB - the target for TLS, where a plain connection's is 1 KiB. **An HTTP/2 connection is another size**: 2,360 bytes idle after
 one small request, failing above 3 KiB, and growing with the header fields it is made to
 remember to about 12.8 KiB when both of its compression tables are full ([Chapter 17, section 6](manual-17-http2.md#6-http2-in-the-event-driven-server)).
 The numbers below are HTTP/1.1's; HTTP/2's, under the same load, are in

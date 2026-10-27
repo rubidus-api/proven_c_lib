@@ -50,8 +50,10 @@ int main(void) {
     ex_app_t app = { 0 };
 
     // ---- a loop -------------------------------------------------------------------
-    /* A loop is operations on sockets that complete, a set of timers, and a queue other threads can post to. */
-    EXAMPLE_REQUIRE(proven_loop_create(heap, &app.loop) == PROVEN_OK, "a loop");
+    /* A loop is operations on sockets that complete, a set of timers, and a queue other threads can post to.
+     * The options choose how it does its work; AUTO is what proven_loop_create gives. */
+    EXAMPLE_REQUIRE(proven_loop_create_ex(heap, &(proven_loop_options_t){ .backend = PROVEN_LOOP_BACKEND_AUTO }, &app.loop) == PROVEN_OK, "a loop");
+    EXAMPLE_REQUIRE(proven_loop_backend(app.loop) != PROVEN_LOOP_BACKEND_AUTO, "it says which backend does the work");
 
     // ---- timers --------------------------------------------------------------------
     /* The timer structs are yours: they live in your own state, and setting one allocates

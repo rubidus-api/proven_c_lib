@@ -259,6 +259,10 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `XCV_LIST_FOR_EACH` | `PROVEN_LIST_FOR_EACH` |
 | `XCV_LIST_FOR_EACH_SAFE` | `PROVEN_LIST_FOR_EACH_SAFE` |
 | `XCV_LIT` | `PROVEN_LIT` |
+| `XCV_LOOP_BACKEND_AUTO` | `PROVEN_LOOP_BACKEND_AUTO` |
+| `XCV_LOOP_BACKEND_IOCP` | `PROVEN_LOOP_BACKEND_IOCP` |
+| `XCV_LOOP_BACKEND_SELECTOR` | `PROVEN_LOOP_BACKEND_SELECTOR` |
+| `XCV_LOOP_BACKEND_URING` | `PROVEN_LOOP_BACKEND_URING` |
 | `XCV_MAP_DESTROY` | `PROVEN_MAP_DESTROY` |
 | `XCV_MAP_GET_INT` | `PROVEN_MAP_GET_INT` |
 | `XCV_MAP_GET_MUT_INT` | `PROVEN_MAP_GET_MUT_INT` |
@@ -833,11 +837,15 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_loop_accept` | `proven_loop_accept` |
 | `xcv_loop_allocator` | `proven_loop_allocator` |
 | `xcv_loop_attach` | `proven_loop_attach` |
+| `xcv_loop_backend_t` | `proven_loop_backend_t` |
+| `xcv_loop_backend` | `proven_loop_backend` |
 | `xcv_loop_close` | `proven_loop_close` |
 | `xcv_loop_connect` | `proven_loop_connect` |
+| `xcv_loop_create_ex` | `proven_loop_create_ex` |
 | `xcv_loop_create` | `proven_loop_create` |
 | `xcv_loop_destroy` | `proven_loop_destroy` |
 | `xcv_loop_fn` | `proven_loop_fn` |
+| `xcv_loop_options_t` | `proven_loop_options_t` |
 | `xcv_loop_poll` | `proven_loop_poll` |
 | `xcv_loop_post` | `proven_loop_post` |
 | `xcv_loop_recv_cancel` | `proven_loop_recv_cancel` |

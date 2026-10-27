@@ -138,23 +138,25 @@ struct proven_http_stream {
         proven_http_compressor_t_ *zip; /* any other state: the response body goes through this, or null */
     };
     proven_http_method_t method;
-    bool active;                       /* on_request was delivered and on_done has not been */
-    bool response_begun, response_ended, chunked, bodiless, keep, expect_continue;
-    bool paused, dead, processing, peer_eof, want_writable, close_when_flushed, head_started;
-    bool compress_asked;
-    proven_u8 compress_coding;         /* what a response asked to be compressed would go in: identity, gzip or zstd */
-    bool sniffed;                      /* which protocol this connection speaks has been decided */
-    bool raw_more;                     /* EV_RAW: the owner has output the transport would not take yet */
-    bool told_stop;                    /* EV_RAW: the owner has been told that the server stopped listening */
-    bool told_drain;                   /* EV_RAW: and that it is shutting down (on_drain) */
-    bool attached;                     /* given to the loop: freed only after its `closed` */
-    bool recv_armed;                   /* a receive of zero bytes is in flight */
-    bool sock_gone;                    /* `closed` has come */
-    bool compact_due;                  /* the timer is set for compacting the TLS keys, not for the idle timeout */
     proven_u16 local_port;             /* the port the connection came in on: the one `Alt-Svc` names */
+    proven_u8 compress_coding;         /* what a response asked to be compressed would go in: identity, gzip or zstd */
+    /* One bit each (the loop's socket grew by a word on Linux for io_uring, RFC-0029; these give
+     * it back). Only the loop's thread touches them. */
+    bool active : 1;                   /* on_request was delivered and on_done has not been */
+    bool response_begun : 1, response_ended : 1, chunked : 1, bodiless : 1, keep : 1, expect_continue : 1;
+    bool paused : 1, dead : 1, processing : 1, peer_eof : 1, want_writable : 1, close_when_flushed : 1, head_started : 1;
+    bool compress_asked : 1;
+    bool sniffed : 1;                  /* which protocol this connection speaks has been decided */
+    bool raw_more : 1;                 /* EV_RAW: the owner has output the transport would not take yet */
+    bool told_stop : 1;                /* EV_RAW: the owner has been told that the server stopped listening */
+    bool told_drain : 1;               /* EV_RAW: and that it is shutting down (on_drain) */
+    bool attached : 1;                 /* given to the loop: freed only after its `closed` */
+    bool recv_armed : 1;               /* a receive of zero bytes is in flight */
+    bool sock_gone : 1;                /* `closed` has come */
+    bool compact_due : 1;              /* the timer is set for compacting the TLS keys, not for the idle timeout */
     /* 0-RTT over TCP (RFC-0027): the request being served arrived as early data (where its head
      * ended among the plaintext the TLS engine counted says so: proven_tls_read_counts_). */
-    bool early_req;
+    bool early_req : 1;
 };
 
 /* One listener, allocated on its own: after stop_listening its accept may still be answered

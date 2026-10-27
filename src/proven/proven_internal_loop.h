@@ -58,8 +58,8 @@ typedef struct proven_loop_udp_fns {
     void (*writable)(void *ctx, proven_err_t err);
     void (*closed)(void *ctx);
 } proven_loop_udp_fns_t;
-#if defined(_WIN32) || defined(_WIN64)
-typedef struct proven_loop_udp { proven_u64 internal_[64]; } proven_loop_udp_t;   /* with what an overlapped WSARecvMsg keeps */
+#if defined(_WIN32) || defined(_WIN64) || defined(__linux__)
+typedef struct proven_loop_udp { proven_u64 internal_[64]; } proven_loop_udp_t;   /* with what an overlapped WSARecvMsg (or io_uring's recvmsg) keeps */
 #else
 typedef struct proven_loop_udp { proven_u64 internal_[10]; } proven_loop_udp_t;
 #endif

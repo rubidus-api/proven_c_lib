@@ -457,7 +457,7 @@ static int internal_remaining_ms(proven_net_deadline_t until, bool *expired) {
     return (int)ms;
 }
 
-#if defined(_WIN32) || defined(_WIN64)
+#if defined(_WIN32) || defined(_WIN64) || defined(__linux__)
 proven_err_t proven_net_err_from_sys_(proven_sys_net_result_t r) { return internal_err_from_reason(r); }
 void proven_net_addr_to_sys_(const proven_net_addr_t *a, proven_sys_net_addr_t *s) { internal_addr_to_sys(a, s); }
 void proven_net_addr_from_sys_(const proven_sys_net_addr_t *s, proven_net_addr_t *a) { internal_addr_from_sys(s, a); }
@@ -1177,7 +1177,7 @@ static void sel_arm(proven_net_selector_t *s, sel_reg_t *r) {
         bool by_recv = r->recv_ok && r->rd_pending;
         if (r->recv_ok && !r->rd_pending) {
             proven_u32 b = 0;
-            const proven_sys_net_result_t res = proven_sys_net_ov_recv(sock, &r->rd.ov, (void *)0, 0, false, &b);
+            const proven_sys_net_result_t res = proven_sys_net_ov_recv(s->port, sock, &r->rd.ov, (void *)0, 0, false, &b);
             if (res == PROVEN_SYS_NET_IN_PROGRESS) { r->rd_pending = true; by_recv = true; }
             else if (res == PROVEN_SYS_NET_OK) { sel_hot(s, r); return; }
             /* Refused at once - a socket not connected yet: a notice instead. */
@@ -1208,7 +1208,7 @@ static void sel_arm(proven_net_selector_t *s, sel_reg_t *r) {
 static void sel_retire(proven_net_selector_t *s, sel_reg_t *r) {
     sel_cool(s, r);
     const proven_sys_socket_t sock = (proven_sys_socket_t)r->raw;
-    if (r->rd_pending) proven_sys_net_ov_cancel(sock, &r->rd.ov);
+    if (r->rd_pending) proven_sys_net_ov_cancel(s->port, sock, &r->rd.ov);
     if (r->evt_open) r->evt_armed = proven_sys_net_evt_disarm(&r->evt, sock);
     if (!r->rd_pending && !r->evt_armed) { sel_free(s, r); return; }
     r->dead = true;

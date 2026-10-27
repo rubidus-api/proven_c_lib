@@ -1387,6 +1387,8 @@ static proven_sys_net_result_t ov_started(bool done_now, bool skip) {
     return ov_reason(e);
 }
 
+bool proven_sys_net_port_available(void) { return true; }
+
 proven_sys_net_result_t proven_sys_net_port_open(proven_uintptr_t *out) {
     if (!net_ready()) return PROVEN_SYS_NET_ERROR;
     HANDLE h = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
@@ -1451,12 +1453,14 @@ proven_sys_net_result_t proven_sys_net_ov_result(proven_sys_socket_t sock, prove
     return ov_reason(WSAGetLastError());
 }
 
-void proven_sys_net_ov_cancel(proven_sys_socket_t sock, proven_sys_net_ov_t *ov) {
+void proven_sys_net_ov_cancel(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov) {
+    (void)port;
     (void)CancelIoEx((HANDLE)sock, (OVERLAPPED *)(void *)ov);
 }
 
-proven_sys_net_result_t proven_sys_net_ov_recv(proven_sys_socket_t sock, proven_sys_net_ov_t *ov, void *buf, proven_size_t cap,
+proven_sys_net_result_t proven_sys_net_ov_recv(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov, void *buf, proven_size_t cap,
                                                bool skip, proven_u32 *bytes) {
+    (void)port;
     /* The WSABUF may be on the stack: the provider takes it before the call returns. */
     WSABUF b = { .len = cap > 0 ? (ULONG)clamp_len(cap) : 0, .buf = (CHAR *)buf };
     DWORD n = 0, flags = 0;
@@ -1466,8 +1470,10 @@ proven_sys_net_result_t proven_sys_net_ov_recv(proven_sys_socket_t sock, proven_
     return ov_started(now, skip);
 }
 
-proven_sys_net_result_t proven_sys_net_ov_send(proven_sys_socket_t sock, proven_sys_net_ov_t *ov, const proven_sys_net_vec_t *vec,
-                                               proven_size_t count, bool skip, proven_u32 *bytes) {
+proven_sys_net_result_t proven_sys_net_ov_send(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov, proven_sys_net_keep_t *keep,
+                                               const proven_sys_net_vec_t *vec, proven_size_t count, bool skip, proven_u32 *bytes) {
+    (void)port;
+    (void)keep;                         /* the provider takes the WSABUFs before the call returns */
     WSABUF b[PROVEN_SYS_NET_VEC_MAX];
     if (count > PROVEN_SYS_NET_VEC_MAX) count = PROVEN_SYS_NET_VEC_MAX;
     for (proven_size_t i = 0; i < count; ++i) { b[i].len = (ULONG)clamp_len(vec[i].len); b[i].buf = (CHAR *)(proven_uintptr_t)vec[i].ptr; }
@@ -1478,8 +1484,9 @@ proven_sys_net_result_t proven_sys_net_ov_send(proven_sys_socket_t sock, proven_
     return ov_started(now, skip);
 }
 
-proven_sys_net_result_t proven_sys_net_ov_accept(proven_sys_socket_t listener, proven_sys_net_family_t family, proven_sys_net_ov_t *ov,
+proven_sys_net_result_t proven_sys_net_ov_accept(proven_uintptr_t port, proven_sys_socket_t listener, proven_sys_net_family_t family, proven_sys_net_ov_t *ov,
                                                  void *area, bool skip, proven_sys_socket_t *accepted) {
+    (void)port;
     *accepted = PROVEN_SYS_SOCKET_INVALID;
     LPFN_ACCEPTEX accept_ex = NULL;
     LPFN_CONNECTEX connect_ex = NULL;
@@ -1528,8 +1535,9 @@ proven_sys_net_result_t proven_sys_net_ov_connect_socket(const proven_sys_net_ad
     return PROVEN_SYS_NET_OK;
 }
 
-proven_sys_net_result_t proven_sys_net_ov_connect(proven_sys_socket_t sock, const proven_sys_net_addr_t *addr, proven_sys_net_ov_t *ov,
+proven_sys_net_result_t proven_sys_net_ov_connect(proven_uintptr_t port, proven_sys_socket_t sock, const proven_sys_net_addr_t *addr, proven_sys_net_ov_t *ov,
                                                   bool skip) {
+    (void)port;
     struct sockaddr_storage ss;
     const proven_native_len_t len = to_native(addr, &ss);
     if (len == 0) return PROVEN_SYS_NET_ADDR_INVALID;
@@ -1559,8 +1567,9 @@ proven_sys_net_result_t proven_sys_net_ov_connect_done(proven_sys_socket_t sock)
     return PROVEN_SYS_NET_OK;
 }
 
-proven_sys_net_result_t proven_sys_net_ov_recv_msg(proven_sys_socket_t sock, proven_sys_net_ov_t *ov, proven_sys_net_msg_t *msg,
+proven_sys_net_result_t proven_sys_net_ov_recv_msg(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov, proven_sys_net_msg_t *msg,
                                                    void *buf, proven_size_t cap, bool skip, proven_u32 *bytes) {
+    (void)port;
     port_msg_t *m = (port_msg_t *)(void *)msg;
     SOCKET s = (SOCKET)sock;
     InitOnceExecuteOnce(&g_recvmsg_once, recvmsg_find, &s, NULL);
@@ -1690,6 +1699,535 @@ void proven_sys_net_evt_close(proven_sys_net_evt_t *evt) {
     memset(evt, 0, sizeof *evt);
 }
 #endif
+
+#if PROVEN_SYS_RING
+/* ---- The port on Linux: io_uring (RFC-0029) ----
+ *
+ * One ring per port, mapped into the process: the loop writes entries into its submission queue
+ * and reads reports from its completion queue; one system call submits what was written and
+ * waits for reports. Raw system calls, no liburing. What a report carries back is the entry's
+ * `user_data`: the OVERLAPPED's address (proven_sys_net_ov_t), or RING_WAKE for the waker - an
+ * eventfd with a read always in flight - or RING_IGNORE for an entry whose report means nothing
+ * (a cancel's). The OVERLAPPED keeps the report's result and what kind of entry it was. */
+
+#include <linux/io_uring.h>
+#include <sys/eventfd.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <limits.h>
+#include <stdlib.h>
+
+#ifndef IORING_ASYNC_CANCEL_ALL
+#define IORING_ASYNC_CANCEL_ALL (1U << 0)
+#endif
+#ifndef IORING_ASYNC_CANCEL_ANY
+#define IORING_ASYNC_CANCEL_ANY (1U << 2)
+#endif
+#ifndef IORING_ASYNC_CANCEL_FD
+#define IORING_ASYNC_CANCEL_FD (1U << 1)
+#endif
+#ifndef IORING_FEAT_EXT_ARG
+#define IORING_FEAT_EXT_ARG (1U << 8)
+#endif
+#ifndef IORING_ENTER_EXT_ARG
+#define IORING_ENTER_EXT_ARG (1U << 3)
+#endif
+#ifndef IORING_SETUP_SUBMIT_ALL
+#define IORING_SETUP_SUBMIT_ALL (1U << 7)
+#endif
+#ifndef IORING_SETUP_COOP_TASKRUN
+#define IORING_SETUP_COOP_TASKRUN (1U << 8)
+#endif
+
+/* Operation numbers are an enum in the header; these are its values (a stable ABI). */
+enum { RING_OP_POLL_ADD = 6, RING_OP_SENDMSG = 9, RING_OP_RECVMSG = 10, RING_OP_ACCEPT = 13, RING_OP_ASYNC_CANCEL = 14,
+       RING_OP_READ = 22, RING_OP_RECV = 27, RING_OP_SOCKET = 45 };
+#define RING_REGISTER_PROBE 8u
+
+/* The probe's layout (struct io_uring_probe, 5.6): ours, so that an older header builds too. */
+typedef struct {
+    proven_u8 last_op, ops_len;
+    proven_u16 resv;
+    proven_u32 resv2[3];
+    struct { proven_u8 op, resv; proven_u16 flags; proven_u32 resv2; } ops[256];
+} ring_probe_t;
+
+typedef struct {
+    proven_u64 sigmask;
+    proven_u32 sigmask_sz, pad;
+    proven_u64 ts;
+} ring_getevents_arg_t;
+
+#define RING_WAKE ((proven_u64)0)
+#define RING_IGNORE ((proven_u64)1)
+#define RING_TRUNCATED INT_MIN                  /* a datagram cut short: what ov_result says TRUNCATED for */
+
+/* What an OVERLAPPED holds here, one word: the kind of entry in its low two bits; above them,
+ * while in flight, a datagram receive's message (whose flags say whether the datagram was cut; a
+ * msghdr is aligned to at least four bytes), and once reported, the result in the high half. */
+enum { RK_IO = 1, RK_POLL, RK_MSG };
+#define RK_KIND(ov) ((unsigned)((ov)->w & 3u))
+#define RK_HDR(ov) ((const struct msghdr *)(proven_uintptr_t)((ov)->w & ~(proven_u64)3u))
+
+typedef struct {
+    int fd, efd;
+    proven_u32 sq_entries, cq_entries, to_submit;
+    void *sq_map, *cq_map;
+    size_t sq_size, cq_size;
+    struct io_uring_sqe *sqes;
+    size_t sqes_size;
+    proven_u32 *sq_head, *sq_tail, *sq_mask, *sq_array;
+    proven_u32 *cq_head, *cq_tail, *cq_mask;
+    struct io_uring_cqe *cqes;
+    proven_u64 wake_buf;                        /* the eventfd read's target */
+} ring_t;
+
+typedef struct {
+    struct msghdr m;
+    struct iovec iov;
+    struct sockaddr_storage from;
+    union { char b[CMSG_SPACE(sizeof(int)) * 4]; struct cmsghdr align; } ctl;
+} ring_msg_t;
+_Static_assert(sizeof(ring_msg_t) <= sizeof(proven_sys_net_msg_t), "a datagram receive's message fits its keep");
+
+typedef struct {
+    struct msghdr m;
+    struct iovec iov[PROVEN_SYS_NET_VEC_MAX];
+} ring_keep_t;
+_Static_assert(sizeof(ring_keep_t) <= sizeof(proven_sys_net_keep_t), "a send's message fits its keep");
+
+static int ring_setup(unsigned entries, struct io_uring_params *p) { return (int)syscall(__NR_io_uring_setup, entries, p); }
+static int ring_enter(int fd, unsigned submit, unsigned min_complete, unsigned flags, const void *arg, size_t argsz) {
+    return (int)syscall(__NR_io_uring_enter, fd, submit, min_complete, flags, arg, argsz);
+}
+
+static void ring_unmap(ring_t *r) {
+    if (r->sqes && r->sqes != MAP_FAILED) munmap(r->sqes, r->sqes_size);
+    if (r->cq_map && r->cq_map != MAP_FAILED && r->cq_map != r->sq_map) munmap(r->cq_map, r->cq_size);
+    if (r->sq_map && r->sq_map != MAP_FAILED) munmap(r->sq_map, r->sq_size);
+}
+
+/* A ring of `sq` entries and `cq` reports, mapped; false when the kernel refuses. */
+static bool ring_open(ring_t *r, unsigned sq, unsigned cq) {
+    memset(r, 0, sizeof *r);
+    r->fd = r->efd = -1;
+    struct io_uring_params p;
+    memset(&p, 0, sizeof p);
+    p.flags = IORING_SETUP_CQSIZE | IORING_SETUP_SUBMIT_ALL | IORING_SETUP_COOP_TASKRUN;
+    p.cq_entries = cq;
+    int fd = ring_setup(sq, &p);
+    if (fd < 0 && errno == EINVAL) {                /* an older kernel: without the flags of 5.18 and 5.19 */
+        memset(&p, 0, sizeof p);
+        p.flags = IORING_SETUP_CQSIZE;
+        p.cq_entries = cq;
+        fd = ring_setup(sq, &p);
+    }
+    if (fd < 0) return false;
+    r->fd = fd;
+    r->sq_entries = p.sq_entries;
+    r->cq_entries = p.cq_entries;
+    r->sq_size = p.sq_off.array + p.sq_entries * sizeof(proven_u32);
+    r->cq_size = p.cq_off.cqes + p.cq_entries * sizeof(struct io_uring_cqe);
+    if (p.features & IORING_FEAT_SINGLE_MMAP) {
+        if (r->cq_size > r->sq_size) r->sq_size = r->cq_size;
+        r->cq_size = r->sq_size;
+    }
+    r->sq_map = mmap(NULL, r->sq_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, fd, IORING_OFF_SQ_RING);
+    if (r->sq_map == MAP_FAILED) { close(fd); return false; }
+    r->cq_map = (p.features & IORING_FEAT_SINGLE_MMAP) ? r->sq_map
+              : mmap(NULL, r->cq_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, fd, IORING_OFF_CQ_RING);
+    r->sqes_size = p.sq_entries * sizeof(struct io_uring_sqe);
+    r->sqes = mmap(NULL, r->sqes_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, fd, IORING_OFF_SQES);
+    if (r->cq_map == MAP_FAILED || r->sqes == MAP_FAILED) { ring_unmap(r); close(fd); return false; }
+    char *sqp = r->sq_map, *cqp = r->cq_map;
+    r->sq_head = (proven_u32 *)(void *)(sqp + p.sq_off.head);
+    r->sq_tail = (proven_u32 *)(void *)(sqp + p.sq_off.tail);
+    r->sq_mask = (proven_u32 *)(void *)(sqp + p.sq_off.ring_mask);
+    r->sq_array = (proven_u32 *)(void *)(sqp + p.sq_off.array);
+    r->cq_head = (proven_u32 *)(void *)(cqp + p.cq_off.head);
+    r->cq_tail = (proven_u32 *)(void *)(cqp + p.cq_off.tail);
+    r->cq_mask = (proven_u32 *)(void *)(cqp + p.cq_off.ring_mask);
+    r->cqes = (struct io_uring_cqe *)(void *)(cqp + p.cq_off.cqes);
+    /* Entry i of the array names submission slot i, for good: slots are used in order. */
+    for (proven_u32 i = 0; i < p.sq_entries; ++i) r->sq_array[i] = i;
+    /* What the kernel must have: reports never dropped, entries read at submission, and a wait
+     * with a time limit. */
+    const proven_u32 need = IORING_FEAT_NODROP | IORING_FEAT_SUBMIT_STABLE | IORING_FEAT_EXT_ARG;
+    if ((p.features & need) != need) { ring_unmap(r); close(fd); return false; }
+    return true;
+}
+
+/* Submit what was written; with `wait`, also wait up to `ms` (negative: no limit) for a report. */
+static int ring_submit(ring_t *r, bool wait, int ms) {
+    unsigned flags = wait ? IORING_ENTER_GETEVENTS : 0;
+    ring_getevents_arg_t arg;
+    struct __kernel_timespec ts;
+    const void *argp = NULL;
+    size_t argsz = 0;
+    if (wait && ms >= 0) {
+        ts.tv_sec = ms / 1000;
+        ts.tv_nsec = (long long)(ms % 1000) * 1000000;
+        memset(&arg, 0, sizeof arg);
+        arg.ts = (proven_u64)(proven_uintptr_t)&ts;
+        flags |= IORING_ENTER_EXT_ARG;
+        argp = &arg;
+        argsz = sizeof arg;
+    }
+    for (;;) {
+        const int n = ring_enter(r->fd, r->to_submit, wait && ms != 0 ? 1u : 0u, flags, argp, argsz);
+        if (n >= 0) { r->to_submit -= (proven_u32)n > r->to_submit ? r->to_submit : (proven_u32)n; return 0; }
+        if (errno == ETIME || errno == EINTR) return 0;
+        if (errno == EBUSY || errno == EAGAIN) return 0;     /* reports to take first: the caller reaps */
+        return -errno;
+    }
+}
+
+/* A free submission entry, zeroed; written ones are submitted first when the queue is full. */
+static struct io_uring_sqe *ring_sqe(ring_t *r) {
+    for (int tries = 0; tries < 2; ++tries) {
+        const proven_u32 tail = *r->sq_tail;
+        const proven_u32 head = __atomic_load_n(r->sq_head, __ATOMIC_ACQUIRE);
+        if (tail - head < r->sq_entries) {
+            struct io_uring_sqe *e = &r->sqes[tail & *r->sq_mask];
+            memset(e, 0, sizeof *e);
+            return e;
+        }
+        (void)ring_submit(r, false, 0);
+    }
+    return NULL;
+}
+
+static void ring_push(ring_t *r) {
+    __atomic_store_n(r->sq_tail, *r->sq_tail + 1, __ATOMIC_RELEASE);
+    r->to_submit++;
+}
+
+static void ring_arm_wake(ring_t *r) {
+    struct io_uring_sqe *e = ring_sqe(r);
+    if (!e) return;
+    e->opcode = RING_OP_READ;
+    e->fd = r->efd;
+    e->addr = (proven_u64)(proven_uintptr_t)&r->wake_buf;
+    e->len = sizeof r->wake_buf;
+    e->user_data = RING_WAKE;
+    ring_push(r);
+}
+
+static atomic_int g_ring_ok;                    /* 0 not asked, 1 yes, 2 no */
+
+bool proven_sys_net_port_available(void) {
+    int v = atomic_load_explicit(&g_ring_ok, memory_order_acquire);
+    if (v == 0) {
+        bool ok = false;
+        ring_t r;
+        if (ring_open(&r, 8, 16)) {
+            ring_probe_t *probe = calloc(1, sizeof *probe);
+            if (probe && syscall(__NR_io_uring_register, r.fd, RING_REGISTER_PROBE, probe, 256) >= 0) {
+                static const int need[] = { RING_OP_POLL_ADD, RING_OP_SENDMSG, RING_OP_RECVMSG, RING_OP_ACCEPT, RING_OP_ASYNC_CANCEL,
+                                            RING_OP_READ, RING_OP_RECV, RING_OP_SOCKET /* 5.19: cancelling a socket's all */ };
+                ok = true;
+                for (size_t i = 0; i < sizeof need / sizeof need[0]; ++i)
+                    if (need[i] > probe->last_op || !(probe->ops[need[i]].flags & IO_URING_OP_SUPPORTED)) ok = false;
+            }
+            free(probe);
+            ring_unmap(&r);
+            close(r.fd);
+        }
+        v = ok ? 1 : 2;
+        atomic_store_explicit(&g_ring_ok, v, memory_order_release);
+    }
+    return v == 1;
+}
+
+proven_sys_net_result_t proven_sys_net_port_open(proven_uintptr_t *out) {
+    if (!proven_sys_net_port_available()) return PROVEN_SYS_NET_UNSUPPORTED;
+    ring_t *r = malloc(sizeof *r);
+    if (!r) return PROVEN_SYS_NET_LIMIT;
+    if (!ring_open(r, 1024, 8192)) { free(r); return PROVEN_SYS_NET_UNSUPPORTED; }
+    r->efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (r->efd < 0) { ring_unmap(r); close(r->fd); free(r); return PROVEN_SYS_NET_LIMIT; }
+    ring_arm_wake(r);
+    *out = (proven_uintptr_t)r;
+    return PROVEN_SYS_NET_OK;
+}
+
+void proven_sys_net_port_close(proven_uintptr_t port) {
+    ring_t *r = (ring_t *)port;
+    if (!r) return;
+    ring_unmap(r);
+    close(r->fd);                               /* the kernel cancels what is left */
+    close(r->efd);
+    free(r);
+}
+
+proven_sys_net_result_t proven_sys_net_port_bind(proven_uintptr_t port, proven_sys_socket_t sock, bool allow_skip, bool *skip) {
+    (void)port; (void)sock;
+    /* Nothing to bind: every entry names its port. A send on such a socket is tried on the socket
+     * first and finishes there when it can, reported by nobody - as a WSASend does on Windows
+     * with the skip mode (proven_sys_net_ov_send). */
+    *skip = allow_skip;
+    return PROVEN_SYS_NET_OK;
+}
+
+proven_sys_net_result_t proven_sys_net_port_post(proven_uintptr_t port) {
+    const ring_t *r = (const ring_t *)port;
+    const proven_u64 one = 1;
+    for (;;) {
+        if (write(r->efd, &one, sizeof one) == (ssize_t)sizeof one) return PROVEN_SYS_NET_OK;
+        if (errno == EINTR) continue;
+        return errno == EAGAIN ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_LIMIT;     /* the counter is full: a wake is due anyway */
+    }
+}
+
+/* Take up to `cap` reports from the completion queue, without a system call. */
+static proven_size_t ring_reap(ring_t *r, proven_sys_net_done_t *out, proven_size_t cap) {
+    proven_size_t n = 0;
+    proven_u32 head = *r->cq_head;
+    const proven_u32 tail = __atomic_load_n(r->cq_tail, __ATOMIC_ACQUIRE);
+    bool rearm = false;
+    while (head != tail && n < cap) {
+        const struct io_uring_cqe *c = &r->cqes[head & *r->cq_mask];
+        const proven_u64 ud = c->user_data;
+        const int res = c->res;
+        head++;
+        if (ud == RING_IGNORE) continue;
+        if (ud == RING_WAKE) {
+            rearm = true;
+            out[n++] = (proven_sys_net_done_t){ .ov = NULL, .bytes = 0, .failed = false };
+            continue;
+        }
+        proven_sys_net_ov_t *ov = (proven_sys_net_ov_t *)(proven_uintptr_t)ud;
+        int got = res;
+        if (RK_KIND(ov) == RK_MSG && res >= 0 && (RK_HDR(ov)->msg_flags & MSG_TRUNC)) got = RING_TRUNCATED;
+        ov->w = ((proven_u64)(proven_u32)got << 32) | RK_KIND(ov);
+        const bool failed = got < 0;
+        out[n++] = (proven_sys_net_done_t){ .ov = ov, .bytes = failed || RK_KIND(ov) == RK_POLL ? 0 : (proven_u32)got, .failed = failed };
+    }
+    __atomic_store_n(r->cq_head, head, __ATOMIC_RELEASE);
+    if (rearm) ring_arm_wake(r);
+    return n;
+}
+
+proven_sys_net_result_t proven_sys_net_port_wait(proven_uintptr_t port, proven_sys_net_done_t *out, proven_size_t cap,
+                                                 int timeout_ms, proven_size_t *count) {
+    ring_t *r = (ring_t *)port;
+    *count = 0;
+    if (cap == 0) return PROVEN_SYS_NET_OK;
+    proven_size_t n = ring_reap(r, out, cap);
+    /* Entered with GETEVENTS when nothing was there, waiting or not, so that a look that does not
+     * wait still asks the kernel for what has finished. With reports in hand the kernel is
+     * entered only to submit. */
+    if ((n == 0 || r->to_submit > 0) && ring_submit(r, true, n == 0 ? timeout_ms : 0) < 0) return PROVEN_SYS_NET_ERROR;
+    if (n < cap) n += ring_reap(r, out + n, cap - n);
+    *count = n;
+    return PROVEN_SYS_NET_OK;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_result(proven_sys_socket_t sock, proven_sys_net_ov_t *ov) {
+    (void)sock;
+    const int res = (int)(proven_u32)(ov->w >> 32);
+    if (res >= 0) return PROVEN_SYS_NET_OK;
+    if (res == RING_TRUNCATED) return PROVEN_SYS_NET_TRUNCATED;
+    if (res == -ECANCELED) return PROVEN_SYS_NET_CANCELLED;
+    return net_reason(-res);
+}
+
+void proven_sys_net_ov_cancel(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov) {
+    ring_t *r = (ring_t *)port;
+    struct io_uring_sqe *e = ring_sqe(r);
+    if (!e) return;
+    e->opcode = RING_OP_ASYNC_CANCEL;
+    e->user_data = RING_IGNORE;
+    if (ov) {
+        e->addr = (proven_u64)(proven_uintptr_t)ov;
+    } else {
+        e->fd = (int)sock;
+        e->rw_flags = (int)(IORING_ASYNC_CANCEL_FD | IORING_ASYNC_CANCEL_ALL);
+    }
+    ring_push(r);
+    /* Submitted now, not at the next wait: the caller may close the socket as soon as this
+     * returns (closing one does not cancel what the ring holds of it, as it does on Windows), and
+     * a cancel by descriptor must find the descriptor still open. */
+    (void)ring_submit(r, false, 0);
+}
+
+void proven_sys_net_port_cancel_all(proven_uintptr_t port) {
+    ring_t *r = (ring_t *)port;
+    struct io_uring_sqe *e = ring_sqe(r);
+    if (!e) return;
+    e->opcode = RING_OP_ASYNC_CANCEL;
+    e->user_data = RING_IGNORE;
+    e->rw_flags = (int)IORING_ASYNC_CANCEL_ANY;
+    ring_push(r);
+}
+
+static void ov_start(proven_sys_net_ov_t *ov, proven_uintptr_t kind) {
+    memset(ov, 0, sizeof *ov);
+    ov->w = kind;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_recv(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov, void *buf, proven_size_t cap,
+                                               bool skip, proven_u32 *bytes) {
+    (void)skip;
+    *bytes = 0;
+    ring_t *r = (ring_t *)port;
+    struct io_uring_sqe *e = ring_sqe(r);
+    if (!e) return PROVEN_SYS_NET_LIMIT;
+    e->fd = (int)sock;
+    e->user_data = (proven_u64)(proven_uintptr_t)ov;
+    if (cap == 0) {                             /* done when data has arrived, nothing taken */
+        ov_start(ov, RK_POLL);
+        e->opcode = RING_OP_POLL_ADD;
+        e->rw_flags = POLLIN;
+    } else {
+        ov_start(ov, RK_IO);
+        e->opcode = RING_OP_RECV;
+        e->addr = (proven_u64)(proven_uintptr_t)buf;
+        e->len = (proven_u32)clamp_len(cap);
+    }
+    ring_push(r);
+    return PROVEN_SYS_NET_IN_PROGRESS;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_send(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov, proven_sys_net_keep_t *keep,
+                                               const proven_sys_net_vec_t *vec, proven_size_t count, bool skip, proven_u32 *bytes) {
+    *bytes = 0;
+    ring_t *r = (ring_t *)port;
+    ring_keep_t *k = (ring_keep_t *)(void *)keep;
+    if (count > PROVEN_SYS_NET_VEC_MAX) count = PROVEN_SYS_NET_VEC_MAX;
+    memset(&k->m, 0, sizeof k->m);
+    for (proven_size_t i = 0; i < count; ++i) { k->iov[i].iov_base = (void *)(proven_uintptr_t)vec[i].ptr; k->iov[i].iov_len = vec[i].len; }
+    k->m.msg_iov = k->iov;
+    k->m.msg_iovlen = count;
+    /* With `skip`, what the socket takes now is sent now, as on Windows: the loop and the drivers
+     * above it count on a send finishing at once when it can - always handing it to the ring let
+     * an HTTP/2 server over TLS take every request of a client that read nothing (RFC-0029). The
+     * ring is asked only when the socket is full. */
+    if (skip) {
+        const ssize_t n = sendmsg((int)sock, &k->m, MSG_DONTWAIT | MSG_NOSIGNAL);
+        if (n > 0) { *bytes = (proven_u32)n; return PROVEN_SYS_NET_OK; }
+        if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) return net_reason(errno);
+    }
+    struct io_uring_sqe *e = ring_sqe(r);
+    if (!e) return PROVEN_SYS_NET_LIMIT;
+    ov_start(ov, RK_IO);
+    e->opcode = RING_OP_SENDMSG;
+    e->fd = (int)sock;
+    e->addr = (proven_u64)(proven_uintptr_t)&k->m;
+    e->len = 1;
+    e->rw_flags = MSG_NOSIGNAL;
+    e->user_data = (proven_u64)(proven_uintptr_t)ov;
+    ring_push(r);
+    return PROVEN_SYS_NET_IN_PROGRESS;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_accept(proven_uintptr_t port, proven_sys_socket_t listener, proven_sys_net_family_t family, proven_sys_net_ov_t *ov,
+                                                 void *area, bool skip, proven_sys_socket_t *accepted) {
+    (void)family; (void)area; (void)skip;
+    *accepted = PROVEN_SYS_SOCKET_INVALID;      /* the report's `bytes` is the new socket */
+    ring_t *r = (ring_t *)port;
+    struct io_uring_sqe *e = ring_sqe(r);
+    if (!e) return PROVEN_SYS_NET_LIMIT;
+    ov_start(ov, RK_IO);
+    e->opcode = RING_OP_ACCEPT;
+    e->fd = (int)listener;
+    e->rw_flags = SOCK_NONBLOCK | SOCK_CLOEXEC;
+    e->user_data = (proven_u64)(proven_uintptr_t)ov;
+    ring_push(r);
+    return PROVEN_SYS_NET_IN_PROGRESS;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_accept_done(proven_sys_socket_t listener, proven_sys_socket_t accepted) {
+    (void)listener; (void)accepted;
+    return PROVEN_SYS_NET_OK;                   /* accept4's flags made it non-blocking and close-on-exec */
+}
+
+proven_sys_net_result_t proven_sys_net_ov_connect_socket(const proven_sys_net_addr_t *addr, proven_sys_socket_t *out) {
+    const int af = native_family(addr->family);
+    if (af < 0) return PROVEN_SYS_NET_ADDR_INVALID;
+    const proven_native_socket_t s = native_open(af, SOCK_STREAM);
+    if (s == NATIVE_INVALID) return net_fail();
+    *out = (proven_sys_socket_t)s;
+    return PROVEN_SYS_NET_OK;
+}
+
+/* A connect started now; what is not finished is waited for as writable, through the ring. */
+proven_sys_net_result_t proven_sys_net_ov_connect(proven_uintptr_t port, proven_sys_socket_t sock, const proven_sys_net_addr_t *addr, proven_sys_net_ov_t *ov,
+                                                  bool skip) {
+    (void)skip;
+    struct sockaddr_storage ss;
+    const proven_native_len_t len = to_native(addr, &ss);
+    if (len == 0) return PROVEN_SYS_NET_ADDR_INVALID;
+    for (;;) {
+        if (connect((proven_native_socket_t)sock, (const struct sockaddr *)&ss, len) == 0) return PROVEN_SYS_NET_OK;
+        if (errno == EINTR) continue;
+        break;
+    }
+    if (errno != EINPROGRESS) return net_reason(errno);
+    ring_t *r = (ring_t *)port;
+    struct io_uring_sqe *e = ring_sqe(r);
+    if (!e) return PROVEN_SYS_NET_LIMIT;
+    ov_start(ov, RK_POLL);
+    e->opcode = RING_OP_POLL_ADD;
+    e->fd = (int)sock;
+    e->rw_flags = POLLOUT;
+    e->user_data = (proven_u64)(proven_uintptr_t)ov;
+    ring_push(r);
+    return PROVEN_SYS_NET_IN_PROGRESS;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_connect_done(proven_sys_socket_t sock) {
+    int err = 0;
+    socklen_t len = (socklen_t)sizeof err;
+    if (getsockopt((proven_native_socket_t)sock, SOL_SOCKET, SO_ERROR, &err, &len) != 0) return net_fail();
+    return err == 0 ? PROVEN_SYS_NET_OK : net_reason(err);
+}
+
+proven_sys_net_result_t proven_sys_net_ov_recv_msg(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov, proven_sys_net_msg_t *msg,
+                                                   void *buf, proven_size_t cap, bool skip, proven_u32 *bytes) {
+    (void)skip;
+    *bytes = 0;
+    ring_msg_t *m = (ring_msg_t *)(void *)msg;
+    memset(m, 0, sizeof *m);
+    m->iov.iov_base = buf;
+    m->iov.iov_len = (size_t)clamp_len(cap);
+    m->m.msg_name = &m->from;
+    m->m.msg_namelen = (socklen_t)sizeof m->from;
+    m->m.msg_iov = &m->iov;
+    m->m.msg_iovlen = 1;
+    m->m.msg_control = m->ctl.b;
+    m->m.msg_controllen = sizeof m->ctl.b;
+    ring_t *r = (ring_t *)port;
+    struct io_uring_sqe *e = ring_sqe(r);
+    if (!e) return PROVEN_SYS_NET_LIMIT;
+    ov_start(ov, RK_MSG);
+    ov->w |= (proven_u64)(proven_uintptr_t)&m->m;
+    e->opcode = RING_OP_RECVMSG;
+    e->fd = (int)sock;
+    e->addr = (proven_u64)(proven_uintptr_t)&m->m;
+    e->len = 1;
+    e->user_data = (proven_u64)(proven_uintptr_t)ov;
+    ring_push(r);
+    return PROVEN_SYS_NET_IN_PROGRESS;
+}
+
+void proven_sys_net_ov_msg_done(const proven_sys_net_msg_t *msg, proven_u32 bytes, proven_size_t *seg, proven_sys_net_addr_t *from) {
+    const ring_msg_t *m = (const ring_msg_t *)(const void *)msg;
+    *seg = 0;
+    if (from) from_native(&m->from, m->m.msg_namelen, from);
+#if defined(UDP_GRO)
+    struct msghdr copy = m->m;
+    for (struct cmsghdr *c = CMSG_FIRSTHDR(&copy); c; c = CMSG_NXTHDR(&copy, c)) {
+        if (c->cmsg_level != IPPROTO_UDP || c->cmsg_type != UDP_GRO) continue;
+        int size = 0;
+        memcpy(&size, CMSG_DATA(c), sizeof size);
+        if (size > 0 && (proven_u32)size < bytes) *seg = (proven_size_t)size;
+    }
+#else
+    (void)bytes;
+#endif
+}
+#endif /* PROVEN_SYS_RING */
 
 #else
 /* A translation unit must not be empty. */
