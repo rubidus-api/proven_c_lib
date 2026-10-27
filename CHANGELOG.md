@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.86.0] - 2026-10-27
+
 ### Changed
 
 - **The Zstandard decoder is 1.3 to 1.7 times faster** (RFC-0028 S-2): matches and literals
