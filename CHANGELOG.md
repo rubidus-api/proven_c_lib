@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.91.0] - 2026-10-28
+
 ### Added
 
 - **io_uring under the loop on Linux, by the caller's choice** (RFC-0029):
