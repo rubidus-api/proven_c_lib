@@ -291,11 +291,13 @@ typedef struct { proven_u64 w; } proven_sys_net_ov_t;   /* io_uring: the kind, a
 #endif
 
 /** One report of a port: the operation's OVERLAPPED (null for a proven_sys_net_port_post),
- *  the bytes it moved, and whether it failed - proven_sys_net_ov_result says why. */
+ *  the bytes it moved, and whether it failed - proven_sys_net_ov_result says why. `more`: the
+ *  operation goes on and reports again (a multishot receive's report that is not its last). */
 typedef struct {
     proven_sys_net_ov_t *ov;
     proven_u32 bytes;
     bool failed;
+    bool more;
 } proven_sys_net_done_t;
 
 /** Whether proven_sys_net_port_open can work here: on Windows always; on Linux when io_uring is
@@ -323,6 +325,33 @@ void proven_sys_net_ov_cancel(proven_uintptr_t port, proven_sys_socket_t sock, p
 #if PROVEN_SYS_RING
 /** io_uring: cancel every operation of the port, each still reported (for a loop's end). */
 void proven_sys_net_port_cancel_all(proven_uintptr_t port);
+
+/*
+ * io_uring, RFC-0030: a pool of `count` buffers of `bytes` each that the kernel fills as data
+ * arrives - a multishot receive takes one only when there is something to put in it, so an idle
+ * socket holds none. Made once per port; false where the kernel cannot (before 6.0, or refused):
+ * receives then stay as they were. `count` a power of two, at most 32768; `bytes` at most 65536.
+ */
+bool proven_sys_net_port_pool(proven_uintptr_t port, proven_size_t count, proven_size_t bytes);
+/** Whether the pool has a buffer the kernel can take now. */
+bool proven_sys_net_port_pool_free(proven_uintptr_t port);
+/** How many of the pool's buffers hold data not yet taken (for tests). */
+proven_size_t proven_sys_net_port_pool_held(proven_uintptr_t port);
+/** A multishot receive of `sock` into the pool, reported once per buffer filled (`more`) and
+ *  once more at its end. The OVERLAPPED then holds the socket's filled buffers in order - what
+ *  proven_sys_net_ov_read takes - and how the receive ended; it is not a result word. */
+proven_sys_net_result_t proven_sys_net_ov_recv_multi(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov);
+/** Take up to `cap` bytes of what a multishot receive has filled, in order; emptied buffers go
+ *  back to the pool. OK with `*n` > 0; WOULD_BLOCK: nothing yet, the receive goes on; EOF or the
+ *  reason it failed once everything before it is taken; NOT_FOUND: nothing, and nothing coming
+ *  (it was stopped, cancelled or ran out of buffers) - read the socket. */
+proven_sys_net_result_t proven_sys_net_ov_read(proven_uintptr_t port, proven_sys_net_ov_t *ov, void *buf, proven_size_t cap, proven_size_t *n);
+/** How many buffers the OVERLAPPED holds (at most 15 told). */
+unsigned proven_sys_net_ov_held(proven_uintptr_t port, const proven_sys_net_ov_t *ov);
+/** Stop a multishot receive; it is still reported, its last report with `more` false. */
+void proven_sys_net_ov_cancel_multi(proven_uintptr_t port, proven_sys_net_ov_t *ov);
+/** Give every buffer the OVERLAPPED holds back to the pool, and forget how it ended. */
+void proven_sys_net_ov_drop(proven_uintptr_t port, proven_sys_net_ov_t *ov);
 #endif
 
 /** A receive of at most `cap` bytes (0: done when data has arrived, nothing taken). */

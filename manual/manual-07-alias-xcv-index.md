@@ -849,6 +849,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_loop_poll` | `proven_loop_poll` |
 | `xcv_loop_post` | `proven_loop_post` |
 | `xcv_loop_recv_cancel` | `proven_loop_recv_cancel` |
+| `xcv_loop_read` | `proven_loop_read` |
 | `xcv_loop_recv` | `proven_loop_recv` |
 | `xcv_loop_run` | `proven_loop_run` |
 | `xcv_loop_scratch` | `proven_loop_scratch` |

@@ -368,7 +368,7 @@ static void wsc_eof(proven_wsc_t *c) {
 static void wsc_readable(proven_wsc_t *c) {
     for (int rounds = 0; rounds < 8 && !c->dead && !c->peer_eof; ++rounds) {
         if (c->state == WSC_OPEN && (c->paused || wsc_pending(&c->in) > 0)) break;
-        proven_result_size_t rd = proven_net_read(&c->sock, (proven_mem_mut_t){ .ptr = c->rbuf, .size = WSC_READ_BYTES }, PROVEN_NET_DONT_WAIT);
+        proven_result_size_t rd = proven_loop_read(c->loop, &c->ls, (proven_mem_mut_t){ .ptr = c->rbuf, .size = WSC_READ_BYTES });
         if (rd.err == PROVEN_ERR_TIMEOUT || rd.err == PROVEN_ERR_AGAIN) break;
         if (rd.err == PROVEN_ERR_EOF) { wsc_eof(c); break; }
         if (rd.err != PROVEN_OK) { wsc_gone(c, rd.err == PROVEN_ERR_REFUSED || rd.err == PROVEN_ERR_UNREACHABLE ? rd.err : PROVEN_ERR_RESET); break; }

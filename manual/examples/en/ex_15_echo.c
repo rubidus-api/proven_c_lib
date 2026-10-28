@@ -59,7 +59,7 @@ static void peer_read(ex_peer_t *p) {
             if (proven_loop_send_wait(loop, &p->sock, 0) != PROVEN_OK) proven_loop_close(loop, &p->sock);
             return;
         }
-        proven_result_size_t r = proven_net_read(&p->conn, scratch, PROVEN_NET_DONT_WAIT);
+        proven_result_size_t r = proven_loop_read(loop, &p->sock, scratch);
         if (r.err == PROVEN_ERR_TIMEOUT) break;                 /* all of it read: wait for more */
         if (r.err != PROVEN_OK) { peer_end(p); return; }        /* PROVEN_ERR_EOF: the client is done */
         proven_result_size_t s = proven_loop_send(loop, &p->sock, (proven_mem_view_t){ scratch.ptr, r.value });

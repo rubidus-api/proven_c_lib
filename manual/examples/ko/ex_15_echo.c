@@ -58,7 +58,7 @@ static void peer_read(ex_peer_t *p) {
             if (proven_loop_send_wait(loop, &p->sock, 0) != PROVEN_OK) proven_loop_close(loop, &p->sock);
             return;
         }
-        proven_result_size_t r = proven_net_read(&p->conn, scratch, PROVEN_NET_DONT_WAIT);
+        proven_result_size_t r = proven_loop_read(loop, &p->sock, scratch);
         if (r.err == PROVEN_ERR_TIMEOUT) break;                 /* 다 읽었다: 더 오기를 기다린다 */
         if (r.err != PROVEN_OK) { peer_end(p); return; }        /* PROVEN_ERR_EOF: 클라이언트가 끝냈다 */
         proven_result_size_t s = proven_loop_send(loop, &p->sock, (proven_mem_view_t){ scratch.ptr, r.value });

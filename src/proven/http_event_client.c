@@ -453,7 +453,7 @@ static void cl_on_idle_timer(void *ctx) { cl_conn_close(ctx, false); }
  * nobody asked for - ends it. */
 static void cl_idle_io(proven_cl_conn_t *k) {
     proven_http_event_client_t *cl = k->client;
-    proven_result_size_t r = proven_net_read(&k->sock, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES }, PROVEN_NET_DONT_WAIT);
+    proven_result_size_t r = proven_loop_read(cl->loop, &k->ls, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES });
     if (r.err == PROVEN_ERR_TIMEOUT || r.err == PROVEN_ERR_AGAIN) return;
     bool good = r.err == PROVEN_OK && k->tls != (void *)0;
     for (proven_size_t at = 0; good && at < r.value; ) {
@@ -891,7 +891,7 @@ static void cl_readable(proven_http_event_request_t *c) {
      * that is paused over what it already holds must not take that for a connection cut
      * under it. */
     if (c->peer_eof) return;
-    proven_result_size_t r = proven_net_read(&k->sock, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES }, PROVEN_NET_DONT_WAIT);
+    proven_result_size_t r = proven_loop_read(cl->loop, &k->ls, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES });
     if (r.err == PROVEN_ERR_TIMEOUT || r.err == PROVEN_ERR_AGAIN) return;
     if (r.err == PROVEN_ERR_EOF) {
         /* Under TLS an end of the connection without the engine having been told is a cut,

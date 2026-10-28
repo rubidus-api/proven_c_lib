@@ -568,7 +568,7 @@ static bool ev_raw_eof(proven_http_stream_t *c) {
 
 static void ev_readable(proven_http_stream_t *c) {
     proven_http_event_server_t *s = c->h.server;
-    proven_result_size_t r = proven_net_read(&c->sock, (proven_mem_mut_t){ .ptr = s->rbuf, .size = EV_READ_BYTES }, PROVEN_NET_DONT_WAIT);
+    proven_result_size_t r = proven_loop_read(s->loop, &c->lsock, (proven_mem_mut_t){ .ptr = s->rbuf, .size = EV_READ_BYTES });
     if (r.err == PROVEN_ERR_TIMEOUT || r.err == PROVEN_ERR_AGAIN) return;
     if (r.err == PROVEN_ERR_EOF) {
         /* A client may close its sending side and still wait for the answer. */

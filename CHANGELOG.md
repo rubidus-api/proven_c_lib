@@ -18,7 +18,29 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **`proven_loop_read`** (RFC-0030): read what has arrived on an attached connection after a
+  receive of zero bytes. On epoll, kqueue, poll and Windows it is `proven_net_read` with
+  `PROVEN_NET_DONT_WAIT`. On an io_uring loop with Linux 6.0 or later, a connection read this way
+  is received for by the kernel - one multishot receive that stays armed - into a pool of the
+  loop's, and the read is a copy from there instead of a system call. A buffer is taken only when
+  data arrives, so an idle connection still holds none; a connection whose data nobody reads holds
+  four at most, and its receive is then stopped so that the kernel's window holds the peer; with
+  the pool empty a socket is received for as before. `proven_loop_options_t` gains
+  `ring_buffers` and `ring_buffer_bytes` (0: 64 buffers of 16 KiB, made at the first such read).
+  Alias `xcv_loop_read`.
+
 ### Changed
+
+- **The event server and clients read through `proven_loop_read`** (HTTP/1.1, HTTP/2,
+  WebSocket; five places). On io_uring that removes the read after each receive: an HTTP/1.1
+  server with sixteen kept-alive connections went from 2.07 system calls a request to 1.01, counted
+  exactly in an emulated Linux 7.2 machine (the response's send remains). Times there were not
+  better than epoll's, so epoll stays the default and io_uring stays the caller's choice.
+  Sends still go to the socket first: through the ring they would have cost 0.07 calls a
+  request, but an HTTP/2 server then took every request of a client that read nothing, and a
+  response head written just before a close was cancelled instead of sent.
 
 - **A QUIC PMTU probe carries nothing but its PING and padding.** It was built like any packet,
   so an acknowledgement owed at that moment rode in it - in the one packet the path may drop for

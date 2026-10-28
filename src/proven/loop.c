@@ -114,8 +114,19 @@
 #define F_SKIP 0x40         /* completion port: what finishes at once is not reported */
 #define F_CANCEL 0x80       /* completion port: what is in flight was asked to stop */
 /* On a completion port F_REG says the node is on the loop's list of every node (for destroy),
- * and `want` holds W_CONNECT while the node's OVERLAPPED is a connect's. */
+ * and `want` holds W_CONNECT while the node's OVERLAPPED is a connect's. On io_uring (RFC-0030)
+ * it also says whether a socket is read with proven_loop_read, and so served by a multishot
+ * receive into the loop's pool; whether its OVERLAPPED holds that receive's buffers and end; and
+ * whether the receive is in flight. */
 #define W_CONNECT 0x01
+#define W_READER 0x02
+#define W_MS 0x04
+#define W_MSARM 0x08
+/* Buffers a socket that nobody reads may hold before its multishot receive is stopped: one slow
+ * reader does not take the pool from the others (and the kernel's window then holds the peer). */
+#define LOOP_HELD_MAX 4u
+#define LOOP_POOL_COUNT 64u
+#define LOOP_POOL_BYTES 16384u
 
 /* done: what is waiting to be delivered */
 #define D_CONNECTED 0x01
@@ -233,6 +244,8 @@ struct proven_loop {
     proven_allocator_t alloc;
 #if LOOP_RING
     bool cp;                                      /* the operations are the port's: io_uring */
+    proven_u8 rbuf_state;                         /* RFC-0030, the pool of receive buffers: 0 not asked for yet, 1 made, 2 none */
+    proven_u32 rbuf_count, rbuf_bytes;            /* what it is to be */
 #endif
 #if LOOP_HAS_CP
     proven_uintptr_t port;
@@ -323,9 +336,16 @@ static proven_loop_backend_t loop_pick(proven_loop_backend_t asked) {
 #endif
 }
 
-static proven_err_t loop_create(proven_allocator_t alloc, proven_loop_t **out, proven_loop_backend_t asked, bool poll_kind) {
+static proven_err_t loop_create(proven_allocator_t alloc, proven_loop_t **out, const proven_loop_options_t *o, bool poll_kind) {
     if (out) *out = (void *)0;
+    const proven_loop_backend_t asked = o ? o->backend : PROVEN_LOOP_BACKEND_AUTO;
     if (!out || !proven_alloc_is_valid(alloc) || (unsigned)asked > (unsigned)PROVEN_LOOP_BACKEND_IOCP) return PROVEN_ERR_INVALID_ARG;
+    proven_size_t pool_count = o && o->ring_buffers ? o->ring_buffers : LOOP_POOL_COUNT;
+    const proven_size_t pool_bytes = o && o->ring_buffer_bytes ? o->ring_buffer_bytes : LOOP_POOL_BYTES;
+    if (pool_count > 32768u || pool_bytes > 65536u) return PROVEN_ERR_INVALID_ARG;
+    proven_size_t round = 1;
+    while (round < pool_count) round *= 2;
+    pool_count = round;
     const proven_loop_backend_t kind = loop_pick(asked);
 #if LOOP_IOCP
     if (kind != PROVEN_LOOP_BACKEND_IOCP) return PROVEN_ERR_UNSUPPORTED;
@@ -345,6 +365,10 @@ static proven_err_t loop_create(proven_allocator_t alloc, proven_loop_t **out, p
     l->wheel_tick = (proven_u64)loop_now(l) / LOOP_TICK_NS;
 #if LOOP_RING
     l->cp = kind == PROVEN_LOOP_BACKEND_URING;
+    l->rbuf_count = (proven_u32)pool_count;
+    l->rbuf_bytes = (proven_u32)pool_bytes;
+#else
+    (void)pool_count; (void)pool_bytes;
 #endif
     proven_err_t e = PROVEN_OK;
 #if LOOP_HAS_CP
@@ -365,17 +389,18 @@ static proven_err_t loop_create(proven_allocator_t alloc, proven_loop_t **out, p
     return PROVEN_OK;
 }
 
-proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out) { return loop_create(alloc, out, PROVEN_LOOP_BACKEND_AUTO, false); }
+proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out) { return loop_create(alloc, out, (void *)0, false); }
 proven_err_t proven_loop_create_poll_(proven_allocator_t alloc, proven_loop_t **out) {
 #if LOOP_IOCP
-    return loop_create(alloc, out, PROVEN_LOOP_BACKEND_IOCP, true);
+    const proven_loop_options_t o = { .backend = PROVEN_LOOP_BACKEND_IOCP };
 #else
-    return loop_create(alloc, out, PROVEN_LOOP_BACKEND_SELECTOR, true);
+    const proven_loop_options_t o = { .backend = PROVEN_LOOP_BACKEND_SELECTOR };
 #endif
+    return loop_create(alloc, out, &o, true);
 }
 
 proven_err_t proven_loop_create_ex(proven_allocator_t alloc, const proven_loop_options_t *options, proven_loop_t **out) {
-    return loop_create(alloc, out, options ? options->backend : PROVEN_LOOP_BACKEND_AUTO, false);
+    return loop_create(alloc, out, options, false);
 }
 
 proven_loop_backend_t proven_loop_backend(const proven_loop_t *l) {
@@ -672,7 +697,8 @@ static void sock_deliver(proven_loop_t *l, loop_sock_t *s) {
     if (bits & D_CONNECTED) sock_connected(s, (proven_err_t)s->node.err);
     /* On a port, a receive answered at once (or failed at once), with what it took. */
     if ((bits & D_RECEIVED) && LOOP_CP(l)) {
-        s->node.flags &= (proven_u8)~(F_RECV | F_CANCEL);
+        /* F_CANCEL stays while a multishot receive is in flight: it is that receive's stop. */
+        s->node.flags &= (proven_u8)~(F_RECV | ((s->node.want & W_MSARM) ? 0 : F_CANCEL));
         const proven_err_t e = (proven_err_t)s->node.err;
         s->fns->received(s->ctx, e, e == PROVEN_OK ? s->recv_cap : 0);
     } else if (bits & D_RECEIVED) s->fns->received(s->ctx, (proven_err_t)s->node.err, 0);
@@ -1168,6 +1194,84 @@ static void sock_ov_done(proven_loop_t *l, loop_sock_t *s, const proven_sys_net_
     sock_maybe_closed(l, s);
 }
 
+#if LOOP_RING
+// --- io_uring: a multishot receive into the loop's pool (RFC-0030)
+
+/* The pool, made at the first need; false where the kernel has none to offer. */
+static bool loop_pool(proven_loop_t *l) {
+    if (l->rbuf_state == 0) {
+#if defined(PROVEN_LOOP_NO_PBUF_)
+        l->rbuf_state = 2;                        /* a build of RFC-0029's ring, for comparison */
+#else
+        l->rbuf_state = proven_sys_net_port_pool(l->port, l->rbuf_count, l->rbuf_bytes) ? 1 : 2;
+#endif
+    }
+    return l->rbuf_state == 1;
+}
+
+/* What a receive of a socket read through the pool finds now: 1 something to answer with (bytes,
+ * or how the receive ended), 0 the multishot receive in flight will answer, -1 there is none and
+ * a receive is to be started. */
+static int ms_state(proven_loop_t *l, loop_sock_t *s) {
+    if (!(s->node.want & W_MS)) return -1;
+    if (proven_sys_net_ov_held(l->port, &s->ov) > 0) return 1;
+    proven_size_t n = 0;
+    const proven_sys_net_result_t r = proven_sys_net_ov_read(l->port, &s->ov, (void *)0, 0, &n);
+    return r == PROVEN_SYS_NET_WOULD_BLOCK ? 0 : r == PROVEN_SYS_NET_NOT_FOUND ? -1 : 1;
+}
+
+/* Take the receive's bytes (or its end) for a receive into a buffer; a receive of nothing takes none. */
+static proven_err_t ms_take(proven_loop_t *l, loop_sock_t *s, proven_size_t *n) {
+    *n = 0;
+    if (s->recv_cap == 0) return PROVEN_OK;
+    const proven_sys_net_result_t r = proven_sys_net_ov_read(l->port, &s->ov, s->recv_buf, s->recv_cap, n);
+    return r == PROVEN_SYS_NET_OK ? PROVEN_OK : sys_err(r);
+}
+
+/* Start the receive asked for: a multishot receive while the pool has a buffer to give, the
+ * plain one otherwise. */
+static void sock_arm(proven_loop_t *l, loop_sock_t *s) {
+    if (loop_pool(l) && proven_sys_net_port_pool_free(l->port)) {
+        if (!(s->node.want & W_MS)) s->ov = (proven_sys_net_ov_t){ 0 };
+        if (proven_sys_net_ov_recv_multi(l->port, sock_handle(s), &s->ov) == PROVEN_SYS_NET_IN_PROGRESS) {
+            s->node.want |= W_MS | W_MSARM;
+            ov_held(l, &s->node, F_OVR);
+            return;
+        }
+    }
+    s->node.want &= (proven_u8)~W_MS;             /* the OVERLAPPED is the plain receive's now: it held nothing */
+    sock_post_recv(l, s);
+}
+
+/* A report of the multishot receive: a buffer filled, or its end. It answers a receive asked
+ * for; with none asked for, a socket holding LOOP_HELD_MAX buffers has its receive stopped. */
+static void sock_ms_done(proven_loop_t *l, loop_sock_t *s, const proven_sys_net_done_t *d) {
+    if (!d->more) {
+        s->node.want &= (proven_u8)~W_MSARM;
+        s->node.flags &= (proven_u8)~F_CANCEL;
+        ov_back(l, &s->node, F_OVR);
+    }
+    if (s->node.state != S_OPEN) {                /* closing: what it held goes back once it has ended */
+        if (!d->more) { proven_sys_net_ov_drop(l->port, &s->ov); sock_maybe_closed(l, s); }
+        return;
+    }
+    if ((s->node.flags & F_RECV) && !(s->node.done & D_RECEIVED)) {
+        const int st = ms_state(l, s);
+        if (st == 0) return;
+        if (st < 0) { sock_arm(l, s); return; }   /* stopped with nothing held: started again, the receive still waiting */
+        proven_size_t n = 0;
+        const proven_err_t e = ms_take(l, s, &n);
+        s->node.flags &= (proven_u8)~F_RECV;
+        s->fns->received(s->ctx, e, n);
+        return;
+    }
+    if ((s->node.want & W_MSARM) && !(s->node.flags & (F_CANCEL | F_RECV)) && proven_sys_net_ov_held(l->port, &s->ov) >= LOOP_HELD_MAX) {
+        s->node.flags |= F_CANCEL;
+        proven_sys_net_ov_cancel_multi(l->port, &s->ov);
+    }
+}
+#endif
+
 // --- UDP
 
 static void udp_maybe_closed(proven_loop_t *l, loop_udp_t *u) {
@@ -1346,7 +1450,12 @@ static void loop_report(proven_loop_t *l, const proven_sys_net_done_t *d) {
     if (!d->ov) { atomic_store(&l->woken, false); return; }       /* the waker: the posts are looked at after this batch */
     loop_node_t *n = node_of_ov(d->ov);
     switch (n->kind) {
-    case KIND_SOCK: sock_ov_done(l, (loop_sock_t *)n, d); break;
+    case KIND_SOCK:
+#if LOOP_RING
+        if (n->want & W_MSARM) { sock_ms_done(l, (loop_sock_t *)n, d); break; }
+#endif
+        sock_ov_done(l, (loop_sock_t *)n, d);
+        break;
     case KIND_CHUNK: sock_send_done(l, (loop_chunk_t *)n, d); break;
     case KIND_ACCEPT: acc_ov_done(l, (loop_acc_t *)n, d); break;
     case KIND_UDP: udp_ov_done(l, (loop_udp_t *)n, d); break;
@@ -1391,6 +1500,7 @@ static void node_last_answer(loop_node_t *n) {
 static loop_node_t *drain_report(proven_loop_t *l, const proven_sys_net_done_t *d) {
     loop_node_t *n = node_of_ov(d->ov);
     if (n->kind == KIND_CHUNK) { n = &((loop_chunk_t *)n)->owner->node; ov_back(l, n, F_OVS); return n; }
+    if (d->more) return n;                        /* a multishot receive's: its last report is still to come */
     ov_back(l, n, F_OVR);
     if (n->kind == KIND_ACCEPT) {
         loop_acc_t *a = (loop_acc_t *)n;
@@ -1521,6 +1631,22 @@ LOOP_WAY proven_err_t CP_(proven_loop_recv)(proven_loop_t *l, proven_loop_sock_t
     s->recv_buf = buf.ptr;
     s->recv_cap = buf.size > 0x7fffffffu ? 0x7fffffffu : (proven_u32)buf.size;
     s->node.flags |= F_RECV;
+#if LOOP_RING
+    /* A socket read with proven_loop_read: from what the pool holds, from the multishot receive
+     * in flight, or from one started now. */
+    if (s->node.want & W_READER) {
+        const int st = ms_state(l, s);
+        if (st > 0) {
+            proven_size_t n = 0;
+            s->node.err = (proven_u16)ms_take(l, s, &n);
+            s->recv_cap = (proven_u32)n;          /* from here on, what it took */
+            node_queue(l, &s->node, D_RECEIVED);
+        } else if (st < 0) {
+            sock_arm(l, s);
+        }
+        return PROVEN_OK;
+    }
+#endif
     sock_post_recv(l, s);
     return PROVEN_OK;
 }
@@ -1529,6 +1655,11 @@ LOOP_WAY void CP_(proven_loop_recv_cancel)(proven_loop_t *l, proven_loop_sock_t 
     if (!l || !sock) return;
     loop_sock_t *s = sock_of(sock);
     if (s->node.kind != KIND_SOCK || !(s->node.flags & F_RECV)) return;
+    if ((s->node.flags & F_OVR) && (s->node.want & W_MSARM)) {
+        /* The multishot receive goes on for the next receive: this one is answered from the list. */
+        if (!(s->node.done & D_RECEIVED)) { s->node.err = (proven_u16)PROVEN_ERR_CANCELLED; s->recv_cap = 0; node_queue(l, &s->node, D_RECEIVED); }
+        return;
+    }
     if (s->node.flags & F_OVR) {
         if (!(s->node.flags & F_CANCEL)) { s->node.flags |= F_CANCEL; proven_sys_net_ov_cancel(l->port, sock_handle(s), &s->ov); }
         return;
@@ -1544,7 +1675,11 @@ LOOP_WAY void CP_(proven_loop_close)(proven_loop_t *l, proven_loop_sock_t *sock)
     const proven_u8 state = s->node.state;
     if (state != S_OPEN && state != S_CONNECTING && state != S_DEAD) return;
     proven_u8 bits = 0;
-    if ((s->node.flags & F_RECV) && !(s->node.flags & F_OVR)) { s->node.err = (proven_u16)PROVEN_ERR_CANCELLED; bits |= D_RECEIVED; }
+    /* A receive is answered now unless the system holds it; a multishot receive is not the receive. */
+    if ((s->node.flags & F_RECV) && (!(s->node.flags & F_OVR) || (s->node.want & W_MSARM))) { s->node.err = (proven_u16)PROVEN_ERR_CANCELLED; s->recv_cap = 0; bits |= D_RECEIVED; }
+#if LOOP_RING
+    if ((s->node.want & W_MS) && !(s->node.want & W_MSARM)) proven_sys_net_ov_drop(l->port, &s->ov);
+#endif
     if (state == S_CONNECTING && !(s->node.flags & F_OVR)) { s->node.err = (proven_u16)PROVEN_ERR_CANCELLED; bits |= D_CONNECTED; }
     if (s->node.flags & F_WAIT) { s->node.flags &= (proven_u8)~F_WAIT; bits |= D_WRITABLE; }
     /* What the system holds is cancelled and answered when the port reports it; bytes in a send
@@ -1723,6 +1858,37 @@ proven_result_size_t proven_loop_sendv_(proven_loop_t *l, proven_loop_sock_t *so
 proven_result_size_t proven_loop_send(proven_loop_t *l, proven_loop_sock_t *sock, proven_mem_view_t bytes) {
     if (bytes.size > 0 && !bytes.ptr) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
     return proven_loop_sendv_(l, sock, &bytes, 1);
+}
+
+proven_result_size_t proven_loop_read(proven_loop_t *l, proven_loop_sock_t *sock, proven_mem_mut_t buf) {
+    proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
+    if (!l || !sock || (buf.size > 0 && !buf.ptr)) { res.err = PROVEN_ERR_INVALID_ARG; return res; }
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN) { res.err = PROVEN_ERR_INVALID_STATE; return res; }
+#if LOOP_RING
+    if (LOOP_CP(l)) {
+        /* From now on the socket is received for into the pool (sock_arm). What the pool holds
+         * comes first; with nothing there and nothing coming, the socket itself. */
+        s->node.want |= W_READER;
+        if ((s->node.want & W_MS) && buf.size > 0) {
+            proven_size_t n = 0;
+            const proven_sys_net_result_t r = proven_sys_net_ov_read(l->port, &s->ov, buf.ptr, buf.size, &n);
+            if (r == PROVEN_SYS_NET_OK) { res.value = n; return res; }
+            if (r == PROVEN_SYS_NET_WOULD_BLOCK) { res.err = PROVEN_ERR_TIMEOUT; return res; }
+            if (r != PROVEN_SYS_NET_NOT_FOUND) { res.err = sys_err(r); return res; }
+        }
+    }
+#endif
+    proven_net_conn_t conn = sock_conn(s);
+    return proven_net_read(&conn, buf, PROVEN_NET_DONT_WAIT);
+}
+
+proven_size_t proven_loop_ring_held_(const proven_loop_t *l) {
+#if LOOP_RING
+    if (l && LOOP_CP(l) && l->rbuf_state == 1) return proven_sys_net_port_pool_held(l->port);
+#endif
+    (void)l;
+    return 0;
 }
 
 proven_size_t proven_loop_send_queued(const proven_loop_sock_t *sock) {

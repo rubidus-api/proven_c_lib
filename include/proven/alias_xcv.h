@@ -830,6 +830,7 @@
 #define xcv_loop_post proven_loop_post
 #define xcv_loop_recv proven_loop_recv
 #define xcv_loop_recv_cancel proven_loop_recv_cancel
+#define xcv_loop_read proven_loop_read
 #define xcv_loop_run proven_loop_run
 #define xcv_loop_scratch proven_loop_scratch
 #define xcv_loop_send proven_loop_send

@@ -98,4 +98,8 @@ void proven_loop_commit_(proven_loop_t *loop, proven_loop_sock_t *sock, proven_s
  * the connection. Nothing is answered from inside it (a failure is kept for `writable`). */
 void proven_loop_flush_(proven_loop_t *loop, proven_loop_sock_t *sock);
 
+/* Internal, for tests: how many buffers of the io_uring pool (RFC-0030) hold data not yet read;
+ * 0 on any other backend or with no pool. */
+proven_size_t proven_loop_ring_held_(const proven_loop_t *loop);
+
 #endif /* PROVEN_INTERNAL_LOOP_H */

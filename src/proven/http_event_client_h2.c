@@ -935,7 +935,7 @@ static void c_fall_back(c2conn_t *c) {
 static void c_readable(c2conn_t *c) {
     proven_http_event_client_t *cl = c->client;
     if (c->peer_eof) return;
-    proven_result_size_t rd = proven_net_read(&c->sock, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES }, PROVEN_NET_DONT_WAIT);
+    proven_result_size_t rd = proven_loop_read(cl->loop, &c->ls, (proven_mem_mut_t){ .ptr = cl->rbuf, .size = CL_READ_BYTES });
     if (rd.err == PROVEN_ERR_TIMEOUT || rd.err == PROVEN_ERR_AGAIN) return;
     if (rd.err == PROVEN_ERR_EOF) {
         c->peer_eof = true;

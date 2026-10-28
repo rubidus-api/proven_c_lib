@@ -95,7 +95,12 @@ void proven_loop_stop(proven_loop_t *loop);
 
 Linux에서 io_uring은 기본값이 아니다. 실제 기계에서 이 라이브러리의 서버가 그것으로 더 빠르다는
 측정이 아직 없고, 더 자주 거절되는 백엔드이기 때문이다. io_uring으로 만든 루프는 커널이 아직 쥔
-것을 Windows처럼 정리한다 - 루프를 없앨 때 취소하고 최대 2초까지 기다린다.
+것을 Windows처럼 정리한다 - 루프를 없앨 때 취소하고 최대 2초까지 기다린다. Linux 6.0 이상에서는
+`proven_loop_read`(5절)로 읽는 연결을 커널이 루프의 풀로 받아 둔다 - 기본은 16 KiB 버퍼 64개이고,
+그런 읽기가 처음 있을 때 만든다. `proven_loop_options_t`의 `ring_buffers`와 `ring_buffer_bytes`로
+바꿀 수 있다. 그래서 0바이트 수신 뒤의 읽기는 시스템 호출이 아니라 복사다. 버퍼는 데이터가 올 때만
+쓰이므로 쉬는 연결은 여전히 하나도 쥐지 않는다. 아무도 읽지 않는 연결은 버퍼를 넷까지만 쥐고, 그다음은
+다른 백엔드에서처럼 커널의 창이 상대를 붙잡는다.
 
 **스레드 규칙.** 이 장에서 `proven_loop_stop`과 `proven_loop_post`를 뺀 모든 것은 루프 자신의
 스레드 - `proven_loop_run`이나 `proven_loop_poll` 안에 있는 스레드 - 에서, 또는 루프가 시작하기 전에
@@ -246,6 +251,7 @@ proven_err_t proven_loop_connect(proven_loop_t *loop, proven_loop_sock_t *sock, 
                                  const proven_loop_sock_fns_t *fns, void *ctx);
 proven_err_t proven_loop_recv(proven_loop_t *loop, proven_loop_sock_t *sock, proven_mem_mut_t buf);
 void proven_loop_recv_cancel(proven_loop_t *loop, proven_loop_sock_t *sock);
+proven_result_size_t proven_loop_read(proven_loop_t *loop, proven_loop_sock_t *sock, proven_mem_mut_t buf);
 proven_result_size_t proven_loop_send(proven_loop_t *loop, proven_loop_sock_t *sock, proven_mem_view_t bytes);
 proven_size_t proven_loop_send_queued(const proven_loop_sock_t *sock);
 proven_err_t proven_loop_send_wait(proven_loop_t *loop, proven_loop_sock_t *sock, proven_size_t at_most);
@@ -274,6 +280,7 @@ proven_allocator_t proven_loop_allocator(const proven_loop_t *loop);
 | `proven_loop_connect(loop, &sock, to, &conn, &fns, ctx)` | 연결을 시작한다. 새 연결은 결과와 상관없이 붙고, 어떻게 끝났는지는 `connected`가 말한다. | `proven_err_t`: 곧바로 실패한 연결. 이때는 아무것도 붙지 않는다. |
 | `proven_loop_recv(loop, &sock, buf)` | 받는다. `buf.size`가 0이면 "읽을 것이 생기면 알려 달라"다: 아무것도 가져오지 않고, 기다리는 동안 버퍼를 쥐지 않는다. 버퍼를 주면 온 것이 거기 들어 있다. | `proven_err_t`: 수신이 진행 중이면 `BUSY`. 닫은 뒤나 연결이 끝나기 전이면 `INVALID_STATE`. |
 | `proven_loop_recv_cancel(loop, &sock)` | 진행 중인 수신을 멈춘다. `PROVEN_ERR_CANCELLED`로 답이 온다. | 없음. |
+| `proven_loop_read(loop, &sock, buf)` | 온 것을 기다리지 않고 읽는다: 연결에 `PROVEN_NET_DONT_WAIT`로 `proven_net_read`를 하는 것과 같고, io_uring에서는 루프의 풀에서 복사한다(2절). 붙인 연결은 언제나 이것으로 읽는다. | `proven_result_size_t`: 읽은 바이트. `.err`는 지금 아무것도 없으면 `TIMEOUT`, `EOF`, `RESET`. |
 | `proven_loop_send(loop, &sock, bytes)` | 보낸다. 기다리는 것이 없으면 바이트는 곧장 소켓으로 간다. 소켓이 바로 받지 않은 것은 루프가 복사해 맡아 두며, 연결마다 64 KiB까지다. 호출이 돌아오면 여러분의 바이트는 다시 자유롭다. | `proven_result_size_t`: 받아 간 바이트 수. 나머지가 들어가지 않았으면 `.err`는 `AGAIN`. 보내기가 실패한 뒤에는 그 실패. |
 | `proven_loop_send_queued(&sock)` | 받아 간 바이트 가운데 아직 나가지 않은 수. | `proven_size_t`. |
 | `proven_loop_send_wait(loop, &sock, at_most)` | 기다리는 바이트가 `at_most` 이하가 되면 `writable`을 한 번 부르게 한다(0: 모두 나갔다). | `proven_err_t`. |
@@ -294,13 +301,13 @@ proven_allocator_t proven_loop_allocator(const proven_loop_t *loop);
   있다. 그 뒤로는 결코 건드리지 않는다. 연결 자체는 `closed`에서 닫는다. 점잖게 끝내려면 - 모두 먼저
   보내고 - `proven_loop_send_wait(loop, &sock, 0)`으로 기다렸다가 `writable`에서 닫는다.
 - **0바이트 수신은 쉬는 연결 만 개가 읽기 버퍼를 하나도 쓰지 않는 방법이다.** 답이 오면
-  `PROVEN_NET_DONT_WAIT`로 임시 작업용 버퍼에 읽어 들이고, 온 것을 쓰고, 아직 쓸 수 없는 것만
+  `proven_loop_read`로 임시 작업용 버퍼에 읽어 들이고, 온 것을 쓰고, 아직 쓸 수 없는 것만
   간직한다. 함수가 돌아오거나, 그 버퍼를 쓸 수도 있는 다른 것을 부르고 나면 내용은 아무 뜻이 없다.
 - **느린 상대를 위해 루프가 맡아 두는 것에 한도를 둔다.** `proven_loop_send_queued`가 많이
   기다린다고 하면, 읽기를 멈추고 `proven_loop_send_wait`에 언제 다시 가면 되는지 묻는다 - 예제가
   그렇게 한다.
-- 연결을 직접 읽는 것은 여전히 괜찮다. 하지만 붙인 뒤로는 바이트가 순서를 지키도록
-  `proven_loop_send`로 보낸다. 연결은 한 루프에, 한 번만 준다.
+- 연결을 붙인 뒤로는 바이트가 순서를 지키도록 `proven_loop_read`로 읽고 `proven_loop_send`로
+  보낸다. io_uring에서는 소켓에 더는 없는 바이트를 루프의 풀이 쥐고 있을 수 있다. 연결은 한 루프에, 한 번만 준다.
 
 아래 프로그램은 루프 하나 위의 에코 서버와 그 클라이언트다. 테스트 묶음이 컴파일하고 실행한다:
 
@@ -365,7 +372,7 @@ static void peer_read(ex_peer_t *p) {
             if (proven_loop_send_wait(loop, &p->sock, 0) != PROVEN_OK) proven_loop_close(loop, &p->sock);
             return;
         }
-        proven_result_size_t r = proven_net_read(&p->conn, scratch, PROVEN_NET_DONT_WAIT);
+        proven_result_size_t r = proven_loop_read(loop, &p->sock, scratch);
         if (r.err == PROVEN_ERR_TIMEOUT) break;                 /* 다 읽었다: 더 오기를 기다린다 */
         if (r.err != PROVEN_OK) { peer_end(p); return; }        /* PROVEN_ERR_EOF: 클라이언트가 끝냈다 */
         proven_result_size_t s = proven_loop_send(loop, &p->sock, (proven_mem_view_t){ scratch.ptr, r.value });

@@ -98,7 +98,13 @@ changes with the choice: the same calls, the same answers in the same order rule
 io_uring is not the default on Linux: no measurement here has yet shown it faster for this
 library's servers on a real machine, and it is the backend more often refused. A loop made with
 it frees what the kernel still holds the way Windows does - cancelled and waited for, up to two
-seconds, when the loop is destroyed.
+seconds, when the loop is destroyed. On Linux 6.0 or later a connection read with
+`proven_loop_read` (section 5) is received for by the kernel into a pool of the loop's - by
+default 64 buffers of 16 KiB, made at the first such read; `ring_buffers` and
+`ring_buffer_bytes` in `proven_loop_options_t` change it - so that the read after a receive of
+zero bytes is a copy, not a system call. A buffer is taken only when data arrives: an idle
+connection still holds none. A connection whose data nobody reads holds four at most; then the
+kernel's own window holds the peer, as on the other backends.
 
 **The thread rule.** Everything in this chapter except `proven_loop_stop` and
 `proven_loop_post` must be called on the loop's own thread - the one inside `proven_loop_run`
@@ -254,6 +260,7 @@ proven_err_t proven_loop_connect(proven_loop_t *loop, proven_loop_sock_t *sock, 
                                  const proven_loop_sock_fns_t *fns, void *ctx);
 proven_err_t proven_loop_recv(proven_loop_t *loop, proven_loop_sock_t *sock, proven_mem_mut_t buf);
 void proven_loop_recv_cancel(proven_loop_t *loop, proven_loop_sock_t *sock);
+proven_result_size_t proven_loop_read(proven_loop_t *loop, proven_loop_sock_t *sock, proven_mem_mut_t buf);
 proven_result_size_t proven_loop_send(proven_loop_t *loop, proven_loop_sock_t *sock, proven_mem_view_t bytes);
 proven_size_t proven_loop_send_queued(const proven_loop_sock_t *sock);
 proven_err_t proven_loop_send_wait(proven_loop_t *loop, proven_loop_sock_t *sock, proven_size_t at_most);
@@ -282,6 +289,7 @@ not moved from `proven_loop_attach` until its `closed` - and a table of four fun
 | `proven_loop_connect(loop, &sock, to, &conn, &fns, ctx)` | Begin connecting; the new connection is attached whatever the outcome, and `connected` says how it ended. | `proven_err_t`: a connect that failed at once, with nothing attached. |
 | `proven_loop_recv(loop, &sock, buf)` | Receive. With `buf.size` 0, "tell me when there is something to read": nothing is taken and no buffer is held while it waits. With a buffer, what arrived is in it. | `proven_err_t`: `BUSY` with a receive in flight; `INVALID_STATE` after a close or before a connect has ended. |
 | `proven_loop_recv_cancel(loop, &sock)` | Stop a receive in flight; it is answered with `PROVEN_ERR_CANCELLED`. | nothing. |
+| `proven_loop_read(loop, &sock, buf)` | Read what has arrived, without waiting: what `proven_net_read` with `PROVEN_NET_DONT_WAIT` does on the connection - and on io_uring, a copy from the loop's pool (section 2). Use it for every read of an attached connection. | `proven_result_size_t`: the bytes read; `.err` `TIMEOUT` when nothing is there now, `EOF`, `RESET`. |
 | `proven_loop_send(loop, &sock, bytes)` | Send. With nothing waiting the bytes go straight to the socket; what it does not take at once the loop copies and keeps, up to 64 KiB per connection. Your bytes are free when the call returns. | `proven_result_size_t`: the bytes taken; `.err` `AGAIN` when the rest did not fit; after a failed send, that failure. |
 | `proven_loop_send_queued(&sock)` | How many bytes taken have not left yet. | `proven_size_t`. |
 | `proven_loop_send_wait(loop, &sock, at_most)` | Have `writable` called once no more than `at_most` bytes wait (0: everything has left). | `proven_err_t`. |
@@ -304,13 +312,14 @@ The rules that hold it together:
   a graceful end - everything sent first - wait with `proven_loop_send_wait(loop, &sock, 0)` and
   close in `writable`.
 - **A receive of zero bytes is how ten thousand idle connections cost no read buffers.** When it
-  is answered, read with `PROVEN_NET_DONT_WAIT` into the scratch buffer, use what arrived, and
+  is answered, read with `proven_loop_read` into the scratch buffer, use what arrived, and
   keep only what cannot be used yet. Its contents mean nothing once your function returns, or
   calls anything that may use it too.
 - **Keep what the loop holds for a slow peer bounded.** When `proven_loop_send_queued` says much
   is waiting, stop reading and ask `proven_loop_send_wait` to say when to go on - the example does.
-- Reading a connection yourself stays allowed, but once it is attached, send through
-  `proven_loop_send`, so that bytes keep their order. A connection is given to one loop, once.
+- Once a connection is attached, read it with `proven_loop_read` and send through
+  `proven_loop_send`, so that bytes keep their order: on io_uring the loop's pool may hold bytes
+  the socket no longer has. A connection is given to one loop, once.
 
 The program below is an echo server and its client on one loop. The test suite compiles and runs
 it:
@@ -377,7 +386,7 @@ static void peer_read(ex_peer_t *p) {
             if (proven_loop_send_wait(loop, &p->sock, 0) != PROVEN_OK) proven_loop_close(loop, &p->sock);
             return;
         }
-        proven_result_size_t r = proven_net_read(&p->conn, scratch, PROVEN_NET_DONT_WAIT);
+        proven_result_size_t r = proven_loop_read(loop, &p->sock, scratch);
         if (r.err == PROVEN_ERR_TIMEOUT) break;                 /* all of it read: wait for more */
         if (r.err != PROVEN_OK) { peer_end(p); return; }        /* PROVEN_ERR_EOF: the client is done */
         proven_result_size_t s = proven_loop_send(loop, &p->sock, (proven_mem_view_t){ scratch.ptr, r.value });

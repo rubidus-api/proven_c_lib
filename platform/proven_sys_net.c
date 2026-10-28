@@ -1440,6 +1440,7 @@ proven_sys_net_result_t proven_sys_net_port_wait(proven_uintptr_t port, proven_s
         /* `Internal` is the request's status once it has completed (an NTSTATUS: negative is a
          * failure, a datagram cut short among them). */
         out[i].failed = o && (LONG)(ULONG)o->Internal < 0;
+        out[i].more = false;
     }
     *count = (proven_size_t)n;
     return PROVEN_SYS_NET_OK;
@@ -1741,8 +1742,21 @@ void proven_sys_net_evt_close(proven_sys_net_evt_t *evt) {
 
 /* Operation numbers are an enum in the header; these are its values (a stable ABI). */
 enum { RING_OP_POLL_ADD = 6, RING_OP_SENDMSG = 9, RING_OP_RECVMSG = 10, RING_OP_ACCEPT = 13, RING_OP_ASYNC_CANCEL = 14,
-       RING_OP_READ = 22, RING_OP_RECV = 27, RING_OP_SOCKET = 45 };
+       RING_OP_READ = 22, RING_OP_RECV = 27, RING_OP_SOCKET = 45, RING_OP_SEND_ZC = 47 };
 #define RING_REGISTER_PROBE 8u
+
+/* Provided buffers and multishot receives (RFC-0030), as the header of 6.0 has them; ours, so
+ * that an older header builds too. A kernel of 6.0 is told by an operation it added (SEND_ZC):
+ * multishot receives have no probe of their own. */
+#define RING_REGISTER_PBUF_RING 22u
+#define RING_RECV_MULTISHOT (1U << 1)            /* IORING_RECV_MULTISHOT, in the entry's ioprio */
+#define RING_SQE_BUFFER_SELECT (1U << 5)         /* IOSQE_BUFFER_SELECT */
+#define RING_CQE_F_BUFFER (1U << 0)
+#define RING_CQE_F_MORE (1U << 1)
+#define RING_CQE_BUFFER_SHIFT 16
+#define RING_POOL_GROUP 1u
+typedef struct { proven_u64 addr; proven_u32 len; proven_u16 bid, resv; } ring_buf_t;   /* the ring's tail is entry 0's resv */
+typedef struct { proven_u64 ring_addr; proven_u32 ring_entries; proven_u16 bgid, flags; proven_u64 resv[3]; } ring_buf_reg_t;
 
 /* The probe's layout (struct io_uring_probe, 5.6): ours, so that an older header builds too. */
 typedef struct {
@@ -1760,6 +1774,7 @@ typedef struct {
 
 #define RING_WAKE ((proven_u64)0)
 #define RING_IGNORE ((proven_u64)1)
+#define RING_MULTI ((proven_u64)2)              /* or'd into a multishot receive's OVERLAPPED address (at least 4-aligned) */
 #define RING_TRUNCATED INT_MIN                  /* a datagram cut short: what ov_result says TRUNCATED for */
 
 /* What an OVERLAPPED holds here, one word: the kind of entry in its low two bits; above them,
@@ -1768,6 +1783,19 @@ typedef struct {
 enum { RK_IO = 1, RK_POLL, RK_MSG };
 #define RK_KIND(ov) ((unsigned)((ov)->w & 3u))
 #define RK_HDR(ov) ((const struct msghdr *)(proven_uintptr_t)((ov)->w & ~(proven_u64)3u))
+
+/* A multishot receive's OVERLAPPED is not a kind and a result but the socket's filled buffers, a
+ * list through the pool's `next` links: the first and last buffer, how much of the first is taken,
+ * whether there are any; whether the receive is in flight, whether it has ended and why. */
+#define MS_HEAD(w) ((proven_u16)((w) & 0xffffu))
+#define MS_TAIL(w) ((proven_u16)(((w) >> 16) & 0xffffu))
+#define MS_OFF(w) ((proven_u32)(((w) >> 32) & 0xffffu))
+#define MS_HELD ((proven_u64)1 << 48)
+#define MS_ARMED ((proven_u64)1 << 49)
+#define MS_ENDED ((proven_u64)1 << 50)
+#define MS_REASON(w) ((proven_sys_net_result_t)(((w) >> 56) & 0xffu))
+#define MS_LIST(head, tail, off) ((proven_u64)(head) | ((proven_u64)(tail) << 16) | ((proven_u64)(off) << 32))
+#define MS_LIST_MASK ((proven_u64)0xffffffffffffu)
 
 typedef struct {
     int fd, efd;
@@ -1780,6 +1808,15 @@ typedef struct {
     proven_u32 *cq_head, *cq_tail, *cq_mask;
     struct io_uring_cqe *cqes;
     proven_u64 wake_buf;                        /* the eventfd read's target */
+    /* The pool of provided buffers (RFC-0030), made at the first need. */
+    bool pool_tried, pool_ok;
+    proven_u16 pool_tail;                       /* where the next buffer given back goes in the buffer ring */
+    proven_u32 pool_count, pool_bytes, pool_held;   /* pool_held: filled buffers not yet given back */
+    ring_buf_t *pool_ring;
+    size_t pool_ring_size, pool_mem_size;
+    proven_byte_t *pool_mem;
+    proven_u32 *pool_len;                       /* per buffer: what the kernel put in it */
+    proven_u16 *pool_next;                      /* per buffer: the next of the same socket's list */
 } ring_t;
 
 typedef struct {
@@ -1914,6 +1951,7 @@ static void ring_arm_wake(ring_t *r) {
 }
 
 static atomic_int g_ring_ok;                    /* 0 not asked, 1 yes, 2 no */
+static bool g_ring_multi;                       /* multishot receives (6.0): written before g_ring_ok */
 
 bool proven_sys_net_port_available(void) {
     int v = atomic_load_explicit(&g_ring_ok, memory_order_acquire);
@@ -1928,6 +1966,7 @@ bool proven_sys_net_port_available(void) {
                 ok = true;
                 for (size_t i = 0; i < sizeof need / sizeof need[0]; ++i)
                     if (need[i] > probe->last_op || !(probe->ops[need[i]].flags & IO_URING_OP_SUPPORTED)) ok = false;
+                g_ring_multi = RING_OP_SEND_ZC <= probe->last_op && (probe->ops[RING_OP_SEND_ZC].flags & IO_URING_OP_SUPPORTED);
             }
             free(probe);
             ring_unmap(&r);
@@ -1957,8 +1996,65 @@ void proven_sys_net_port_close(proven_uintptr_t port) {
     ring_unmap(r);
     close(r->fd);                               /* the kernel cancels what is left */
     close(r->efd);
+    /* The pool after the ring: until the ring is gone the kernel may still write into it. */
+    if (r->pool_ring) munmap(r->pool_ring, r->pool_ring_size);
+    if (r->pool_mem) munmap(r->pool_mem, r->pool_mem_size);
+    free(r->pool_len);
+    free(r->pool_next);
     free(r);
 }
+
+/* A buffer back into the buffer ring, for the kernel to fill again. */
+static void pool_give(ring_t *r, proven_u16 bid) {
+    ring_buf_t *b = &r->pool_ring[r->pool_tail & (r->pool_count - 1u)];
+    b->addr = (proven_u64)(proven_uintptr_t)(r->pool_mem + (size_t)bid * r->pool_bytes);
+    b->len = r->pool_bytes;
+    b->bid = bid;
+    r->pool_tail++;
+    __atomic_store_n(&r->pool_ring[0].resv, r->pool_tail, __ATOMIC_RELEASE);
+}
+
+bool proven_sys_net_port_pool(proven_uintptr_t port, proven_size_t count, proven_size_t bytes) {
+    ring_t *r = (ring_t *)port;
+    if (r->pool_tried) return r->pool_ok;
+    r->pool_tried = true;
+    if (!g_ring_multi || count == 0 || count > 32768u || (count & (count - 1u)) != 0 || bytes == 0 || bytes > 65536u) return false;
+    const size_t page = 4096;
+    r->pool_count = (proven_u32)count;
+    r->pool_bytes = (proven_u32)bytes;
+    r->pool_ring_size = (count * sizeof(ring_buf_t) + page - 1) / page * page;
+    r->pool_mem_size = (count * bytes + page - 1) / page * page;
+    r->pool_ring = mmap(NULL, r->pool_ring_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    r->pool_mem = mmap(NULL, r->pool_mem_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    r->pool_len = calloc(count, sizeof *r->pool_len);
+    r->pool_next = calloc(count, sizeof *r->pool_next);
+    if (r->pool_ring == MAP_FAILED) r->pool_ring = NULL;
+    if (r->pool_mem == MAP_FAILED) r->pool_mem = NULL;
+    ring_buf_reg_t reg;
+    memset(&reg, 0, sizeof reg);
+    reg.ring_addr = (proven_u64)(proven_uintptr_t)r->pool_ring;
+    reg.ring_entries = (proven_u32)count;
+    reg.bgid = RING_POOL_GROUP;
+    if (!r->pool_ring || !r->pool_mem || !r->pool_len || !r->pool_next ||
+        syscall(__NR_io_uring_register, r->fd, RING_REGISTER_PBUF_RING, &reg, 1) < 0) {
+        if (r->pool_ring) munmap(r->pool_ring, r->pool_ring_size);
+        if (r->pool_mem) munmap(r->pool_mem, r->pool_mem_size);
+        free(r->pool_len);
+        free(r->pool_next);
+        r->pool_ring = NULL; r->pool_mem = NULL; r->pool_len = NULL; r->pool_next = NULL;
+        return false;
+    }
+    for (proven_u32 i = 0; i < r->pool_count; ++i) pool_give(r, (proven_u16)i);
+    r->pool_ok = true;
+    return true;
+}
+
+bool proven_sys_net_port_pool_free(proven_uintptr_t port) {
+    const ring_t *r = (const ring_t *)port;
+    return r->pool_ok && r->pool_held < r->pool_count;
+}
+
+proven_size_t proven_sys_net_port_pool_held(proven_uintptr_t port) { return ((const ring_t *)port)->pool_held; }
 
 proven_sys_net_result_t proven_sys_net_port_bind(proven_uintptr_t port, proven_sys_socket_t sock, bool allow_skip, bool *skip) {
     (void)port; (void)sock;
@@ -1979,6 +2075,37 @@ proven_sys_net_result_t proven_sys_net_port_post(proven_uintptr_t port) {
     }
 }
 
+/* A report of a multishot receive: a filled buffer joins the end of its socket's list; the last
+ * report says how the receive ended. -EINVAL there is a kernel without multishot receives after
+ * all: the pool is not offered again. */
+static proven_sys_net_done_t ring_multi_report(ring_t *r, proven_sys_net_ov_t *ov, int res, proven_u32 flags) {
+    proven_u64 w = ov->w;
+    if (flags & RING_CQE_F_BUFFER) {
+        const proven_u16 bid = (proven_u16)(flags >> RING_CQE_BUFFER_SHIFT);
+        if (res > 0) {
+            r->pool_held++;
+            r->pool_len[bid] = (proven_u32)res;
+            if (w & MS_HELD) {
+                r->pool_next[MS_TAIL(w)] = bid;
+                w = (w & ~MS_LIST_MASK) | MS_LIST(MS_HEAD(w), bid, MS_OFF(w));
+            } else {
+                w = (w & ~MS_LIST_MASK) | MS_LIST(bid, bid, 0) | MS_HELD;
+            }
+        } else {
+            pool_give(r, bid);
+        }
+    }
+    const bool more = (flags & RING_CQE_F_MORE) != 0;
+    if (!more) {
+        proven_sys_net_result_t why = res > 0 ? PROVEN_SYS_NET_OK : res == 0 ? PROVEN_SYS_NET_EOF : res == -ENOBUFS ? PROVEN_SYS_NET_LIMIT
+                                    : res == -ECANCELED ? PROVEN_SYS_NET_CANCELLED : res == -EINVAL ? PROVEN_SYS_NET_UNSUPPORTED : net_reason(-res);
+        if (why == PROVEN_SYS_NET_UNSUPPORTED) r->pool_ok = false;
+        w = (w & ~(MS_ARMED | ((proven_u64)0xffu << 56))) | MS_ENDED | ((proven_u64)(proven_u8)why << 56);
+    }
+    ov->w = w;
+    return (proven_sys_net_done_t){ .ov = ov, .bytes = res > 0 ? (proven_u32)res : 0, .failed = false, .more = more };
+}
+
 /* Take up to `cap` reports from the completion queue, without a system call. */
 static proven_size_t ring_reap(ring_t *r, proven_sys_net_done_t *out, proven_size_t cap) {
     proven_size_t n = 0;
@@ -1994,6 +2121,10 @@ static proven_size_t ring_reap(ring_t *r, proven_sys_net_done_t *out, proven_siz
         if (ud == RING_WAKE) {
             rearm = true;
             out[n++] = (proven_sys_net_done_t){ .ov = NULL, .bytes = 0, .failed = false };
+            continue;
+        }
+        if (ud & RING_MULTI) {
+            out[n++] = ring_multi_report(r, (proven_sys_net_ov_t *)(proven_uintptr_t)(ud & ~(proven_u64)3u), res, c->flags);
             continue;
         }
         proven_sys_net_ov_t *ov = (proven_sys_net_ov_t *)(proven_uintptr_t)ud;
@@ -2087,6 +2218,83 @@ proven_sys_net_result_t proven_sys_net_ov_recv(proven_uintptr_t port, proven_sys
     }
     ring_push(r);
     return PROVEN_SYS_NET_IN_PROGRESS;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_recv_multi(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov) {
+    ring_t *r = (ring_t *)port;
+    if (!r->pool_ok) return PROVEN_SYS_NET_UNSUPPORTED;
+    struct io_uring_sqe *e = ring_sqe(r);
+    if (!e) return PROVEN_SYS_NET_LIMIT;
+    e->opcode = RING_OP_RECV;
+    e->fd = (int)sock;
+    e->ioprio = RING_RECV_MULTISHOT;
+    e->flags = RING_SQE_BUFFER_SELECT;
+    e->buf_index = RING_POOL_GROUP;             /* the buffer group, in the same place */
+    e->user_data = (proven_u64)(proven_uintptr_t)ov | RING_MULTI;
+    ov->w = (ov->w & (MS_LIST_MASK | MS_HELD)) | MS_ARMED;     /* what it held stays, ahead of what comes */
+    ring_push(r);
+    return PROVEN_SYS_NET_IN_PROGRESS;
+}
+
+proven_sys_net_result_t proven_sys_net_ov_read(proven_uintptr_t port, proven_sys_net_ov_t *ov, void *buf, proven_size_t cap, proven_size_t *n) {
+    ring_t *r = (ring_t *)port;
+    proven_u64 w = ov->w;
+    proven_size_t total = 0;
+    while (total < cap && (w & MS_HELD)) {
+        const proven_u16 bid = MS_HEAD(w);
+        proven_u32 off = MS_OFF(w);
+        proven_size_t k = r->pool_len[bid] - off;
+        if (k > cap - total) k = cap - total;
+        memcpy((proven_byte_t *)buf + total, r->pool_mem + (size_t)bid * r->pool_bytes + off, k);
+        total += k;
+        off += (proven_u32)k;
+        if (off < r->pool_len[bid]) { w = (w & ~MS_LIST_MASK) | MS_LIST(bid, MS_TAIL(w), off); break; }
+        /* This buffer is taken: back to the pool, and the list starts at the next. */
+        if (bid == MS_TAIL(w)) w &= ~(MS_LIST_MASK | MS_HELD);
+        else w = (w & ~MS_LIST_MASK) | MS_LIST(r->pool_next[bid], MS_TAIL(w), 0);
+        r->pool_held--;
+        pool_give(r, bid);
+    }
+    ov->w = w;
+    *n = total;
+    if (total > 0) return PROVEN_SYS_NET_OK;
+    if (w & MS_ARMED) return PROVEN_SYS_NET_WOULD_BLOCK;
+    if (!(w & MS_ENDED)) return PROVEN_SYS_NET_NOT_FOUND;
+    const proven_sys_net_result_t why = MS_REASON(w);
+    if (why == PROVEN_SYS_NET_OK || why == PROVEN_SYS_NET_LIMIT || why == PROVEN_SYS_NET_CANCELLED || why == PROVEN_SYS_NET_UNSUPPORTED) return PROVEN_SYS_NET_NOT_FOUND;
+    return why;
+}
+
+unsigned proven_sys_net_ov_held(proven_uintptr_t port, const proven_sys_net_ov_t *ov) {
+    const ring_t *r = (const ring_t *)port;
+    const proven_u64 w = ov->w;
+    if (!(w & MS_HELD)) return 0;
+    unsigned k = 1;
+    for (proven_u16 b = MS_HEAD(w); b != MS_TAIL(w) && k < 15; b = r->pool_next[b]) ++k;
+    return k;
+}
+
+void proven_sys_net_ov_cancel_multi(proven_uintptr_t port, proven_sys_net_ov_t *ov) {
+    ring_t *r = (ring_t *)port;
+    struct io_uring_sqe *e = ring_sqe(r);
+    if (!e) return;
+    e->opcode = RING_OP_ASYNC_CANCEL;
+    e->user_data = RING_IGNORE;
+    e->addr = (proven_u64)(proven_uintptr_t)ov | RING_MULTI;
+    ring_push(r);
+}
+
+void proven_sys_net_ov_drop(proven_uintptr_t port, proven_sys_net_ov_t *ov) {
+    ring_t *r = (ring_t *)port;
+    proven_u64 w = ov->w;
+    while (w & MS_HELD) {
+        const proven_u16 bid = MS_HEAD(w);
+        if (bid == MS_TAIL(w)) w &= ~(MS_LIST_MASK | MS_HELD);
+        else w = (w & ~MS_LIST_MASK) | MS_LIST(r->pool_next[bid], MS_TAIL(w), 0);
+        r->pool_held--;
+        pool_give(r, bid);
+    }
+    ov->w = w & MS_ARMED;
 }
 
 proven_sys_net_result_t proven_sys_net_ov_send(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov, proven_sys_net_keep_t *keep,

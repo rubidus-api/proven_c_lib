@@ -715,6 +715,190 @@ static void case_destroy(proven_allocator_t heap, int on) {
     (void)proven_net_close(&gone_far);
 }
 
+/* Reads with proven_loop_read (RFC-0030). On io_uring they come from a pool of the loop's that a
+ * multishot receive fills - here a pool of four buffers of 1 KiB, so that its edges are reached:
+ * data across buffers, a socket nobody reads stopped at four, another left with no buffer to take
+ * and read from the socket itself, the order kept through all of it. Elsewhere the same calls
+ * read the socket, and must answer alike. */
+static proven_byte_t pat(proven_size_t i) { return (proven_byte_t)(i * 7u + 3u); }
+
+static void put_pattern(proven_net_conn_t *far, proven_size_t n) {
+    static proven_byte_t big[32768];
+    for (proven_size_t i = 0; i < n; ++i) big[i] = pat(i);
+    proven_result_size_t w = proven_net_write_all(far, (proven_mem_view_t){ big, n }, proven_net_deadline_in(2000));
+    PROVEN_TEST_ASSERT(w.err == PROVEN_OK, "the far end writes", g_kind);
+}
+
+/* Receive and read, `chunk` bytes at a time, until `want` bytes have come; true when they all
+ * came in order. */
+static bool read_pattern(conn_t *c, proven_size_t want, proven_size_t chunk) {
+    proven_byte_t buf[4096];
+    proven_size_t got = 0;
+    proven_net_deadline_t end = proven_net_deadline_in(4000);
+    while (got < want && proven_time_monotonic_now() < end) {
+        const int before = c->received;
+        if (proven_loop_recv(g_loop, &c->sock, (proven_mem_mut_t){ 0 }) != PROVEN_OK || !until_moves(&c->received, before) || c->recv_err != PROVEN_OK) return false;
+        for (;;) {
+            proven_result_size_t r = proven_loop_read(g_loop, &c->sock, (proven_mem_mut_t){ buf, chunk });
+            if (r.err == PROVEN_ERR_TIMEOUT) break;
+            if (r.err != PROVEN_OK || r.value == 0 || got + r.value > want) return false;
+            for (proven_size_t i = 0; i < r.value; ++i) if (buf[i] != pat(got + i)) return false;
+            got += r.value;
+        }
+    }
+    return got == want;
+}
+
+static void case_read(proven_allocator_t heap, int on) {
+    proven_loop_t *bad = NULL;
+    PROVEN_TEST_ASSERT(proven_loop_create_ex(heap, &(proven_loop_options_t){ .ring_buffers = 40000 }, &bad) == PROVEN_ERR_INVALID_ARG &&
+                       proven_loop_create_ex(heap, &(proven_loop_options_t){ .ring_buffer_bytes = 65537 }, &bad) == PROVEN_ERR_INVALID_ARG && bad == NULL,
+                       "a pool of more than 32768 buffers, or of buffers over 64 KiB, is PROVEN_ERR_INVALID_ARG", g_kind);
+    proven_loop_backend_t backend = on == ON_URING ? PROVEN_LOOP_BACKEND_URING : PROVEN_LOOP_BACKEND_AUTO;
+    proven_loop_t *l = NULL;
+    if (on == ON_POLL) PROVEN_TEST_ASSERT(proven_loop_create_poll_(heap, &l) == PROVEN_OK, "a loop", g_kind);
+    else PROVEN_TEST_ASSERT(proven_loop_create_ex(heap, &(proven_loop_options_t){ .backend = backend, .ring_buffers = 3, .ring_buffer_bytes = 1024 }, &l) == PROVEN_OK,
+                            "a loop with a pool of four buffers of 1 KiB (three is rounded up)", g_kind);
+    proven_loop_t *saved = g_loop;
+    g_loop = l;
+
+    conn_t c, d;
+    proven_net_conn_t far, dfar;
+    pair(&c, &far);
+    pair(&d, &dfar);
+
+    put(&far, "hello");
+    PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &c.sock, (proven_mem_mut_t){ 0 }) == PROVEN_OK && until_moves(&c.received, 0) && c.recv_err == PROVEN_OK,
+                       "a receive of zero bytes is answered", g_kind);
+    proven_byte_t buf[64];
+    proven_result_size_t r = proven_loop_read(g_loop, &c.sock, (proven_mem_mut_t){ buf, sizeof buf });
+    PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.value == 5 && memcmp(buf, "hello", 5) == 0, "proven_loop_read reads what arrived", g_kind);
+    r = proven_loop_read(g_loop, &c.sock, (proven_mem_mut_t){ buf, sizeof buf });
+    PROVEN_TEST_ASSERT(r.err == PROVEN_ERR_TIMEOUT && r.value == 0, "and PROVEN_ERR_TIMEOUT when nothing more is there", g_kind);
+
+    put_pattern(&far, 3000);
+    PROVEN_TEST_ASSERT(read_pattern(&c, 3000, 700), "3,000 bytes across buffers of 1 KiB, read 700 at a time: all, in order", g_kind);
+
+    /* d becomes a reader too. */
+    put(&dfar, "d1");
+    PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &d.sock, (proven_mem_mut_t){ 0 }) == PROVEN_OK && until_moves(&d.received, 0), "d's receive", g_kind);
+    r = proven_loop_read(g_loop, &d.sock, (proven_mem_mut_t){ buf, sizeof buf });
+    PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.value == 2, "d reads", g_kind);
+    PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &d.sock, (proven_mem_mut_t){ 0 }) == PROVEN_OK, "d waits for more", g_kind);
+
+    /* c is not read while 20,000 bytes arrive: on the ring it may hold four buffers - the whole
+     * pool - and no more. d, waiting, then has none to take: it is answered all the same, and its
+     * read finds the bytes in the socket. */
+    int before = c.received;
+    PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &c.sock, (proven_mem_mut_t){ 0 }) == PROVEN_OK, "c's receive", g_kind);
+    put_pattern(&far, 20000);
+    PROVEN_TEST_ASSERT(until_moves(&c.received, before), "is answered, and c is then left unread", g_kind);
+    rounds(30);
+    if (on == ON_URING) PROVEN_TEST_ASSERT(proven_loop_ring_held_(g_loop) == 4, "on the ring c holds four buffers, the whole pool, and no more", g_kind);
+    const int dr = d.received;
+    put(&dfar, "ping");
+    PROVEN_TEST_ASSERT(until_moves(&d.received, dr) && d.recv_err == PROVEN_OK, "a reader is answered while another holds the whole pool", g_kind);
+    r = proven_loop_read(g_loop, &d.sock, (proven_mem_mut_t){ buf, sizeof buf });
+    PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.value == 4 && memcmp(buf, "ping", 4) == 0, "and reads its bytes", g_kind);
+    /* c's answer came when the bytes arrived; now it is read: everything, in order, what the
+     * pool held first and the socket's after. */
+    proven_size_t got = 0;
+    bool in_order = true;
+    for (;;) {
+        r = proven_loop_read(g_loop, &c.sock, (proven_mem_mut_t){ buf, sizeof buf });
+        if (r.err != PROVEN_OK) break;
+        for (proven_size_t i = 0; i < r.value; ++i) if (buf[i] != pat(got + i)) in_order = false;
+        got += r.value;
+    }
+    PROVEN_TEST_ASSERT(in_order && (r.err == PROVEN_ERR_TIMEOUT || got == 20000), "what c held is read in order", g_kind);
+    if (got < 20000) {
+        /* The rest is still to come: read it in the usual way. */
+        static proven_byte_t rest[20000];
+        proven_size_t off = got;
+        proven_net_deadline_t end = proven_net_deadline_in(4000);
+        while (off < 20000 && proven_time_monotonic_now() < end) {
+            const int before = c.received;
+            if (proven_loop_recv(g_loop, &c.sock, (proven_mem_mut_t){ 0 }) != PROVEN_OK || !until_moves(&c.received, before)) break;
+            for (;;) {
+                r = proven_loop_read(g_loop, &c.sock, (proven_mem_mut_t){ rest, sizeof rest - off });
+                if (r.err != PROVEN_OK) break;
+                for (proven_size_t i = 0; i < r.value; ++i) if (rest[i] != pat(off + i)) in_order = false;
+                off += r.value;
+            }
+        }
+        got = off;
+    }
+    PROVEN_TEST_ASSERT(in_order && got == 20000, "all 20,000 bytes of the socket nobody read, in order", g_kind);
+    put_pattern(&dfar, 5000);
+    PROVEN_TEST_ASSERT(read_pattern(&d, 5000, 4096), "and the pool serves again: 5,000 bytes for d", g_kind);
+
+    /* A receive into a buffer on a socket read through the pool takes from there. */
+    put(&far, "abcdef");
+    before = c.received;
+    PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &c.sock, (proven_mem_mut_t){ 0 }) == PROVEN_OK && until_moves(&c.received, before), "c's bytes arrive", g_kind);
+    proven_byte_t four[4];
+    before = c.received;
+    PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &c.sock, (proven_mem_mut_t){ four, 4 }) == PROVEN_OK && until_moves(&c.received, before) &&
+                       c.recv_err == PROVEN_OK && c.recv_n == 4 && memcmp(four, "abcd", 4) == 0, "a receive into four bytes brings the first four", g_kind);
+    before = c.received;
+    PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &c.sock, (proven_mem_mut_t){ four, 4 }) == PROVEN_OK && until_moves(&c.received, before) &&
+                       c.recv_err == PROVEN_OK && c.recv_n == 2 && memcmp(four, "ef", 2) == 0, "and the next the other two", g_kind);
+
+    /* Cancelled, with the multishot receive (on the ring) going on beneath. */
+    before = c.received;
+    PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &c.sock, (proven_mem_mut_t){ 0 }) == PROVEN_OK, "a receive", g_kind);
+    INSIDE(proven_loop_recv_cancel(g_loop, &c.sock));
+    PROVEN_TEST_ASSERT(until_moves(&c.received, before) && c.recv_err == PROVEN_ERR_CANCELLED, "cancelled is PROVEN_ERR_CANCELLED", g_kind);
+    put_pattern(&far, 1500);
+    PROVEN_TEST_ASSERT(read_pattern(&c, 1500, 4096), "and the next receive and read find what came after", g_kind);
+
+    /* The end, after data: the data, then PROVEN_ERR_EOF. */
+    put(&far, "bye");
+    (void)proven_net_close(&far);
+    proven_size_t n = 0;
+    proven_err_t last = PROVEN_OK;
+    proven_net_deadline_t end = proven_net_deadline_in(4000);
+    while (last == PROVEN_OK && proven_time_monotonic_now() < end) {
+        before = c.received;
+        if (proven_loop_recv(g_loop, &c.sock, (proven_mem_mut_t){ 0 }) != PROVEN_OK || !until_moves(&c.received, before)) break;
+        for (;;) {
+            r = proven_loop_read(g_loop, &c.sock, (proven_mem_mut_t){ buf + n, sizeof buf - n });
+            if (r.err == PROVEN_OK) { n += r.value; continue; }
+            if (r.err != PROVEN_ERR_TIMEOUT) last = r.err;
+            break;
+        }
+    }
+    PROVEN_TEST_ASSERT(n == 3 && memcmp(buf, "bye", 3) == 0 && last == PROVEN_ERR_EOF, "the last bytes, then PROVEN_ERR_EOF", g_kind);
+
+    /* Closed while it holds buffers: they go back, and d still has the pool. A receive is asked
+     * for first - on the ring the multishot receive is (re)started by one - and its answer is
+     * left unread. */
+    before = d.received;
+    PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &d.sock, (proven_mem_mut_t){ 0 }) == PROVEN_OK, "d's receive", g_kind);
+    put_pattern(&dfar, 3000);
+    PROVEN_TEST_ASSERT(until_moves(&d.received, before), "is answered", g_kind);
+    rounds(20);
+    if (on == ON_URING) PROVEN_TEST_ASSERT(proven_loop_ring_held_(g_loop) >= 3, "d holds what came: three buffers or four", g_kind);
+    close_and_wait(&d);
+    if (on == ON_URING) PROVEN_TEST_ASSERT(proven_loop_ring_held_(g_loop) == 0, "closed, it has given them back", g_kind);
+    (void)proven_net_close(&dfar);
+    pair(&d, &dfar);
+    put(&dfar, "d2");
+    PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &d.sock, (proven_mem_mut_t){ 0 }) == PROVEN_OK && until_moves(&d.received, 0), "a new socket's receive", g_kind);
+    r = proven_loop_read(g_loop, &d.sock, (proven_mem_mut_t){ buf, sizeof buf });
+    PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.value == 2, "it reads", g_kind);
+    put_pattern(&dfar, 4096);
+    PROVEN_TEST_ASSERT(read_pattern(&d, 4096, 4096), "and a fill of the whole pool comes whole", g_kind);
+    if (on == ON_URING) PROVEN_TEST_ASSERT(proven_loop_ring_held_(g_loop) == 0, "read, every buffer is back in the pool", g_kind);
+
+    close_and_wait(&c);
+    close_and_wait(&d);
+    PROVEN_TEST_ASSERT(proven_loop_read(g_loop, &d.sock, (proven_mem_mut_t){ buf, sizeof buf }).err == PROVEN_ERR_INVALID_STATE, "no read after close", g_kind);
+    (void)proven_net_close(&dfar);
+    proven_loop_destroy(l);
+    g_loop = saved;
+}
+
 static void run_all(proven_allocator_t heap, int on) {
     g_kind = on == ON_POLL ? "on the poll kind of selector" : on == ON_URING ? "on io_uring" : "on the system's default";
     PROVEN_TEST_ASSERT(make_loop(heap, on, &g_loop) == PROVEN_OK, "a loop", g_kind);
@@ -735,6 +919,8 @@ static void run_all(proven_allocator_t heap, int on) {
     case_unix();
     PROVEN_TEST_SECTION("batched datagrams", "Datagrams of one size sent in one call, received through the loop with URO/GRO asked for and with the one-at-a-time way forced: every datagram whole, in order, of its size (internal, for HTTP/3).", g_kind);
     case_udp_segments();
+    PROVEN_TEST_SECTION("reads", "proven_loop_read after a receive of zero bytes: across buffers, a socket nobody reads held at the pool's size, another left without a buffer, a receive into a buffer, cancelled, the end; on io_uring from a pool of four buffers of 1 KiB (RFC-0030).", g_kind);
+    case_read(heap, on);
     PROVEN_TEST_SECTION("destroy", "A loop destroyed with a receive and bytes in flight calls nothing.", g_kind);
     case_destroy(heap, on);
 

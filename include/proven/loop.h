@@ -152,6 +152,12 @@ typedef enum proven_loop_backend {
 /** @brief Options of proven_loop_create_ex; zero-initialised, they are proven_loop_create's. */
 typedef struct proven_loop_options {
     proven_loop_backend_t backend;
+    /** io_uring with Linux 6.0 or later: the pool of buffers the kernel fills for the
+     *  connections read with proven_loop_read - how many (rounded up to a power of two, at most
+     *  32768) and of how many bytes each (at most 65536). 0: 64 and 16384. Made at the first
+     *  proven_loop_read; the other backends ignore both. */
+    proven_size_t ring_buffers;
+    proven_size_t ring_buffer_bytes;
 } proven_loop_options_t;
 
 /**
@@ -257,6 +263,22 @@ proven_err_t proven_loop_recv(proven_loop_t *loop, proven_loop_sock_t *sock, pro
 /** @brief Stop a receive in flight: `received` comes with PROVEN_ERR_CANCELLED (or, on Windows,
  *         with data that reached a buffer first). Harmless when there is none. */
 void proven_loop_recv_cancel(proven_loop_t *loop, proven_loop_sock_t *sock);
+
+/**
+ * @brief Read what has arrived, after a receive of zero bytes said there is something: the
+ *        same as proven_net_read with PROVEN_NET_DONT_WAIT on the connection, and on epoll,
+ *        kqueue, poll and Windows it is that call.
+ *
+ * On io_uring (Linux 6.0 or later) a connection read this way is received for by the kernel
+ * into a pool of the loop's as data arrives, and this copies from there - no system call. An
+ * idle connection still holds no buffer. Use it, not proven_net_read, for every read of an
+ * attached connection: bytes the pool holds come before what the socket holds.
+ *
+ * @return `.value` bytes read; PROVEN_ERR_TIMEOUT when nothing is there now; PROVEN_ERR_EOF;
+ *         the errors of proven_net_read; PROVEN_ERR_INVALID_STATE after proven_loop_close.
+ */
+[[nodiscard]]
+proven_result_size_t proven_loop_read(proven_loop_t *loop, proven_loop_sock_t *sock, proven_mem_mut_t buf);
 
 /**
  * @brief Send `bytes`: the loop takes what it can and the caller's bytes are free again when
