@@ -148,7 +148,14 @@ static void case_send(void) {
 
     proven_result_size_t s;
     INSIDE(s = proven_loop_send(g_loop, &c.sock, (proven_mem_view_t){ (const proven_byte_t *)"abc", 3 }));
-    PROVEN_TEST_ASSERT(s.err == PROVEN_OK && s.value == 3 && proven_loop_send_queued(&c.sock) == 0, "a small send goes straight to the socket", g_kind);
+    if (proven_loop_backend(g_loop) == PROVEN_LOOP_BACKEND_URING) {
+        /* On io_uring every send goes through the ring: it waits for the loop's next round. */
+        PROVEN_TEST_ASSERT(s.err == PROVEN_OK && s.value == 3 && proven_loop_send_queued(&c.sock) == 3, "a small send is taken and waits for the loop", g_kind);
+        for (int i = 0; i < 50 && proven_loop_send_queued(&c.sock) > 0; ++i) rounds(1);
+        PROVEN_TEST_ASSERT(proven_loop_send_queued(&c.sock) == 0, "which hands it to the ring", g_kind);
+    } else {
+        PROVEN_TEST_ASSERT(s.err == PROVEN_OK && s.value == 3 && proven_loop_send_queued(&c.sock) == 0, "a small send goes straight to the socket", g_kind);
+    }
     proven_byte_t buf[8];
     proven_result_size_t r = proven_net_read(&far, (proven_mem_mut_t){ buf, sizeof buf }, proven_net_deadline_in(1000));
     PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.value == 3 && memcmp(buf, "abc", 3) == 0, "and arrives", g_kind);
@@ -263,6 +270,8 @@ static proven_size_t fill(conn_t *c) {
  * bytes of three small pieces put together (one send), then 2,500 of three large ones (one
  * gather write). */
 static void case_sendv_cut(void) {
+    /* On io_uring no send goes to the socket first, so none is cut there (RFC-0030 D-3). */
+    if (proven_loop_backend(g_loop) == PROVEN_LOOP_BACKEND_URING) return;
     conn_t c;
     proven_net_conn_t far;
     pair(&c, &far);
@@ -415,6 +424,7 @@ static void case_accept_connect(void) {
     proven_net_conn_t server;
     PROVEN_TEST_ASSERT(proven_net_accept(&a.listener, proven_net_deadline_in(2000), &server, NULL) == PROVEN_OK, "the other end", g_kind);
     proven_result_size_t s = proven_loop_send(g_loop, &c.sock, (proven_mem_view_t){ (const proven_byte_t *)"ping", 4 });
+    rounds(2);                                     /* on io_uring the send is the loop's */
     proven_byte_t buf[8];
     proven_result_size_t r = proven_net_read(&server, (proven_mem_mut_t){ buf, sizeof buf }, proven_net_deadline_in(1000));
     PROVEN_TEST_ASSERT(s.err == PROVEN_OK && r.err == PROVEN_OK && r.value == 4 && memcmp(buf, "ping", 4) == 0, "and the connection carries bytes", g_kind);
@@ -552,6 +562,7 @@ static void case_unix(void) {
     put(&clients[0], "by path");
     PROVEN_TEST_ASSERT(until_moves(&c.received, 0) && c.recv_err == PROVEN_OK && c.recv_n == 7 && memcmp(into, "by path", 7) == 0, "brings what the client wrote", g_kind);
     proven_result_size_t s = proven_loop_send(g_loop, &c.sock, (proven_mem_view_t){ (const proven_byte_t *)"back", 4 });
+    rounds(2);
     proven_byte_t buf[8];
     proven_result_size_t r = proven_net_read(&clients[0], (proven_mem_mut_t){ buf, sizeof buf }, proven_net_deadline_in(1000));
     PROVEN_TEST_ASSERT(s.err == PROVEN_OK && r.err == PROVEN_OK && r.value == 4 && memcmp(buf, "back", 4) == 0, "and the loop's send reaches the client", g_kind);
@@ -569,6 +580,7 @@ static void case_unix(void) {
     proven_net_conn_t server;
     PROVEN_TEST_ASSERT(proven_net_accept(&a.listener, proven_net_deadline_in(2000), &server, NULL) == PROVEN_OK, "the other end", g_kind);
     s = proven_loop_send(g_loop, &d.sock, (proven_mem_view_t){ (const proven_byte_t *)"ping", 4 });
+    rounds(2);
     r = proven_net_read(&server, (proven_mem_mut_t){ buf, sizeof buf }, proven_net_deadline_in(1000));
     PROVEN_TEST_ASSERT(s.err == PROVEN_OK && r.err == PROVEN_OK && r.value == 4 && memcmp(buf, "ping", 4) == 0, "and the connection carries bytes", g_kind);
     close_and_wait(&d);

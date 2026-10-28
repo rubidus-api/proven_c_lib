@@ -467,9 +467,12 @@ static proven_size_t h2_engine_bound(const proven_http_event_server_t *sv) {
          : sv->cfg.max_buffered_output > ((proven_size_t)1 << 29) ? (proven_size_t)1 << 30 : sv->cfg.max_buffered_output * 2;
 }
 
-/* Whether the engine holds as much output as it may: the transport is not taking it. */
+/* Whether this side holds as much output as it may - the engine's and what the loop holds for
+ * the connection: the transport is not taking it. (The loop's share counts too: on io_uring every
+ * send waits in the loop until the next entry into the kernel, and the engine alone would then stop
+ * at its room for bodies, short of the bound, while requests kept being taken - RFC-0030 D-3.) */
 static bool d_full(const h2d_t *d) {
-    return proven_h2_conn_pending_output(d->engine).size >= h2_engine_bound(d->server);
+    return d_queued(d) >= h2_engine_bound(d->server);
 }
 
 static void d_pump(h2d_t *d) {
@@ -615,6 +618,11 @@ static void h2_on_progress(void *raw) {
     h2d_t *d = raw;
     if (d->dead) return;
     d_enter(d);
+    /* The connection's output moved: a WebSocket that counts it (proven_http_event_h2_buffered_)
+     * and was refused is asked again in this round's turns. With sends through io_uring the
+     * output stays in the loop until the next round, so a stream's own output having moved
+     * earlier is not the last news it needs. */
+    for (proven_h2s_t *s = d->streams; s; s = s->next) if (s->raw && !s->dead) s->want_writable = true;
     d_raw_feed_all(d);
     d_pump(d);
     d_leave(d);

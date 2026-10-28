@@ -473,7 +473,10 @@ static void cl_idle_io(proven_cl_conn_t *k) {
 static bool cl_reusable(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->h.client;
     proven_cl_conn_t *k = c->k;
-    if (!c->keep || !c->request_ended || c->peer_eof || cl_buffered(c) > 0 || buf_pending(&c->stash) > 0 || k->unfed > 0) return false;
+    /* What the loop holds still counts as sent: it leaves in order whoever uses the connection
+     * next (on io_uring every send waits in the loop for its next round - RFC-0030 D-3). */
+    if (!c->keep || !c->request_ended || c->peer_eof || buf_pending(&c->out) > 0 || buf_pending(&c->stash) > 0 || k->unfed > 0) return false;
+    if (k->tls && proven_tls_pending_output(k->tls).size > 0) return false;
     if (k->tls) {
         /* Nothing more may be waiting inside TLS either. (The stash is empty, so the buffer
          * this reads into holds nothing that is still wanted.) */

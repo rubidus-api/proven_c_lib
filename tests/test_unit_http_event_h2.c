@@ -655,6 +655,8 @@ static void ws_over_h2(void) {
         if (got[0] != (proven_byte_t)i) in_order = false;
         pushed++;
     }
+    if (!(pushed == 200 && in_order && atomic_load(&g_push_refused) > 0 && atomic_load(&g_push_writable) > 0))
+        PROVEN_TEST_INFO("pushed {}, in order {}, refused {}, writable {}, sent {}", PROVEN_ARG(pushed), PROVEN_ARG((int)in_order), PROVEN_ARG(atomic_load(&g_push_refused)), PROVEN_ARG(atomic_load(&g_push_writable)), PROVEN_ARG(atomic_load(&g_push_sent)));
     PROVEN_TEST_ASSERT(pushed == 200 && in_order && atomic_load(&g_push_refused) > 0 && atomic_load(&g_push_writable) > 0,
         "two hundred messages arrive in order, though the server was refused on the way and resumed through on_writable", "Check s_push: output that moved tells the WebSocket (on_progress).");
     (void)proven_h2_conn_reset(c.e, id, PROVEN_H2_CANCEL);
@@ -1215,6 +1217,7 @@ int main(void) {
          * the rest of what the client sent stays unread, so a client that asks without
          * reading cannot make the server hold an answer for everything it sends. */
         const int taken = atomic_load(&g_requests) - asked_before;
+        if (!(taken > 0 && taken < 100)) PROVEN_TEST_INFO("{} of a hundred taken", PROVEN_ARG(taken));
         PROVEN_TEST_ASSERT(taken > 0 && taken < 100, "while the client reads nothing, the server stops taking requests when its output is full", "Check d_full and the loop of h2_on_input in src/proven/http_event_h2.c.");
         good = 0; resets = 0;
         for (int i = 0; i < 100; i++) {

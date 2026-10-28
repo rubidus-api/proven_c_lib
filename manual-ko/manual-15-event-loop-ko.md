@@ -100,7 +100,10 @@ Linux에서 io_uring은 기본값이 아니다. 실제 기계에서 이 라이�
 그런 읽기가 처음 있을 때 만든다. `proven_loop_options_t`의 `ring_buffers`와 `ring_buffer_bytes`로
 바꿀 수 있다. 그래서 0바이트 수신 뒤의 읽기는 시스템 호출이 아니라 복사다. 버퍼는 데이터가 올 때만
 쓰이므로 쉬는 연결은 여전히 하나도 쥐지 않는다. 아무도 읽지 않는 연결은 버퍼를 넷까지만 쥐고, 그다음은
-다른 백엔드에서처럼 커널의 창이 상대를 붙잡는다.
+다른 백엔드에서처럼 커널의 창이 상대를 붙잡는다. 송신도 링을 지난다: 송신은 복사되어 루프의 다음
+바퀴에 수신과 함께 커널에 넘어가므로, 모든 연결의 읽기와 송신이 루프가 커널에 한 번 드는 것을 함께 쓴다.
+`proven_loop_send_queued`는 커널이 가져갈 때까지 그 바이트를 세고, 닫기는 아직 넘기지 않은 것을 먼저
+소켓에 쓴다.
 
 **스레드 규칙.** 이 장에서 `proven_loop_stop`과 `proven_loop_post`를 뺀 모든 것은 루프 자신의
 스레드 - `proven_loop_run`이나 `proven_loop_poll` 안에 있는 스레드 - 에서, 또는 루프가 시작하기 전에
@@ -281,7 +284,7 @@ proven_allocator_t proven_loop_allocator(const proven_loop_t *loop);
 | `proven_loop_recv(loop, &sock, buf)` | 받는다. `buf.size`가 0이면 "읽을 것이 생기면 알려 달라"다: 아무것도 가져오지 않고, 기다리는 동안 버퍼를 쥐지 않는다. 버퍼를 주면 온 것이 거기 들어 있다. | `proven_err_t`: 수신이 진행 중이면 `BUSY`. 닫은 뒤나 연결이 끝나기 전이면 `INVALID_STATE`. |
 | `proven_loop_recv_cancel(loop, &sock)` | 진행 중인 수신을 멈춘다. `PROVEN_ERR_CANCELLED`로 답이 온다. | 없음. |
 | `proven_loop_read(loop, &sock, buf)` | 온 것을 기다리지 않고 읽는다: 연결에 `PROVEN_NET_DONT_WAIT`로 `proven_net_read`를 하는 것과 같고, io_uring에서는 루프의 풀에서 복사한다(2절). 붙인 연결은 언제나 이것으로 읽는다. | `proven_result_size_t`: 읽은 바이트. `.err`는 지금 아무것도 없으면 `TIMEOUT`, `EOF`, `RESET`. |
-| `proven_loop_send(loop, &sock, bytes)` | 보낸다. 기다리는 것이 없으면 바이트는 곧장 소켓으로 간다. 소켓이 바로 받지 않은 것은 루프가 복사해 맡아 두며, 연결마다 64 KiB까지다. 호출이 돌아오면 여러분의 바이트는 다시 자유롭다. | `proven_result_size_t`: 받아 간 바이트 수. 나머지가 들어가지 않았으면 `.err`는 `AGAIN`. 보내기가 실패한 뒤에는 그 실패. |
+| `proven_loop_send(loop, &sock, bytes)` | 보낸다. 기다리는 것이 없으면 바이트는 곧장 소켓으로 간다. 소켓이 바로 받지 않은 것은 루프가 복사해 맡아 두며, 연결마다 64 KiB까지다. io_uring에서는 모든 송신을 복사해 루프의 다음 바퀴에 커널에 넘긴다(2절). 호출이 돌아오면 여러분의 바이트는 다시 자유롭다. | `proven_result_size_t`: 받아 간 바이트 수. 나머지가 들어가지 않았으면 `.err`는 `AGAIN`. 보내기가 실패한 뒤에는 그 실패. |
 | `proven_loop_send_queued(&sock)` | 받아 간 바이트 가운데 아직 나가지 않은 수. | `proven_size_t`. |
 | `proven_loop_send_wait(loop, &sock, at_most)` | 기다리는 바이트가 `at_most` 이하가 되면 `writable`을 한 번 부르게 한다(0: 모두 나갔다). | `proven_err_t`. |
 | `proven_loop_close(loop, &sock)` | 끝: 진행 중인 것은 `PROVEN_ERR_CANCELLED`로 답하고, 아직 기다리던 바이트는 버리고, 그다음 `closed`. | 없음. |

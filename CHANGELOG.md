@@ -18,6 +18,21 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **On io_uring every send goes through the ring** (RFC-0030 D-3, the owner's decision of
+  2026-10-28): `proven_loop_send` copies the bytes and the loop hands them to the kernel in its
+  next round, together with the receives, instead of trying the socket first.
+  `proven_loop_send_queued` counts them until the kernel has taken them, and `proven_loop_close`
+  writes to the socket what had not been handed over yet before it drops the rest. The selector
+  and Windows' completion port are unchanged. To keep the bounds that rest on what is queued:
+  the HTTP/2 server stops taking requests when the engine's output and what the loop holds for
+  the connection together reach the engine's bound (before, the engine's alone - on the ring the
+  engine stopped short of it, and a client that read nothing could have every request taken); a
+  WebSocket over HTTP/2 that was refused is asked again whenever the connection's output moves;
+  the event client keeps a connection for reuse while the loop still holds its last bytes; and
+  the event server shuts the write side of a TLS connection only once its close alert has left.
+
 ## [0.92.0] - 2026-10-28
 
 ### Added

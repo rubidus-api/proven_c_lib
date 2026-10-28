@@ -104,7 +104,11 @@ default 64 buffers of 16 KiB, made at the first such read; `ring_buffers` and
 `ring_buffer_bytes` in `proven_loop_options_t` change it - so that the read after a receive of
 zero bytes is a copy, not a system call. A buffer is taken only when data arrives: an idle
 connection still holds none. A connection whose data nobody reads holds four at most; then the
-kernel's own window holds the peer, as on the other backends.
+kernel's own window holds the peer, as on the other backends. Sends too go through the ring: a
+send is copied and handed to the kernel in the loop's next round, together with the receives,
+so that the reads and sends of every connection share the loop's one entry into the kernel;
+`proven_loop_send_queued` counts the bytes until the kernel has taken them, and a close writes
+to the socket what had not been handed over yet.
 
 **The thread rule.** Everything in this chapter except `proven_loop_stop` and
 `proven_loop_post` must be called on the loop's own thread - the one inside `proven_loop_run`
@@ -290,7 +294,7 @@ not moved from `proven_loop_attach` until its `closed` - and a table of four fun
 | `proven_loop_recv(loop, &sock, buf)` | Receive. With `buf.size` 0, "tell me when there is something to read": nothing is taken and no buffer is held while it waits. With a buffer, what arrived is in it. | `proven_err_t`: `BUSY` with a receive in flight; `INVALID_STATE` after a close or before a connect has ended. |
 | `proven_loop_recv_cancel(loop, &sock)` | Stop a receive in flight; it is answered with `PROVEN_ERR_CANCELLED`. | nothing. |
 | `proven_loop_read(loop, &sock, buf)` | Read what has arrived, without waiting: what `proven_net_read` with `PROVEN_NET_DONT_WAIT` does on the connection - and on io_uring, a copy from the loop's pool (section 2). Use it for every read of an attached connection. | `proven_result_size_t`: the bytes read; `.err` `TIMEOUT` when nothing is there now, `EOF`, `RESET`. |
-| `proven_loop_send(loop, &sock, bytes)` | Send. With nothing waiting the bytes go straight to the socket; what it does not take at once the loop copies and keeps, up to 64 KiB per connection. Your bytes are free when the call returns. | `proven_result_size_t`: the bytes taken; `.err` `AGAIN` when the rest did not fit; after a failed send, that failure. |
+| `proven_loop_send(loop, &sock, bytes)` | Send. With nothing waiting the bytes go straight to the socket; what it does not take at once the loop copies and keeps, up to 64 KiB per connection. On io_uring every send is copied and handed to the kernel in the loop's next round (section 2). Your bytes are free when the call returns. | `proven_result_size_t`: the bytes taken; `.err` `AGAIN` when the rest did not fit; after a failed send, that failure. |
 | `proven_loop_send_queued(&sock)` | How many bytes taken have not left yet. | `proven_size_t`. |
 | `proven_loop_send_wait(loop, &sock, at_most)` | Have `writable` called once no more than `at_most` bytes wait (0: everything has left). | `proven_err_t`. |
 | `proven_loop_close(loop, &sock)` | The end: what is in flight is answered `PROVEN_ERR_CANCELLED`, bytes still waiting are dropped, then `closed`. | nothing. |

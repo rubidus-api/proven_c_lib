@@ -285,9 +285,13 @@ proven_result_size_t proven_loop_read(proven_loop_t *loop, proven_loop_sock_t *s
  * @brief Send `bytes`: the loop takes what it can and the caller's bytes are free again when
  *        the call returns.
  *
- * With nothing waiting, the bytes go straight to the socket, and only what it does not take at
- * once is copied - into buffers of the loop's, given back when sent. Bytes keep their order.
- * The loop holds up to 64 KiB waiting per connection: past that, it takes nothing more.
+ * On the selector and Windows' completion port, with nothing waiting the bytes go straight to the
+ * socket, and only what it does not take at once is copied - into buffers of the loop's, given
+ * back when sent. On io_uring every send is copied and given to the kernel in the loop's next
+ * round, with the receives (so proven_loop_send_queued counts it until then); at
+ * proven_loop_close what the loop has not yet given to the kernel is written to the socket first.
+ * Bytes keep their order. The loop holds up to 64 KiB waiting per connection: past that, it
+ * takes nothing more.
  *
  * @return `.value` the bytes taken; `.err` PROVEN_OK when all were, PROVEN_ERR_AGAIN when the
  *         rest did not fit - ask proven_loop_send_wait to be told when to give it again.

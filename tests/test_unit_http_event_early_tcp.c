@@ -115,6 +115,7 @@ static void cases(bool h2, proven_tls_config_t *c_early, proven_tls_config_t *c_
     PROVEN_TEST_ASSERT(b.status == 200 && b.early == 1 && b.protocol == proto && g_early_calls == 1 && b.body_len == 5 && memcmp(b.body, "early", 5) == 0,
         "the second connection's GET went as early data, was taken, and its handler saw proven_http_stream_early", how);
     call_t d = ask(client, port, "GET", "/", NULL);
+    if (!(d.status == 200 && d.early == 0 && memcmp(d.body, "late", 4) == 0)) PROVEN_TEST_INFO("status {}, early {}, body {}", PROVEN_ARG(d.status), PROVEN_ARG(d.early), PROVEN_ARG((const char *)d.body));
     PROVEN_TEST_ASSERT(d.status == 200 && d.early == 0 && memcmp(d.body, "late", 4) == 0, "a GET on that connection once it is up: not early", how);
     proven_http_event_client_destroy(client);
     spin(50);

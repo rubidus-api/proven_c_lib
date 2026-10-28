@@ -339,7 +339,13 @@ static void ev_linger(proven_http_stream_t *c) {
     c->h.state = EV_LINGER;
     c->stash.len = 0; c->stash.off = 0;
     if (ev_buffered(c) > 0) { c->close_when_flushed = true; ev_watch(c); ev_arm(c); return; }
-    if (c->tls) { (void)proven_tls_close(c->tls); if (!ev_flush(c)) return; }
+    if (c->tls) {
+        (void)proven_tls_close(c->tls);            /* once: again it does nothing */
+        if (!ev_flush(c)) return;
+        /* The alert may wait in the loop (always, when sends go through io_uring): the write side
+         * is shut when it has left, not before it. */
+        if (ev_buffered(c) > 0) { c->close_when_flushed = true; ev_watch(c); ev_arm(c); return; }
+    }
     (void)proven_net_shutdown_write(&c->sock);
     if (c->peer_eof) { ev_kill(c, PROVEN_OK); return; }
     ev_watch(c);

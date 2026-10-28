@@ -126,6 +126,14 @@
  * reader does not take the pool from the others (and the kernel's window then holds the peer). */
 #define LOOP_HELD_MAX 4u
 #define LOOP_POOL_COUNT 64u
+/* On io_uring every send goes through the ring (RFC-0030 D-3): the chain waits for the next entry
+ * into the kernel instead of being offered to the socket first. (PROVEN_LOOP_SEND_FIRST_ keeps the
+ * socket first: for measurement.) */
+#if LOOP_RING && !defined(PROVEN_LOOP_SEND_FIRST_)
+#define LOOP_RING_SENDS(l) LOOP_CP(l)
+#else
+#define LOOP_RING_SENDS(l) ((void)(l), 0)
+#endif
 #define LOOP_POOL_BYTES 16384u
 
 /* done: what is waiting to be delivered */
@@ -1128,7 +1136,7 @@ static void CP_(sock_flush)(proven_loop_t *l, loop_sock_t *s, bool answer) {
         loop_chunk_t *h = s->head;
         h->owner = s;
         proven_u32 sent = 0;
-        const proven_sys_net_result_t r = proven_sys_net_ov_send(l->port, sock_handle(s), &h->ov, &h->keep, vec, count, skip_of(&s->node), &sent);
+        const proven_sys_net_result_t r = proven_sys_net_ov_send(l->port, sock_handle(s), &h->ov, &h->keep, vec, count, skip_of(&s->node) && !LOOP_RING_SENDS(l), &sent);
         if (r == PROVEN_SYS_NET_IN_PROGRESS) { ov_held(l, &s->node, F_OVS); break; }
         if (r != PROVEN_SYS_NET_OK) { sock_send_failed(l, s, sys_err(r), answer); return; }
         sock_sent(l, s, sent);
@@ -1142,6 +1150,24 @@ static proven_err_t CP_(sock_kick)(proven_loop_t *l, loop_sock_t *s) {
     if (!(s->node.flags & F_OVS)) node_queue(l, &s->node, D_FLUSH);
     return PROVEN_OK;
 }
+
+#if LOOP_RING
+/* Sends through the ring wait for the loop: at a close, what was committed and not yet handed to
+ * the ring goes to the socket now, as it would have with the socket first; what it does not take
+ * is dropped by the caller. (A send the ring already holds is ahead of the close's cancel in the
+ * queue, so it is tried first; what waits behind it is dropped, as behind a full socket - the
+ * owner may close the socket as soon as proven_loop_close returns.) */
+static void sock_write_now(proven_loop_t *l, loop_sock_t *s) {
+    proven_net_conn_t conn = sock_conn(s);
+    while (s->head) {
+        loop_chunk_t *c = s->head;
+        if (c->used == c->sent) { sock_sent(l, s, 0); continue; }     /* an empty chunk: given back */
+        proven_result_size_t w = proven_net_write(&conn, (proven_mem_view_t){ .ptr = c->data + c->sent, .size = c->used - c->sent }, PROVEN_NET_DONT_WAIT);
+        if (w.err != PROVEN_OK || w.value == 0) break;
+        sock_sent(l, s, w.value);
+    }
+}
+#endif
 
 static void sock_send_done(proven_loop_t *l, loop_chunk_t *c, const proven_sys_net_done_t *d) {
     loop_sock_t *s = c->owner;
@@ -1682,6 +1708,9 @@ LOOP_WAY void CP_(proven_loop_close)(proven_loop_t *l, proven_loop_sock_t *sock)
 #endif
     if (state == S_CONNECTING && !(s->node.flags & F_OVR)) { s->node.err = (proven_u16)PROVEN_ERR_CANCELLED; bits |= D_CONNECTED; }
     if (s->node.flags & F_WAIT) { s->node.flags &= (proven_u8)~F_WAIT; bits |= D_WRITABLE; }
+#if LOOP_RING
+    if (LOOP_RING_SENDS(l) && state == S_OPEN && !(s->node.flags & F_OVS)) sock_write_now(l, s);
+#endif
     /* What the system holds is cancelled and answered when the port reports it; bytes in a send
      * of the system's go when it has let go of them. */
     if (s->node.flags & (F_OVR | F_OVS)) proven_sys_net_ov_cancel(l->port, sock_handle(s), (void *)0);
@@ -1806,7 +1835,7 @@ proven_result_size_t proven_loop_sendv_(proven_loop_t *l, proven_loop_sock_t *so
     if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN) { res.err = PROVEN_ERR_INVALID_STATE; return res; }
     if (s->send_err != PROVEN_OK) { res.err = (proven_err_t)s->send_err; return res; }
     proven_size_t gone = 0;
-    if (s->queued == 0 && total > 0) {
+    if (s->queued == 0 && total > 0 && !LOOP_RING_SENDS(l)) {
         proven_net_conn_t conn = sock_conn(s);
         proven_err_t e;
         /* Small pieces are put together and sent with one plain send: cheaper than a gather
