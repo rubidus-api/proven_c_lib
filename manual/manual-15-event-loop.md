@@ -297,7 +297,7 @@ not moved from `proven_loop_attach` until its `closed` - and a table of four fun
 | `proven_loop_send(loop, &sock, bytes)` | Send. With nothing waiting the bytes go straight to the socket; what it does not take at once the loop copies and keeps, up to 64 KiB per connection. On io_uring every send is copied and handed to the kernel in the loop's next round (section 2). Your bytes are free when the call returns. | `proven_result_size_t`: the bytes taken; `.err` `AGAIN` when the rest did not fit; after a failed send, that failure. |
 | `proven_loop_send_queued(&sock)` | How many bytes taken have not left yet. | `proven_size_t`. |
 | `proven_loop_send_wait(loop, &sock, at_most)` | Have `writable` called once no more than `at_most` bytes wait (0: everything has left). | `proven_err_t`. |
-| `proven_loop_close(loop, &sock)` | The end: what is in flight is answered `PROVEN_ERR_CANCELLED`, bytes still waiting are dropped, then `closed`. | nothing. |
+| `proven_loop_close(loop, &sock)` | The end: what is in flight is answered `PROVEN_ERR_CANCELLED`, bytes still waiting are dropped (on io_uring, what the loop had not yet handed to the kernel is written to the socket first), then `closed`. | nothing. |
 | `proven_loop_accept(loop, &acc, &listener, fn, ctx)` | Accept one connection: `fn(ctx, err, &conn)` once, with the connection - yours; copy it out - or the reason there is none. Arm it again from inside `fn`. `acc` is yours, zero-initialised before its first use. | `proven_err_t`: `BUSY` with an accept in flight. |
 | `proven_loop_accept_cancel(loop, &acc)` | Stop accepting: one in flight is answered `PROVEN_ERR_CANCELLED`, and the listener may be closed. | nothing. |
 | `proven_loop_scratch(loop)` | The loop's scratch buffer, 64 KiB. | `proven_mem_mut_t`. |
