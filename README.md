@@ -1,4 +1,4 @@
-[한국어](README-ko.md) | **English** - **Proven C library v0.91.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.91.0/proven_c_lib-v0.91.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.91.0/proven_c_lib-v0.91.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.91.0/proven_c_lib-v0.91.0-ko-manual.pdf)
+[한국어](README-ko.md) | **English** - **Proven C library v0.92.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.92.0/proven_c_lib-v0.92.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.92.0/proven_c_lib-v0.92.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.92.0/proven_c_lib-v0.92.0-ko-manual.pdf)
 
 # Proven C library
 
@@ -27,7 +27,7 @@ than looked up.
 programs, each adding one idea: printing, text with a length, errors as values, allocators, arenas,
 a container and a file. Chapter 0 is the place to go after it.
 
-- Version: proven_c_lib-v0.91.0 | Standard: C23 | License: MIT
+- Version: proven_c_lib-v0.92.0 | Standard: C23 | License: MIT
 - Versions are semantic, `MAJOR.MINOR.PATCH`, from v0.0.1 (2026-09-04); the releases before it carry
   date-based numbers (`v26.MM.DDx`) and stay as they were published.
 - Seven functions named `*_internal` or `*_impl` sit in public headers because macros call them;

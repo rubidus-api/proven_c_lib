@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.92.0] - 2026-10-28
+
 ### Added
 
 - **`proven_loop_read`** (RFC-0030): read what has arrived on an attached connection after a

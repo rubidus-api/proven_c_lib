@@ -251,8 +251,9 @@ proven_err_t proven_loop_connect(proven_loop_t *loop, proven_loop_sock_t *sock, 
  *
  * With `buf.size` 0 nothing is taken: the call is "tell me when there is something to read",
  * and the connection holds no buffer while it waits - how ten thousand idle connections cost
- * no memory for their reads. Then read into proven_loop_scratch and keep only what cannot be
- * used yet. With a buffer, what arrived is in it; the buffer is the loop's until `received`.
+ * no memory for their reads. Then read with proven_loop_read into proven_loop_scratch and keep
+ * only what cannot be used yet. With a buffer, what arrived is in it; the buffer is the loop's
+ * until `received`.
  *
  * @return PROVEN_ERR_BUSY when a receive is already in flight; PROVEN_ERR_INVALID_STATE after
  *         proven_loop_close or before a connect has ended; PROVEN_ERR_INVALID_ARG.
