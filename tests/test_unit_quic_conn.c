@@ -290,14 +290,14 @@ static void run_for(net_t *n, proven_u64 us) {
 /* An allocator that remembers the largest single allocation since it was last reset. */
 static proven_size_t g_rec_biggest;
 static proven_result_mem_mut_t rec_alloc(void *ctx, proven_size_t size, proven_size_t align) {
+    (void)ctx;
     if (size > g_rec_biggest) g_rec_biggest = size;
     return g_alloc.alloc_fn(g_alloc.ctx, size, align);
-    (void)ctx;
 }
 static proven_result_mem_mut_t rec_realloc(void *ctx, void *p, proven_size_t old, proven_size_t size, proven_size_t align) {
+    (void)ctx;
     if (size > g_rec_biggest) g_rec_biggest = size;
     return g_alloc.realloc_fn(g_alloc.ctx, p, old, size, align);
-    (void)ctx;
 }
 static void rec_free(void *ctx, void *p) { (void)ctx; g_alloc.free_fn(g_alloc.ctx, p); }
 
