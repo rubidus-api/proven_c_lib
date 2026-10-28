@@ -1224,6 +1224,50 @@ int main(void) {
         PROVEN_TEST_ASSERT(kept_from > 0 && got[kept_from - 1] <= 8192, "once small, the buffer is kept and nothing more is allocated", "");
         free(t);
         net_free(n);
+        /* The receiving side's buffer, the same way: a reader that stops lets a burst fill it,
+         * then reads it all; small writes after, each read before the next. */
+        net_init(n, 161);
+        n->cfg[1].alloc = (proven_allocator_t){ .ctx = NULL, .alloc_fn = rec_alloc, .realloc_fn = rec_realloc, .free_fn = rec_free };
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "the handshake completes", "");
+        t = calloc(1, sizeof *t);
+        x = xfer_open(n, t, 0, false, ~0ull);
+        x->fin_written = true;
+        off = 0;
+        for (int r = 0; r < 40; ++r) { pump(n, t); run_for(n, 5000); }
+        n->reading_off[1] = true;
+        g_rec_biggest = 0;
+        write_pattern(n, x, &off, 256u << 10);
+        for (int r = 0; r < 100; ++r) { pump(n, t); run_for(n, 5000); }     /* half a second: the window fills */
+        const proven_size_t rburst = g_rec_biggest;
+        n->reading_off[1] = false;
+        /* The events that came while it read nothing were passed over: read once by hand. */
+        for (;;) {
+            static proven_byte_t buf[65536];
+            proven_size_t got_now = 0; bool fin = false;
+            if (proven_quic_stream_read(n->ep[1], x->id, (proven_mem_mut_t){ buf, sizeof buf }, &got_now, &fin) != PROVEN_OK || got_now == 0) break;
+            for (proven_size_t i = 0; i < got_now; ++i) if (buf[i] != pattern(x->id, x->read + i)) x->bad = true;
+            x->read += got_now;
+        }
+        drain_stream(n, t, x, off);
+        PROVEN_TEST_ASSERT(x->read == off && !x->bad, "the burst is read in order", "");
+        for (int k = 0; k < 48; ++k) {
+            write_pattern(n, x, &off, 2048);
+            g_rec_biggest = 0;
+            drain_stream(n, t, x, off);
+            got[k] = g_rec_biggest;
+        }
+        printf("  receiving: one buffer of %zu bytes; small writes then allocated %zu, %zu, %zu ... %zu, %zu\n", rburst, got[0], got[1], got[2], got[46], got[47]);
+        PROVEN_TEST_ASSERT(x->read == off && !x->bad, "every small write is read in order", "");
+        PROVEN_TEST_ASSERT(rburst >= 65536 && got[0] == rburst, "the first small write is received into the burst's capacity at once", "");
+        eighths = true; kept_from = -1;
+        for (int k = 1; k < 48; ++k) {
+            if (got[k] == 0) { if (kept_from < 0) kept_from = k; continue; }
+            if (kept_from >= 0 || got[k] != got[k - 1] - got[k - 1] / 8) eighths = false;
+        }
+        PROVEN_TEST_ASSERT(eighths && kept_from > 0 && got[kept_from - 1] <= 8192, "each emptying forgets an eighth, until the buffer is small enough to keep", "");
+        free(t);
+        net_free(n);
     }
 
     PROVEN_TEST_SECTION("changed packets", "Every captured datagram of a handshake and a transfer, with a bit changed or cut short, delivered again: dropped, and the connection carries on.", "");

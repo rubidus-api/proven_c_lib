@@ -34,8 +34,8 @@ written; their tags still exist.
   source of the library now builds with GCC 16 at `-O3 -Wall -Wextra -Werror`, 32- and 64-bit.
 - An internal 128-bit value with a zero low half was stored as its high half alone (a value
   2^64 times too small). Not reachable: its one caller, a rounding midpoint, is under 2^56.
-- **Tests:** `test_unit_quic_conn`: a stream's send buffer remembers a large fill and forgets it an eighth at a
-  time; a lost PATH_CHALLENGE is sent again and the new path validated in one validation.
+- **Tests:** `test_unit_quic_conn`: a stream's send and receive buffers remember a large fill and
+  forget it an eighth at a time; a lost PATH_CHALLENGE is sent again and the new path validated in one validation.
 
 ## [0.91.0] - 2026-10-28
 
