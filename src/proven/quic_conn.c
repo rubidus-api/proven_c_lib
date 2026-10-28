@@ -1871,6 +1871,7 @@ static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_q
         random_bytes(c, c->challenge, 8);
         c->challenge_owed = true; c->challenge_wait = true;
         c->challenge_deadline = c->now + 3 * pto_base(c);
+        ++c->st.path_validations;
         c->datagram = c->cfg.datagram_size;     /* a new path: its size is found again */
         c->pm_state = 0; c->pm_out = false;
         cc_init(c);
@@ -2341,15 +2342,14 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
     }
     /* A PMTU probe (RFC-0018 S-2): once the handshake is confirmed and the path validated, a
      * datagram of the size probed, PING and PADDING, alone. Not recorded as in flight: its loss
-     * is no congestion, and a probe timeout is not owed for it. */
+     * is no congestion, and a probe timeout is not owed for it. Only the header and the PING: an
+     * ACK owed now goes in an ordinary packet, not in one the path may drop for its size (RFC
+     * 8899 section 4.1: a probe carries probe data, not what the connection needs delivered). */
     if (c->confirmed && c->state == QS_OPEN && c->validated && c->sp[2].tx_ok && !c->challenge_wait) {
         if (c->pm_state == 0) pm_begin(c);
         if (c->pm_state == 1 && !c->pm_out && c->pm_size <= out.size) {
-            proven_qpkt_t pk;
-            if (!build_packet(c, 2, out.ptr, c->pm_size, false, false, &pk)) {
-                pk = (proven_qpkt_t){ .lvl = 2, .pn = c->sp[2].next_pn, .pn_len = proven_quic_pn_len(c->sp[2].next_pn, c->sp[2].largest_acked_plus_one) };
-                pk.hlen = proven_quic_short_header_put(&peer_cid(c)->cid, c->key_phase, pk.pn, pk.pn_len, (proven_mem_mut_t){ out.ptr, out.size });
-            }
+            proven_qpkt_t pk = { .lvl = 2, .pn = c->sp[2].next_pn, .pn_len = proven_quic_pn_len(c->sp[2].next_pn, c->sp[2].largest_acked_plus_one) };
+            pk.hlen = proven_quic_short_header_put(&peer_cid(c)->cid, c->key_phase, pk.pn, pk.pn_len, (proven_mem_mut_t){ out.ptr, out.size });
             proven_quic_wr_t w = { out.ptr + pk.hlen, pk.payload, c->pm_size - pk.hlen - 16, true };
             proven_quic_frame_t f = { .type = PROVEN_QUIC_FT_PING };
             (void)proven_quic_frame_put(&w, &f);

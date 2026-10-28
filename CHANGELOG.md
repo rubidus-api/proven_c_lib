@@ -18,6 +18,25 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **A QUIC PMTU probe carries nothing but its PING and padding.** It was built like any packet,
+  so an acknowledgement owed at that moment rode in it - in the one packet the path may drop for
+  its size (RFC 8899 section 4.1 keeps probes to probe data). The acknowledgement now goes in an
+  ordinary packet.
+
+### Fixed
+
+- **GCC 16 at `-O3` with `-Werror`** stopped in `float_decimal.c` (a `-Wmaybe-uninitialized` on a
+  rounding midpoint) and in the console writer (a `-Wstringop-overflow` on the bytes of a character
+  carried to the next write). Neither value could be read or written out of bounds; the first is
+  now set before the copy that GCC could not follow, and the second has an explicit bound. Every
+  source of the library now builds with GCC 16 at `-O3 -Wall -Wextra -Werror`, 32- and 64-bit.
+- An internal 128-bit value with a zero low half was stored as its high half alone (a value
+  2^64 times too small). Not reachable: its one caller, a rounding midpoint, is under 2^56.
+- **Tests:** `test_unit_quic_conn`: a stream's send buffer remembers a large fill and forgets it an eighth at a
+  time; a lost PATH_CHALLENGE is sent again and the new path validated in one validation.
+
 ## [0.91.0] - 2026-10-28
 
 ### Added

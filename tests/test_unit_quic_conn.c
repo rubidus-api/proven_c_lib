@@ -287,6 +287,40 @@ static void run_for(net_t *n, proven_u64 us) {
     n->until = 0;
 }
 
+/* An allocator that remembers the largest single allocation since it was last reset. */
+static proven_size_t g_rec_biggest;
+static proven_result_mem_mut_t rec_alloc(void *ctx, proven_size_t size, proven_size_t align) {
+    if (size > g_rec_biggest) g_rec_biggest = size;
+    return g_alloc.alloc_fn(g_alloc.ctx, size, align);
+    (void)ctx;
+}
+static proven_result_mem_mut_t rec_realloc(void *ctx, void *p, proven_size_t old, proven_size_t size, proven_size_t align) {
+    if (size > g_rec_biggest) g_rec_biggest = size;
+    return g_alloc.realloc_fn(g_alloc.ctx, p, old, size, align);
+    (void)ctx;
+}
+static void rec_free(void *ctx, void *p) { (void)ctx; g_alloc.free_fn(g_alloc.ctx, p); }
+
+/* Write `want` more bytes of the pattern on `x`, as many as the stream takes. */
+static void write_pattern(net_t *n, xfer_t *x, proven_u64 *off, proven_u64 want) {
+    static proven_byte_t chunk[4096];
+    const proven_u64 end = *off + want;
+    while (*off < end) {
+        const proven_size_t len = (proven_size_t)(end - *off < sizeof chunk ? end - *off : sizeof chunk);
+        for (proven_size_t k = 0; k < len; ++k) chunk[k] = pattern(x->id, *off + k);
+        proven_size_t taken = 0;
+        if (proven_quic_stream_write(n->ep[x->owner], x->id, (proven_mem_view_t){ chunk, len }, false, &taken) != PROVEN_OK) break;
+        *off += taken;
+        if (taken < len) break;
+    }
+}
+
+/* Run until the reader has read `upto` bytes of `x` and a while longer, for the acknowledgements. */
+static void drain_stream(net_t *n, xfers_t *t, const xfer_t *x, proven_u64 upto) {
+    for (int r = 0; r < 400 && x->read < upto; ++r) { pump(n, t); run_for(n, 5000); }
+    for (int r = 0; r < 20; ++r) { pump(n, t); run_for(n, 5000); }
+}
+
 /* Hooks. */
 static int g_hook_count;
 static bool hook_drop_all(net_t *n, int to, proven_byte_t *b, proven_size_t *len) { (void)n; (void)to; (void)b; (void)len; return false; }
@@ -338,6 +372,14 @@ static bool hook_mtu_1280(net_t *n, int to, proven_byte_t *b, proven_size_t *len
 }
 
 /* Toward the server only: nothing at all (a blackout), or nothing above 1,280 bytes. */
+/* Drops every datagram that reaches the client up to g_drop_until, and counts them. */
+static proven_u64 g_drop_until;
+static bool hook_drop_to_client_until(net_t *n, int to, proven_byte_t *b, proven_size_t *len) {
+    (void)b; (void)len;
+    if (to != 0 || n->now > g_drop_until) return true;
+    ++g_hook_count;
+    return false;
+}
 static bool hook_blackout_to_server(net_t *n, int to, proven_byte_t *b, proven_size_t *len) { (void)n; (void)b; (void)len; return to != 1; }
 static bool hook_blackout_to_client(net_t *n, int to, proven_byte_t *b, proven_size_t *len) { (void)n; (void)b; (void)len; return to != 0; }
 static bool hook_mtu_1280_to_server(net_t *n, int to, proven_byte_t *b, proven_size_t *len) { (void)n; (void)b; return to != 1 || *len <= 1280; }
@@ -866,6 +908,41 @@ int main(void) {
         PROVEN_TEST_ASSERT(stats(n, 1).path_validated && memcmp(n->last_to[1].b, n->addr[0].b, 6) == 0, "the server validated the new address and sends there", "");
         free(t);
         net_free(n);
+        /* The same change with the server's challenge lost: everything on its way to the client
+         * when the server sees the new address, and the first datagram after it, which carries the
+         * PATH_CHALLENGE. The packet is declared lost and the challenge goes again (RFC 9000
+         * section 8.2.1): the path is still validated, not given up at the validation timer. */
+        fresh(n, 131);
+        t = calloc(1, sizeof *t);
+        xfer_open(n, t, 0, true, 300000);
+        xfer_open(n, t, 1, true, 300000);
+        for (int k = 0; k < 40; ++k) { pump(n, t); net_step(n); }
+        const proven_quic_addr_t old_addr = n->addr[0];
+        n->addr[0] = (proven_quic_addr_t){ .len = 6, .b = { 10, 0, 0, 9, 0x77, 0x78 } };
+        for (int k = 0; k < 400 && stats(n, 1).path_validated; ++k) { pump(n, t); net_step(n); }
+        PROVEN_TEST_ASSERT(!stats(n, 1).path_validated, "the server saw the new address", "");
+        g_hook_count = 0;
+        /* What is on its way, and what the server sends in the next three delays: the challenge
+         * goes once the client's next packet lifts the amplification limit on the new path. */
+        g_drop_until = n->now + 3 * n->delay;
+        n->hook = hook_drop_to_client_until;
+        const proven_u64 packets_lost = stats(n, 1).packets_lost, seen_at = n->now;
+        proven_u64 validated_at = 0;
+        bool sent_new = false, went_back = false;
+        for (int k = 0; k < 100000 && !validated_at; ++k) {
+            pump(n, t); net_step(n);
+            if (memcmp(n->last_to[1].b, n->addr[0].b, 6) == 0) sent_new = true;
+            else if (sent_new && memcmp(n->last_to[1].b, old_addr.b, 6) == 0) went_back = true;
+            if (stats(n, 1).path_validated) validated_at = n->now;
+        }
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 30000000), "the transfer completes across the change", "");
+        printf("  %d datagrams to the client dropped; the server declared %llu packets lost; validated %llu us after it saw the address; %llu validations in all\n", g_hook_count,
+               (unsigned long long)(stats(n, 1).packets_lost - packets_lost), (unsigned long long)(validated_at - seen_at), (unsigned long long)stats(n, 1).path_validations);
+        PROVEN_TEST_ASSERT(g_hook_count > 0 && stats(n, 1).packets_lost > packets_lost, "the challenge's packet was lost and found lost", "");
+        PROVEN_TEST_ASSERT(validated_at && !went_back && stats(n, 1).path_validations == 1, "the challenge went again: the new address validated in one validation (without the second challenge the timer gives it up, the server goes back to the old address and must begin anew)", "");
+        PROVEN_TEST_ASSERT(stats(n, 1).path_validated && memcmp(n->last_to[1].b, n->addr[0].b, 6) == 0, "the server sends to the new address", "");
+        free(t);
+        net_free(n);
     }
 
     PROVEN_TEST_SECTION("key updates", "Either side starts a key update in the middle of a transfer; the other follows; nothing is lost.", "");
@@ -1108,6 +1185,43 @@ int main(void) {
         t->n = 0;
         xfer_open(n, t, 0, true, 2 << 20);
         PROVEN_TEST_ASSERT(run_xfers(n, t, 60000000), "a new stream's 2 MiB arrive: the reset streams' unread bytes were given back", "");
+        free(t);
+        net_free(n);
+    }
+
+    PROVEN_TEST_SECTION("a large fill remembered, then forgotten", "One stream: a burst that fills its send buffer, then small writes, each acknowledged before the next. The first small write gets the burst's capacity in one allocation (RFC-0018 S-1); each later one an eighth less, until it is small enough to be kept.", "Inspect qbuf_drop and ring_drop: `last` is set from `peak` and decays by an eighth at each emptying.");
+    {
+        net_init(n, 160);
+        n->cfg[0].alloc = (proven_allocator_t){ .ctx = NULL, .alloc_fn = rec_alloc, .realloc_fn = rec_realloc, .free_fn = rec_free };
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "the handshake completes", "");
+        xfers_t *t = calloc(1, sizeof *t);
+        xfer_t *x = xfer_open(n, t, 0, false, ~0ull);
+        x->fin_written = true;                         /* pump only reads it; the writes are below */
+        proven_u64 off = 0;
+        for (int r = 0; r < 40; ++r) { pump(n, t); run_for(n, 5000); }
+        g_rec_biggest = 0;
+        write_pattern(n, x, &off, 1u << 20);
+        const proven_size_t burst = g_rec_biggest;
+        drain_stream(n, t, x, off);
+        PROVEN_TEST_ASSERT(x->read == off && !x->bad, "the burst arrives in order", "");
+        proven_size_t got[48];
+        for (int k = 0; k < 48; ++k) {
+            g_rec_biggest = 0;
+            write_pattern(n, x, &off, 2048);
+            got[k] = g_rec_biggest;                    /* the send buffer's allocation, 0 if it was kept */
+            drain_stream(n, t, x, off);
+        }
+        printf("  burst: one buffer of %zu bytes; small writes then allocated %zu, %zu, %zu ... %zu, %zu\n", burst, got[0], got[1], got[2], got[46], got[47]);
+        PROVEN_TEST_ASSERT(x->read == off && !x->bad, "every small write arrives in order", "");
+        PROVEN_TEST_ASSERT(burst >= 65536 && got[0] == burst, "the first small write gets the burst's capacity at once", "");
+        bool eighths = true; int kept_from = -1;
+        for (int k = 1; k < 48; ++k) {
+            if (got[k] == 0) { if (kept_from < 0) kept_from = k; continue; }
+            if (kept_from >= 0 || got[k] != got[k - 1] - got[k - 1] / 8) eighths = false;
+        }
+        PROVEN_TEST_ASSERT(eighths, "each emptying forgets exactly an eighth", "");
+        PROVEN_TEST_ASSERT(kept_from > 0 && got[kept_from - 1] <= 8192, "once small, the buffer is kept and nothing more is allocated", "");
         free(t);
         net_free(n);
     }

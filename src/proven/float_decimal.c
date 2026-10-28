@@ -369,16 +369,11 @@ static void proven_float_bigint_set_u64(proven_float_bigint_t *value, proven_u64
     }
 }
 
+// A zero low limb with a nonzero high one is still two limbs: the high limb is worth 2^64.
 static void proven_float_bigint_set_u128_parts(proven_float_bigint_t *value, proven_u128_parts_t u128) {
-    if (u128.lo != 0u) {
-        value->limbs[0] = u128.lo;
-        value->len = 1u;
-    } else {
-        value->len = 0u;
-    }
-    if (u128.hi != 0u) {
-        value->limbs[value->len++] = u128.hi;
-    }
+    value->limbs[0] = u128.lo;
+    value->limbs[1] = u128.hi;
+    value->len = u128.hi != 0u ? 2u : u128.lo != 0u ? 1u : 0u;
 }
 
 static void proven_float_bigint_copy(proven_float_bigint_t *dst, const proven_float_bigint_t *src) {
@@ -2421,6 +2416,11 @@ static int proven_float_compare_mantissa_to_midpoint(const proven_float_decimal_
     proven_i64 upper_exp2 = 0;
     proven_float_bigint_t midpoint_num;
 
+    // The midpoint has at most two limbs, and the copy below reads only those. GCC 16 at -O3
+    // cannot see the bound through the copy's unrolled cases and warns that limbs 2 and 3 may
+    // be read uninitialised; two stores are cheaper than clearing the whole array.
+    midpoint_num.limbs[2] = 0u;
+    midpoint_num.limbs[3] = 0u;
     proven_float_f64_to_scaled(lower_bits, &lower_mantissa, &lower_exp2);
     proven_float_f64_to_scaled(upper_bits, &upper_mantissa, &upper_exp2);
     if (!proven_float_bigint_from_adjacent_midpoint(lower_mantissa, lower_exp2, upper_mantissa, upper_exp2, &midpoint_num, &lower_exp2)) {
@@ -2548,6 +2548,11 @@ static int proven_float_compare_decimal_to_midpoint(const proven_float_decimal_n
     proven_i64 upper_exp2 = 0;
     proven_float_bigint_t midpoint_num;
 
+    // The midpoint has at most two limbs, and the copy below reads only those. GCC 16 at -O3
+    // cannot see the bound through the copy's unrolled cases and warns that limbs 2 and 3 may
+    // be read uninitialised; two stores are cheaper than clearing the whole array.
+    midpoint_num.limbs[2] = 0u;
+    midpoint_num.limbs[3] = 0u;
     proven_float_f64_to_scaled(lower_bits, &lower_mantissa, &lower_exp2);
     proven_float_f64_to_scaled(upper_bits, &upper_mantissa, &upper_exp2);
     if (!proven_float_bigint_from_adjacent_midpoint(lower_mantissa, lower_exp2, upper_mantissa, upper_exp2, &midpoint_num, &lower_exp2)) {

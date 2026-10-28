@@ -472,6 +472,7 @@ typedef struct {
     proven_u64 cwnd, bytes_in_flight, srtt_us, min_rtt_us, pto_count;
     proven_size_t streams, memory;                 /* streams held; bytes of buffers held */
     bool established, confirmed, closed, path_validated;
+    proven_u64 path_validations;                   /* new peer addresses a server began to validate */
     proven_u64 key_updates, spurious_losses;
     proven_size_t datagram_size;                   /* what a datagram may take on this path now */
     proven_u64 pmtu_probes, pmtu_probes_lost;      /* PMTU probes sent, and not acknowledged in time */
