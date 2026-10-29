@@ -376,7 +376,123 @@ int main(void) {
         PROVEN_TEST_ASSERT(same_all, "five hundred random splittings of B.2 to B.4's encoder stream build the same table", "");
     }
 
-    PROVEN_TEST_PASS("QPACK decodes with and without a dynamic table, encodes and refuses as RFC 9204 says.");
+    PROVEN_TEST_SECTION("The dynamic table, as an encoder (RFC-0032)", "Lists encoded with a table of 4,096 bytes and decoded by this side's decoder, each instruction carried across and every acknowledgement and increment back: the same lists, references only to acknowledged entries, a repeated list a fraction of its first size; a table of 256 bytes under many fields, a section held unacknowledged keeping its entries from eviction; secrets never inserted; the decoder-stream instructions refused.", "Check proven_qpack_encode_dyn, qe_room, qe_find and proven_qpack_enc_feed in src/proven/qpack.c.");
+    {
+        static proven_byte_t sec[8192], ins[8192], back[64];
+        proven_qpack_enc_t *e = NULL;
+        proven_qpack_dec_t *d = NULL;
+        PROVEN_TEST_ASSERT(proven_qpack_enc_create(proven_heap_allocator(), 4096, 2048, &e) == PROVEN_ERR_INVALID_ARG && proven_qpack_enc_create(proven_heap_allocator(), 16, 4096, &e) == PROVEN_ERR_INVALID_ARG,
+            "a table larger than the peer allows, or under one entry, is refused", "");
+        PROVEN_TEST_ASSERT(proven_qpack_enc_create(proven_heap_allocator(), 4096, 4096, &e) == PROVEN_OK && proven_qpack_dec_create(proven_heap_allocator(), 4096, &d) == PROVEN_OK,
+            "an encoder and a decoder of 4,096 bytes", "");
+        bool same_all = true, refs_ok = true;
+        proven_size_t first_size = 0, last_size = 0;
+        proven_u64 stream = 0, dec_known = 0;
+        for (int round = 0; round < 3; ++round) {
+            for (proven_size_t i = 0; i < sizeof hpack_examples / sizeof hpack_examples[0]; ++i) {
+                proven_http_header_t f[16];
+                const proven_size_t nf = hpack_examples[i].field_count;
+                for (proven_size_t k = 0; k < nf; ++k) f[k] = (proven_http_header_t){ sv(hpack_examples[i].fields[k].name), sv(hpack_examples[i].fields[k].value) };
+                proven_size_t sl = 0, il = 0;
+                proven_u64 ric = 0, low = 0;
+                PROVEN_TEST_ASSERT(proven_qpack_encode_dyn(e, f, nf, NULL, (proven_mem_mut_t){ sec, sizeof sec }, &sl, (proven_mem_mut_t){ ins, sizeof ins }, &il, &ric, &low) == PROVEN_OK, "encoded", "");
+                if (ric > proven_qpack_enc_known(e)) refs_ok = false;           /* only what the peer has */
+                if (i == 0 && round == 0) first_size = sl;
+                if (i == 0 && round == 2) last_size = sl;
+                PROVEN_TEST_ASSERT(proven_qpack_enc_sent(e, stream, ric, low), "kept until acknowledged", "");
+                /* The peer: the inserts, its increment back; the section, its acknowledgement back. */
+                PROVEN_TEST_ASSERT(proven_qpack_dec_feed(d, (proven_mem_view_t){ ins, il }) == 0, "the encoder stream taken", "");
+                if (proven_qpack_dec_inserts(d) > dec_known) {
+                    const proven_size_t bn = proven_qpack_put_insert_count(back, proven_qpack_dec_inserts(d) - dec_known);
+                    dec_known = proven_qpack_dec_inserts(d);
+                    PROVEN_TEST_ASSERT(proven_qpack_enc_feed(e, (proven_mem_view_t){ back, bn }) == 0, "the increment taken", "");
+                }
+                proven_u64 dric = 0;
+                same_all = same_all && proven_qpack_decode_dyn(d, (proven_mem_view_t){ sec, sl }, fields, never, 512, (proven_mem_mut_t){ scratch, sizeof scratch }, 0, &count, &dric) == PROVEN_OK &&
+                           dric == ric && count == nf;
+                for (proven_size_t k = 0; k < nf && k < count; ++k) same_all = same_all && same(fields[k].name, f[k].name) && same(fields[k].value, f[k].value);
+                if (ric > 0) {
+                    const proven_size_t bn = proven_qpack_put_section_ack(back, stream);
+                    PROVEN_TEST_ASSERT(proven_qpack_enc_feed(e, (proven_mem_view_t){ back, bn }) == 0, "the acknowledgement taken", "");
+                }
+                stream += 4;
+            }
+        }
+        PROVEN_TEST_ASSERT(same_all && refs_ok, "RFC 7541 appendix C's lists three times over: decoded alike, never referring past what the peer acknowledged", "");
+        PROVEN_TEST_ASSERT(proven_qpack_enc_inserts(e) > 0 && last_size * 3 < first_size, "the table is used: the first list again in under a third of its first size", "");
+        PROVEN_TEST_INFO("the first list: {} bytes, then {}", PROVEN_ARG((unsigned)first_size), PROVEN_ARG((unsigned)last_size));
+        proven_qpack_enc_destroy(e); proven_qpack_dec_destroy(d);
+
+        /* A small table; one section that refers to an entry held unacknowledged while fifty new
+         * fields want room. */
+        PROVEN_TEST_ASSERT(proven_qpack_enc_create(proven_heap_allocator(), 256, 4096, &e) == PROVEN_OK && proven_qpack_dec_create(proven_heap_allocator(), 4096, &d) == PROVEN_OK,
+            "an encoder that uses 256 bytes of a peer's 4,096: six entries of these fields", "");
+        dec_known = 0;
+        bool small_ok = true;
+        static proven_byte_t held[256];
+        proven_size_t held_n = 0;
+        proven_u64 held_ric = 0, inserts_held = 0;
+        for (unsigned i = 0; i < 52; ++i) {
+            char nm[16], va[16];
+            const unsigned which = i < 2 ? 0 : i;                         /* the same field twice, then fifty new ones */
+            snprintf(nm, sizeof nm, "x-n%u", which); snprintf(va, sizeof va, "v%u", which);
+            const proven_http_header_t f = { sv(nm), sv(va) };
+            proven_size_t sl = 0, il = 0;
+            proven_u64 ric = 0, low = 0;
+            small_ok = small_ok && proven_qpack_encode_dyn(e, &f, 1, NULL, (proven_mem_mut_t){ sec, sizeof sec }, &sl, (proven_mem_mut_t){ ins, sizeof ins }, &il, &ric, &low) == PROVEN_OK &&
+                       proven_qpack_enc_sent(e, (proven_u64)i * 4, ric, low) && proven_qpack_dec_feed(d, (proven_mem_view_t){ ins, il }) == 0;
+            if (proven_qpack_dec_inserts(d) > dec_known) {
+                const proven_size_t bn = proven_qpack_put_insert_count(back, proven_qpack_dec_inserts(d) - dec_known);
+                dec_known = proven_qpack_dec_inserts(d);
+                small_ok = small_ok && proven_qpack_enc_feed(e, (proven_mem_view_t){ back, bn }) == 0;
+            }
+            if (i == 1) { small_ok = small_ok && ric == 1; memcpy(held, sec, sl); held_n = sl; held_ric = ric; continue; }   /* refers to x-n0: held, not acknowledged */
+            proven_u64 dric = 0;
+            small_ok = small_ok && proven_qpack_decode_dyn(d, (proven_mem_view_t){ sec, sl }, fields, never, 512, (proven_mem_mut_t){ scratch, sizeof scratch }, 0, &count, &dric) == PROVEN_OK &&
+                       count == 1 && same(fields[0].name, f.name) && same(fields[0].value, f.value);
+            if (ric > 0) { const proven_size_t bn = proven_qpack_put_section_ack(back, (proven_u64)i * 4); small_ok = small_ok && proven_qpack_enc_feed(e, (proven_mem_view_t){ back, bn }) == 0; }
+        }
+        inserts_held = proven_qpack_enc_inserts(e);
+        proven_u64 dric = 0;
+        PROVEN_TEST_ASSERT(small_ok && inserts_held == 6 && proven_qpack_decode_dyn(d, (proven_mem_view_t){ held, held_n }, fields, never, 512, (proven_mem_mut_t){ scratch, sizeof scratch }, 0, &count, &dric) == PROVEN_OK &&
+                           dric == held_ric && count == 1 && sveq(fields[0].name, "x-n0") && sveq(fields[0].value, "v0"),
+            "fifty new fields fill the table and stop at six entries: the oldest is referred to by a section not acknowledged, which still decodes", "");
+        {
+            const proven_size_t bn = proven_qpack_put_section_ack(back, 4);
+            const proven_http_header_t f = { sv("x-after"), sv("v") };
+            proven_size_t sl = 0, il = 0;
+            proven_u64 ric = 0, low = 0;
+            PROVEN_TEST_ASSERT(proven_qpack_enc_feed(e, (proven_mem_view_t){ back, bn }) == 0 &&
+                               proven_qpack_encode_dyn(e, &f, 1, NULL, (proven_mem_mut_t){ sec, sizeof sec }, &sl, (proven_mem_mut_t){ ins, sizeof ins }, &il, &ric, &low) == PROVEN_OK &&
+                               proven_qpack_enc_inserts(e) == inserts_held + 1, "acknowledged, the entry may go: the next field is inserted", "");
+        }
+        proven_qpack_enc_destroy(e); proven_qpack_dec_destroy(d);
+
+        /* Secrets, and the peer's instructions. */
+        PROVEN_TEST_ASSERT(proven_qpack_enc_create(proven_heap_allocator(), 4096, 4096, &e) == PROVEN_OK, "an encoder", "");
+        const proven_http_header_t secrets[] = { { sv("cookie"), sv("id=1") }, { sv("authorization"), sv("Bearer a-long-enough-token-value") }, { sv("x-marked"), sv("v") } };
+        const bool marks[] = { false, false, true };
+        proven_size_t sl = 0, il = 0;
+        proven_u64 ric = 0, low = 0;
+        PROVEN_TEST_ASSERT(proven_qpack_encode_dyn(e, secrets, 3, marks, (proven_mem_mut_t){ sec, sizeof sec }, &sl, (proven_mem_mut_t){ ins, sizeof ins }, &il, &ric, &low) == PROVEN_OK &&
+                           il == 0 && proven_qpack_enc_inserts(e) == 0, "a short cookie, any authorization and a marked field: none inserted", "");
+        const proven_http_header_t plain = { sv("x-plain"), sv("value") };
+        PROVEN_TEST_ASSERT(proven_qpack_encode_dyn(e, &plain, 1, NULL, (proven_mem_mut_t){ sec, sizeof sec }, &sl, (proven_mem_mut_t){ ins, sizeof ins }, &il, &ric, &low) == PROVEN_OK &&
+                           proven_qpack_enc_inserts(e) == 1, "a plain one is", "");
+        PROVEN_TEST_ASSERT(proven_qpack_enc_feed(e, (proven_mem_view_t){ (const proven_byte_t *)"\x84", 1 }) == PROVEN_QPACK_DECODER_STREAM_ERROR, "an acknowledgement of no section: QPACK_DECODER_STREAM_ERROR", "");
+        proven_qpack_enc_destroy(e);
+        PROVEN_TEST_ASSERT(proven_qpack_enc_create(proven_heap_allocator(), 4096, 4096, &e) == PROVEN_OK &&
+                           proven_qpack_enc_feed(e, (proven_mem_view_t){ (const proven_byte_t *)"\x00", 1 }) == PROVEN_QPACK_DECODER_STREAM_ERROR, "an increment of 0: refused", "");
+        proven_qpack_enc_destroy(e);
+        PROVEN_TEST_ASSERT(proven_qpack_enc_create(proven_heap_allocator(), 4096, 4096, &e) == PROVEN_OK &&
+                           proven_qpack_enc_feed(e, (proven_mem_view_t){ (const proven_byte_t *)"\x01", 1 }) == PROVEN_QPACK_DECODER_STREAM_ERROR, "an increment past what was inserted: refused", "");
+        proven_qpack_enc_destroy(e);
+        PROVEN_TEST_ASSERT(proven_qpack_enc_create(proven_heap_allocator(), 4096, 4096, &e) == PROVEN_OK &&
+                           proven_qpack_enc_feed(e, (proven_mem_view_t){ (const proven_byte_t *)"\x48", 1 }) == 0, "a Stream Cancellation of a stream with nothing outstanding: taken", "");
+        proven_qpack_enc_destroy(e);
+    }
+
+    PROVEN_TEST_PASS("QPACK decodes with and without a dynamic table, encodes with and without one, and refuses as RFC 9204 says.");
     return 0;
 }
 

@@ -1688,7 +1688,7 @@ underneath:
 | `max_head_bytes`, `max_headers` | The largest field section, as QPACK counts it, said to the client in SETTINGS; more fields than `max_headers` is `431` |
 | `max_body_bytes` | Per request: `413`, as on HTTP/2 |
 | `http3_window_bytes` (0: 256 KiB a stream, 1 MiB a connection, growing up to 16 MiB and 24 MiB while bodies are read) | Request-body bytes a client may send before the handler has taken them; a value set is fixed; at most 2^31-1 |
-| `http3_header_table_bytes`, `http3_no_header_table` (0: 4,096) | The QPACK dynamic table a client's encoder may fill (since v0.95.0, RFC-0032): said in SETTINGS with 16 streams whose heads may wait for its inserts - such a stream is not read until they come, and one more than that ends the connection with QPACK_DECOMPRESSION_FAILED. The table's memory - about twice its size - is made when a client first sets a capacity. 32 to 1 MiB. The server's own encoder uses none: responses go with the static table and literals. `http3_no_header_table`: none, as before |
+| `http3_header_table_bytes`, `http3_no_header_table` (0: 4,096) | The QPACK dynamic table a client's encoder may fill (since v0.95.0, RFC-0032): said in SETTINGS with 16 streams whose heads may wait for its inserts - such a stream is not read until they come, and one more than that ends the connection with QPACK_DECOMPRESSION_FAILED. The table's memory - about twice its size - is made when a client first sets a capacity. 32 to 1 MiB. Since v0.96.0 the server's encoder fills the client's table in turn, when the client allows one, up to the smaller of the two sizes: it inserts the fields it sends - not those marked sensitive, nor `authorization`, `proxy-authorization` or `cookie` values under 20 bytes, nor one whose entry is over a quarter of the table - and refers only to entries the client has acknowledged, so the client never waits. A client that never counts inserts (aioquic's) is sent the inserts and no reference. `http3_no_header_table`: no table either way, as before |
 | `http3_retry` | A Retry for every client's first packet: see the cautions |
 | `head_timeout_ms` | From a connection's first packet - the handshake included - to its first request |
 | `body_timeout_ms` | Silence from one request whose body is owed: that stream is reset, the others go on |
@@ -1800,7 +1800,7 @@ so the server stops at the window it had; read as fast as it comes, the window g
 stream and 24 MiB a connection unless `http3_window_bytes` fixes it (v0.71.0). A server's
 encoder may fill a QPACK dynamic table for the client as the server's section above describes
 for its clients - `http3_header_table_bytes` and `http3_no_header_table`, the same defaults and
-limits (since v0.95.0); the client's own encoder uses none.
+limits (since v0.95.0) - and since v0.96.0 the client's encoder fills the server's table the same way.
 
 **Without `http3_fallback` there is no fallback.** A request asked over HTTP/3 whose server does not answer over UDP ends
 with `PROVEN_ERR_TIMEOUT` when `connect_timeout_ms` has passed - an unconnected UDP socket hears

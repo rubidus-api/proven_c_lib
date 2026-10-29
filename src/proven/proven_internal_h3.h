@@ -59,6 +59,35 @@ proven_err_t proven_qpack_dec_required(const proven_qpack_dec_t *d, proven_mem_v
  * blocked stream). Fields from the table are copied into `scratch`. */
 proven_err_t proven_qpack_decode_dyn(proven_qpack_dec_t *d, proven_mem_view_t section, proven_http_header_t *headers, bool *never_indexed, proven_size_t header_cap,
                                      proven_mem_mut_t scratch, proven_size_t max_list_bytes, proven_size_t *count, proven_u64 *required);
+/* An encoder with a dynamic table (RFC-0032, its encoder half): `capacity` is the table this side
+ * uses - at most the peer's QPACK_MAX_TABLE_CAPACITY, `peer_max` - 32 to 1 MiB. Sections refer only
+ * to entries the peer has acknowledged, so they never wait at the peer (its blocked streams stay
+ * unused). Inserted: fields that are not marked sensitive - nor `authorization`, `cookie` or
+ * `proxy-authorization` values under 20 bytes - whose entry is at most a quarter of the table. An
+ * entry is evicted only once its insert is acknowledged and no unacknowledged section refers to it. */
+typedef struct proven_qpack_enc proven_qpack_enc_t;
+proven_err_t proven_qpack_enc_create(proven_allocator_t alloc, proven_u32 capacity, proven_u32 peer_max, proven_qpack_enc_t **out);
+void proven_qpack_enc_destroy(proven_qpack_enc_t *e);
+/* The most bytes proven_qpack_encode_dyn can append to `ins` for a list. */
+proven_size_t proven_qpack_enc_ins_bound(const proven_http_header_t *headers, proven_size_t count);
+/* A field section for `headers` appended at out[*len] (room as for proven_qpack_encode), and the
+ * encoder-stream instructions it makes appended at ins[*ins_len] (room as
+ * proven_qpack_enc_ins_bound). `*required` and `*lowest`: the section's Required Insert Count and
+ * the lowest entry it refers to - give both to proven_qpack_enc_sent once the section is on its
+ * stream, if `*required` is not 0. `e` null: proven_qpack_encode. */
+proven_err_t proven_qpack_encode_dyn(proven_qpack_enc_t *e, const proven_http_header_t *headers, proven_size_t count, const bool *sensitive,
+                                     proven_mem_mut_t out, proven_size_t *len, proven_mem_mut_t ins, proven_size_t *ins_len,
+                                     proven_u64 *required, proven_u64 *lowest);
+/* A section that refers to the table is on stream `stream_id`: kept until it is acknowledged or
+ * the stream cancelled. False when memory ran out (the section must then not be sent). */
+bool proven_qpack_enc_sent(proven_qpack_enc_t *e, proven_u64 stream_id, proven_u64 required, proven_u64 lowest);
+/* The peer's decoder stream, fed as it arrives: 0, or PROVEN_QPACK_DECODER_STREAM_ERROR (an
+ * acknowledgement of a section not outstanding, an increment of 0 or past what was inserted). */
+proven_u64 proven_qpack_enc_feed(proven_qpack_enc_t *e, proven_mem_view_t in);
+/* For tests: entries inserted, and how many the peer has acknowledged. */
+proven_u64 proven_qpack_enc_inserts(const proven_qpack_enc_t *e);
+proven_u64 proven_qpack_enc_known(const proven_qpack_enc_t *e);
+
 /* This side's decoder-stream instructions (section 4.4), at most 10 bytes each. */
 proven_size_t proven_qpack_put_section_ack(proven_byte_t *out, proven_u64 stream_id);
 proven_size_t proven_qpack_put_stream_cancel(proven_byte_t *out, proven_u64 stream_id);
@@ -161,6 +190,9 @@ void proven_h3_conn_destroy(proven_h3_conn_t *h);
 /* The next event; false when there is none until the QUIC connection is given a datagram or
  * a timeout. Call it after each of those, until it says false. */
 bool proven_h3_conn_poll(proven_h3_conn_t *h, proven_h3_event_t *ev);
+/* For tests: this side's QPACK encoder - entries inserted and acknowledged - and decoder -
+ * entries inserted by the peer (RFC-0032). */
+void proven_h3_conn_test_qpack_(const proven_h3_conn_t *h, proven_u64 *enc_inserts, proven_u64 *enc_known, proven_u64 *dec_inserts);
 
 /* A client: a request (pseudo-header fields first, names in lowercase). PROVEN_ERR_INVALID_ARG
  * for a list proven_h2_request_head refuses or `:protocol`, or on a server;

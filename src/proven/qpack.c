@@ -619,4 +619,262 @@ static proven_u64 qp_stream_feed(proven_qpack_stream_t *s, proven_mem_view_t in,
 proven_u64 proven_qpack_encoder_stream_feed(proven_qpack_stream_t *s, proven_mem_view_t in) { return qp_stream_feed(s, in, true); }
 proven_u64 proven_qpack_decoder_stream_feed(proven_qpack_stream_t *s, proven_mem_view_t in) { return qp_stream_feed(s, in, false); }
 
+// -----------------------------------------------------------------------------
+// The dynamic table, as an encoder (RFC 9204 sections 2.1, 3.2, 4.3, 4.4 and 4.5; RFC-0032)
+// -----------------------------------------------------------------------------
+
+typedef struct { proven_u64 stream, ric, low; } qp_out_t;     /* a section not yet acknowledged */
+
+struct proven_qpack_enc {
+    proven_allocator_t alloc;
+    proven_u32 cap, peer_max;
+    proven_u32 size;                   /* the entries' sizes, name + value + 32 each */
+    proven_byte_t *ring;               /* cap bytes: names and values, wrapping, oldest first */
+    proven_u32 head;
+    qp_entry_t *ent;                   /* a ring of cap / 32 + 1 entries */
+    proven_u32 slots, first, count;
+    proven_u64 inserts;                /* entries inserted */
+    proven_u64 known;                  /* ... and acknowledged: the Known Received Count */
+    bool cap_sent;                     /* Set Dynamic Table Capacity has gone */
+    qp_out_t *outs;                    /* sections not yet acknowledged, in the order they went */
+    proven_size_t nouts, outs_cap;
+    proven_byte_t ib[12];              /* a decoder-stream instruction not yet whole */
+    proven_size_t ib_n;
+};
+
+proven_err_t proven_qpack_enc_create(proven_allocator_t alloc, proven_u32 capacity, proven_u32 peer_max, proven_qpack_enc_t **out) {
+    if (out) *out = (void *)0;
+    if (!out || !proven_alloc_is_valid(alloc) || capacity < 32 || capacity > ((proven_u32)1 << 20) || peer_max < capacity) return PROVEN_ERR_INVALID_ARG;
+    proven_qpack_enc_t *e = qp_alloc(alloc, sizeof *e);
+    if (!e) return PROVEN_ERR_NOMEM;
+    *e = (proven_qpack_enc_t){ .alloc = alloc, .cap = capacity, .peer_max = peer_max, .slots = capacity / 32 + 1 };
+    e->ring = qp_alloc(alloc, capacity);
+    e->ent = qp_alloc(alloc, (proven_size_t)e->slots * sizeof(qp_entry_t));
+    if (!e->ring || !e->ent) { proven_qpack_enc_destroy(e); return PROVEN_ERR_NOMEM; }
+    *out = e;
+    return PROVEN_OK;
+}
+
+void proven_qpack_enc_destroy(proven_qpack_enc_t *e) {
+    if (!e) return;
+    const proven_allocator_t a = e->alloc;
+    if (e->ring) a.free_fn(a.ctx, e->ring);
+    if (e->ent) a.free_fn(a.ctx, e->ent);
+    if (e->outs) a.free_fn(a.ctx, e->outs);
+    a.free_fn(a.ctx, e);
+}
+
+proven_u64 proven_qpack_enc_inserts(const proven_qpack_enc_t *e) { return e ? e->inserts : 0; }
+proven_u64 proven_qpack_enc_known(const proven_qpack_enc_t *e) { return e ? e->known : 0; }
+
+static const qp_entry_t *qe_entry(const proven_qpack_enc_t *e, proven_u64 abs) {
+    const proven_u64 oldest = e->inserts - e->count;
+    if (abs < oldest || abs >= e->inserts) return (void *)0;
+    return &e->ent[(e->first + (proven_u32)(abs - oldest)) % e->slots];
+}
+
+/* Whether the ring holds `p` (n bytes) from `at`, wrapping. */
+static bool qe_ring_eq(const proven_qpack_enc_t *e, proven_u32 at, const proven_byte_t *p, proven_u32 n) {
+    for (proven_u32 i = 0; i < n; ++i) if (e->ring[(at + i) % e->cap] != p[i]) return false;
+    return true;
+}
+
+/* The newest entry with this name and value, and the newest with this name, that the peer has
+ * acknowledged (UINT64_MAX: none); `*present`: the whole field is in the table, acknowledged or
+ * not (so it is not inserted twice). */
+static void qe_find(const proven_qpack_enc_t *e, proven_u8str_view_t name, proven_u8str_view_t value, proven_u64 *whole, proven_u64 *named, bool *present) {
+    *whole = *named = UINT64_MAX;
+    *present = false;
+    for (proven_u64 k = 0; k < e->count; ++k) {
+        const proven_u64 abs = e->inserts - 1 - k;
+        const qp_entry_t *x = qe_entry(e, abs);
+        if (x->nlen != name.size || !qe_ring_eq(e, x->at, name.ptr, x->nlen)) continue;
+        const bool same = x->vlen == value.size && qe_ring_eq(e, (x->at + x->nlen) % e->cap, value.ptr, x->vlen);
+        if (same) *present = true;
+        if (abs >= e->known) continue;
+        if (same && *whole == UINT64_MAX) *whole = abs;
+        if (*named == UINT64_MAX) *named = abs;
+    }
+}
+
+/* The lowest entry an unacknowledged section refers to (UINT64_MAX: none). */
+static proven_u64 qe_low(const proven_qpack_enc_t *e) {
+    proven_u64 low = UINT64_MAX;
+    for (proven_size_t i = 0; i < e->nouts; ++i) if (e->outs[i].low < low) low = e->outs[i].low;
+    return low;
+}
+
+/* Make room for an entry of `esize` by evicting the oldest, if each of those is evictable - its
+ * insert acknowledged, and no unacknowledged section (nor `also`, this one's) referring to it
+ * (section 2.1.1). False, and nothing evicted, when they are not. */
+static bool qe_room(proven_qpack_enc_t *e, proven_u32 esize, proven_u64 also) {
+    if (esize > e->cap) return false;
+    const proven_u64 low = qe_low(e) < also ? qe_low(e) : also;
+    proven_u32 size = e->size, n = 0;
+    while (size + esize > e->cap) {
+        const proven_u64 abs = e->inserts - e->count + n;
+        if (n == e->count || abs >= e->known || abs >= low) return false;
+        const qp_entry_t *x = qe_entry(e, abs);
+        size -= x->nlen + x->vlen + 32u;
+        n++;
+    }
+    for (proven_u32 i = 0; i < n; ++i) {
+        const qp_entry_t *x = &e->ent[e->first];
+        e->size -= x->nlen + x->vlen + 32u;
+        e->first = (e->first + 1) % e->slots;
+        e->count--;
+    }
+    return true;
+}
+
+static void qe_insert(proven_qpack_enc_t *e, proven_u8str_view_t name, proven_u8str_view_t value) {
+    const proven_u32 at = e->head;
+    for (proven_u32 i = 0; i < name.size; ++i) e->ring[(at + i) % e->cap] = name.ptr[i];
+    for (proven_u32 i = 0; i < value.size; ++i) e->ring[(at + (proven_u32)name.size + i) % e->cap] = value.ptr[i];
+    e->head = (at + (proven_u32)name.size + (proven_u32)value.size) % e->cap;
+    e->ent[(e->first + e->count) % e->slots] = (qp_entry_t){ .at = at, .nlen = (proven_u32)name.size, .vlen = (proven_u32)value.size };
+    e->count++;
+    e->size += (proven_u32)(name.size + value.size + 32u);
+    e->inserts++;
+}
+
+proven_size_t proven_qpack_enc_ins_bound(const proven_http_header_t *headers, proven_size_t count) {
+    proven_size_t n = qp_int_size();                   /* the capacity */
+    for (proven_size_t i = 0; i < count && headers; ++i) n += 2 * qp_int_size() + headers[i].name.size + headers[i].value.size;
+    return n;
+}
+
+/* A secret short enough to guess a byte at a time is not inserted (section 7.1.3). */
+static bool qe_short_secret(proven_u8str_view_t name, proven_u8str_view_t value) {
+    return value.size < 20 && (qp_eq(name, "authorization", 13) || qp_eq(name, "proxy-authorization", 19) || qp_eq(name, "cookie", 6));
+}
+
+enum { QE_STATIC = 0, QE_DYN, QE_SNAME, QE_DNAME, QE_LIT };
+
+proven_err_t proven_qpack_encode_dyn(proven_qpack_enc_t *e, const proven_http_header_t *headers, proven_size_t count, const bool *sensitive,
+                                     proven_mem_mut_t out, proven_size_t *len, proven_mem_mut_t ins, proven_size_t *ins_len,
+                                     proven_u64 *required, proven_u64 *lowest) {
+    if (required) *required = 0;
+    if (lowest) *lowest = 0;
+    if (!e) return proven_qpack_encode(headers, count, sensitive, out, len);
+    if (!len || !ins_len || !required || !lowest || (count > 0 && !headers) || (out.size > 0 && !out.ptr) || *len > out.size ||
+        (ins.size > 0 && !ins.ptr) || *ins_len > ins.size) return PROVEN_ERR_INVALID_ARG;
+    for (proven_size_t i = 0; i < count; ++i) {
+        if ((headers[i].name.size > 0 && !headers[i].name.ptr) || (headers[i].value.size > 0 && !headers[i].value.ptr)) return PROVEN_ERR_INVALID_ARG;
+    }
+    if (out.size - *len < proven_qpack_encode_bound(headers, count) + 8 || ins.size - *ins_len < proven_qpack_enc_ins_bound(headers, count)) return PROVEN_ERR_OUT_OF_BOUNDS;
+    proven_result_mem_mut_t m = e->alloc.alloc_fn(e->alloc.ctx, (count ? count : 1) * (sizeof(proven_u64) + 1), 8);
+    if (m.err != PROVEN_OK) return PROVEN_ERR_NOMEM;
+    proven_u64 *ref = (proven_u64 *)m.value.ptr;      /* a field's static index or absolute entry */
+    proven_byte_t *rep = (proven_byte_t *)(ref + (count ? count : 1));
+    proven_u64 top = 0, low = UINT64_MAX;
+    proven_size_t at = *ins_len;
+    for (proven_size_t i = 0; i < count; ++i) {
+        const proven_u8str_view_t name = headers[i].name, value = headers[i].value;
+        const bool never = (sensitive && sensitive[i]) || qp_eq(name, "authorization", 13) || qp_eq(name, "proxy-authorization", 19);
+        proven_size_t whole_s = QPACK_STATIC_COUNT, name_s = QPACK_STATIC_COUNT;
+        for (proven_size_t k = 0; k < QPACK_STATIC_COUNT; ++k) {
+            if (qpack_static[k].name_len != name.size || !qp_eq(name, qpack_static[k].name, name.size)) continue;
+            if (name_s == QPACK_STATIC_COUNT) name_s = k;
+            if (qpack_static[k].value_len == value.size && qp_eq(value, qpack_static[k].value, value.size)) { whole_s = k; break; }
+        }
+        if (whole_s != QPACK_STATIC_COUNT && !never) { rep[i] = QE_STATIC; ref[i] = whole_s; continue; }
+        proven_u64 whole_d, name_d;
+        bool present;
+        qe_find(e, name, value, &whole_d, &name_d, &present);
+        if (whole_d != UINT64_MAX && !never) {
+            rep[i] = QE_DYN; ref[i] = whole_d;
+        } else {
+            /* Inserted for the sections after this one, which may refer to it once the peer has it. */
+            const proven_u64 esize = (proven_u64)name.size + value.size + 32u;
+            if (!never && !present && !qe_short_secret(name, value) && esize <= e->cap / 4 && qe_room(e, (proven_u32)esize, low)) {
+                if (!e->cap_sent) { qp_put_int(ins.ptr, &at, 5, 0x20, e->cap); e->cap_sent = true; }
+                if (name_s != QPACK_STATIC_COUNT) qp_put_int(ins.ptr, &at, 6, 0xc0, name_s);
+                else qp_put_string(ins.ptr, &at, 5, 0x40, 0x20, name);
+                qp_put_string(ins.ptr, &at, 7, 0x00, 0x80, value);
+                qe_insert(e, name, value);
+                qe_find(e, name, value, &whole_d, &name_d, &present);   /* an eviction may have taken the name's entry */
+            }
+            if (name_s != QPACK_STATIC_COUNT) { rep[i] = QE_SNAME; ref[i] = name_s; }
+            else if (name_d != UINT64_MAX) { rep[i] = QE_DNAME; ref[i] = name_d; }
+            else rep[i] = QE_LIT;
+        }
+        if (rep[i] == QE_DYN || rep[i] == QE_DNAME) {
+            if (ref[i] + 1 > top) top = ref[i] + 1;
+            if (ref[i] < low) low = ref[i];
+        }
+    }
+    *ins_len = at;
+    /* The prefix: the Required Insert Count, encoded (section 4.5.1.1), and a Base equal to it. */
+    proven_size_t o = *len;
+    const proven_u64 full = 2 * (proven_u64)(e->peer_max / 32);
+    qp_put_int(out.ptr, &o, 8, 0x00, top == 0 ? 0 : top % full + 1);
+    out.ptr[o++] = 0;
+    for (proven_size_t i = 0; i < count; ++i) {
+        const proven_u8str_view_t name = headers[i].name, value = headers[i].value;
+        const bool never = (sensitive && sensitive[i]) || qp_eq(name, "authorization", 13) || qp_eq(name, "proxy-authorization", 19);
+        switch (rep[i]) {
+        case QE_STATIC: qp_put_int(out.ptr, &o, 6, 0xc0, ref[i]); break;
+        case QE_DYN: qp_put_int(out.ptr, &o, 6, 0x80, top - 1 - ref[i]); break;
+        case QE_SNAME: qp_put_int(out.ptr, &o, 4, (proven_byte_t)(0x50 | (never ? 0x20 : 0)), ref[i]); qp_put_string(out.ptr, &o, 7, 0x00, 0x80, value); break;
+        case QE_DNAME: qp_put_int(out.ptr, &o, 4, (proven_byte_t)(0x40 | (never ? 0x20 : 0)), top - 1 - ref[i]); qp_put_string(out.ptr, &o, 7, 0x00, 0x80, value); break;
+        default: qp_put_string(out.ptr, &o, 3, (proven_byte_t)(0x20 | (never ? 0x10 : 0)), 0x08, name); qp_put_string(out.ptr, &o, 7, 0x00, 0x80, value); break;
+        }
+    }
+    *len = o;
+    *required = top;
+    *lowest = top ? low : 0;
+    e->alloc.free_fn(e->alloc.ctx, m.value.ptr);
+    return PROVEN_OK;
+}
+
+bool proven_qpack_enc_sent(proven_qpack_enc_t *e, proven_u64 stream_id, proven_u64 required, proven_u64 lowest) {
+    if (!e || required == 0) return true;
+    if (e->nouts == e->outs_cap) {
+        const proven_size_t want = e->outs_cap ? e->outs_cap * 2 : 8;
+        qp_out_t *n = qp_alloc(e->alloc, want * sizeof *n);
+        if (!n) return false;
+        if (e->outs) { proven_sys_mem_copy(n, e->outs, e->nouts * sizeof *n); e->alloc.free_fn(e->alloc.ctx, e->outs); }
+        e->outs = n; e->outs_cap = want;
+    }
+    e->outs[e->nouts++] = (qp_out_t){ .stream = stream_id, .ric = required, .low = lowest };
+    return true;
+}
+
+static void qe_drop(proven_qpack_enc_t *e, proven_size_t i) {
+    proven_sys_mem_move(e->outs + i, e->outs + i + 1, (e->nouts - i - 1) * sizeof *e->outs);
+    e->nouts--;
+}
+
+proven_u64 proven_qpack_enc_feed(proven_qpack_enc_t *e, proven_mem_view_t in) {
+    if (!e || (in.size > 0 && !in.ptr)) return PROVEN_QPACK_DECODER_STREAM_ERROR;
+    for (proven_size_t i = 0; i < in.size; ++i) {
+        e->ib[e->ib_n++] = in.ptr[i];
+        const proven_byte_t b = e->ib[0];
+        const unsigned prefix = (b & 0x80) ? 7u : 6u;
+        proven_size_t pos = 0;
+        proven_u64 v = 0;
+        const int r = qp_int_more((proven_mem_view_t){ .ptr = e->ib, .size = e->ib_n }, &pos, prefix, &v);
+        if (r == 2) return PROVEN_QPACK_DECODER_STREAM_ERROR;
+        if (r == 1) { if (e->ib_n == sizeof e->ib) return PROVEN_QPACK_DECODER_STREAM_ERROR; continue; }
+        e->ib_n = 0;
+        if (b & 0x80) {
+            /* Section Acknowledgement: the oldest outstanding section of the stream. */
+            proven_size_t k = 0;
+            while (k < e->nouts && e->outs[k].stream != v) ++k;
+            if (k == e->nouts) return PROVEN_QPACK_DECODER_STREAM_ERROR;
+            if (e->outs[k].ric > e->known) e->known = e->outs[k].ric;
+            qe_drop(e, k);
+        } else if (b & 0x40) {
+            /* Stream Cancellation: its sections will not be acknowledged. */
+            for (proven_size_t k = e->nouts; k-- > 0;) if (e->outs[k].stream == v) qe_drop(e, k);
+        } else {
+            /* Insert Count Increment. */
+            if (v == 0 || v > e->inserts - e->known) return PROVEN_QPACK_DECODER_STREAM_ERROR;
+            e->known += v;
+        }
+    }
+    return 0;
+}
+
 #endif /* PROVEN_NO_HTTP3 */

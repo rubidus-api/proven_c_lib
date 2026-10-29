@@ -899,6 +899,38 @@ int main(void) {
         }
     }
 
+    PROVEN_TEST_SECTION("both encoders with a table (RFC-0032)", "Client and server each with a table of 4,096 bytes: sixty requests with the same custom fields, under loss and reordering, each answered whole; both encoders inserted, the peer acknowledged them, and both decoders hold what the other inserted.", "Check h3_start_encoder, the encoder branch of h3_put_headers and proven_qpack_enc_feed's caller in qpack_step.");
+    {
+        reset_apps();
+        net_init(n, 900);
+        n->h3cfg[0].qpack_capacity = n->h3cfg[1].qpack_capacity = 4096;
+        n->loss = 20; n->reorder = 50;
+        fresh(n, 900);
+        int asked = 0;
+        for (int i = 0; i < 60; ++i) {
+            const proven_http_header_t f[] = { { sv(":method"), sv("GET") }, { sv(":scheme"), sv("https") }, { sv(":authority"), sv("example.test") },
+                                               { sv(":path"), sv("/get/100") }, { sv("x-client-token"), sv("abcdefghijklmnop") }, { sv("user-agent"), sv("proven-test/1.0") } };
+            proven_u64 id = 0;
+            if (proven_h3_submit_request(n->h3[0], f, 6, true, &id) == PROVEN_OK) {
+                rec_t *r = &g_app[0].r[g_app[0].n++];
+                *r = (rec_t){ .id = id, .sent_end = true };
+                snprintf(r->path, sizeof r->path, "/get/100");
+                ++asked;
+            }
+            run_for(n, 30000);
+        }
+        PROVEN_TEST_ASSERT(asked == 60 && run_until_done(n, 60, 20000000), "sixty requests, each answered whole", "");
+        proven_u64 ei = 0, ek = 0, di = 0, sei = 0, sek = 0, sdi = 0;
+        proven_h3_conn_test_qpack_(n->h3[0], &ei, &ek, &di);
+        proven_h3_conn_test_qpack_(n->h3[1], &sei, &sek, &sdi);
+        PROVEN_TEST_INFO("client: inserted {}, acknowledged {}; server: inserted {}, acknowledged {}; decoders {} and {}",
+                         PROVEN_ARG((unsigned)ei), PROVEN_ARG((unsigned)ek), PROVEN_ARG((unsigned)sei), PROVEN_ARG((unsigned)sek), PROVEN_ARG((unsigned)sdi), PROVEN_ARG((unsigned)di));
+        PROVEN_TEST_ASSERT(ei > 0 && ek == ei && sdi == ei, "the client's encoder inserted its fields, the server has them, and acknowledged them all", "");
+        PROVEN_TEST_ASSERT(sei > 0 && sek == sei && di == sei, "and the same the other way", "");
+        PROVEN_TEST_ASSERT(!g_app[0].closed && !g_app[1].closed, "the connection stays", "");
+        net_free(n);
+    }
+
     PROVEN_TEST_SECTION("codes this side sends", "H3_REQUEST_CANCELLED for a stream given up, both ways; H3_EXCESSIVE_LOAD when the peer resets more streams than finish; H3_INTERNAL_ERROR when memory runs out; a field section over the limit.", "");
     {
         /* Given up by the client: the server sees the reset with H3_REQUEST_CANCELLED. */

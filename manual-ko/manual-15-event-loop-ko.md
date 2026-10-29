@@ -861,7 +861,7 @@ void proven_http_stream_resume(proven_http_stream_t *stream);
 | `http3` | HTTP/3도: 각 TCP 리스너 곁의 같은 포트 UDP 소켓에서 QUIC으로, 같은 처리기로, 그리고 TCP 응답에 `Alt-Svc`: [17장 9절](manual-17-http2-ko.md#9-이벤트-구동-서버의-http3). `h3`를 내는 `tls`가 필요하다. | false |
 | `http3_retry` | HTTP/3: 클라이언트마다 첫 패킷에 Retry로 답해, 받는다는 것을 보이지 않은 주소에는 상태를 두지 않는다 - 연결마다 한 왕복이 더 들며, 부하가 걸린 서버를 위한 것. | false |
 | `http3_window_bytes` | HTTP/3: 처리기가 가져가기 전에 클라이언트가 한 스트림에, 그리고 연결 전체에 보낼 수 있는 요청 본문 바이트(QUIC의 흐름 제어). | 스트림 256 KiB, 연결 1 MiB에서 시작해 본문을 오는 대로 읽는 동안 16 MiB와 24 MiB까지 자람; 값을 주면 고정 |
-| `http3_header_table_bytes` | HTTP/3: 클라이언트의 인코더가 채울 수 있는 QPACK 동적 표(RFC-0032): 그 삽입을 기다릴 수 있는 스트림 16개와 함께 SETTINGS로 알린다. 클라이언트가 처음 쓸 때 만들며 그때 이것의 두 배쯤. 32에서 1 MiB. | 4,096 |
+| `http3_header_table_bytes` | HTTP/3: 클라이언트의 인코더가 채울 수 있는 QPACK 동적 표(RFC-0032): 그 삽입을 기다릴 수 있는 스트림 16개와 함께 SETTINGS로 알린다. 클라이언트가 처음 쓸 때 만들며 그때 이것의 두 배쯤. 32에서 1 MiB. v0.96.0부터는 서버의 인코더가 채우는 클라이언트 표의 최대이기도 하며, 클라이언트가 확인한 것만 가리킨다. | 4,096 |
 | `http3_no_header_table` | HTTP/3: 그런 표 없음. 모든 요청 헤드가 통째로 온다. | false |
 
 서버가 서비스하지 않을 요청은 `on_request`에 닿지 않는다. 답을 받고 연결이 닫힌다:
@@ -1730,7 +1730,7 @@ HTTP/2에서는 이 설정이 더 많은 경우를 다룬다: 17장.)
 | `http2_window_bytes` | HTTP/2: `on_body`가 가져가기 전에 서버가 한 스트림에, 그리고 연결 전체에 보낼 수 있는 응답 본문 바이트. 멈춘 요청이 연결에 쥐게 할 수 있는 양이며, 큰 다운로드는 서버가 이만큼 보낼 때마다 자리를 기다린다(1 MiB 응답 16개 동시, v0.75.0 전 측정: 기본값에서 초당 568개, 1 MiB로 1,208개). 0이면 창이 거기서 시작해 본문을 읽는 동안 자란다 - 왕복 두 번 안에 절반이 읽히는 동안 두 배씩, 스트림당 16 MiB, 연결당 24 MiB까지(v0.75.0, HTTP/3은 v0.71.0부터); 읽지 않는 본문은 키우지 않는다. 정한 값은 고정. 한쪽 10 ms 지연 중계기 너머 64 MiB 내려받기 하나: 창을 65,535로 고정하면 16 Mbit/s, 자라면 1,310. | 65,535, 자람 |
 | `http3` | 그것을 청하는 요청(옵션의 `http3`, `https` URL)은 HTTP/3으로, 그 오리진에 하나 간직하는 QUIC 연결 위로 간다: [17장 10절](manual-17-http2-ko.md#10-이벤트-구동-클라이언트의-http3). 청하지 않은 요청은 결코, `Alt-Svc`를 따라서도 결코 가지 않는다. `http3_fallback`이 없으면 **대체 없음**: UDP로 답이 없으면 `connect_timeout_ms` 뒤 `PROVEN_ERR_TIMEOUT`. `h3`를 내는 `tls`가 필요하다. | false |
 | `http3_window_bytes` | HTTP/3: `on_body`가 가져가기 전에 서버가 한 스트림에, 그리고 연결 전체에 보낼 수 있는 응답 본문 바이트(QUIC의 흐름 제어). | 스트림 256 KiB, 연결 1 MiB에서 시작해 본문을 오는 대로 읽는 동안 16 MiB와 24 MiB까지 자람; 값을 주면 고정 |
-| `http3_header_table_bytes` | HTTP/3: 서버의 인코더가 채울 수 있는 QPACK 동적 표(RFC-0032): 그 삽입을 기다릴 수 있는 스트림 16개와 함께 SETTINGS로 알린다. 서버가 처음 쓸 때 만들며 그때 이것의 두 배쯤. 32에서 1 MiB. | 4,096 |
+| `http3_header_table_bytes` | HTTP/3: 서버의 인코더가 채울 수 있는 QPACK 동적 표(RFC-0032): 그 삽입을 기다릴 수 있는 스트림 16개와 함께 SETTINGS로 알린다. 서버가 처음 쓸 때 만들며 그때 이것의 두 배쯤. 32에서 1 MiB. v0.96.0부터는 클라이언트의 인코더가 채우는 서버 표의 최대이기도 하며, 서버가 확인한 것만 가리킨다. | 4,096 |
 | `http3_no_header_table` | HTTP/3: 그런 표 없음. 모든 응답 헤드가 통째로 온다. | false |
 | `http3_fallback` | HTTP/3으로 청한 요청의 QUIC 연결이 서지 않으면 - `http3_fallback_ms` 안에 핸드셰이크가 없거나, 닿을 수 없는 주소나 거절한 포트, `h3` 거절 - 호출자가 쥔 객체 그대로 TCP로 다시 시작한다. 그 뒤 5분 동안 그 출처는 처음부터 TCP로 간다. 믿을 수 없는 인증서에서는 결코 아니다: [17장 10절](manual-17-http2-ko.md#10-이벤트-구동-클라이언트의-http3). `http3`가 필요하다. | false |
 | `http3_fallback_ms` | `http3_fallback`에서: 요청이 TCP로 가기 전에 QUIC 핸드셰이크가 걸려도 되는 시간. 많아야 `connect_timeout_ms`. | 1초 |

@@ -867,7 +867,7 @@ Failure tip: inspect `src/proven/quic_conn.c` (for the datagram size: `pm_next`,
 
 ### `tests/test_unit_qpack` - QPACK: header compression for HTTP/3
 
-Intent: verify QPACK (RFC 9204; RFC-0017 Q-3) with a dynamic table of capacity 0, where nothing is kept from one field section to the next, and the decoder with a dynamic table (RFC-0032). Internal code, reached through `src/proven/proven_internal_h3.h`.
+Intent: verify QPACK (RFC 9204; RFC-0017 Q-3) with a dynamic table of capacity 0, where nothing is kept from one field section to the next, and the decoder and the encoder with a dynamic table (RFC-0032). Internal code, reached through `src/proven/proven_internal_h3.h`.
 
 Sub-checks:
 
@@ -880,6 +880,7 @@ Sub-checks:
 - The peer's encoder and decoder streams fed a byte at a time: a capacity of 0 taken, a capacity of 31 refused at its last byte, Stream Cancellations of one and two bytes taken, an integer that does not end refused, and each instruction a table of capacity 0 cannot take refused with its code.
 - Every truncation and every single-bit change of an encoded section of seven fields refused or decoded within bounds.
 - The decoder with a dynamic table (RFC-0032): a table under 32 bytes or over 1 MiB refused; against a table of 220 bytes, RFC 9204 appendix B - B.2's section before its inserts is PROVEN_ERR_AGAIN (it needs two), B.2's encoder stream fed a byte at a time makes the capacity and two inserts, then the section decodes to `:authority` and `:path` after the Base; its Section Acknowledgement is the appendix's `84`; B.3's insert with a literal name and its Insert Count Increment `01`; B.4's duplicate and its section of a dynamic, a static and a dynamic field, its Stream Cancellation `48`; B.5's insert evicts the oldest entry, which is then refused while the new one decodes. Refused: a Required Insert Count above what the section needs, a reference at or past it, an encoded count beyond twice the table's entries, a negative Base, a capacity over the maximum and an entry larger than the table (QPACK_ENCODER_STREAM_ERROR). Huffman-coded name and value inserted and decoded back; five hundred random splittings of B.2 to B.4's encoder stream build the same table.
+- The encoder with a dynamic table (RFC-0032): a table larger than the peer allows, or under one entry, refused; RFC 7541 appendix C's header lists three times through an encoder and a decoder of 4,096 bytes with every instruction carried both ways - each list decoded alike, no section referring past the entries the decoder acknowledged, the first list again in under a third of its first size (22 bytes, then 3); a 256-byte table where a section referring to the oldest entry is held unacknowledged while fifty new fields want room - inserting stops at six entries, the held section still decodes, and once it is acknowledged the next insert goes; a short cookie, an `authorization` and a field marked sensitive not inserted, a plain one inserted; an acknowledgement of no section, an increment of 0 and one past what was inserted refused (QPACK_DECODER_STREAM_ERROR), a Stream Cancellation of a stream with nothing outstanding taken.
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
@@ -902,6 +903,7 @@ Sub-checks:
 - Codes this side sends of its own: H3_REQUEST_CANCELLED when a stream is given up, and reported when the peer resets one; H3_EXCESSIVE_LOAD after one more reset than `max_reset_debt` allows; H3_INTERNAL_ERROR, and the peer told, when the HTTP/3 side's memory runs out; a list larger than the peer's SETTINGS_MAX_FIELD_SECTION_SIZE refused before it is sent.
 - A request stream's bytes with one bit changed, every fifth bit: each change closes the connection with a code, resets the stream with one, or is taken as another request.
 - The QPACK dynamic table (RFC-0032), a server with a table of 220 bytes and a raw client: a request head that needs two inserts waits (no request, the connection stays) and is taken once the encoder stream brings them, its `:path` from the table; the server's decoder stream is its type, Insert Count Increment 2 and the Section Acknowledgement of stream 0 (`03 02 80`); a waiting stream reset is cancelled on it (`03 40`); two waiting streams where one may is QPACK_DECOMPRESSION_FAILED; an insert larger than the table is QPACK_ENCODER_STREAM_ERROR.
+- Both encoders with a table (RFC-0032): client and server each with 4,096 bytes, sixty requests with the same custom fields under 2 percent loss and 5 percent reordering, each answered whole; the client's encoder inserted its fields and the server acknowledged every one, the server's likewise for the client, and each decoder holds what the other inserted; the connection stays.
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 

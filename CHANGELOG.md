@@ -18,6 +18,19 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **HTTP/3: this side's QPACK encoder uses the peer's table** (RFC-0032, the encoder half): when a
+  peer's SETTINGS allow a dynamic table, the event server and client fill it - up to the smaller
+  of the two sides' sizes (`http3_header_table_bytes`) - with the fields they send: not one marked
+  sensitive, nor an `authorization`, `proxy-authorization` or `cookie` value under 20 bytes, nor
+  one whose entry is over a quarter of the table. A section refers only to entries the peer has
+  acknowledged, so the peer never waits; an entry is evicted only once its insert is acknowledged
+  and no unacknowledged section refers to it. Against pylsqpack over the hpack-test-case corpus,
+  field sections came to about half their size without a table. A peer that never sends Insert
+  Count Increment (aioquic) is sent the inserts and no references. `http3_no_header_table` turns
+  the table off in both directions.
+
 ## [0.95.0] - 2026-10-29
 
 ### Added
