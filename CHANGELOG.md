@@ -18,6 +18,18 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **HTTP/3: a QPACK dynamic table for the peer's encoder** (RFC-0032, its decoder half): the event
+  server and the event client announce a table of `http3_header_table_bytes` (0: 4,096; 32 to
+  1 MiB) and 16 blocked streams, so a peer's encoder - curl's nghttp3, aioquic's pylsqpack,
+  browsers - can send repeated fields as references instead of in full. A request or response
+  head that needs inserts not yet arrived waits for them (its stream is not read meanwhile); a
+  section that used the table is acknowledged and inserts are counted on this side's decoder
+  stream; a stream given up before its head was read is cancelled there. The table's memory -
+  about twice its size - is made when the peer first uses it. `http3_no_header_table` keeps the
+  table at 0, as before. This side's own encoder still uses none (the encoder half comes next).
+
 ## [0.94.0] - 2026-10-29
 
 ### Added

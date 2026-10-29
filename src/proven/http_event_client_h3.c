@@ -1046,7 +1046,7 @@ static proven_err_t c_open(proven_http_event_client_t *cl, proven_u8str_view_t h
         e = proven_quic_conn_client_create(&qc, host, &c->session, &qa, c3_now_us(), &c->q);
         if (e == PROVEN_OK) {
             const proven_u32 list = cl->cfg.max_head_bytes > ((proven_size_t)1 << 20) ? (proven_u32)1 << 20 : (proven_u32)cl->cfg.max_head_bytes;
-            const proven_h3_config_t hc = { .alloc = cl->alloc, .server = false, .max_field_section_bytes = list };
+            const proven_h3_config_t hc = { .alloc = cl->alloc, .server = false, .max_field_section_bytes = list, .qpack_capacity = (proven_u32)cl->cfg.http3_header_table_bytes };
             e = proven_h3_conn_create(&hc, c->q, &c->h3);
         }
         if (e == PROVEN_OK) {

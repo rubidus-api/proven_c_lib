@@ -1543,6 +1543,8 @@ typedef struct {
     bool http3;
     bool http3_retry;
     proven_size_t http3_window_bytes;
+    proven_size_t http3_header_table_bytes;
+    bool http3_no_header_table;
 } proven_http_event_server_config_t;
 ```
 
@@ -1582,6 +1584,7 @@ HTTP/2에 견주어 주는 것은 잃은 패킷이 제 스트림만 붙잡는다
 | `max_head_bytes`, `max_headers` | QPACK이 세는 가장 큰 필드 구역으로, SETTINGS로 클라이언트에 알린다. `max_headers`보다 많은 필드는 `431` |
 | `max_body_bytes` | 요청마다: HTTP/2에서처럼 `413` |
 | `http3_window_bytes` (0: 스트림 256 KiB, 연결 1 MiB에서 본문을 읽는 동안 16 MiB와 24 MiB까지 자람) | 처리기가 가져가기 전에 클라이언트가 보낼 수 있는 요청 본문 바이트. 값을 주면 고정. 최대 2^31-1 |
+| `http3_header_table_bytes`, `http3_no_header_table` (0: 4,096) | 클라이언트의 인코더가 채울 수 있는 QPACK 동적 표(v0.95.0부터, RFC-0032): 그 삽입을 기다릴 수 있는 스트림 16개와 함께 SETTINGS로 알린다 - 그런 스트림은 삽입이 올 때까지 읽지 않고, 그보다 하나 더 많으면 QPACK_DECOMPRESSION_FAILED로 연결을 끝낸다. 표의 메모리 - 크기의 두 배쯤 - 는 클라이언트가 처음 용량을 정할 때 만든다. 32에서 1 MiB. 서버 자신의 인코더는 쓰지 않는다: 응답은 정적 표와 리터럴로 간다. `http3_no_header_table`: 전처럼 없음 |
 | `http3_retry` | 클라이언트마다 첫 패킷에 Retry: 주의할 것을 보라 |
 | `head_timeout_ms` | 연결의 첫 패킷부터 - 핸드셰이크를 포함해 - 첫 요청까지 |
 | `body_timeout_ms` | 본문이 남은 요청 하나의 침묵: 그 스트림이 리셋되고, 나머지는 계속된다 |
@@ -1648,6 +1651,8 @@ typedef struct {
     /* ... 15장이 설명하는 모든 것, 그리고 7절의 필드 ... */
     bool http3;
     proven_size_t http3_window_bytes;
+    proven_size_t http3_header_table_bytes;
+    bool http3_no_header_table;
     bool http3_fallback;
     proven_u32 http3_fallback_ms;
 } proven_http_event_client_config_t;
@@ -1669,7 +1674,9 @@ HTTP/2는 TLS 핸드셰이크가 고른다. HTTP/3은 그럴 수 없다 - UDP �
 처리하지 않고 거절한 요청(H3_REQUEST_REJECTED, 또는 GOAWAY 뒤)을 다시 보낸다. `decompress`는 다른 것에서처럼
 푼다. 쓰기는 QUIC의 보내기 버퍼 - 스트림 256 KiB, 연결 1 MiB, 또는 서버가 허락한 범위 안에서 혼잡 창의 두 배, 16 MiB와 24 MiB까지 - 로
 묶이고, 멈춘 응답은 읽히지 않아 서버는 가졌던 창에서 멈춘다. 오는 대로 읽으면 `http3_window_bytes`가 고정하지 않는 한
-창이 스트림 16 MiB, 연결 24 MiB까지 자란다(v0.71.0).
+창이 스트림 16 MiB, 연결 24 MiB까지 자란다(v0.71.0). 서버의 인코더는 위 서버 절이 그 클라이언트에 대해 말하듯
+클라이언트를 위해 QPACK 동적 표를 채울 수 있다 - `http3_header_table_bytes`와 `http3_no_header_table`, 기본값과
+한도도 같다(v0.95.0부터). 클라이언트 자신의 인코더는 쓰지 않는다.
 
 **`http3_fallback`이 없으면 대체는 없다.** HTTP/3으로 청한 요청의 서버가 UDP로 답하지 않으면 `connect_timeout_ms`가 지난 뒤
 `PROVEN_ERR_TIMEOUT`으로 - 연결하지 않은 UDP 소켓은 거절을 듣지 못한다 - , `h3`를 거절하는 서버면

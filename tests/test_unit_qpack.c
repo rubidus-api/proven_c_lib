@@ -44,6 +44,13 @@ static proven_err_t dec_hex(const char *hex, proven_size_t *count) {
     return dec(b, n, count);
 }
 
+static proven_err_t dec_hex_d(proven_qpack_dec_t *d, const char *hex, proven_size_t *count) {
+    static proven_byte_t b[256];
+    const proven_size_t n = unhex(hex, b, sizeof b);
+    proven_u64 ric = 0;
+    return proven_qpack_decode_dyn(d, (proven_mem_view_t){ b, n }, fields, never, 512, (proven_mem_mut_t){ scratch, sizeof scratch }, 0, count, &ric);
+}
+
 static unsigned long long rng = 0x9e3779b97f4a7c15ull;
 static unsigned next(void) { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return (unsigned)(rng >> 32); }
 
@@ -281,7 +288,95 @@ int main(void) {
         PROVEN_TEST_INFO("{} refused, {} decoded", PROVEN_ARG((long long)(refused)), PROVEN_ARG((long long)(decoded)));
     }
 
-    PROVEN_TEST_PASS("QPACK with a table of capacity 0 decodes, encodes and refuses as RFC 9204 says.");
+    PROVEN_TEST_SECTION("The dynamic table, as a decoder (RFC-0032)", "RFC 9204 appendix B against a table of 220 bytes: a section that waits for its inserts, B.2 to B.5 decoded, the decoder's instructions as the appendix writes them, an evicted entry refused; a capacity over the maximum, an entry larger than the table, a count above what the section needs, a reference past it; Huffman-coded inserts; the encoder stream fed a byte at a time and in random pieces.", "Check proven_qpack_dec_feed, qp_enc_instr, qp_required and the dynamic branches of proven_qpack_decode_dyn in src/proven/qpack.c.");
+    {
+        static proven_byte_t enc_b2[64], enc_b3[64], enc_b4[8], enc_b5[64], sec_b2[8], sec_b4[8];
+        const proven_size_t n_eb2 = unhex(qpack_examples[1].hex, enc_b2, sizeof enc_b2), n_sb2 = unhex(qpack_examples[2].hex, sec_b2, sizeof sec_b2);
+        const proven_size_t n_eb3 = unhex(qpack_examples[4].hex, enc_b3, sizeof enc_b3), n_eb4 = unhex(qpack_examples[6].hex, enc_b4, sizeof enc_b4);
+        const proven_size_t n_sb4 = unhex(qpack_examples[7].hex, sec_b4, sizeof sec_b4), n_eb5 = unhex(qpack_examples[9].hex, enc_b5, sizeof enc_b5);
+        proven_qpack_dec_t *d = NULL;
+        PROVEN_TEST_ASSERT(proven_qpack_dec_create(proven_heap_allocator(), 31, &d) == PROVEN_ERR_INVALID_ARG && proven_qpack_dec_create(proven_heap_allocator(), (1u << 20) + 1, &d) == PROVEN_ERR_INVALID_ARG,
+            "a table of less than one entry, or of more than 1 MiB, is refused", "");
+        PROVEN_TEST_ASSERT(proven_qpack_dec_create(proven_heap_allocator(), 220, &d) == PROVEN_OK, "a decoder whose table may be 220 bytes", "");
+        proven_u64 ric = 0;
+        PROVEN_TEST_ASSERT(proven_qpack_dec_required(d, (proven_mem_view_t){ sec_b2, n_sb2 }, &ric) == PROVEN_OK && ric == 2 &&
+                           proven_qpack_decode_dyn(d, (proven_mem_view_t){ sec_b2, n_sb2 }, fields, never, 512, (proven_mem_mut_t){ scratch, sizeof scratch }, 0, &count, &ric) == PROVEN_ERR_AGAIN,
+            "B.2's section before its inserts: it needs two, and waits (a blocked stream)", "");
+        bool fed = true;
+        for (proven_size_t i = 0; i < n_eb2; ++i) fed = fed && proven_qpack_dec_feed(d, (proven_mem_view_t){ enc_b2 + i, 1 }) == 0;
+        PROVEN_TEST_ASSERT(fed && proven_qpack_dec_inserts(d) == 2, "B.2's encoder stream a byte at a time: the capacity, then two inserts", "");
+        PROVEN_TEST_ASSERT(proven_qpack_decode_dyn(d, (proven_mem_view_t){ sec_b2, n_sb2 }, fields, never, 512, (proven_mem_mut_t){ scratch, sizeof scratch }, 0, &count, &ric) == PROVEN_OK &&
+                           ric == 2 && count == 2 && sveq(fields[0].name, ":authority") && sveq(fields[0].value, "www.example.com") && sveq(fields[1].name, ":path") && sveq(fields[1].value, "/sample/path"),
+            "then B.2's section: two entries after the Base", "");
+        proven_byte_t ins[16];
+        PROVEN_TEST_ASSERT(proven_qpack_put_section_ack(ins, 4) == 1 && ins[0] == 0x84, "its Section Acknowledgement is the appendix's byte, 84", "");
+        PROVEN_TEST_ASSERT(proven_qpack_dec_feed(d, (proven_mem_view_t){ enc_b3, n_eb3 }) == 0 && proven_qpack_dec_inserts(d) == 3 && proven_qpack_put_insert_count(ins, 1) == 1 && ins[0] == 0x01,
+            "B.3: an insert with a literal name; its Insert Count Increment is 01", "");
+        PROVEN_TEST_ASSERT(proven_qpack_dec_feed(d, (proven_mem_view_t){ enc_b4, n_eb4 }) == 0 && proven_qpack_dec_inserts(d) == 4 &&
+                           proven_qpack_decode_dyn(d, (proven_mem_view_t){ sec_b4, n_sb4 }, fields, never, 512, (proven_mem_mut_t){ scratch, sizeof scratch }, 0, &count, &ric) == PROVEN_OK &&
+                           ric == 4 && count == 3 && sveq(fields[0].name, ":authority") && sveq(fields[0].value, "www.example.com") && sveq(fields[1].name, ":path") && sveq(fields[1].value, "/") &&
+                           sveq(fields[2].name, "custom-key") && sveq(fields[2].value, "custom-value") && proven_qpack_put_stream_cancel(ins, 8) == 1 && ins[0] == 0x48,
+            "B.4: a duplicate, then a section of a dynamic entry, a static one and another dynamic; its Stream Cancellation is 48", "");
+        PROVEN_TEST_ASSERT(proven_qpack_dec_feed(d, (proven_mem_view_t){ enc_b5, n_eb5 }) == 0 && proven_qpack_dec_inserts(d) == 5, "B.5: an insert that evicts the oldest entry", "");
+        PROVEN_TEST_ASSERT(dec_hex_d(d, "060080", &count) == PROVEN_OK && count == 1 && sveq(fields[0].name, "custom-key") && sveq(fields[0].value, "custom-value2"),
+            "the new entry is there", "");
+        PROVEN_TEST_ASSERT(dec_hex_d(d, "020080", &count) == PROVEN_ERR_INVALID_FORMAT, "and the evicted one is not: QPACK_DECOMPRESSION_FAILED", "");
+        PROVEN_TEST_ASSERT(dec_hex_d(d, "060081", &count) == PROVEN_ERR_INVALID_FORMAT, "a Required Insert Count above what the section needs: refused", "");
+        PROVEN_TEST_ASSERT(dec_hex_d(d, "060010", &count) == PROVEN_ERR_INVALID_FORMAT, "a reference at or past the Required Insert Count: refused", "");
+        PROVEN_TEST_ASSERT(dec_hex_d(d, "0f00", &count) == PROVEN_ERR_INVALID_FORMAT, "an encoded count beyond twice the table's entries: refused", "");
+        PROVEN_TEST_ASSERT(dec_hex_d(d, "06ff00", &count) == PROVEN_ERR_INVALID_FORMAT, "a Base below 0: refused", "");
+        proven_qpack_dec_destroy(d);
+
+        static const proven_byte_t over[] = { 0x3f, 0xbe, 0x01 };              /* capacity 221 */
+        PROVEN_TEST_ASSERT(proven_qpack_dec_create(proven_heap_allocator(), 220, &d) == PROVEN_OK && proven_qpack_dec_feed(d, (proven_mem_view_t){ over, sizeof over }) == PROVEN_QPACK_ENCODER_STREAM_ERROR,
+            "a capacity above the maximum: QPACK_ENCODER_STREAM_ERROR", "");
+        proven_qpack_dec_destroy(d);
+        static proven_byte_t big[64];
+        big[0] = 0x3f; big[1] = 0x21;                                          /* capacity 64 */
+        big[2] = 0x40 | 0x1f; big[3] = 40 - 31;                                /* a literal name of 40 bytes */
+        memset(big + 4, 'a', 40);
+        big[44] = 0x00;                                                        /* and an empty value: 72 bytes in all */
+        PROVEN_TEST_ASSERT(proven_qpack_dec_create(proven_heap_allocator(), 220, &d) == PROVEN_OK && proven_qpack_dec_feed(d, (proven_mem_view_t){ big, 45 }) == PROVEN_QPACK_ENCODER_STREAM_ERROR,
+            "an entry larger than the table's capacity: QPACK_ENCODER_STREAM_ERROR", "");
+        proven_qpack_dec_destroy(d);
+
+        /* Huffman-coded name and value, then the insert referred to as a whole field. */
+        PROVEN_TEST_ASSERT(proven_qpack_dec_create(proven_heap_allocator(), 4096, &d) == PROVEN_OK, "a decoder of 4,096 bytes", "");
+        proven_byte_t hb[128];
+        proven_size_t hn = 0;
+        hb[hn++] = 0x3f; hb[hn++] = 0xe1; hb[hn++] = 0x1f;                     /* capacity 4,096 */
+        const proven_u8str_view_t hname = sv("x-huffman-name"), hvalue = sv("a value worth coding");
+        const proven_size_t cn = proven_hpack_huffman_size(hname), cv = proven_hpack_huffman_size(hvalue);
+        hb[hn++] = (proven_byte_t)(0x40 | 0x20 | cn);                          /* 01H, the length fits in 5 bits */
+        PROVEN_TEST_ASSERT(cn < 31 && cv < 127 && proven_hpack_huffman_encode(hname, (proven_mem_mut_t){ hb, hn + cn }, &hn) == PROVEN_OK, "the name Huffman-coded", "");
+        hb[hn++] = (proven_byte_t)(0x80 | cv);
+        PROVEN_TEST_ASSERT(proven_hpack_huffman_encode(hvalue, (proven_mem_mut_t){ hb, hn + cv }, &hn) == PROVEN_OK, "the value Huffman-coded", "");
+        PROVEN_TEST_ASSERT(proven_qpack_dec_feed(d, (proven_mem_view_t){ hb, hn }) == 0 && dec_hex_d(d, "0200" "80", &count) == PROVEN_OK && count == 1 &&
+                           same(fields[0].name, hname) && same(fields[0].value, hvalue), "an insert of both, decoded back whole", "");
+        proven_qpack_dec_destroy(d);
+
+        /* The whole appendix's encoder stream in random pieces gives the same table. */
+        static proven_byte_t all[256];
+        proven_size_t an = 0;
+        memcpy(all + an, enc_b2, n_eb2); an += n_eb2; memcpy(all + an, enc_b3, n_eb3); an += n_eb3; memcpy(all + an, enc_b4, n_eb4); an += n_eb4;
+        bool same_all = true;
+        for (int round = 0; round < 500; ++round) {
+            PROVEN_TEST_ASSERT(proven_qpack_dec_create(proven_heap_allocator(), 220, &d) == PROVEN_OK, "a decoder", "");
+            for (proven_size_t at = 0; at < an;) {
+                proven_size_t k = 1 + next() % 9;
+                if (k > an - at) k = an - at;
+                if (proven_qpack_dec_feed(d, (proven_mem_view_t){ all + at, k }) != 0) same_all = false;
+                at += k;
+            }
+            same_all = same_all && proven_qpack_dec_inserts(d) == 4 &&
+                       proven_qpack_decode_dyn(d, (proven_mem_view_t){ sec_b4, n_sb4 }, fields, never, 512, (proven_mem_mut_t){ scratch, sizeof scratch }, 0, &count, &ric) == PROVEN_OK &&
+                       count == 3 && sveq(fields[2].value, "custom-value");
+            proven_qpack_dec_destroy(d);
+        }
+        PROVEN_TEST_ASSERT(same_all, "five hundred random splittings of B.2 to B.4's encoder stream build the same table", "");
+    }
+
+    PROVEN_TEST_PASS("QPACK decodes with and without a dynamic table, encodes and refuses as RFC 9204 says.");
     return 0;
 }
 

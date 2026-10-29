@@ -793,6 +793,9 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
     if (s->cfg.http2_no_header_table) s->cfg.http2_header_table_bytes = 0;
     else if (s->cfg.http2_header_table_bytes == 0) s->cfg.http2_header_table_bytes = 4096;
     if (s->cfg.http2_header_table_bytes > ((proven_size_t)1 << 20)) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
+    if (s->cfg.http3_no_header_table) s->cfg.http3_header_table_bytes = 0;
+    else if (s->cfg.http3_header_table_bytes == 0) s->cfg.http3_header_table_bytes = 4096;
+    if (s->cfg.http3_header_table_bytes > ((proven_size_t)1 << 20) || (s->cfg.http3_header_table_bytes != 0 && s->cfg.http3_header_table_bytes < 32)) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
     if (s->cfg.http2_window_bytes > 0x7fffffffu || (s->cfg.http2_websocket && !s->cfg.http2)) { a.free_fn(a.ctx, s); return PROVEN_ERR_INVALID_ARG; }
 #if defined(PROVEN_NO_HTTP3)
     if (s->cfg.http3) { a.free_fn(a.ctx, s); return PROVEN_ERR_UNSUPPORTED; }

@@ -194,7 +194,7 @@ typedef struct {
 static app_t g_app[2];
 
 /* What a raw end saw: per stream, the last reset and stop codes and bytes. */
-typedef struct { proven_u64 id, reset_code, stop_code; bool reset, stopped, fin; proven_u64 bytes; } raw_t;
+typedef struct { proven_u64 id, reset_code, stop_code; bool reset, stopped, fin; proven_u64 bytes; proven_byte_t head[64]; proven_size_t head_n; } raw_t;
 static raw_t g_raw[64];
 static int g_nraw;
 static raw_t *raw_rec(proven_u64 id) {
@@ -382,6 +382,7 @@ static void app_pump(net_t *n) {
                     for (;;) {
                         proven_size_t got = 0; bool fin = false;
                         if (proven_quic_stream_read(n->ep[side], ev.stream_id, (proven_mem_mut_t){ buf, sizeof buf }, &got, &fin) != PROVEN_OK) break;
+                        for (proven_size_t i = 0; i < got && w->head_n < sizeof w->head; ++i) w->head[w->head_n++] = buf[i];
                         w->bytes += got;
                         if (fin) w->fin = true;
                         if (got == 0 || fin) break;
@@ -838,6 +839,64 @@ int main(void) {
         };
         for (proven_size_t i = 0; i < sizeof cases / sizeof cases[0]; ++i) run_script(n, &cases[i], 100 + (unsigned)i);
         PROVEN_TEST_INFO("{} scripts", PROVEN_ARG((long long)(sizeof cases / sizeof cases[0])));
+    }
+
+    PROVEN_TEST_SECTION("the QPACK dynamic table (RFC-0032)", "A server whose decoder has a table of 220 bytes, and a raw client: a request whose head needs two inserts waits for them and is then taken; the server's decoder stream counts the inserts and acknowledges the section; a waiting stream reset is cancelled on it; more waiting streams than allowed, and an insert larger than the table, end the connection with their codes.", "Check st_qblock, the qwait branch of req_step, qpack_step and dec_put in src/proven/h3_conn.c.");
+    {
+        static proven_byte_t b[256];
+        /* RFC 9204 B.2's inserts, and a request head of :method GET, :scheme https (static), then
+         * :authority and :path after a Base of 0 (dynamic, post-base). */
+        const proven_size_t enc_n = unhex("02" "3fbd01c00f7777772e6578616d706c652e636f6dc10c2f73616d706c652f70617468", b, sizeof b);
+        static const proven_byte_t head[] = { 0x01, 0x06, 0x03, 0x81, 0x10, 0x11, 0xd1, 0xd7 };
+        static const proven_byte_t control[] = { 0x00, 0x04, 0x00 };
+        for (int round = 0; round < 4; ++round) {
+            reset_apps();
+            net_init(n, 300 + (unsigned)round);
+            n->use_h3[0] = false;
+            n->h3cfg[1].qpack_capacity = 220;
+            if (round == 2) n->h3cfg[1].qpack_blocked_streams = 1;
+            fresh(n, 300 + (unsigned)round);
+            proven_u64 ctl = 0, req = 0, req2 = 0, enc = 0;
+            PROVEN_TEST_ASSERT(proven_quic_stream_open(n->ep[0], false, &ctl) == PROVEN_OK, "the raw client's control stream", "");
+            raw_write(n, 0, ctl, control, sizeof control, false);
+            PROVEN_TEST_ASSERT(proven_quic_stream_open(n->ep[0], true, &req) == PROVEN_OK, "a request stream", "");
+            raw_write(n, 0, req, head, sizeof head, round != 1);    /* round 1 resets it: not ended, or the reset is moot */
+            if (round == 2) {
+                PROVEN_TEST_ASSERT(proven_quic_stream_open(n->ep[0], true, &req2) == PROVEN_OK, "a second", "");
+                raw_write(n, 0, req2, head, sizeof head, true);
+            }
+            run_for(n, 200000);
+            if (round == 0) {
+                PROVEN_TEST_ASSERT(g_app[1].n == 0 && !g_app[1].closed, "a head that needs two inserts waits, and the connection stays", "");
+                PROVEN_TEST_ASSERT(proven_quic_stream_open(n->ep[0], false, &enc) == PROVEN_OK, "the encoder stream", "");
+                raw_write(n, 0, enc, b, enc_n, false);
+                run_for(n, 1000000);
+                PROVEN_TEST_ASSERT(g_app[1].n == 1 && strcmp(g_app[1].r[0].path, "/sample/path") == 0 && !g_app[1].closed,
+                    "with the inserts come, the request is taken: :path from the table", "");
+                const raw_t *w = raw_rec(7);                   /* the server's second unidirectional stream */
+                PROVEN_TEST_ASSERT(w->head_n == 3 && w->head[0] == 0x03 && w->head[1] == 0x02 && w->head[2] == 0x80,
+                    "its decoder stream: the type, Insert Count Increment 2, the Section Acknowledgement of stream 0", "");
+            } else if (round == 1) {
+                PROVEN_TEST_ASSERT(proven_quic_stream_reset(n->ep[0], req, 0x10c) == PROVEN_OK, "the waiting stream reset", "");
+                run_for(n, 1000000);
+                const raw_t *w = raw_rec(7);
+                PROVEN_TEST_ASSERT(w->head_n == 2 && w->head[0] == 0x03 && w->head[1] == 0x40 && !g_app[1].closed, "is cancelled on the decoder stream: Stream Cancellation of stream 0", "");
+            } else if (round == 2) {
+                PROVEN_TEST_ASSERT(g_app[1].closed && g_app[1].close_code == PROVEN_QPACK_DECOMPRESSION_FAILED, "two streams waiting where one may: QPACK_DECOMPRESSION_FAILED", "");
+            } else {
+                /* The type, a capacity of 64, and an insert of a literal name of 40 bytes with an empty
+                 * value: 72 bytes. */
+                static proven_byte_t too_big[64];
+                too_big[0] = 0x02; too_big[1] = 0x3f; too_big[2] = 0x21; too_big[3] = 0x5f; too_big[4] = 40 - 31;
+                memset(too_big + 5, 'a', 40);
+                too_big[45] = 0x00;
+                PROVEN_TEST_ASSERT(proven_quic_stream_open(n->ep[0], false, &enc) == PROVEN_OK, "the encoder stream", "");
+                raw_write(n, 0, enc, too_big, 46, false);
+                run_for(n, 1000000);
+                PROVEN_TEST_ASSERT(g_app[1].closed && g_app[1].close_code == PROVEN_QPACK_ENCODER_STREAM_ERROR, "an insert larger than the table: QPACK_ENCODER_STREAM_ERROR", "");
+            }
+            net_free(n);
+        }
     }
 
     PROVEN_TEST_SECTION("codes this side sends", "H3_REQUEST_CANCELLED for a stream given up, both ways; H3_EXCESSIVE_LOAD when the peer resets more streams than finish; H3_INTERNAL_ERROR when memory runs out; a field section over the limit.", "");

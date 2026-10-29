@@ -1034,6 +1034,9 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
     if (cfg.max_kept_connections == 0) cfg.max_kept_connections = 8;
     if (cfg.http2_window_bytes > 0x7fffffffu || cfg.http3_window_bytes > 0x7fffffffu) return PROVEN_ERR_INVALID_ARG;
     if (cfg.http3_fallback && !cfg.http3) return PROVEN_ERR_INVALID_ARG;      /* a fallback from nothing (RFC-0031) */
+    if (cfg.http3_no_header_table) cfg.http3_header_table_bytes = 0;
+    else if (cfg.http3_header_table_bytes == 0) cfg.http3_header_table_bytes = 4096;
+    if (cfg.http3_header_table_bytes > ((proven_size_t)1 << 20) || (cfg.http3_header_table_bytes != 0 && cfg.http3_header_table_bytes < 32)) return PROVEN_ERR_INVALID_ARG;
     if (cfg.http3_fallback_ms == 0) cfg.http3_fallback_ms = 1000;
     if (cfg.http3_fallback_ms > cfg.connect_timeout_ms) cfg.http3_fallback_ms = cfg.connect_timeout_ms;
 #if defined(PROVEN_NO_HTTP3)

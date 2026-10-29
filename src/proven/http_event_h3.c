@@ -804,7 +804,7 @@ static void x_accept(struct ev_h3 *x, h3e_t *e, const proven_quic_accept_t *acc,
     const proven_quic_addr_t qa = h3_qaddr(from);
     if (proven_quic_conn_server_create(&x->qc, acc, dg, &qa, h3_now_us(), &d->q) != PROVEN_OK) { sv->alloc.free_fn(sv->alloc.ctx, d); return; }
     const proven_u32 list = sv->cfg.max_head_bytes > ((proven_size_t)1 << 20) ? (proven_u32)1 << 20 : (proven_u32)sv->cfg.max_head_bytes;
-    const proven_h3_config_t hc = { .alloc = sv->alloc, .server = true, .max_field_section_bytes = list };
+    const proven_h3_config_t hc = { .alloc = sv->alloc, .server = true, .max_field_section_bytes = list, .qpack_capacity = (proven_u32)sv->cfg.http3_header_table_bytes };
     if (proven_h3_conn_create(&hc, d->q, &d->h3) != PROVEN_OK) {
         proven_quic_conn_destroy(d->q);
         sv->alloc.free_fn(sv->alloc.ctx, d);
