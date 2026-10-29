@@ -870,9 +870,9 @@ Compile-time identification, for diagnostics and for code that must adapt to the
 
 ```text
 #define PROVEN_VERSION_MAJOR  0
-#define PROVEN_VERSION_MINOR  93
+#define PROVEN_VERSION_MINOR  94
 #define PROVEN_VERSION_PATCH  0
-#define PROVEN_VERSION_STRING "proven_c_lib-v0.93.0"
+#define PROVEN_VERSION_STRING "proven_c_lib-v0.94.0"
 #define PROVEN_VERSION_ENCODE(major, minor, patch) ((major) * 1000000L + (minor) * 1000L + (patch))
 #define PROVEN_VERSION_NUM    PROVEN_VERSION_ENCODE(PROVEN_VERSION_MAJOR, PROVEN_VERSION_MINOR, PROVEN_VERSION_PATCH)
 ```

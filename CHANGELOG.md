@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.94.0] - 2026-10-29
+
 ### Added
 
 - **The event client falls back to TCP when asked** (RFC-0031): with `http3_fallback` in its
