@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.95.0] - 2026-10-29
+
 ### Added
 
 - **HTTP/3: a QPACK dynamic table for the peer's encoder** (RFC-0032, its decoder half): the event
