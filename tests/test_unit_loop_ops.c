@@ -761,6 +761,29 @@ static bool read_pattern(conn_t *c, proven_size_t want, proven_size_t chunk) {
     return got == want;
 }
 
+/* A reader that reads all there is from inside `received` and asks for the next receive there,
+ * as the event server and clients do. */
+typedef struct {
+    conn_t c;
+    proven_size_t got;
+    bool in_order;
+} drain_t;
+
+static void on_drain(void *ctx, proven_err_t err, proven_size_t n) {
+    drain_t *d = ctx;
+    on_received(&d->c, err, n);
+    if (err != PROVEN_OK) return;
+    proven_byte_t buf[1500];
+    for (;;) {
+        proven_result_size_t r = proven_loop_read(g_loop, &d->c.sock, (proven_mem_mut_t){ buf, sizeof buf });
+        if (r.err != PROVEN_OK || r.value == 0) break;
+        for (proven_size_t i = 0; i < r.value; ++i) if (buf[i] != pat(d->got + i)) d->in_order = false;
+        d->got += r.value;
+    }
+    (void)proven_loop_recv(g_loop, &d->c.sock, (proven_mem_mut_t){ 0 });
+}
+static const proven_loop_sock_fns_t g_drain_fns = { on_drain, on_writable, on_connected, on_closed };
+
 static void case_read(proven_allocator_t heap, int on) {
     proven_loop_t *bad = NULL;
     PROVEN_TEST_ASSERT(proven_loop_create_ex(heap, &(proven_loop_options_t){ .ring_buffers = 40000 }, &bad) == PROVEN_ERR_INVALID_ARG &&
@@ -902,6 +925,35 @@ static void case_read(proven_allocator_t heap, int on) {
     put_pattern(&dfar, 4096);
     PROVEN_TEST_ASSERT(read_pattern(&d, 4096, 4096), "and a fill of the whole pool comes whole", g_kind);
     if (on == ON_URING) PROVEN_TEST_ASSERT(proven_loop_ring_held_(g_loop) == 0, "read, every buffer is back in the pool", g_kind);
+
+    /* Read and asked again from inside `received`, many times over a pool of four: on the ring the
+     * multishot receive runs out of buffers and ends again and again, its last report often taken
+     * in the batch of the bytes before it. The next receive must not start before that report is
+     * delivered - delivered after, it took the new receive for the ended one, and the socket was
+     * closed with that receive still in the kernel, holding the socket open. */
+    {
+        drain_t e = { .in_order = true };
+        proven_net_conn_t efar;
+        memset(&e.c, 0, sizeof e.c);
+        PROVEN_TEST_ASSERT(proven_net_pair(&e.c.conn, &efar) == PROVEN_OK &&
+                           proven_loop_attach(g_loop, &e.c.sock, &e.c.conn, &g_drain_fns, &e) == PROVEN_OK, "a reader that asks again from inside", g_kind);
+        PROVEN_TEST_ASSERT(proven_loop_recv(g_loop, &e.c.sock, (proven_mem_mut_t){ 0 }) == PROVEN_OK, "its first receive", g_kind);
+        enum { ROUNDS = 40 };
+        for (int i = 0; i < ROUNDS; ++i) {
+            static proven_byte_t part[8192];
+            for (proven_size_t k = 0; k < sizeof part; ++k) part[k] = pat((proven_size_t)i * sizeof part + k);
+            PROVEN_TEST_ASSERT(proven_net_write_all(&efar, (proven_mem_view_t){ part, sizeof part }, proven_net_deadline_in(2000)).err == PROVEN_OK, "the far end writes", g_kind);
+            proven_net_deadline_t until = proven_net_deadline_in(4000);
+            while (e.got < (proven_size_t)(i + 1) * sizeof part && proven_time_monotonic_now() < until) (void)proven_loop_poll(g_loop, proven_net_deadline_in(20));
+        }
+        PROVEN_TEST_ASSERT(e.got == ROUNDS * 8192u && e.in_order, "every byte, in order", g_kind);
+        close_and_wait(&e.c);
+        if (on == ON_URING) PROVEN_TEST_ASSERT(proven_loop_ring_held_(g_loop) == 0, "closed, it holds no buffer", g_kind);
+        proven_byte_t one[16];
+        proven_result_size_t r2 = proven_net_read(&efar, (proven_mem_mut_t){ one, sizeof one }, proven_net_deadline_in(2000));
+        PROVEN_TEST_ASSERT(r2.err == PROVEN_ERR_EOF, "and the far end sees the end: nothing holds the socket open", g_kind);
+        (void)proven_net_close(&efar);
+    }
 
     close_and_wait(&c);
     close_and_wait(&d);

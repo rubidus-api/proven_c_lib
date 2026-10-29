@@ -24,6 +24,9 @@ static proven_allocator_t g_heap;
 static proven_loop_t *g_loop;
 static proven_http_event_server_t *g_server;
 static proven_job_sys_t *g_threads, *g_workers;
+/* The work jobs of /work, waited for before the loop they post to is destroyed: a post that has
+ * been taken may still be waking the loop. */
+static proven_job_group_t g_work;
 static proven_tls_config_t *g_server_tls, *g_client_tls;
 
 static atomic_int g_requests, g_done_ok, g_done_err, g_writable_calls, g_refused, g_last_error;
@@ -108,7 +111,7 @@ static void on_request(void *ctx, proven_http_stream_t *s, const proven_http_req
     } else if (strcmp(a->path, "/later") == 0) {
         proven_loop_timer_set(g_loop, &a->timer, 40, later_fire, a);
     } else if (strcmp(a->path, "/work") == 0) {
-        if (!proven_job_submit(g_workers, work_job, a)) (void)proven_http_stream_respond(s, 503, NULL, 0, mv(""));
+        if (proven_job_group_submit(g_workers, &g_work, work_job, a) != PROVEN_OK) (void)proven_http_stream_respond(s, 503, NULL, 0, mv(""));
     } else if (strcmp(a->path, "/never") == 0) {
         /* No answer: the test closes the connection, or destroys the server, under it. */
     } else if (strcmp(a->path, "/abort") == 0) {
@@ -245,6 +248,7 @@ static void cases(bool tls) {
                        proven_http_event_server_listen(g_server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server on it", how);
     proven_job_group_t running;
     proven_job_group_init(&running);
+    proven_job_group_init(&g_work);
     PROVEN_TEST_ASSERT(proven_job_group_submit(g_threads, &running, run_loop, NULL) == PROVEN_OK, "the loop runs on its own thread", how);
 
     proven_http_client_config_t ccfg = { .alloc = g_heap, .max_idle_connections = 2, .tls_wrap = tls ? proven_tls_http_wrap : NULL, .tls_ctx = g_client_tls,
@@ -495,6 +499,7 @@ static void cases(bool tls) {
 
     proven_loop_stop(g_loop);
     proven_job_group_wait(g_threads, &running);
+    proven_job_group_wait(g_workers, &g_work);
     proven_loop_destroy(g_loop);
     g_loop = NULL;
 }

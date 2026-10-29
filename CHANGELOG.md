@@ -32,6 +32,23 @@ written; their tags still exist.
   WebSocket over HTTP/2 that was refused is asked again whenever the connection's output moves;
   the event client keeps a connection for reuse while the loop still holds its last bytes; and
   the event server shuts the write side of a TLS connection only once its close alert has left.
+  When a send through the ring completes, an owner waiting to send (`proven_loop_send_wait`) is
+  answered before the rest of the chain is handed over, so that what it adds goes in the same
+  send (otherwise a bulk sender's sends alternated between the remainder and the refill, each
+  waiting a round).
+
+### Fixed
+
+- **io_uring: a connection read with `proven_loop_read` could be closed while the kernel still
+  held its receive** (since v0.92.0, io_uring loops only). When the multishot receive ran out of
+  pool buffers and its last report came in the same batch as the bytes before it, a receive asked
+  for from inside `received` started a new one before that last report was delivered, and the
+  report then ended the new receive in the loop's books. Its later reports were taken for a plain
+  receive's, and `closed` could come while the kernel held the receive: the socket stayed open in
+  the kernel, and after the owner freed the connection the next report read freed memory (found
+  by AddressSanitizer in the event client's test, in an emulated machine). A new receive now
+  waits until the last report has been delivered. A test in `test_unit_loop_ops` reads from
+  inside `received` over a pool of four buffers and checks that the far end sees the close.
 
 ## [0.92.0] - 2026-10-28
 

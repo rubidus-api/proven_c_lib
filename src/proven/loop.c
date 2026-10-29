@@ -1179,6 +1179,12 @@ static void sock_send_done(proven_loop_t *l, loop_chunk_t *c, const proven_sys_n
     }
     if (d->failed) { sock_send_failed(l, s, sys_err(proven_sys_net_ov_result(sock_handle(s), &c->ov)), true); return; }
     sock_sent(l, s, d->bytes);
+#if LOOP_RING
+    /* Through the ring the owner waiting to send is told before the rest of the chain goes, so
+     * that what it adds goes in the same send: told after, its bytes waited a round behind a
+     * send of the remainder, and a bulk sender's sends came at half their size. */
+    if (LOOP_RING_SENDS(l)) sock_check_wait(l, s, true);
+#endif
     sock_flush(l, s, true);
 }
 
@@ -1237,13 +1243,16 @@ static bool loop_pool(proven_loop_t *l) {
 
 /* What a receive of a socket read through the pool finds now: 1 something to answer with (bytes,
  * or how the receive ended), 0 the multishot receive in flight will answer, -1 there is none and
- * a receive is to be started. */
+ * a receive is to be started. The OVERLAPPED knows a receive has ended as soon as its last report
+ * is taken from the ring, a batch before that report is delivered: until it is (W_MSARM), no other
+ * receive is started - its delivery would end the new one instead. */
 static int ms_state(proven_loop_t *l, loop_sock_t *s) {
     if (!(s->node.want & W_MS)) return -1;
     if (proven_sys_net_ov_held(l->port, &s->ov) > 0) return 1;
     proven_size_t n = 0;
     const proven_sys_net_result_t r = proven_sys_net_ov_read(l->port, &s->ov, (void *)0, 0, &n);
-    return r == PROVEN_SYS_NET_WOULD_BLOCK ? 0 : r == PROVEN_SYS_NET_NOT_FOUND ? -1 : 1;
+    if (r == PROVEN_SYS_NET_NOT_FOUND) return (s->node.want & W_MSARM) ? 0 : -1;
+    return r == PROVEN_SYS_NET_WOULD_BLOCK ? 0 : 1;
 }
 
 /* Take the receive's bytes (or its end) for a receive into a buffer; a receive of nothing takes none. */
