@@ -156,6 +156,7 @@ struct proven_http_event_client {
     bool h3_room_busy;
     void *h3_delayed;                  /* and those that wait for a try (retry_delay_ms), in no order that matters */
     proven_byte_t *h3_batch;           /* a connection's datagrams gathered for one send (RFC-0018 S-3); made when first needed */
+    void *h3_gone;                     /* RFC-0031: origins whose QUIC connection did not come up, and until when; made when first needed */
     void *sessions;                    /* RFC-0020: the TLS sessions learned, by origin and transport; made when first needed */
     proven_u64 session_clock;
 };
@@ -281,6 +282,12 @@ void proven_http_event_client_h3_resume_(proven_http_event_request_t *request);
 void proven_http_event_client_h3_set_user_(proven_http_event_request_t *request, void *user);
 [[nodiscard]]
 void *proven_http_event_client_h3_user_(const proven_http_event_request_t *request);
+/* 3, or - for a request that fell back to TCP (RFC-0031) - what carries it now. */
+[[nodiscard]]
+int proven_http_event_client_h3_protocol_(const proven_http_event_request_t *request);
+/* For tests: forget the origins whose QUIC connection did not come up (RFC-0031), as five
+ * minutes would. */
+void proven_http_event_client_h3_test_forget_(proven_http_event_client_t *client);
 #endif
 
 #endif /* hosted, with a network */

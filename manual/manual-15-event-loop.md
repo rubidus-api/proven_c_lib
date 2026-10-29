@@ -90,14 +90,17 @@ changes with the choice: the same calls, the same answers in the same order rule
 
 | `proven_loop_backend_t` | Where | How |
 |---|---|---|
-| `PROVEN_LOOP_BACKEND_AUTO` | everywhere | The completion port on Windows, the selector elsewhere - what `proven_loop_create` gives. |
+| `PROVEN_LOOP_BACKEND_AUTO` | everywhere | The completion port on Windows; io_uring on Linux 6.0 or later where the system allows it, epoll where it does not (since v0.94.0); the selector elsewhere - what `proven_loop_create` gives. |
 | `PROVEN_LOOP_BACKEND_SELECTOR` | POSIX | epoll, kqueue or poll ([Chapter 9](manual-09-networking.md)): the loop is told a socket is ready and makes the call itself. |
 | `PROVEN_LOOP_BACKEND_URING` | Linux 5.19 or later | io_uring: the receives, sends, accepts and connects are given to the kernel, which reports them done. Refused (`UNSUPPORTED`) on an older kernel, and where the system turns io_uring off - a container's seccomp filter, `io_uring_disabled`. Datagrams are sent with a plain call, as on the other backends. |
 | `PROVEN_LOOP_BACKEND_IOCP` | Windows | The I/O completion port. |
 
-io_uring is not the default on Linux: no measurement here has yet shown it faster for this
-library's servers on a real machine, and it is the backend more often refused. A loop made with
-it frees what the kernel still holds the way Windows does - cancelled and waited for, up to two
+io_uring is the default on Linux 6.0 or later since v0.94.0, where the system lets the process
+use it; elsewhere on Linux, and where it is refused, `AUTO` is epoll, as it was before. In an
+emulated machine an HTTP/1.1 server on it made 0.071 system calls a request against epoll's
+2.07, and answered 5 to 7 % more requests a second; no real machine has measured it here yet.
+`PROVEN_LOOP_BACKEND_SELECTOR` asks for epoll whatever the kernel. A loop made with io_uring
+frees what the kernel still holds the way Windows does - cancelled and waited for, up to two
 seconds, when the loop is destroyed. On Linux 6.0 or later a connection read with
 `proven_loop_read` (section 5) is received for by the kernel into a pool of the loop's - by
 default 64 buffers of 16 KiB, made at the first such read; `ring_buffers` and
@@ -1782,8 +1785,10 @@ The configuration's fields, each with a default when zero:
 | `retry_delay_max_ms` | When set, the wait doubles with each try of a request, from `retry_delay_ms` up to this. Below `retry_delay_ms`, or with no `retry_delay_ms`, is `INVALID_ARG`. | 0: the same wait every time |
 | `max_connections` | Connections of the whole client, both protocols, busy and idle. At the limit an idle one is closed for a new request; with none idle the request waits, in either protocol, for `connect_timeout_ms` at most. | 0: no limit |
 | `http2_window_bytes` | HTTP/2: response-body bytes a server may send on a stream, and on a connection as a whole, before `on_body` has taken them. What a paused request can make a connection hold; a large download waits for room each time the server has sent this much (sixteen responses of 1 MiB at once, measured before v0.75.0: 568 a second at the default, 1,208 with 1 MiB). With 0 the window starts there and grows while bodies are read - doubling while half of it is taken within two round trips, up to 16 MiB a stream and 24 MiB a connection (v0.75.0, as HTTP/3's since v0.71.0); a body not read stops the growth. A value set stays fixed. One download of 64 MiB over a relay with 10 ms each way: 16 Mbit/s with the window fixed at 65,535, 1,310 growing. | 65,535, growing |
-| `http3` | A request that asks for it (`http3` in its options, an `https` URL) goes over HTTP/3, on one QUIC connection kept for its origin: [Chapter 17, section 10](manual-17-http2.md#10-http3-in-the-event-driven-client). Never one that does not ask, and never by following `Alt-Svc`. **No fallback**: no answer over UDP is `PROVEN_ERR_TIMEOUT` after `connect_timeout_ms`. Needs `tls`, offering `h3`. | false |
+| `http3` | A request that asks for it (`http3` in its options, an `https` URL) goes over HTTP/3, on one QUIC connection kept for its origin: [Chapter 17, section 10](manual-17-http2.md#10-http3-in-the-event-driven-client). Never one that does not ask, and never by following `Alt-Svc`. **No fallback** unless `http3_fallback`: no answer over UDP is `PROVEN_ERR_TIMEOUT` after `connect_timeout_ms`. Needs `tls`, offering `h3`. | false |
 | `http3_window_bytes` | HTTP/3: response-body bytes a server may send on a stream, and on a connection as a whole, before `on_body` has taken them (QUIC's flow control). | 256 KiB a stream and 1 MiB a connection, growing while bodies are read as fast as they come, up to 16 MiB and 24 MiB; a value set is fixed |
+| `http3_fallback` | A request asked over HTTP/3 whose QUIC connection does not come up - no handshake within `http3_fallback_ms`, an unreachable address or refused port, `h3` refused - starts again over TCP, on the object the caller holds; the origin goes over TCP from the start for five minutes after. Never for an untrusted certificate: [Chapter 17, section 10](manual-17-http2.md#10-http3-in-the-event-driven-client). Needs `http3`. | false |
+| `http3_fallback_ms` | With `http3_fallback`: how long a QUIC handshake may take before its requests go over TCP. At most `connect_timeout_ms`. | 1 s |
 
 The test suite compiles and runs this program:
 

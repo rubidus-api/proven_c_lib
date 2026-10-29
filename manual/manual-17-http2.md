@@ -1766,6 +1766,8 @@ typedef struct {
     /* ... everything Chapter 15 describes, and section 7's fields ... */
     bool http3;
     proven_size_t http3_window_bytes;
+    bool http3_fallback;
+    proven_u32 http3_fallback_ms;
 } proven_http_event_client_config_t;
 
 typedef struct {
@@ -1792,12 +1794,27 @@ a paused response stops being read,
 so the server stops at the window it had; read as fast as it comes, the window grows to 16 MiB a
 stream and 24 MiB a connection unless `http3_window_bytes` fixes it (v0.71.0).
 
-**There is no fallback.** A request asked over HTTP/3 whose server does not answer over UDP ends
+**Without `http3_fallback` there is no fallback.** A request asked over HTTP/3 whose server does not answer over UDP ends
 with `PROVEN_ERR_TIMEOUT` when `connect_timeout_ms` has passed - an unconnected UDP socket hears
 no refusal - one whose server refuses `h3` with `PROVEN_ERR_UNSUPPORTED`, and one whose server is
 not trusted with `PROVEN_ERR_UNTRUSTED`. Over QUIC the client offers `h3` alone, whatever else its
 TLS configuration offers over TCP, and takes nothing else (since version 0.73.2). No TCP connection is tried: a caller that wants one
 starts the request again without `http3`.
+
+**With `http3_fallback`** (since v0.94.0) the client does that itself, for the cases where TCP
+may well get through: a QUIC handshake that has not finished after `http3_fallback_ms` (0: 1 s,
+at most `connect_timeout_ms`), an address the system reports unreachable or a port it reports
+refused, a server that refuses `h3`. Every request waiting on that connection then starts again
+over TCP as it would have without `http3` - HTTP/2 where the client has `http2` and the server
+agrees, HTTP/1.1 otherwise. The caller keeps the object it was given: its calls and callbacks
+are the same, and `proven_http_event_request_protocol` now says 2 or 1. For five minutes after,
+requests to that origin asked over HTTP/3 go over TCP from the start (64 origins at most, the
+oldest forgotten first). An untrusted certificate is not a reason - TCP would show the same one
+- and neither is a QUIC connection lost after it came up, which is `retry_unsent`'s matter. A
+body to be written that was refused before the switch is asked for again (`on_writable`) once
+the request is over TCP. The TLS configuration goes as it is, `h3` among what it offers over TCP;
+a server does not choose that over TCP. Nothing here races QUIC and TCP from the start, and the
+client still never follows a server's `Alt-Svc`.
 
 ### Cautions, and what goes wrong
 
@@ -1819,6 +1836,8 @@ starts the request again without `http3`.
 
 **How this was tested.** A registered test runs this client against this library's server over
 UDP on loopback - every case of section 7's test that the server can answer, the client's
-refusals, no fallback, an untrusted server, the timeouts. Outside the registered tests:
+refusals, no fallback, the fallback with `http3_fallback` (a server over TCP only, an origin
+remembered and forgotten, a body written after the switch, a server that refuses `h3`, an
+untrusted one), an untrusted server, the timeouts. Outside the registered tests:
 aioquic's server (downloads to 50 MB byte for byte, uploads, trailers, an interim response passed
 over, 400 requests) and two public servers, cloudflare-quic.com and www.google.com.

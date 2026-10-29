@@ -1,5 +1,6 @@
 node_modules/
 build/
+build-clang/
 dist/
 coverage/
 .DS_Store

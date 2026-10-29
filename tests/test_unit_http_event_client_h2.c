@@ -1147,7 +1147,7 @@ static void window_growth(void) {
         static call_t c;
         g_cl_win_min = g_cl_win_max = g_srv_win_min = g_srv_win_max = 0;
         PROVEN_TEST_ASSERT(start(client, &c, "GET", "/big/8388608", mv(""), 0) == PROVEN_OK, "a download of 8 MiB", "");
-        spin_until(&c.done, 20000);
+        spin_until(&c.done, 20000u * PROVEN_TEST_BULK_SCALE);
         PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.got == 8388608 && !c.bad, "arrives whole", "");
         PROVEN_TEST_ASSERT(set ? g_cl_win_min == 300000u && g_cl_win_max == 300000u : g_cl_win_min == 16u << 20 && g_cl_win_max == 16u << 20,
             set ? "with http2_window_bytes 300,000 the client's windows stay 300,000" : "by default the client's windows may grow to 16 MiB", "");

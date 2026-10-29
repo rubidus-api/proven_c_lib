@@ -1648,6 +1648,8 @@ typedef struct {
     /* ... 15장이 설명하는 모든 것, 그리고 7절의 필드 ... */
     bool http3;
     proven_size_t http3_window_bytes;
+    bool http3_fallback;
+    proven_u32 http3_fallback_ms;
 } proven_http_event_client_config_t;
 
 typedef struct {
@@ -1669,11 +1671,22 @@ HTTP/2는 TLS 핸드셰이크가 고른다. HTTP/3은 그럴 수 없다 - UDP �
 묶이고, 멈춘 응답은 읽히지 않아 서버는 가졌던 창에서 멈춘다. 오는 대로 읽으면 `http3_window_bytes`가 고정하지 않는 한
 창이 스트림 16 MiB, 연결 24 MiB까지 자란다(v0.71.0).
 
-**대체는 없다.** HTTP/3으로 청한 요청의 서버가 UDP로 답하지 않으면 `connect_timeout_ms`가 지난 뒤
+**`http3_fallback`이 없으면 대체는 없다.** HTTP/3으로 청한 요청의 서버가 UDP로 답하지 않으면 `connect_timeout_ms`가 지난 뒤
 `PROVEN_ERR_TIMEOUT`으로 - 연결하지 않은 UDP 소켓은 거절을 듣지 못한다 - , `h3`를 거절하는 서버면
 `PROVEN_ERR_UNSUPPORTED`로, 믿을 수 없는 서버면 `PROVEN_ERR_UNTRUSTED`로 끝난다. QUIC에서 클라이언트는 TLS
 설정이 TCP에서 무엇을 내든 `h3`만 내고 그 밖의 것은 받지 않는다(0.73.2부터). TCP 연결은 시도하지 않는다:
 그것을 원하는 호출자는 `http3` 없이 요청을 다시 시작한다.
+
+**`http3_fallback`이 있으면**(v0.94.0부터) 클라이언트가 그 일을 스스로 한다. TCP라면 통할 만한 경우다:
+`http3_fallback_ms`(0: 1초, 많아야 `connect_timeout_ms`)가 지나도 QUIC 핸드셰이크가 끝나지 않을 때, 시스템이
+주소에 닿을 수 없다거나 포트가 거절했다고 알릴 때, 서버가 `h3`를 거절할 때. 그러면 그 연결에서 기다리던 요청이
+모두 `http3` 없이 시작했을 때처럼 TCP로 다시 시작한다 - 클라이언트에 `http2`가 있고 서버가 동의하면 HTTP/2,
+아니면 HTTP/1.1. 호출자는 받았던 객체를 그대로 쓴다: 호출과 콜백은 같고, `proven_http_event_request_protocol`은
+이제 2나 1을 답한다. 그 뒤 5분 동안 그 출처로 HTTP/3을 청한 요청은 처음부터 TCP로 간다(출처는 많아야 64개,
+가장 오래된 것부터 잊는다). 믿을 수 없는 인증서는 이유가 아니다 - TCP도 같은 인증서를 보일 것이다 - 한 번
+선 뒤 잃은 QUIC 연결도 아니다. 그것은 `retry_unsent`의 일이다. 전환 전에 쓰기를 거절당한 본문은 요청이 TCP로
+간 뒤 다시 청한다(`on_writable`). TLS 설정은 그대로 쓰여 TCP에서도 `h3`를 내지만, 서버는 TCP에서 그것을 고르지
+않는다. 처음부터 QUIC과 TCP를 경주시키지 않으며, 클라이언트는 여전히 서버의 `Alt-Svc`를 따르지 않는다.
 
 ### 주의할 것, 그리고 잘못되는 것
 
@@ -1691,6 +1704,7 @@ HTTP/2는 TLS 핸드셰이크가 고른다. HTTP/3은 그럴 수 없다 - UDP �
 - **여기 없는 것:** 이쪽 스스로의 연결 이주, HTTP/3 위 WebSocket.
 
 **어떻게 시험했는가.** 등록된 시험이 이 클라이언트를 루프백 UDP 위 이 라이브러리의 서버에 붙인다 - 서버가
-답할 수 있는 7절 시험의 모든 사례, 클라이언트의 거절, 대체 없음, 믿을 수 없는 서버, 시간 초과. 등록된 시험
+답할 수 있는 7절 시험의 모든 사례, 클라이언트의 거절, 대체 없음, `http3_fallback`의 대체(TCP만 하는 서버, 기억했다 잊은 출처, 전환 뒤에 쓴 본문,
+`h3`를 거절하는 서버, 믿을 수 없는 서버), 믿을 수 없는 서버, 시간 초과. 등록된 시험
 밖에서: aioquic의 서버(50 MB까지 바이트 단위 다운로드, 업로드, 트레일러, 건너뛴 중간 응답, 요청 400개)와
 공개 서버 둘, cloudflare-quic.com과 www.google.com.

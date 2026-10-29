@@ -1388,6 +1388,7 @@ static proven_sys_net_result_t ov_started(bool done_now, bool skip) {
 }
 
 bool proven_sys_net_port_available(void) { return true; }
+bool proven_sys_net_port_preferred(void) { return true; }
 
 proven_sys_net_result_t proven_sys_net_port_open(proven_uintptr_t *out) {
     if (!net_ready()) return PROVEN_SYS_NET_ERROR;
@@ -1977,6 +1978,8 @@ bool proven_sys_net_port_available(void) {
     }
     return v == 1;
 }
+
+bool proven_sys_net_port_preferred(void) { return proven_sys_net_port_available() && g_ring_multi; }
 
 proven_sys_net_result_t proven_sys_net_port_open(proven_uintptr_t *out) {
     if (!proven_sys_net_port_available()) return PROVEN_SYS_NET_UNSUPPORTED;

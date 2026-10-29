@@ -1160,12 +1160,12 @@ int main(void) {
         proven_time_sleep(300);
         const unsigned long held = atomic_load(&g_max_buffered);
         PROVEN_TEST_ASSERT(held > 30000 && held <= 100000, "the server holds about max_buffered_output for it - 64 KiB, a piece, and with TLS a record - and no more", tls ? "over TLS" : "in the clear");
-        PROVEN_TEST_ASSERT(cl_wait(&c, id, 20000) && cl_res(&c, id)->end && cl_res(&c, id)->got == 20000000 && !cl_res(&c, id)->bad, "and when it reads, all twenty megabytes arrive", "");
+        PROVEN_TEST_ASSERT(cl_wait(&c, id, 20000u * PROVEN_TEST_BULK_SCALE) && cl_res(&c, id)->end && cl_res(&c, id)->got == 20000000 && !cl_res(&c, id)->bad, "and when it reads, all twenty megabytes arrive", "");
         PROVEN_TEST_ASSERT(atomic_load(&g_max_buffered) <= 100000, "with the bound held all the way", "");
         /* Two more at once, to a client that takes them as fast as they come: every write is
          * refused and resumed, and a second stream is ready whenever the first is. */
         proven_u32 a2 = cl_ask(&c, "GET", "/big/3000000", true), b2 = cl_ask(&c, "GET", "/big/6000000", true);
-        PROVEN_TEST_ASSERT(cl_wait(&c, a2, 20000) && cl_wait(&c, b2, 20000) && cl_res(&c, a2)->got == 3000000 && cl_res(&c, b2)->got == 6000000 && !cl_res(&c, a2)->bad && !cl_res(&c, b2)->bad,
+        PROVEN_TEST_ASSERT(cl_wait(&c, a2, 20000u * PROVEN_TEST_BULK_SCALE) && cl_wait(&c, b2, 20000u * PROVEN_TEST_BULK_SCALE) && cl_res(&c, a2)->got == 3000000 && cl_res(&c, b2)->got == 6000000 && !cl_res(&c, a2)->bad && !cl_res(&c, b2)->bad,
             "two large responses side by side arrive whole and in order", tls ? "over TLS" : "in the clear");
         PROVEN_TEST_ASSERT(atomic_load(&g_reentered) == 0, "and on_writable is never called from inside the handler's own write", "");
         cl_close(&c);
@@ -1221,7 +1221,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(taken > 0 && taken < 100, "while the client reads nothing, the server stops taking requests when its output is full", "Check d_full and the loop of h2_on_input in src/proven/http_event_h2.c.");
         good = 0; resets = 0;
         for (int i = 0; i < 100; i++) {
-            (void)cl_wait(&c, ids[i], 120000);     /* forty megabytes: under ThreadSanitizer on a busy machine that took more than thirty seconds, and the streams end together, so the first wait is the long one */
+            (void)cl_wait(&c, ids[i], 120000u * PROVEN_TEST_BULK_SCALE);     /* forty megabytes: under ThreadSanitizer on a busy machine that took more than thirty seconds, and the streams end together, so the first wait is the long one */
             const res_t *r = cl_res(&c, ids[i]);
             good += r->end && !r->reset && r->status == 200 && r->got == 400000 && !r->bad;
             resets += r->reset;
@@ -1249,7 +1249,7 @@ int main(void) {
         proven_time_sleep(700);
         good = 0; resets = 0;
         for (int i = 0; i < 100; i++) {
-            (void)cl_wait(&c, ids[i], 120000);     /* forty megabytes: under ThreadSanitizer on a busy machine that took more than thirty seconds, and the streams end together, so the first wait is the long one */
+            (void)cl_wait(&c, ids[i], 120000u * PROVEN_TEST_BULK_SCALE);     /* forty megabytes: under ThreadSanitizer on a busy machine that took more than thirty seconds, and the streams end together, so the first wait is the long one */
             const res_t *r = cl_res(&c, ids[i]);
             good += r->end && !r->reset && r->status == 200 && r->got == 400000 && !r->bad;
             resets += r->reset;
@@ -1273,7 +1273,7 @@ int main(void) {
         for (int i = 0; i < 100; i++) ids[i] = cl_ask(&c, "GET", "/whole/300000", true);
         int good = 0, resets = 0;
         for (int i = 0; i < 100; i++) {
-            (void)cl_wait(&c, ids[i], 120000);     /* forty megabytes: under ThreadSanitizer on a busy machine that took more than thirty seconds, and the streams end together, so the first wait is the long one */
+            (void)cl_wait(&c, ids[i], 120000u * PROVEN_TEST_BULK_SCALE);     /* forty megabytes: under ThreadSanitizer on a busy machine that took more than thirty seconds, and the streams end together, so the first wait is the long one */
             const res_t *r = cl_res(&c, ids[i]);
             good += r->end && !r->reset && r->status == 200 && r->got == 300000 && !r->bad;
             resets += r->reset;

@@ -1,6 +1,21 @@
 #ifndef PROVEN_TEST_H
 #define PROVEN_TEST_H
 
+/* What a time limit on a bulk transfer (megabytes through the loop) is multiplied by. Under
+ * ThreadSanitizer every memory access is checked, and in an emulated machine on a busy host a
+ * transfer that takes seconds takes minutes: 16 MiB in two of them has been measured (2026-10-29,
+ * io_uring). Elsewhere the limits stand as written. */
+#if defined(__SANITIZE_THREAD__)
+#define PROVEN_TEST_BULK_SCALE 10u
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define PROVEN_TEST_BULK_SCALE 10u
+#endif
+#endif
+#ifndef PROVEN_TEST_BULK_SCALE
+#define PROVEN_TEST_BULK_SCALE 1u
+#endif
+
 static inline const char *proven_test_text_or_default(const char *text, const char *fallback) {
     return (text != 0 && text[0] != '\0') ? text : fallback;
 }

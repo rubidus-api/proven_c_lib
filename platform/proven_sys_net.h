@@ -304,6 +304,10 @@ typedef struct {
  *  there and allowed (a container's seccomp filter may refuse it) and the kernel has every
  *  operation used (5.19 or later: cancelling all of a socket's operations). Asked once. */
 bool proven_sys_net_port_available(void);
+/** Whether a loop that names no backend should be made on the port: on Windows always; on Linux
+ *  when proven_sys_net_port_available and the kernel has multishot receives into a pool of
+ *  buffers as well (6.0 or later) - what saves the calls (RFC-0030 D-4). */
+bool proven_sys_net_port_preferred(void);
 proven_sys_net_result_t proven_sys_net_port_open(proven_uintptr_t *out);
 void proven_sys_net_port_close(proven_uintptr_t port);
 /** Bind `sock` to the port for the rest of its life. A socket bound already is taken to be bound

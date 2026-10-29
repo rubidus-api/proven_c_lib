@@ -390,7 +390,7 @@ static void efetch(proven_http_event_client_t *c, const char *method, bool tls, 
     };
     proven_err_t e = proven_http_event_client_start(c, &o, &g->request);
     PROVEN_TEST_ASSERT(e == PROVEN_OK, "a request starts", "");
-    if (!spin_until(&g->done, 60000)) PROVEN_TEST_INFO("no end after 60 s: {} with {} bytes in {} pieces", PROVEN_ARG(path), PROVEN_ARG((unsigned)g->size), PROVEN_ARG(g->pieces));
+    if (!spin_until(&g->done, 60000u * PROVEN_TEST_BULK_SCALE)) PROVEN_TEST_INFO("no end after {} s: {} with {} bytes in {} pieces", PROVEN_ARG(60u * PROVEN_TEST_BULK_SCALE), PROVEN_ARG(path), PROVEN_ARG((unsigned)g->size), PROVEN_ARG(g->pieces));
     PROVEN_TEST_ASSERT(g->done && g->dones == 1, "and ends, once", "Check cl_decode and cl_process in src/proven/http_event_client.c.");
 }
 static void eget(proven_http_event_client_t *c, bool tls, proven_u16 port, const char *path, got_t *g) { efetch(c, "GET", tls, port, path, NULL, 0, false, g); }

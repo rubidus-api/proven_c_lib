@@ -18,6 +18,35 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **The event client falls back to TCP when asked** (RFC-0031): with `http3_fallback` in its
+  configuration, a request asked over HTTP/3 whose QUIC connection does not come up - no
+  handshake within `http3_fallback_ms` (0: 1 s, at most `connect_timeout_ms`), an address the
+  system reports unreachable or a port refused, a server that refuses `h3` - starts again over
+  TCP as it would have without `http3`: HTTP/2 where the client has `http2` and the server agrees,
+  HTTP/1.1 otherwise. The caller keeps the object it was given; its calls and callbacks are
+  unchanged and `proven_http_event_request_protocol` says 2 or 1. The origin is then spoken to
+  over TCP from the start for five minutes (64 origins remembered). Not for an untrusted
+  certificate, nor for a QUIC connection lost after it came up. Off by default: without it,
+  nothing changes. The client still never follows `Alt-Svc`.
+
+### Changed
+
+- **On Linux 6.0 or later a loop that names no backend is made on io_uring** (RFC-0030 D-4, the
+  owner's decision of 2026-10-29, once the ring had run under AddressSanitizer and
+  ThreadSanitizer): `proven_loop_create`, and `proven_loop_create_ex` with
+  `PROVEN_LOOP_BACKEND_AUTO`, take io_uring where the kernel has multishot receives into a pool of
+  buffers and lets the process use it, and epoll where it does not (an older kernel, a seccomp
+  filter, `io_uring_disabled`) - so the event server and clients, made on such loops, go through
+  the ring there. `PROVEN_LOOP_BACKEND_SELECTOR` asks for epoll whatever the kernel. Windows and
+  the other systems are unchanged.
+- Tests: the time limits of the bulk transfers in `test_unit_http_coding` (16 MiB),
+  `test_unit_http_event_client_h2` (8 MiB) and `test_unit_http_event_h2` (20 MB, and the 3 and
+  6 MB after it) are ten times longer under ThreadSanitizer (`PROVEN_TEST_BULK_SCALE` in
+  `proven_test.h`), where they ran out on a busy host in an emulated machine; other builds keep
+  them.
+
 ## [0.93.0] - 2026-10-29
 
 ### Changed

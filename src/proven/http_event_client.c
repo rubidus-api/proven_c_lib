@@ -1033,6 +1033,9 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
     if (cfg.max_connections_per_origin == 0) cfg.max_connections_per_origin = 6;
     if (cfg.max_kept_connections == 0) cfg.max_kept_connections = 8;
     if (cfg.http2_window_bytes > 0x7fffffffu || cfg.http3_window_bytes > 0x7fffffffu) return PROVEN_ERR_INVALID_ARG;
+    if (cfg.http3_fallback && !cfg.http3) return PROVEN_ERR_INVALID_ARG;      /* a fallback from nothing (RFC-0031) */
+    if (cfg.http3_fallback_ms == 0) cfg.http3_fallback_ms = 1000;
+    if (cfg.http3_fallback_ms > cfg.connect_timeout_ms) cfg.http3_fallback_ms = cfg.connect_timeout_ms;
 #if defined(PROVEN_NO_HTTP3)
     if (cfg.http3) return PROVEN_ERR_UNSUPPORTED;
 #endif
@@ -1410,7 +1413,9 @@ bool proven_http_event_request_resumed_(proven_http_event_request_t *c) {
 }
 
 int proven_http_event_request_protocol(const proven_http_event_request_t *c) {
-    if (c && PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) return 3;
+#if !defined(PROVEN_NO_HTTP3)
+    if (c && PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) return proven_http_event_client_h3_protocol_(c);
+#endif
     return c && PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c) && !proven_http_event_client_h2_is_h1_(c) ? 2 : 1;
 }
 

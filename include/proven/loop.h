@@ -139,9 +139,11 @@ typedef struct proven_loop_accept {
 [[nodiscard]]
 proven_err_t proven_loop_create(proven_allocator_t alloc, proven_loop_t **out);
 
-/** @brief How a loop does its work. AUTO: the completion port on Windows, the selector (epoll,
- *         kqueue, poll) elsewhere. URING: io_uring, on Linux 5.19 or later where the kernel lets
- *         the process use it. */
+/** @brief How a loop does its work. AUTO: the completion port on Windows; io_uring on Linux 6.0
+ *         or later where the kernel lets the process use it (since v0.94.0), else epoll; the
+ *         selector (kqueue, poll) elsewhere. URING: io_uring, on Linux 5.19 or later where the
+ *         kernel lets the process use it. SELECTOR: epoll, kqueue or poll, everywhere but
+ *         Windows - what AUTO was on Linux before v0.94.0. */
 typedef enum proven_loop_backend {
     PROVEN_LOOP_BACKEND_AUTO = 0,
     PROVEN_LOOP_BACKEND_SELECTOR = 1,

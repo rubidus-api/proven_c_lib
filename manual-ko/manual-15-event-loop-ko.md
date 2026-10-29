@@ -88,13 +88,15 @@ void proven_loop_stop(proven_loop_t *loop);
 
 | `proven_loop_backend_t` | 어디서 | 어떻게 |
 |---|---|---|
-| `PROVEN_LOOP_BACKEND_AUTO` | 어디서나 | Windows에서는 완료 포트, 그 밖에서는 셀렉터 - `proven_loop_create`가 주는 것. |
+| `PROVEN_LOOP_BACKEND_AUTO` | 어디서나 | Windows에서는 완료 포트. Linux 6.0 이상에서 시스템이 허락하면 io_uring, 아니면 epoll(v0.94.0부터). 그 밖에서는 셀렉터 - `proven_loop_create`가 주는 것. |
 | `PROVEN_LOOP_BACKEND_SELECTOR` | POSIX | epoll, kqueue, poll([9장](manual-09-networking-ko.md)): 소켓이 준비됐다는 말을 듣고 루프가 직접 호출한다. |
 | `PROVEN_LOOP_BACKEND_URING` | Linux 5.19 이상 | io_uring: 수신, 송신, accept, connect를 커널에 맡기고 커널이 끝났다고 알린다. 더 오래된 커널이나 시스템이 io_uring을 꺼 둔 곳(컨테이너의 seccomp 필터, `io_uring_disabled`)에서는 거절된다(`UNSUPPORTED`). 데이터그램은 다른 백엔드처럼 보통 호출로 보낸다. |
 | `PROVEN_LOOP_BACKEND_IOCP` | Windows | I/O 완료 포트. |
 
-Linux에서 io_uring은 기본값이 아니다. 실제 기계에서 이 라이브러리의 서버가 그것으로 더 빠르다는
-측정이 아직 없고, 더 자주 거절되는 백엔드이기 때문이다. io_uring으로 만든 루프는 커널이 아직 쥔
+v0.94.0부터 Linux 6.0 이상에서 시스템이 프로세스에 허락하면 io_uring이 기본값이다. 그 밖의 Linux와
+거절되는 곳에서 `AUTO`는 전처럼 epoll이다. 에뮬레이션 기계에서 그 위의 HTTP/1.1 서버는 요청당 시스템 호출을
+epoll의 2.07회 대신 0.071회 썼고, 초당 요청을 5~7 % 더 받았다. 실제 기계에서는 아직 재지 않았다.
+`PROVEN_LOOP_BACKEND_SELECTOR`는 커널과 상관없이 epoll을 청한다. io_uring으로 만든 루프는 커널이 아직 쥔
 것을 Windows처럼 정리한다 - 루프를 없앨 때 취소하고 최대 2초까지 기다린다. Linux 6.0 이상에서는
 `proven_loop_read`(5절)로 읽는 연결을 커널이 루프의 풀로 받아 둔다 - 기본은 16 KiB 버퍼 64개이고,
 그런 읽기가 처음 있을 때 만든다. `proven_loop_options_t`의 `ring_buffers`와 `ring_buffer_bytes`로
@@ -1724,8 +1726,10 @@ HTTP/2에서는 이 설정이 더 많은 경우를 다룬다: 17장.)
 | `retry_delay_max_ms` | 설정하면 한 요청의 시도마다 기다림이 두 배가 되어 `retry_delay_ms`에서 여기까지 늘어난다. `retry_delay_ms`보다 작거나 `retry_delay_ms` 없이 설정하면 `INVALID_ARG`. | 0: 매번 같은 기다림 |
 | `max_connections` | 클라이언트 전체의 연결 수. 두 프로토콜, 쓰는 중과 쉬는 것 모두. 한도에서는 새 요청을 위해 쉬는 연결 하나를 닫는다. 쉬는 것이 없으면 요청은 프로토콜과 상관없이 기다린다. 길어야 `connect_timeout_ms`. | 0: 제한 없음 |
 | `http2_window_bytes` | HTTP/2: `on_body`가 가져가기 전에 서버가 한 스트림에, 그리고 연결 전체에 보낼 수 있는 응답 본문 바이트. 멈춘 요청이 연결에 쥐게 할 수 있는 양이며, 큰 다운로드는 서버가 이만큼 보낼 때마다 자리를 기다린다(1 MiB 응답 16개 동시, v0.75.0 전 측정: 기본값에서 초당 568개, 1 MiB로 1,208개). 0이면 창이 거기서 시작해 본문을 읽는 동안 자란다 - 왕복 두 번 안에 절반이 읽히는 동안 두 배씩, 스트림당 16 MiB, 연결당 24 MiB까지(v0.75.0, HTTP/3은 v0.71.0부터); 읽지 않는 본문은 키우지 않는다. 정한 값은 고정. 한쪽 10 ms 지연 중계기 너머 64 MiB 내려받기 하나: 창을 65,535로 고정하면 16 Mbit/s, 자라면 1,310. | 65,535, 자람 |
-| `http3` | 그것을 청하는 요청(옵션의 `http3`, `https` URL)은 HTTP/3으로, 그 오리진에 하나 간직하는 QUIC 연결 위로 간다: [17장 10절](manual-17-http2-ko.md#10-이벤트-구동-클라이언트의-http3). 청하지 않은 요청은 결코, `Alt-Svc`를 따라서도 결코 가지 않는다. **대체 없음**: UDP로 답이 없으면 `connect_timeout_ms` 뒤 `PROVEN_ERR_TIMEOUT`. `h3`를 내는 `tls`가 필요하다. | false |
+| `http3` | 그것을 청하는 요청(옵션의 `http3`, `https` URL)은 HTTP/3으로, 그 오리진에 하나 간직하는 QUIC 연결 위로 간다: [17장 10절](manual-17-http2-ko.md#10-이벤트-구동-클라이언트의-http3). 청하지 않은 요청은 결코, `Alt-Svc`를 따라서도 결코 가지 않는다. `http3_fallback`이 없으면 **대체 없음**: UDP로 답이 없으면 `connect_timeout_ms` 뒤 `PROVEN_ERR_TIMEOUT`. `h3`를 내는 `tls`가 필요하다. | false |
 | `http3_window_bytes` | HTTP/3: `on_body`가 가져가기 전에 서버가 한 스트림에, 그리고 연결 전체에 보낼 수 있는 응답 본문 바이트(QUIC의 흐름 제어). | 스트림 256 KiB, 연결 1 MiB에서 시작해 본문을 오는 대로 읽는 동안 16 MiB와 24 MiB까지 자람; 값을 주면 고정 |
+| `http3_fallback` | HTTP/3으로 청한 요청의 QUIC 연결이 서지 않으면 - `http3_fallback_ms` 안에 핸드셰이크가 없거나, 닿을 수 없는 주소나 거절한 포트, `h3` 거절 - 호출자가 쥔 객체 그대로 TCP로 다시 시작한다. 그 뒤 5분 동안 그 출처는 처음부터 TCP로 간다. 믿을 수 없는 인증서에서는 결코 아니다: [17장 10절](manual-17-http2-ko.md#10-이벤트-구동-클라이언트의-http3). `http3`가 필요하다. | false |
+| `http3_fallback_ms` | `http3_fallback`에서: 요청이 TCP로 가기 전에 QUIC 핸드셰이크가 걸려도 되는 시간. 많아야 `connect_timeout_ms`. | 1초 |
 
 테스트 스위트가 이 프로그램을 컴파일하고 실행한다:
 

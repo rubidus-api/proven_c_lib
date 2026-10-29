@@ -4,6 +4,7 @@
 #include "test_unit_http_coding_vectors.h"
 #include "../src/proven/proven_internal_quic_net.h"
 #include "../src/proven/proven_internal_h3.h"
+#include "../src/proven/proven_internal_http_event_client.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -531,7 +532,7 @@ static void cases(void) {
 
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP client, speaking HTTP/3",
-        "The event-driven client asked for HTTP/3, against the event-driven server on the same loop over real UDP: requests and bodies both ways, compression, pause, abort, idle, destroy; the client's checks; no fallback to TCP; an untrusted server; time. Against a scripted server: responses that break the rules, and a server that refuses h3. max_connections across protocols.",
+        "The event-driven client asked for HTTP/3, against the event-driven server on the same loop over real UDP: requests and bodies both ways, compression, pause, abort, idle, destroy; the client's checks; no fallback to TCP, and with http3_fallback a fallback; an untrusted server; time. Against a scripted server: responses that break the rules, and a server that refuses h3. max_connections across protocols.",
         "Inspect src/proven/http_event_client_h3.c: r_submit and r_push for what leaves, c_event for what arrives, c_round for a round, c_check_time and c_arm for time, c_open for a connection.");
 
     g_heap = proven_heap_allocator();
@@ -563,6 +564,9 @@ int main(void) {
         cfg.http3 = true; cfg.http3_window_bytes = (proven_size_t)1 << 31;
         PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &cfg, &cl) == PROVEN_ERR_INVALID_ARG && !cl, "and a window above 2^31-1", "");
         cfg.http3_window_bytes = 0;
+        cfg.http3 = false; cfg.tls = g_client_tls_h1; cfg.http2 = false; cfg.http3_fallback = true;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &cfg, &cl) == PROVEN_ERR_INVALID_ARG && !cl, "and http3_fallback without http3", "");
+        cfg.http3 = true; cfg.tls = g_client_tls; cfg.http2 = true; cfg.http3_fallback = false;
         PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &cfg, &cl) == PROVEN_OK && cl, "together they are a client", "");
         call_t c;
         memset(&c, 0, sizeof c);
@@ -744,6 +748,88 @@ int main(void) {
         proven_tls_config_destroy(tls);
     }
 
+    PROVEN_TEST_SECTION("fallback to TCP", "With http3_fallback (RFC-0031): a server that speaks only TCP is reached over TCP, in HTTP/2, on the object the caller holds - after http3_fallback_ms or, where the system says the port is closed, at once; the origin is then spoken to over TCP from the start until it is forgotten; a body refused before the switch is written after it; a server that refuses h3 sends the request to TCP at once; an untrusted server does not.", "Check c_falls_back, r_fallback and the x_* relay in src/proven/http_event_client_h3.c, and the http3_fallback_ms check in c_check_time.");
+    {
+        static const proven_u8str_view_t tcp_only[] = { { (const proven_byte_t *)"h2", 2 }, { (const proven_byte_t *)"http/1.1", 8 } };
+        proven_tls_options_t o = { .alloc = g_heap, .certificate_pem = { (const proven_byte_t *)TP_SERVER_P256, strlen(TP_SERVER_P256) },
+                                   .private_key_pem = { (const proven_byte_t *)TP_SERVER_P256_KEY, strlen(TP_SERVER_P256_KEY) }, .alpn = tcp_only, .alpn_count = 2 };
+        proven_tls_config_t *tls = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &tls) == PROVEN_OK, "a server TLS configuration without h3", "");
+        proven_http_event_server_config_t scfg = { .on = { srv_request, srv_body, srv_writable, srv_done }, .tls = tls, .http2 = true };
+        proven_http_event_server_t *server = NULL;
+        proven_net_addr_t at;
+        PROVEN_TEST_ASSERT(proven_http_event_server_create(g_loop, &scfg, &server) == PROVEN_OK &&
+                           proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server over TCP only: nothing on its UDP port", "");
+        g_served = g_served_done = g_served_h3 = 0;
+        proven_http_event_client_config_t cfg = { .alloc = g_heap, .tls = g_client_tls, .http2 = true, .http3 = true, .http3_fallback = true, .http3_fallback_ms = 300,
+                                                  .connect_timeout_ms = 20000 };
+        proven_http_event_client_t *cl = NULL;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &cfg, &cl) == PROVEN_OK, "a client with http3_fallback", "");
+        static call_t c;
+        proven_time_t t0 = proven_time_monotonic_now();
+        PROVEN_TEST_ASSERT(start_to(cl, &c, at.port, "GET", "/hello", mv(""), 0, true) == PROVEN_OK && proven_http_event_request_protocol(c.request) == 3, "a request asked over HTTP/3", "");
+        c.plain = true;
+        spin_until(&c.done, 10000);
+        proven_time_t took = (proven_time_monotonic_now() - t0) / 1000000;
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.status == 200 && c.got == 5 && c.protocol == 2 && !c.bad && g_served == 1 && g_served_h3 == 0,
+            "is answered over TCP, in HTTP/2, on the object it was given", "");
+        PROVEN_TEST_ASSERT(took < 5000, "within http3_fallback_ms and a handshake, not connect_timeout_ms", "");
+        PROVEN_TEST_ASSERT(proven_http_event_client_requests(cl) == 0, "and the client counts no request left", "");
+
+        PROVEN_TEST_ASSERT(start_to(cl, &c, at.port, "GET", "/hello", mv(""), 0, true) == PROVEN_OK && proven_http_event_request_protocol(c.request) != 3,
+            "the origin remembered: the next request asked over HTTP/3 goes over TCP from the start", "");
+        c.plain = true;
+        spin_until(&c.done, 10000);
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.got == 5 && g_served == 2, "and is answered", "");
+
+        proven_http_event_client_h3_test_forget_(cl);
+        PROVEN_TEST_ASSERT(start_to(cl, &c, at.port, "POST", "/echo", mv(""), 1000, true) == PROVEN_OK && proven_http_event_request_protocol(c.request) == 3,
+            "forgotten, the origin is tried over QUIC again: a body of 1,000 bytes to be written", "");
+        c.plain = true;
+        c.to_send = 1000;
+        call_pump(&c);
+        PROVEN_TEST_ASSERT(c.sent == 0, "is refused while there is no stream", "");
+        spin_until(&c.done, 10000);
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.sent == 1000 && c.got == 1000 && c.writables > 0 && c.protocol == 2 && g_served == 3,
+            "on_writable comes once it is over TCP, and the body written then is echoed whole", "");
+        proven_http_event_client_destroy(cl);
+        spin(200);
+
+        /* A server that refuses h3, with nothing on its TCP port: over TCP at once, and refused there. */
+        static const proven_u8str_view_t h2only[] = { { (const proven_byte_t *)"h2", 2 } };
+        proven_tls_options_t ro = o;
+        ro.alpn = h2only; ro.alpn_count = 1;
+        proven_tls_config_t *rtls = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&ro, &rtls) == PROVEN_OK, "a QUIC server's TLS that offers only h2", "");
+        static raw_t x;
+        raw_start(&x, rtls);
+        cfg.http3_fallback_ms = 5000;
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &cfg, &cl) == PROVEN_OK, "a client whose bound is 5 s", "");
+        t0 = proven_time_monotonic_now();
+        PROVEN_TEST_ASSERT(start_to(cl, &c, x.port, "GET", "/hello", mv(""), 0, true) == PROVEN_OK, "a request over HTTP/3 to it", "");
+        spin_until(&c.done, 10000);
+        took = (proven_time_monotonic_now() - t0) / 1000000;
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_REFUSED && c.responses == 0 && x.requests == 0 && took < 4000,
+            "goes to TCP at the refusal, without waiting for the bound - where the port is closed: PROVEN_ERR_REFUSED", "");
+        proven_http_event_client_destroy(cl);
+        spin(100);
+        raw_stop(&x);
+        proven_tls_config_destroy(rtls);
+
+        /* An untrusted server: that is the answer, over TCP as over UDP. */
+        proven_http_event_server_t *h3server = server_on();
+        proven_http_event_client_config_t ucfg = { .alloc = g_heap, .tls = g_client_tls_untrusting, .http2 = true, .http3 = true, .http3_fallback = true };
+        PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ucfg, &cl) == PROVEN_OK, "a client that trusts no one, with http3_fallback", "");
+        PROVEN_TEST_ASSERT(start(cl, &c, "GET", "/hello", mv(""), 0) == PROVEN_OK, "a request to a server over HTTP/3", "");
+        spin_until(&c.done, 5000);
+        PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_UNTRUSTED && c.responses == 0 && g_served == 0, "ends with PROVEN_ERR_UNTRUSTED: no fallback", "");
+        proven_http_event_client_destroy(cl);
+        spin(200);
+        proven_http_event_server_destroy(h3server);
+        proven_http_event_server_destroy(server);
+        proven_tls_config_destroy(tls);
+    }
+
     PROVEN_TEST_SECTION("max_connections across protocols", "A client of one connection: an HTTP/2 request waits while an HTTP/3 request is on the only one, and has it when that is done; the same the other way round.", "Check proven_http_event_client_room_ and proven_http_event_client_freed_ in src/proven/http_event_client.c, r_place and c_round's call to proven_http_event_client_freed_ in http_event_client_h3.c.");
     for (int first3 = 1; first3 >= 0; --first3) {
         proven_http_event_server_t *server = server_on();
@@ -769,7 +855,7 @@ int main(void) {
     proven_tls_config_destroy(g_server_tls); proven_tls_config_destroy(g_client_tls); proven_tls_config_destroy(g_client_tls_untrusting); proven_tls_config_destroy(g_client_tls_h1);
     proven_cert_store_destroy(anchors); proven_cert_store_destroy(strangers);
     proven_loop_destroy(g_loop);
-    PROVEN_TEST_PASS("the event-driven client speaks HTTP/3 when asked, to the event-driven server, with no fallback.");
+    PROVEN_TEST_PASS("the event-driven client speaks HTTP/3 when asked, to the event-driven server, and falls back to TCP only when told to.");
     return 0;
 }
 

@@ -330,15 +330,19 @@ static proven_err_t loop_open_selector(proven_loop_t *l, bool poll_kind) {
 }
 #endif
 
-/* Which backend `asked` makes here: AUTO is the port on Windows and the selector elsewhere (the
- * owner's D-1 of RFC-0029: io_uring by the caller's choice) - except in a build made with
- * PROVEN_LOOP_AUTO_URING_, which tries io_uring first: how the suite runs on it. */
+/* Which backend `asked` makes here: AUTO is the port on Windows; on Linux io_uring where the
+ * kernel has all RFC-0030 saves calls with (6.0, and not refused) - the owner's D-4 of RFC-0030,
+ * once the ring had run under ASan and TSan - and the selector otherwise and elsewhere. A build
+ * made with PROVEN_LOOP_AUTO_URING_ takes io_uring wherever it works at all (5.19): how the suite
+ * runs on it in an emulated machine. */
 static proven_loop_backend_t loop_pick(proven_loop_backend_t asked) {
     if (asked != PROVEN_LOOP_BACKEND_AUTO) return asked;
 #if LOOP_IOCP
     return PROVEN_LOOP_BACKEND_IOCP;
 #elif LOOP_RING && defined(PROVEN_LOOP_AUTO_URING_)
     return proven_sys_net_port_available() ? PROVEN_LOOP_BACKEND_URING : PROVEN_LOOP_BACKEND_SELECTOR;
+#elif LOOP_RING
+    return proven_sys_net_port_preferred() ? PROVEN_LOOP_BACKEND_URING : PROVEN_LOOP_BACKEND_SELECTOR;
 #else
     return PROVEN_LOOP_BACKEND_SELECTOR;
 #endif
