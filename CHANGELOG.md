@@ -18,6 +18,26 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **The blocking client speaks HTTP/3 when a request asks** (RFC-0034): a client made with `http3`
+  and a `tls` configuration offering `h3` sends a request that sets `http3`, to an `https` URL, over
+  QUIC. Underneath is the event-driven client on a loop of the client's own, which the calling
+  thread runs while it waits in `proven_http_client_send` (the head) and `proven_http_client_read`
+  (body bytes) - no thread is made. Redirects, challenges, cookies and decoding are decided as for
+  HTTP/1.1; a redirect keeps HTTP/3 within the origin and is an ordinary request elsewhere. The
+  QUIC connection is kept between calls and remade when the server let it go. Not through a proxy
+  and not with `upgrade` (`PROVEN_ERR_UNSUPPORTED`); `http3_fallback` passes RFC-0031's fallback on.
+
+### Changed
+
+- **QUIC's congestion control is CUBIC** (RFC 9438; RFC-0033), for every connection in both roles,
+  in integer arithmetic: a loss keeps 0.7 of the window, and the window comes back with the time
+  since the loss rather than a datagram a round trip - on a 100 ms path with a 1.25 MB window
+  about 9.5 s instead of 52 s. On short paths it behaves as NewReno did. NewReno's own growth also
+  lost a fraction of a byte per acknowledgement to integer division and stopped above about
+  1.44 MB of window: before this release QUIC's congestion avoidance stalled there.
+
 ## [0.96.0] - 2026-10-29
 
 ### Added

@@ -468,7 +468,7 @@ proven_http_client_destroy(client);
 
 | API | Intent | Return |
 |---|---|---|
-| `proven_http_client_create(&config, &client)` | Make a client. The configuration's strings are copied. | `proven_err_t`: `INVALID_ARG` for an invalid allocator, a proxy that is not `http` or `socks5`, or a control character in a credential; `NOMEM`. |
+| `proven_http_client_create(&config, &client)` | Make a client. The configuration's strings are copied. | `proven_err_t`: `INVALID_ARG` for an invalid allocator, a proxy that is not `http` or `socks5`, a control character in a credential, or `http3` without a `tls` that offers `h3`; `UNSUPPORTED` for `http3` in a build without it; `NOMEM`. |
 | `proven_http_client_destroy(client)` | Close idle connections and free it. Finish every response first. | none. |
 | `proven_http_client_send(client, &request, &response)` | Send a request and read the head of the response. | `proven_err_t`; see section 7. |
 | `proven_http_client_get(client, url, &response)` | `send` with only a URL. | the same. |
@@ -492,6 +492,9 @@ typedef struct {
     proven_http_tls_wrap_fn tls_wrap;       /* NULL: an https URL is PROVEN_ERR_UNSUPPORTED */
     void *tls_ctx;
     proven_u32 expect_timeout_ms;           /* 0: 1 s - see expect_continue in section 7 */
+    bool http3;                             /* a request that sets http3 goes over HTTP/3 - section 10 */
+    const proven_tls_config_t *tls;         /* with http3: the QUIC connections' TLS, offering h3 */
+    bool http3_fallback;                    /* with http3: TCP when QUIC does not come up */
 } proven_http_client_config_t;
 ```
 
@@ -909,6 +912,30 @@ int main(void) {
 }
 ```
 
+### HTTP/3, when a request asks for it
+
+Since v0.97.0 (RFC-0034) a client made with `http3`, and a `tls` configuration that offers
+`h3`, sends a request that sets `http3` in `proven_http_client_request_t` over HTTP/3 - an
+`https` URL, over QUIC. Nothing else changes for the caller: `send` returns at the head, `read`
+gives the body, `finish` releases it. HTTP/3 cannot go through `tls_wrap` - QUIC is TLS inside
+UDP packets, not TLS over a connected socket - so underneath is the event-driven client of
+[Chapter 15](manual-15-event-loop.md) on a loop of this client's own. The calling thread runs
+that loop while it waits: in `send` until the head (bounded by `connect_timeout_ms` and
+`io_timeout_ms` together, as a connection may have to be made first), in `read` until body
+bytes (`io_timeout_ms`). No thread is made, and between calls nothing runs it.
+
+- **The same rules above the exchange.** Redirects, challenges, cookies, `User-Agent` and
+  decoding are decided as for HTTP/1.1. A redirect keeps HTTP/3 within the origin the caller
+  named; to another origin it is an ordinary request - HTTP/1.1 through `tls_wrap`, or the 3xx
+  is returned when there is none. The client never picks HTTP/3 by itself.
+- **The connection is kept** between calls in the event client, one QUIC connection per origin;
+  a server that let it go meanwhile (nobody answered its packets) is reached on a new one.
+- **Each resolved address in turn** while one gives no QUIC answer, as the TCP connect tries each.
+- **Not over HTTP/3:** a proxy (there is no `CONNECT-UDP`) and `upgrade`, each
+  `PROVEN_ERR_UNSUPPORTED`; `expect_continue` - the body goes at once. HTTP/2 is not offered here.
+- **`http3_fallback`** sends such a request over TCP when its QUIC connection does not come up,
+  as [Chapter 17](manual-17-http2.md) section 10 describes for the event client.
+
 ## 11. Changing protocol
 
 A request may ask that the connection stop carrying HTTP: `Connection: Upgrade` and
@@ -1060,7 +1087,7 @@ int main(void) {
 ## 12. What is not here
 
 - **TLS**, in both directions. Section 1.
-- **HTTP/2 and HTTP/3.**
+- **HTTP/2**, and **HTTP/3 except for a request that asks** (section 10).
 - **Compression, unless asked for.** With nothing set, no `Accept-Encoding` is sent, no
   content coding is decoded, and no response is compressed. Setting `decompress` in the
   client's configuration, and calling `proven_http_exchange_compress` in a handler, turn on

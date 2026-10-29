@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 129 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 130 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -348,7 +348,7 @@ Last run, 2026-10-29, Windows 11 test VM (v0.96.0): x86-64 370 PASS, 0 FAIL, 10 
 ## Test catalog
 
 
-The hosted full run builds and executes 198 registered tests plus the 182 runnable manual examples - 380 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 211 test files: the 194 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 199 registered tests plus the 182 runnable manual examples - 381 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 212 test files: the 195 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -860,6 +860,7 @@ Sub-checks:
 - Flow control and memory: with a reader that reads nothing, six streams of 2 MiB stop at the windows; the receiver holds less than its 1 MiB window and bookkeeping, the sender less than its 1 MiB send buffer and bookkeeping; once read, everything arrives. Five streams that fill the connection's window unread and are then reset by the sender give their bytes back: a new stream's 2 MiB arrive. (The fill runs the clock in steps of at most its three seconds: with the window full nothing is sent, and the next deadline is the idle timeout's.)
 - A large fill remembered, then forgotten (RFC-0018 S-1): one stream whose send buffer a burst fills to 256 KiB, then small writes, each acknowledged before the next. The first small write gets the burst's capacity in one allocation (an allocator that records sizes), each later one an eighth less, until the buffer is small enough to be kept and nothing more is allocated. The receiving side's buffer the same way: a reader that stops lets a burst of 256 KiB fill it, then reads it all, and the small writes after are received into 256 KiB, 224 KiB, 196 KiB and so on. Planted: no decay on either side (every write allocates 256 KiB) and no memory of the burst (the first allocates 2 KiB) each fail it.
 - Changed packets: every datagram captured in a handshake and a small transfer, delivered again with a bit changed (each of the first 64 bytes' bits, then every 29th) and cut short (each of the first 64 lengths, then every 17th) - about 21,000 datagrams - is dropped; delivered again unchanged, not one packet is processed a second time (RFC 9000 section 12.3); neither side closes or is told to, and a new transfer goes through.
+- Congestion control (RFC-0033), the controller alone on a model of the path (every round trip acknowledges the window in datagrams of 1,200 bytes), from congestion avoidance at a window with one loss: CUBIC keeps 0.7 of the window and NewReno half; at 100 ms and 1.25 MB CUBIC is back in 9 to 11 s (RFC 9438's K is 9.2 s) and NewReno in 50 to 55 s; at 300 ms and 4 MB CUBIC in 13 to 16 s and NewReno in 490 to 510 s (before v0.97.0 NewReno's step was divided away above 1.44 MB and it did not come back); at 1 ms the two within half again of each other (the Reno-friendly region); fast convergence remembers 0.85 of a window lost below the last maximum.
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
@@ -2061,6 +2062,21 @@ Sub-checks:
 - An answer before the body is all sent: a peer that answers `413` and closes with 8 MiB still coming - on Linux the call returns that `413` and its body, elsewhere that or an error; a peer that closes the same way without a word is an error, and not a timeout.
 
 Failure tip: inspect `src/proven/http_client.c`: `proven_http_client_send` for redirects and challenges, `cl_exchange` for what is written, `cl_connect`, `cl_http_tunnel` and `cl_socks5` for proxies. The proxy targets are under `.invalid`, so `PROVEN_ERR_NOT_FOUND` means the client resolved a name it should have handed to the proxy.
+
+### `tests/test_unit_http_client_h3` - http: the client, speaking HTTP/3
+
+Intent: verify the blocking client asked for HTTP/3 (RFC-0034) against the event-driven server on another thread, over real UDP on loopback, with a second server over TCP only.
+
+Sub-checks:
+
+- Refused: a client with `http3` and no TLS configuration, or one that does not offer `h3`; `http3_fallback` without `http3`; a request asked over HTTP/3 on a client without it (`PROVEN_ERR_INVALID_ARG`), through a proxy (`PROVEN_ERR_UNSUPPORTED`), to an `http` URL (`PROVEN_ERR_INVALID_ARG`), with `upgrade` (`PROVEN_ERR_UNSUPPORTED`).
+- A GET answered over HTTP/3 (the server sees protocol 3); 100,000 bytes from memory and 50,000 from a stream echoed whole; 300,000 bytes read a kilobyte at a time, whole and in order, then `PROVEN_ERR_EOF`.
+- Above the exchange: a redirect within the origin followed over HTTP/3; a redirect to another origin followed there over TCP (HTTP/1.1 through `tls_wrap`); a Basic challenge answered; a cookie set and sent back; a gzip body decoded.
+- Every request above on one QUIC connection; to a server that lets an idle connection go after 300 ms, a second request 1.5 s later is answered on a new one; an answer that does not come is `PROVEN_ERR_TIMEOUT` after `io_timeout_ms` and within `connect_timeout_ms` and `io_timeout_ms` together.
+
+Failure tip: inspect the HTTP/3 part of `src/proven/http_client.c`: `cl_exchange_h3`, `cl_h3_next`, `cl_h3_pump`, and the `use_h3` choice and redirect branch of `proven_http_client_send`.
+
+The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
 ### `tests/test_unit_ws` - ws: the WebSocket codec
 

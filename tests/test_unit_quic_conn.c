@@ -1317,6 +1317,28 @@ int main(void) {
     proven_tls_config_destroy(g_tls_client);
     proven_tls_config_destroy(g_tls_server);
     proven_cert_store_destroy(g_anchors);
+    PROVEN_TEST_SECTION("congestion control (RFC-0033)", "CUBIC (RFC 9438) against RFC 9002's NewReno on a model of the path, both from congestion avoidance at a window with one loss: the reduction (0.7 against 0.5), the time back to the window - at 100 ms and 300 ms a fraction of NewReno's, near RFC 9438's K; at 1 ms the Reno-friendly region, close to NewReno - fast convergence, and NewReno's own growth above the square of a datagram.", "Check cu_reduce, cu_avoid, cu_cbrt, cu_term and cc_share in src/proven/quic_conn.c.");
+    {
+        proven_u64 a = 0, ra = 0, b = 0, rb = 0;
+        proven_quic_cc_model_(false, 1200, 100000, 1250000, &a, &ra);
+        proven_quic_cc_model_(true, 1200, 100000, 1250000, &b, &rb);
+        printf("  100 ms, 1.25 MB: CUBIC %llu then %.1f s back; NewReno %llu then %.1f s\n", (unsigned long long)a, (double)ra / 1e6, (unsigned long long)b, (double)rb / 1e6);
+        PROVEN_TEST_ASSERT(a == 875000 && b == 625000, "a loss: CUBIC keeps 0.7 of the window, NewReno half", "");
+        /* RFC 9438's K = cbrt(W_max (1 - beta) / C) = cbrt(1,250,000 * 0.3 / (0.4 * 1,200)) s = 9.2 s. */
+        PROVEN_TEST_ASSERT(ra >= 9000000 && ra <= 11000000 && rb >= 50000000 && rb <= 55000000, "back in about K (9.2 s); NewReno a datagram a round trip, 52 s", "");
+        proven_quic_cc_model_(false, 1200, 300000, 4000000, &a, &ra);
+        proven_quic_cc_model_(true, 1200, 300000, 4000000, &b, &rb);
+        printf("  300 ms, 4 MB: CUBIC %.1f s back; NewReno %.1f s\n", (double)ra / 1e6, (double)rb / 1e6);
+        PROVEN_TEST_ASSERT(ra >= 13000000 && ra <= 16000000 && rb >= 490000000 && rb <= 510000000,
+            "300 ms and 4 MB: about K (13.6 s) against NewReno's 500 s - which before v0.97.0 did not grow at all above 1.44 MB (a fraction of a byte an acknowledgement, divided away)", "");
+        proven_quic_cc_model_(false, 1200, 1000, 300000, &a, &ra);
+        proven_quic_cc_model_(true, 1200, 1000, 300000, &b, &rb);
+        printf("  1 ms, 300 KB: CUBIC %.0f ms back; NewReno %.0f ms\n", (double)ra / 1e3, (double)rb / 1e3);
+        PROVEN_TEST_ASSERT(ra > 0 && rb > 0 && ra * 10 <= rb * 15 && ra * 15 >= rb * 10, "at 1 ms the Reno-friendly region: within half again of NewReno either way", "");
+        PROVEN_TEST_ASSERT(proven_quic_cc_fast_convergence_(1200, 1000000, 600000) == 600000 * 17 / 20 && proven_quic_cc_fast_convergence_(1200, 600000, 1000000) == 1000000,
+            "fast convergence: a loss below the last maximum remembers 0.85 of the window; above it, the window", "");
+    }
+
     PROVEN_TEST_PASS("QUIC connections hold over a lossy network.");
     return 0;
 }

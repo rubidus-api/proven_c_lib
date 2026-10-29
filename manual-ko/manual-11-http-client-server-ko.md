@@ -454,7 +454,7 @@ proven_http_client_destroy(client);
 
 | API | 의도 | 반환 |
 |---|---|---|
-| `proven_http_client_create(&config, &client)` | 클라이언트를 만든다. 설정의 문자열은 복사된다. | `proven_err_t`: 할당자가 유효하지 않거나, 프록시가 `http`나 `socks5`가 아니거나, 자격 증명에 제어 문자가 있으면 `INVALID_ARG`. `NOMEM`. |
+| `proven_http_client_create(&config, &client)` | 클라이언트를 만든다. 설정의 문자열은 복사된다. | `proven_err_t`: 할당자가 유효하지 않거나, 프록시가 `http`나 `socks5`가 아니거나, 자격 증명에 제어 문자가 있거나, `h3`를 내는 `tls` 없이 `http3`이면 `INVALID_ARG`. 그것이 빠진 빌드의 `http3`은 `UNSUPPORTED`. `NOMEM`. |
 | `proven_http_client_destroy(client)` | 한가한 연결을 닫고 해제한다. 모든 응답을 먼저 finish하라. | 없음. |
 | `proven_http_client_send(client, &request, &response)` | 요청을 보내고 응답의 헤드를 읽는다. | `proven_err_t`. §7을 보라. |
 | `proven_http_client_get(client, url, &response)` | URL만으로 하는 `send`. | 같다. |
@@ -478,6 +478,9 @@ typedef struct {
     proven_http_tls_wrap_fn tls_wrap;       /* NULL: an https URL is PROVEN_ERR_UNSUPPORTED */
     void *tls_ctx;
     proven_u32 expect_timeout_ms;           /* 0: 1 s - see expect_continue in section 7 */
+    bool http3;                             /* a request that sets http3 goes over HTTP/3 - section 10 */
+    const proven_tls_config_t *tls;         /* with http3: the QUIC connections' TLS, offering h3 */
+    bool http3_fallback;                    /* with http3: TCP when QUIC does not come up */
 } proven_http_client_config_t;
 ```
 
@@ -881,6 +884,27 @@ int main(void) {
 }
 ```
 
+### 요청이 청할 때의 HTTP/3
+
+v0.97.0부터(RFC-0034) `http3`와 `h3`를 내는 `tls` 설정으로 만든 클라이언트는 `proven_http_client_request_t`에
+`http3`를 둔 요청을 HTTP/3으로 - `https` URL을 QUIC으로 - 보낸다. 호출자에게 다른 것은 없다: `send`는 헤드에서
+돌아오고, `read`는 본문을 주며, `finish`가 놓는다. HTTP/3은 `tls_wrap`을 지날 수 없다 - QUIC은 연결된 소켓 위의
+TLS가 아니라 UDP 패킷 안의 TLS다 - 그래서 아래에는 이 클라이언트 자신의 루프 위에 [15장](manual-15-event-loop-ko.md)의
+이벤트 구동 클라이언트가 있다. 기다리는 동안 부른 스레드가 그 루프를 돌린다: `send`에서는 헤드까지(연결을 먼저 만들어야
+할 수 있으므로 `connect_timeout_ms`와 `io_timeout_ms`를 합쳐 묶음), `read`에서는 본문 바이트까지(`io_timeout_ms`).
+스레드는 만들지 않고, 호출과 호출 사이에는 아무도 돌리지 않는다.
+
+- **교환 위의 규칙은 같다.** 리디렉션, 인증 요구, 쿠키, `User-Agent`, 해독은 HTTP/1.1에서처럼 정한다. 리디렉션은
+  호출자가 지정한 출처 안에서는 HTTP/3을 유지한다. 다른 출처로는 보통 요청이다 - `tls_wrap`을 거친 HTTP/1.1, 그것이
+  없으면 3xx를 돌려준다. 클라이언트가 스스로 HTTP/3을 고르는 일은 없다.
+- **연결은 남는다**: 호출 사이에 이벤트 클라이언트 안에, 출처마다 QUIC 연결 하나. 그사이 서버가 놓아 버린 연결(아무도
+  그 패킷에 답하지 않았으므로)이면 새 연결로 간다.
+- **풀린 주소를 하나씩**: 한 주소가 QUIC 응답을 전혀 주지 않는 동안, TCP 연결이 각 주소를 시도하듯이.
+- **HTTP/3에서 안 되는 것:** 프록시(`CONNECT-UDP`가 없다)와 `upgrade`, 각각 `PROVEN_ERR_UNSUPPORTED`. `expect_continue` -
+  본문은 바로 간다. HTTP/2는 여기서 내지 않는다.
+- **`http3_fallback`**은 QUIC 연결이 서지 않을 때 그런 요청을 TCP로 보낸다. [17장](manual-17-http2-ko.md) 10절이
+  이벤트 클라이언트에 대해 말하는 그대로다.
+
 ## 11. 프로토콜 바꾸기
 
 요청은 연결이 HTTP를 그만 실어 나르게 해 달라고 청할 수 있다: `Connection: Upgrade`와
@@ -1030,7 +1054,7 @@ int main(void) {
 ## 12. 여기에 없는 것
 
 - 양쪽 방향의 **TLS**. §1.
-- **HTTP/2와 HTTP/3.**
+- **HTTP/2**, 그리고 **청하는 요청 밖의 HTTP/3**(10절).
 - **요청하지 않은 압축.** 아무것도 설정하지 않으면 `Accept-Encoding`을 보내지 않고, 콘텐츠 코딩을
   풀지 않으며, 응답을 압축하지 않는다. 클라이언트 설정의 `decompress`와 핸들러에서 부르는
   `proven_http_exchange_compress`가 각 방향의 gzip을 켠다(Zstandard는 클라이언트의 `decompress_zstd`와

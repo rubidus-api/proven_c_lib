@@ -380,6 +380,7 @@ typedef struct {
     proven_u32 max_ack_ranges;                     /* received packet ranges kept per space. 0: 64 */
     proven_u32 key_update_packets;                 /* 1-RTT packets sent under one key before this side updates it (RFC 9001 section 6.6: AES-GCM's limit is 2^23). 0: 2^22 */
     proven_byte_t static_key[32];                  /* a server: one key for all its connections (Retry tokens, stateless reset tokens). All zero: drawn per connection */
+    bool newreno;                                  /* RFC 9002's NewReno instead of CUBIC (RFC 9438; RFC-0033): for tests and measurement only */
 } proven_quic_config_t;
 
 typedef struct proven_quic_conn proven_quic_conn_t;
@@ -481,6 +482,14 @@ typedef struct {
 void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s);
 /* Tests only: `payload` read as the frames of a packet that opened at `lvl` (3: a 0-RTT packet;
  * its result: the close code, or 0), and a key update started by this side. */
+/* For tests (RFC-0033): the congestion controller alone, on a model of the path - every round
+ * trip of `rtt_us` acknowledges the whole window in packets of `mss` bytes, the sender never short
+ * of data. Once the window reaches `w_loss` one loss is declared; `*after` is the window just after
+ * it, `*recover_us` the time until the window is `w_loss` again (0: not within 600 s of model time). */
+void proven_quic_cc_model_(bool newreno, proven_u32 mss, proven_u64 rtt_us, proven_u64 w_loss, proven_u64 *after, proven_u64 *recover_us);
+/* For tests: CUBIC's remembered maximum after a loss at `w1` and then one at `w2` (RFC 9438
+ * section 4.7, fast convergence: below the last maximum it is taken lower still). */
+proven_u64 proven_quic_cc_fast_convergence_(proven_u32 mss, proven_u64 w1, proven_u64 w2);
 proven_u64 proven_quic_conn_test_frames_(proven_quic_conn_t *c, int lvl, proven_mem_view_t payload, proven_u64 now);
 bool proven_quic_conn_test_key_update_(proven_quic_conn_t *c);
 proven_u64 proven_quic_conn_test_tx_max_(const proven_quic_conn_t *c, proven_u64 id);

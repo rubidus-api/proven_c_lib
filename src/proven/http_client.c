@@ -8,13 +8,26 @@
 #include "proven/time.h"
 #include "proven_internal_http_coding.h"
 #include "proven_internal_tls.h"
+#if !defined(PROVEN_NO_HTTP3)
+#include "proven/loop.h"
+#include "proven/http_event_client.h"
+#endif
 
 /*
  * The HTTP/1.1 client driver. The message format is http.c's business and the sockets are
  * net.c's; what is here is the sequence between them: find or make a connection, write a
  * request, read a head, decide whether that head is the answer or a reason to send another
  * request, and hand the body out through a decoder.
+ *
+ * A request asked over HTTP/3 (RFC-0034) has an exchange of its own: the event-driven client on
+ * a loop of this client's, made at the first such request, which the caller's thread runs while
+ * it waits - for the head in send, for body bytes in read. The head is copied into the call as an
+ * HTTP/1.1 head would sit there, the body comes through a queue (the request paused while it is
+ * full), and everything above the exchange - redirects, challenges, cookies, decoding - is the same.
  */
+
+#define CL_H3_QUEUE_HIGH 65536u          /* body bytes queued before the request is paused */
+#define CL_H3_QUEUE_LOW 16384u           /* ... and below which it goes on */
 
 #define CL_DEFAULT_TIMEOUT_MS 30000u
 #define CL_MAX_HEADERS 64
@@ -38,6 +51,10 @@ typedef struct cl_conn {
 
 struct proven_http_client {
     proven_http_client_config_t cfg;   /* string views point into `strings` */
+#if !defined(PROVEN_NO_HTTP3)
+    proven_loop_t *loop;               /* HTTP/3 (RFC-0034): a loop and an event client of its own, made when first needed */
+    proven_http_event_client_t *ev;
+#endif
     proven_byte_t *strings;
     proven_url_t proxy;
     bool has_proxy;
@@ -69,6 +86,20 @@ typedef struct {
     bool decoding;                     /* the body is decoded on its way to the caller */
     proven_mem_view_t pending;         /* decoding: encoded bytes of the window not decoded yet */
     proven_http_decoder_t_ dec;
+#if !defined(PROVEN_NO_HTTP3)
+    /* HTTP/3 (RFC-0034): the event client's request, what it has said, the body queue, and a
+     * stream body being written. */
+    bool h3;
+    proven_http_event_request_t *h3_req;
+    bool h3_head, h3_done;
+    proven_err_t h3_why;
+    proven_byte_t *h3q;
+    proven_size_t h3q_len, h3q_pos, h3q_cap;
+    bool h3_paused;
+    proven_reader_t h3_stream;
+    proven_size_t h3_pend_off, h3_pend_len;
+    bool h3_stream_end;
+#endif
 } proven_cl_call_t;
 
 static proven_u8str_view_t cl_lit(const char *s) {
@@ -108,6 +139,22 @@ proven_err_t proven_http_client_create(const proven_http_client_config_t *config
     if (cl_has_control(config->username) || cl_has_control(config->password) || cl_has_control(config->user_agent)) return PROVEN_ERR_INVALID_ARG;
     const proven_err_t coding_e = proven_http_decoder_cfg_check_(config->decompress, config->decompress_zstd, config->decompress_brotli);
     if (coding_e != PROVEN_OK) return coding_e;
+    if (config->http3) {
+        /* HTTP/3 needs its own TLS configuration, one that offers h3 (RFC-0034). */
+#if defined(PROVEN_NO_HTTP3)
+        return PROVEN_ERR_UNSUPPORTED;
+#else
+        bool offers_h3 = false;
+        for (proven_size_t i = 0; config->tls; ++i) {
+            const proven_u8str_view_t name = proven_tls_config_alpn(config->tls, i);
+            if (name.size == 0) break;
+            if (name.size == 2 && name.ptr[0] == 'h' && name.ptr[1] == '3') offers_h3 = true;
+        }
+        if (!offers_h3) return PROVEN_ERR_INVALID_ARG;
+#endif
+    } else if (config->http3_fallback) {
+        return PROVEN_ERR_INVALID_ARG;
+    }
 
     proven_http_client_t *c = cl_alloc(config->alloc, sizeof *c);
     if (!c) return PROVEN_ERR_NOMEM;
@@ -166,6 +213,15 @@ static void cl_conn_close(proven_http_client_t *c, proven_cl_conn_t *conn) {
 
 void proven_http_client_destroy(proven_http_client_t *client) {
     if (!client) return;
+#if !defined(PROVEN_NO_HTTP3)
+    if (client->ev) {
+        /* Its QUIC connections closed, and their sockets let go by the loop before it goes. */
+        proven_http_event_client_destroy(client->ev);
+        const proven_net_deadline_t until = proven_net_deadline_in(200);
+        while (proven_time_monotonic_now() < until) (void)proven_loop_poll(client->loop, proven_net_deadline_in(10));
+    }
+    if (client->loop) proven_loop_destroy(client->loop);
+#endif
     for (proven_size_t i = 0; i < client->idle_count; ++i) cl_conn_close(client, client->idle[i]);
     proven_allocator_t a = client->cfg.alloc;
     cl_free(a, client->idle);
@@ -750,11 +806,248 @@ static proven_err_t cl_exchange(proven_cl_call_t *call, const proven_http_client
     return PROVEN_OK;
 }
 
+#if !defined(PROVEN_NO_HTTP3)
+// -----------------------------------------------------------------------------
+// HTTP/3 (RFC-0034): the event client underneath
+// -----------------------------------------------------------------------------
+
+static proven_err_t cl_h3_ready(proven_http_client_t *c) {
+    if (c->ev) return PROVEN_OK;
+    if (!c->loop) {
+        proven_err_t e = proven_loop_create(c->cfg.alloc, &c->loop);
+        if (e != PROVEN_OK) { c->loop = (void *)0; return e; }
+    }
+    bool offers_h2 = false;
+    for (proven_size_t i = 0;; ++i) {
+        const proven_u8str_view_t name = proven_tls_config_alpn(c->cfg.tls, i);
+        if (name.size == 0) break;
+        if (name.size == 2 && name.ptr[0] == 'h' && name.ptr[1] == '2') offers_h2 = true;
+    }
+    const proven_http_event_client_config_t ec = {
+        .alloc = c->cfg.alloc, .tls = c->cfg.tls, .http2 = offers_h2, .http3 = true, .http3_fallback = c->cfg.http3_fallback,
+        .connect_timeout_ms = c->cfg.connect_timeout_ms, .max_head_bytes = c->cfg.max_head_bytes, .max_headers = CL_MAX_HEADERS,
+        .response_timeout_ms = 3600000u, .body_timeout_ms = 3600000u,        /* the waits here are bounded by io_timeout_ms; these only must not come first */
+        .write_timeout_ms = c->cfg.io_timeout_ms,
+        .retry_unsent = 1,                            /* a kept connection found dead before the request was on it: a new one */
+    };
+    return proven_http_event_client_create(c->loop, &ec, &c->ev);
+}
+
+/* Run the loop until `*flag`, or until `until`: PROVEN_ERR_TIMEOUT. */
+static proven_err_t cl_h3_wait(proven_http_client_t *c, const bool *flag, const bool *also, proven_net_deadline_t until) {
+    while (!*flag && !(also && *also)) {
+        const proven_net_deadline_t now = proven_time_monotonic_now();
+        if (now >= until) return PROVEN_ERR_TIMEOUT;
+        const proven_net_deadline_t step = proven_net_deadline_in(50);
+        proven_err_t e = proven_loop_poll(c->loop, step < until ? step : until);
+        if (e != PROVEN_OK) return e;
+    }
+    return PROVEN_OK;
+}
+
+static void cl_h3_response(void *ctx, proven_http_event_request_t *r, const proven_http_response_t *head) {
+    (void)r;
+    proven_cl_call_t *call = ctx;
+    /* The head, copied into the call where an HTTP/1.1 head would be: its views live until finish. */
+    proven_size_t at = 0, n = 0;
+    for (proven_size_t i = 0; i < head->header_count && n < CL_MAX_HEADERS; ++i) {
+        const proven_u8str_view_t name = head->headers[i].name, value = head->headers[i].value;
+        if (name.size + value.size > call->buf_cap - at) break;
+        for (proven_size_t k = 0; k < name.size; ++k) call->buf[at + k] = name.ptr[k];
+        for (proven_size_t k = 0; k < value.size; ++k) call->buf[at + name.size + k] = value.ptr[k];
+        call->headers[n++] = (proven_http_header_t){ .name = { .ptr = call->buf + at, .size = name.size }, .value = { .ptr = call->buf + at + name.size, .size = value.size } };
+        at += name.size + value.size;
+    }
+    call->res = (proven_http_response_t){ .version_minor = 1, .status = head->status, .headers = call->headers, .header_count = n };
+    call->h3_head = true;
+}
+
+static void cl_h3_body(void *ctx, proven_http_event_request_t *r, proven_mem_view_t piece, bool last) {
+    proven_cl_call_t *call = ctx;
+    (void)last;
+    if (piece.size == 0) return;
+    if (call->h3q_len + piece.size > call->h3q_cap) {
+        if (call->h3q_pos > 0) {
+            for (proven_size_t i = call->h3q_pos; i < call->h3q_len; ++i) call->h3q[i - call->h3q_pos] = call->h3q[i];
+            call->h3q_len -= call->h3q_pos;
+            call->h3q_pos = 0;
+        }
+        if (call->h3q_len + piece.size > call->h3q_cap) {
+            proven_size_t want = call->h3q_cap ? call->h3q_cap : 16384;
+            while (want < call->h3q_len + piece.size) want *= 2;
+            proven_byte_t *q = cl_alloc(call->client->cfg.alloc, want);
+            if (!q) { call->h3_why = PROVEN_ERR_NOMEM; proven_http_event_request_abort(r); return; }
+            for (proven_size_t i = 0; i < call->h3q_len; ++i) q[i] = call->h3q[i];
+            cl_free(call->client->cfg.alloc, call->h3q);
+            call->h3q = q;
+            call->h3q_cap = want;
+        }
+    }
+    for (proven_size_t i = 0; i < piece.size; ++i) call->h3q[call->h3q_len + i] = piece.ptr[i];
+    call->h3q_len += piece.size;
+    /* Read at the caller's pace: past the high mark the request waits (QUIC's window then holds the server). */
+    if (!call->h3_paused && call->h3q_len - call->h3q_pos > CL_H3_QUEUE_HIGH) { call->h3_paused = true; proven_http_event_request_pause(r); }
+}
+
+/* A stream body: what the reader gives, written as the request takes it. */
+static void cl_h3_pump(proven_cl_call_t *call) {
+    while (call->h3_req && !call->h3_done && !call->h3_stream_end) {
+        if (call->h3_pend_off == call->h3_pend_len) {
+            proven_result_size_t r = proven_reader_read(call->h3_stream, (proven_mem_mut_t){ .ptr = call->out, .size = call->out_cap });
+            if (r.err == PROVEN_ERR_EOF) {
+                call->h3_stream_end = true;
+                (void)proven_http_event_request_end(call->h3_req);
+                return;
+            }
+            if (r.err != PROVEN_OK) { call->h3_why = r.err; proven_http_event_request_abort(call->h3_req); return; }
+            call->h3_pend_off = 0;
+            call->h3_pend_len = r.value;
+        }
+        proven_result_size_t w = proven_http_event_request_write(call->h3_req, (proven_mem_view_t){ .ptr = call->out + call->h3_pend_off, .size = call->h3_pend_len - call->h3_pend_off });
+        if (w.err != PROVEN_OK || w.value == 0) return;          /* on_writable says when */
+        call->h3_pend_off += w.value;
+    }
+}
+
+static void cl_h3_writable(void *ctx, proven_http_event_request_t *r) { (void)r; cl_h3_pump(ctx); }
+
+static void cl_h3_done(void *ctx, proven_http_event_request_t *r, proven_err_t why) {
+    (void)r;
+    proven_cl_call_t *call = ctx;
+    call->h3_done = true;
+    if (call->h3_why == PROVEN_OK) call->h3_why = why;
+    call->h3_req = (void *)0;
+}
+
+/* The request over HTTP/3, and its response head into `call`. */
+static proven_err_t cl_exchange_h3(proven_cl_call_t *call, const proven_http_client_request_t *req, const proven_url_t *u, const proven_cl_attempt_t *at) {
+    proven_http_client_t *c = call->client;
+    proven_err_t e = cl_h3_ready(c);
+    if (e != PROVEN_OK) return e;
+    call->h3 = true;
+    call->h3_head = call->h3_done = call->h3_paused = call->h3_stream_end = false;
+    call->h3_why = PROVEN_OK;
+    call->h3q_len = call->h3q_pos = 0;
+    call->h3_pend_off = call->h3_pend_len = 0;
+
+    /* The fields, chosen as the HTTP/1.1 exchange chooses them; their bytes in `out`. */
+    proven_http_header_t fields[CL_MAX_HEADERS + 8];
+    proven_size_t nf = 0, used = 0;
+    bool caller_cookie = false;
+    const bool streaming = at->send_body && proven_reader_is_valid(req->body_stream);
+    for (proven_size_t i = 0; i < req->header_count; ++i) {
+        const proven_u8str_view_t name = req->headers[i].name;
+        if (at->cross_origin && cl_is_credential_header(name)) continue;
+        if (at->authorization.size > 0 && proven_u8str_view_eq_ascii_ci(name, cl_lit("Authorization"))) continue;
+        if (!at->send_body && proven_u8str_view_eq_ascii_ci(name, cl_lit("Content-Type"))) continue;
+        if (proven_u8str_view_eq_ascii_ci(name, cl_lit("Expect"))) continue;
+        if (proven_u8str_view_eq_ascii_ci(name, cl_lit("Cookie"))) caller_cookie = true;
+        if (nf == CL_MAX_HEADERS) return PROVEN_ERR_OUT_OF_BOUNDS;
+        fields[nf++] = req->headers[i];
+    }
+    if (c->cfg.user_agent.size > 0) fields[nf++] = (proven_http_header_t){ cl_lit("User-Agent"), c->cfg.user_agent };
+    if (at->authorization.size > 0) fields[nf++] = (proven_http_header_t){ cl_lit("Authorization"), at->authorization };
+    if (c->cfg.cookies && !caller_cookie) {
+        proven_size_t n = 0;
+        e = proven_http_cookie_jar_header(c->cfg.cookies, u->host, u->path.size ? u->path : cl_lit("/"), true, proven_time_now(),
+                                          (proven_mem_mut_t){ .ptr = call->out + used, .size = call->out_cap - used }, &n);
+        if (e != PROVEN_OK) return e;
+        if (n > 0) { fields[nf++] = (proven_http_header_t){ cl_lit("Cookie"), { .ptr = call->out + used, .size = n } }; used += n; }
+    }
+    if (c->cfg.decompress && !proven_http_header_find(req->headers, req->header_count, cl_lit("Accept-Encoding"), &(proven_u8str_view_t){0}) &&
+        !proven_http_header_find(req->headers, req->header_count, cl_lit("Range"), &(proven_u8str_view_t){0}))
+        fields[nf++] = (proven_http_header_t){ cl_lit("Accept-Encoding"), proven_http_decoder_accept_(c->cfg.decompress_zstd, c->cfg.decompress_brotli) };
+
+    /* Where: the event client takes an address. */
+    proven_net_addr_t addrs[CL_MAX_ADDRS];
+    proven_size_t count = 0;
+    e = proven_net_resolve(u->host, proven_url_effective_port(u), addrs, CL_MAX_ADDRS, &count);
+    if (e != PROVEN_OK) return e;
+    if (count == 0) return PROVEN_ERR_NOT_FOUND;
+
+    /* Each address in turn while one gives no QUIC answer at all, as the TCP connect tries each. */
+    for (proven_size_t ai = 0;; ++ai) {
+        proven_http_event_request_options_t o = {
+            .method = at->method, .url = { .ptr = call->url, .size = call->url_len }, .address = &addrs[ai], .headers = fields, .header_count = nf,
+            .on = { cl_h3_response, cl_h3_body, cl_h3_writable, cl_h3_done }, .ctx = call, .http3 = true,
+        };
+        if (at->send_body && !streaming) o.body = req->body;
+        if (streaming) { o.body_length = PROVEN_HTTP_EVENT_LENGTH_UNKNOWN; call->h3_stream = req->body_stream; }
+        else if (at->send_body && req->body.size == 0 && (proven_u8str_view_eq_ascii_ci(at->method, cl_lit("POST")) || proven_u8str_view_eq_ascii_ci(at->method, cl_lit("PUT")) ||
+                                                          proven_u8str_view_eq_ascii_ci(at->method, cl_lit("PATCH")))) o.body_length = 0;
+        call->h3_head = call->h3_done = false;
+        call->h3_why = PROVEN_OK;
+        e = proven_http_event_client_start(c->ev, &o, &call->h3_req);
+        if (e != PROVEN_OK) { call->h3_req = (void *)0; return e; }
+        if (streaming) cl_h3_pump(call);
+        /* The head: connect_timeout_ms for the connection the event client may make, then io_timeout_ms. */
+        e = cl_h3_wait(c, &call->h3_head, &call->h3_done, proven_net_deadline_in(c->cfg.connect_timeout_ms + c->cfg.io_timeout_ms));
+        if (e == PROVEN_OK && !call->h3_head) e = call->h3_why != PROVEN_OK ? call->h3_why : PROVEN_ERR_RESET;
+        if (e == PROVEN_OK) break;
+        if (call->h3_req) proven_http_event_request_abort(call->h3_req);
+        const bool nobody = e == PROVEN_ERR_TIMEOUT || e == PROVEN_ERR_REFUSED || e == PROVEN_ERR_UNREACHABLE;
+        if (!nobody || streaming || ai + 1 >= count) return e;          /* a stream body was read once: not again */
+    }
+    call->got_response_bytes = true;
+    if (c->cfg.cookies) {
+        for (proven_size_t i = 0; i < call->res.header_count; ++i) {
+            if (!proven_u8str_view_eq_ascii_ci(call->headers[i].name, cl_lit("Set-Cookie"))) continue;
+            (void)proven_http_cookie_jar_store(c->cfg.cookies, u->host, u->path.size ? u->path : cl_lit("/"), true, call->headers[i].value, proven_time_now());
+        }
+    }
+    call->keep_alive = false;                          /* the QUIC connection is the event client's to keep */
+    call->body_done = false;
+    proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
+    proven_http_decoder_free_(&call->dec);
+    call->pending = (proven_mem_view_t){0};
+    call->decoding = c->cfg.decompress && proven_http_decoder_wanted_(call->res.status, call->res.headers, call->res.header_count, c->cfg.decompress_zstd, c->cfg.decompress_brotli, &coding);
+    if (call->decoding) proven_http_decoder_begin_(&call->dec, c->cfg.alloc, coding);
+    return PROVEN_OK;
+}
+
+/* Body bytes from the queue, the loop run for more while it is empty. */
+static proven_err_t cl_h3_next(proven_cl_call_t *call, proven_size_t max, proven_mem_view_t *payload) {
+    proven_http_client_t *c = call->client;
+    if (call->h3q_pos == call->h3q_len) {
+        call->h3q_pos = call->h3q_len = 0;
+        if (call->h3_paused && call->h3_req) { call->h3_paused = false; proven_http_event_request_resume(call->h3_req); }
+        while (call->h3q_len == 0 && !call->h3_done) {
+            proven_err_t e = cl_h3_wait(c, &call->h3_done, (void *)0, proven_net_deadline_in(c->cfg.io_timeout_ms));
+            if (call->h3q_len > 0) break;
+            if (e != PROVEN_OK) return e;
+        }
+        if (call->h3q_len == 0) {
+            call->body_done = true;
+            return call->h3_why == PROVEN_OK ? PROVEN_ERR_EOF : (call->h3_why == PROVEN_ERR_EOF ? PROVEN_ERR_RESET : call->h3_why);
+        }
+    }
+    proven_size_t n = call->h3q_len - call->h3q_pos;
+    if (n > max) n = max;
+    *payload = (proven_mem_view_t){ .ptr = call->h3q + call->h3q_pos, .size = n };
+    call->h3q_pos += n;
+    if (call->h3_paused && call->h3_req && call->h3q_len - call->h3q_pos < CL_H3_QUEUE_LOW) { call->h3_paused = false; proven_http_event_request_resume(call->h3_req); }
+    return PROVEN_OK;
+}
+
+static void cl_h3_release(proven_cl_call_t *call) {
+    if (!call->h3) return;
+    if (call->h3_req) proven_http_event_request_abort(call->h3_req);
+    call->h3_req = (void *)0;
+    cl_free(call->client->cfg.alloc, call->h3q);
+    call->h3q = (void *)0;
+    call->h3q_cap = call->h3q_len = call->h3q_pos = 0;
+    call->h3 = false;
+}
+#endif
+
 /* The next piece of the body, as a view into the read window of at most `max` bytes. The
  * window is refilled from the transport when it runs dry - so a view is good only until the
  * next call. PROVEN_ERR_EOF at the end of the body. */
 static proven_err_t cl_next_payload(proven_cl_call_t *call, proven_size_t max, proven_mem_view_t *payload) {
     if (call->body_done) return PROVEN_ERR_EOF;
+#if !defined(PROVEN_NO_HTTP3)
+    if (call->h3) return cl_h3_next(call, max, payload);
+#endif
     for (;;) {
         if (call->buf_pos < call->buf_len) {
             proven_size_t avail = call->buf_len - call->buf_pos;
@@ -831,6 +1124,9 @@ static proven_result_size_t cl_read_decoded(proven_cl_call_t *call, proven_mem_m
 /* Read away what is left of a body so the connection can carry the next request - up to a
  * limit: past it, closing is cheaper than reading. */
 static void cl_drain(proven_cl_call_t *call) {
+#if !defined(PROVEN_NO_HTTP3)
+    if (call->h3) return;                              /* the stream is reset instead: nothing is kept that a body must be read off */
+#endif
     proven_byte_t sink[2048];
     proven_size_t total = 0;
     while (!call->body_done && total <= CL_DRAIN_LIMIT) {
@@ -843,6 +1139,9 @@ static void cl_drain(proven_cl_call_t *call) {
 
 /* Give the connection back, or close it. */
 static void cl_release_conn(proven_cl_call_t *call) {
+#if !defined(PROVEN_NO_HTTP3)
+    cl_h3_release(call);
+#endif
     if (!call->conn) return;
     if (call->body_done && call->keep_alive && call->buf_pos == call->buf_len) cl_pool_put(call->client, call->conn);
     else cl_conn_close(call->client, call->conn);
@@ -872,6 +1171,8 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
     }
     bool streaming = proven_reader_is_valid(request->body_stream);
     if (streaming && request->body.size > 0) return PROVEN_ERR_INVALID_ARG;
+    if (request->http3 && !client->cfg.http3) return PROVEN_ERR_INVALID_ARG;
+    if (request->http3 && request->upgrade.size > 0) return PROVEN_ERR_UNSUPPORTED;     /* HTTP/3 changes protocol no such way */
 
     proven_allocator_t a = client->cfg.alloc;
     proven_size_t cap = client->cfg.max_head_bytes;
@@ -904,20 +1205,37 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
         if (e != PROVEN_OK || u.host.size == 0 || u.host.size > 255) { e = PROVEN_ERR_INVALID_FORMAT; break; }
         bool https = proven_url_scheme_is(&u, cl_lit("https"));
         if (!https && !proven_url_scheme_is(&u, cl_lit("http"))) { e = PROVEN_ERR_UNSUPPORTED; break; }
-        if (https && !client->cfg.tls_wrap) { e = PROVEN_ERR_UNSUPPORTED; break; }
         if (redirects == 0 && origin_host_len == 0) {
+            if (request->http3 && !https) { e = PROVEN_ERR_INVALID_ARG; break; }
             for (proven_size_t i = 0; i < u.host.size; ++i) origin_host[i] = cl_lower(u.host.ptr[i]);
             origin_host_len = u.host.size;
             origin_port = proven_url_effective_port(&u);
             origin_https = https;
         }
+        /* HTTP/3 where the caller asked for it: the origin it named, and a redirect within it. */
+        bool use_h3 = false;
+#if !defined(PROVEN_NO_HTTP3)
+        if (request->http3 && https && u.host.size == origin_host_len && proven_url_effective_port(&u) == origin_port && origin_https) {
+            use_h3 = true;
+            for (proven_size_t i = 0; use_h3 && i < u.host.size; ++i) if (cl_lower(u.host.ptr[i]) != origin_host[i]) use_h3 = false;
+        }
+        if (use_h3 && client->has_proxy && !cl_no_proxy(client, u.host)) { e = PROVEN_ERR_UNSUPPORTED; break; }   /* no CONNECT-UDP */
+#endif
+        if (https && !use_h3 && !client->cfg.tls_wrap) { e = PROVEN_ERR_UNSUPPORTED; break; }
 
         /* A request is replayed on a fresh connection when a reused one turns out to be dead
          * before a single byte of the answer arrived - the server closed it while it sat
          * idle - and the body can be sent again. */
         bool replayable = !(at.send_body && streaming);
         bool allow_reuse = true;
-        for (int attempt = 0; attempt < 2; ++attempt) {
+#if !defined(PROVEN_NO_HTTP3)
+        if (use_h3) {
+            call->got_response_bytes = false;
+            e = cl_exchange_h3(call, request, &u, &at);
+            if (e != PROVEN_OK) break;
+        }
+#endif
+        for (int attempt = 0; attempt < 2 && !use_h3; ++attempt) {
             e = cl_connect(client, &u, allow_reuse, &call->conn, &call->reused);
             if (e != PROVEN_OK) break;
             call->got_response_bytes = false;
@@ -1006,12 +1324,13 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
             bool next_https = ok && proven_url_scheme_is(&nu, cl_lit("https"));
             if (ok && !next_https && !proven_url_scheme_is(&nu, cl_lit("http"))) ok = false;
             if (ok && https && !next_https) ok = false;               /* never from https down to http */
-            if (ok && next_https && !client->cfg.tls_wrap) ok = false;
+            bool same = ok && nu.host.size == origin_host_len && proven_url_effective_port(&nu) == origin_port && next_https == origin_https;
+            for (proven_size_t i = 0; same && i < nu.host.size; ++i) if (cl_lower(nu.host.ptr[i]) != origin_host[i]) same = false;
+            /* Within the origin a request asked over HTTP/3 stays on it; anywhere else HTTPS is tls_wrap's. */
+            if (ok && next_https && !client->cfg.tls_wrap && !(request->http3 && same)) ok = false;
             if (ok) {
                 /* A fragment is the client's own business and is not sent anywhere. */
                 if (nu.has_fragment) nl = (proven_size_t)(nu.fragment.ptr - 1 - next);
-                bool same = nu.host.size == origin_host_len && proven_url_effective_port(&nu) == origin_port && next_https == origin_https;
-                for (proven_size_t i = 0; same && i < nu.host.size; ++i) if (cl_lower(nu.host.ptr[i]) != origin_host[i]) same = false;
                 if (!same) at.cross_origin = true;
                 /* An answer to a challenge was computed for the old target; the new one may
                  * ask again. */
@@ -1031,6 +1350,9 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
     }
 
     if (e != PROVEN_OK) {
+#if !defined(PROVEN_NO_HTTP3)
+        cl_h3_release(call);
+#endif
         if (call->conn) cl_conn_close(client, call->conn);
         proven_http_decoder_free_(&call->dec);
         cl_free(a, call);

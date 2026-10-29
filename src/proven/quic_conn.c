@@ -573,6 +573,10 @@ struct proven_quic_conn {
     proven_u64 loss_timer;
     proven_u64 cwnd, ssthresh, bif, recovery_start;
     bool in_recovery_set;
+    /* CUBIC (RFC 9438; RFC-0033): the window before the last reduction, its fast-convergence
+     * predecessor, when the epoch began (0: not begun), K, and the Reno-friendly estimate. */
+    proven_u64 cu_wmax, cu_wlast, cu_epoch, cu_k_ms, cu_west;
+    proven_u64 ca_rest, cu_west_rest;   /* what integer division left of the increases: carried, not lost */
     proven_u64 pace_tokens, pace_time;
     proven_u64 peer_max_ack_delay, peer_ack_delay_exp;
     bool hs_acked;                      /* a client: something it sent at Handshake was acknowledged */
@@ -1162,9 +1166,78 @@ static void cc_init(proven_quic_conn_t *c) {
     const proven_u64 mds = c->datagram;
     c->cwnd = qmin(10 * mds, qmax(14720, 2 * mds));
     c->ssthresh = QC_INF;
+    c->cu_wmax = c->cu_wlast = c->cu_epoch = c->cu_k_ms = c->cu_west = 0;
+    c->ca_rest = c->cu_west_rest = 0;
+}
+
+/* `num / den` added to the window, the remainder kept for the next time: an increase of a
+ * fraction of a byte per acknowledgement - a large window's - is not lost to the division. */
+static proven_u64 cc_share(proven_u64 *rest, proven_u64 num, proven_u64 den) {
+    const proven_u64 sum = *rest + num;
+    *rest = sum % den;
+    return sum / den;
 }
 
 static proven_u64 cc_min_window(const proven_quic_conn_t *c) { return 2 * (proven_u64)c->datagram; }
+
+/* CUBIC (RFC 9438) in integers: windows in bytes, time in milliseconds, C = 0.4 segments/s^3,
+ * beta = 0.7. */
+#define CU_CAP ((proven_u64)1 << 26)
+
+/* The integer cube root of x < 2^60, by bisection. */
+static proven_u64 cu_cbrt(proven_u64 x) {
+    proven_u64 lo = 0, hi = (proven_u64)1 << 20;
+    while (lo + 1 < hi) {
+        const proven_u64 m = (lo + hi) / 2;
+        if (m * m * m <= x) lo = m; else hi = m;
+    }
+    return lo;
+}
+
+/* C * MSS * d^3 for d milliseconds, in bytes (d at most 2^17: the model's ten minutes and more). */
+static proven_u64 cu_term(proven_u64 mss, proven_u64 d_ms) {
+    if (d_ms > ((proven_u64)1 << 17)) d_ms = (proven_u64)1 << 17;
+    const proven_u64 cube = d_ms * d_ms * d_ms;                         /* ms^3, under 2^51 */
+    return cube / 1000u * mss * 4u / 10000000u;                         /* 0.4 * MSS * (d/1000)^3 */
+}
+
+/* A window reduction (RFC 9438 section 4.6): fast convergence, beta 0.7, a new epoch at the next ACK. */
+static void cu_reduce(proven_quic_conn_t *c) {
+    const proven_u64 w = c->cwnd;
+    c->cu_wmax = w < c->cu_wlast ? w * 17 / 20 : w;                     /* (1 + beta) / 2 */
+    c->cu_wlast = w;
+    c->cu_epoch = 0;
+    c->ssthresh = qmax(w * 7 / 10, cc_min_window(c));
+    c->cwnd = c->ssthresh;
+}
+
+/* Congestion avoidance on `acked` bytes (RFC 9438 sections 4.2 to 4.4). */
+static void cu_avoid(proven_quic_conn_t *c, proven_u64 acked) {
+    const proven_u64 mss = c->datagram, now_ms = c->now / 1000;
+    if (c->cu_epoch == 0) {
+        c->cu_epoch = now_ms ? now_ms : 1;
+        c->cu_west = c->cwnd;
+        c->ca_rest = c->cu_west_rest = 0;
+        if (c->cwnd < c->cu_wmax) c->cu_k_ms = cu_cbrt((c->cu_wmax - c->cwnd) * 2500000000u / mss);   /* ((W_max - cwnd) / (C MSS))^(1/3) s, in ms */
+        else { c->cu_k_ms = 0; c->cu_wmax = c->cwnd; }
+    }
+    /* The Reno-friendly estimate: alpha = 3 (1 - beta) / (1 + beta) = 9/17 segments a round trip. */
+    c->cu_west += cc_share(&c->cu_west_rest, mss * acked * 9, 17 * qmax(c->cwnd, 1));
+    const proven_u64 t = now_ms - c->cu_epoch + qmax(c->srtt, 1000) / 1000;   /* a round trip ahead */
+    proven_u64 target;
+    if (t >= c->cu_k_ms) {
+        const proven_u64 up = cu_term(mss, t - c->cu_k_ms);
+        target = c->cu_wmax > CU_CAP - qmin(up, CU_CAP) ? CU_CAP : c->cu_wmax + up;
+    } else {
+        const proven_u64 down = cu_term(mss, c->cu_k_ms - t);
+        target = c->cu_wmax > down ? c->cu_wmax - down : 0;
+    }
+    if (target < c->cwnd) target = c->cwnd;
+    if (target > c->cwnd + c->cwnd / 2) target = c->cwnd + c->cwnd / 2;
+    if (c->cu_west > target) c->cwnd = qmax(c->cwnd, c->cu_west);     /* the Reno-friendly region */
+    else c->cwnd += cc_share(&c->ca_rest, (target - c->cwnd) * acked, qmax(c->cwnd, 1));
+}
+
 
 static bool in_recovery(const proven_quic_conn_t *c, proven_u64 sent_time) {
     return c->in_recovery_set && sent_time <= c->recovery_start;
@@ -1174,6 +1247,7 @@ static void cc_congestion_event(proven_quic_conn_t *c, proven_u64 sent_time) {
     if (in_recovery(c, sent_time)) return;
     c->in_recovery_set = true;
     c->recovery_start = c->now;
+    if (!c->cfg.newreno) { cu_reduce(c); return; }
     c->ssthresh = c->cwnd / 2;
     c->cwnd = qmax(c->ssthresh, cc_min_window(c));
 }
@@ -1183,8 +1257,9 @@ static void cc_acked(proven_quic_conn_t *c, const proven_qsent_t *p, proven_u64 
     if (in_recovery(c, p->time)) return;
     if (bif_before + c->datagram < c->cwnd / 2) return;      /* application limited: the window was not in use */
     if (c->cwnd < c->ssthresh) c->cwnd += p->size;
-    else c->cwnd += (proven_u64)c->datagram * p->size / c->cwnd;
-    if (c->cwnd > ((proven_u64)1 << 26)) c->cwnd = (proven_u64)1 << 26;
+    else if (!c->cfg.newreno) cu_avoid(c, p->size);
+    else c->cwnd += cc_share(&c->ca_rest, (proven_u64)c->datagram * p->size, c->cwnd);   /* NewReno: a datagram a round trip */
+    if (c->cwnd > CU_CAP) c->cwnd = CU_CAP;
 }
 
 static void update_rtt(proven_quic_conn_t *c, proven_u64 latest, proven_u64 ack_delay) {
@@ -1350,7 +1425,7 @@ static void detect_lost(proven_quic_conn_t *c, int lvl) {
      * those between them acknowledged (here: their numbers run without a gap). */
     if (c->have_rtt && last_pn - first_pn + 1 == lost_n) {
         const proven_u64 period = (c->srtt + qmax(4 * c->rttvar, c->cfg.granularity_us) + c->peer_max_ack_delay) * 3;
-        if (last_time - first_time > period) c->cwnd = cc_min_window(c);
+        if (last_time - first_time > period) { c->cwnd = cc_min_window(c); c->cu_epoch = 0; }
     }
 }
 
@@ -2670,6 +2745,48 @@ bool proven_quic_conn_ticket_stored_(const proven_quic_conn_t *c) { return c && 
 proven_u8str_view_t proven_quic_conn_alpn_(const proven_quic_conn_t *c) { return c && c->tls ? proven_tls_alpn(c->tls) : (proven_u8str_view_t){ 0 }; }
 
 /* ---- For tests: frames as if a packet carried them, and a key update started here ---- */
+
+proven_u64 proven_quic_cc_fast_convergence_(proven_u32 mss, proven_u64 w1, proven_u64 w2) {
+    proven_quic_conn_t *c = (proven_quic_conn_t *)proven_sys_mem_alloc(sizeof(proven_quic_conn_t), alignof(proven_quic_conn_t));
+    if (!c) return 0;
+    proven_sys_mem_set(c, 0, sizeof *c);
+    c->datagram = mss;
+    cc_init(c);
+    c->cwnd = w1; cu_reduce(c);
+    c->cwnd = w2; cu_reduce(c);
+    const proven_u64 w = c->cu_wmax;
+    proven_sys_mem_free(c);
+    return w;
+}
+
+void proven_quic_cc_model_(bool newreno, proven_u32 mss, proven_u64 rtt_us, proven_u64 w_loss, proven_u64 *after, proven_u64 *recover_us) {
+    *after = *recover_us = 0;
+    proven_quic_conn_t *c = (proven_quic_conn_t *)proven_sys_mem_alloc(sizeof(proven_quic_conn_t), alignof(proven_quic_conn_t));
+    if (!c) return;
+    proven_sys_mem_set(c, 0, sizeof *c);
+    c->cfg.newreno = newreno;
+    c->datagram = mss;
+    c->srtt = rtt_us;
+    c->have_rtt = true;
+    c->now = 1000000;
+    cc_init(c);
+    /* In congestion avoidance at `w_loss`, and a loss there. */
+    c->cwnd = c->ssthresh = w_loss;
+    cc_congestion_event(c, c->now - rtt_us);
+    *after = c->cwnd;
+    const proven_u64 lost_at = c->now;
+    while (c->now - lost_at < 600000000u) {
+        /* A round trip: the whole window, sent a round trip ago, acknowledged a packet at a time. */
+        const proven_u64 w = c->cwnd;
+        c->now += rtt_us;
+        for (proven_u64 done = 0; done < w; done += mss) {
+            const proven_qsent_t p = { .in_flight = true, .size = mss, .time = c->now - rtt_us };
+            cc_acked(c, &p, w);
+        }
+        if (c->cwnd >= w_loss) { *recover_us = c->now - lost_at; break; }
+    }
+    proven_sys_mem_free(c);
+}
 
 proven_u64 proven_quic_conn_test_frames_(proven_quic_conn_t *c, int lvl, proven_mem_view_t payload, proven_u64 now) {
     c->now = now;
