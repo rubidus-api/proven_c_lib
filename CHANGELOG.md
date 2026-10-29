@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.96.0] - 2026-10-29
+
 ### Added
 
 - **HTTP/3: this side's QPACK encoder uses the peer's table** (RFC-0032, the encoder half): when a
