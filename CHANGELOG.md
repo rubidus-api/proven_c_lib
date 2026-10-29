@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.97.0] - 2026-10-30
+
 ### Added
 
 - **The blocking client speaks HTTP/3 when a request asks** (RFC-0034): a client made with `http3`
