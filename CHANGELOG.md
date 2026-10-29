@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.93.0] - 2026-10-29
+
 ### Changed
 
 - **On io_uring every send goes through the ring** (RFC-0030 D-3, the owner's decision of
