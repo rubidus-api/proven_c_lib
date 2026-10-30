@@ -489,8 +489,8 @@ static proven_err_t internal_wait_one(proven_uintptr_t handle, proven_u8 want, p
 // Stream sockets
 // -----------------------------------------------------------------------------
 
-proven_err_t proven_net_listen(proven_net_addr_t at, int backlog,
-                               proven_net_listener_t *out, proven_net_addr_t *bound) {
+static proven_err_t net_listen(proven_net_addr_t at, int backlog, bool shared,
+                              proven_net_listener_t *out, proven_net_addr_t *bound) {
     if (!out) return PROVEN_ERR_INVALID_ARG;
     *out = (proven_net_listener_t){0};
     if (at.family == PROVEN_NET_FAMILY_NONE) return PROVEN_ERR_INVALID_ARG;
@@ -498,7 +498,8 @@ proven_err_t proven_net_listen(proven_net_addr_t at, int backlog,
     proven_sys_net_addr_t sys;
     internal_addr_to_sys(&at, &sys);
     proven_sys_socket_t s = PROVEN_SYS_SOCKET_INVALID;
-    proven_sys_net_result_t r = proven_sys_net_open_listener(&sys, backlog, &s);
+    proven_sys_net_result_t r = shared ? proven_sys_net_open_shared(&sys, true, backlog, &s)
+                                       : proven_sys_net_open_listener(&sys, backlog, &s);
     if (r != PROVEN_SYS_NET_OK) return internal_err_from_reason(r);
 
     if (bound) {
@@ -514,6 +515,15 @@ proven_err_t proven_net_listen(proven_net_addr_t at, int backlog,
     out->internal.family = (proven_u8)at.family;
     out->internal.open = true;
     return PROVEN_OK;
+}
+
+proven_err_t proven_net_listen(proven_net_addr_t at, int backlog,
+                               proven_net_listener_t *out, proven_net_addr_t *bound) {
+    return net_listen(at, backlog, false, out, bound);
+}
+
+proven_err_t proven_net_listen_shared_(proven_net_addr_t at, int backlog, proven_net_listener_t *out, proven_net_addr_t *bound) {
+    return net_listen(at, backlog, true, out, bound);
 }
 
 proven_err_t proven_net_accept(proven_net_listener_t *listener, proven_net_deadline_t until,
@@ -752,7 +762,7 @@ proven_err_t proven_net_pair(proven_net_conn_t *a, proven_net_conn_t *b) {
 // Datagram sockets
 // -----------------------------------------------------------------------------
 
-proven_err_t proven_net_udp_open(proven_net_addr_t at, proven_net_udp_t *out, proven_net_addr_t *bound) {
+static proven_err_t net_udp_open(proven_net_addr_t at, bool shared, proven_net_udp_t *out, proven_net_addr_t *bound) {
     if (!out) return PROVEN_ERR_INVALID_ARG;
     *out = (proven_net_udp_t){0};
     if (at.family == PROVEN_NET_FAMILY_NONE) return PROVEN_ERR_INVALID_ARG;
@@ -760,7 +770,7 @@ proven_err_t proven_net_udp_open(proven_net_addr_t at, proven_net_udp_t *out, pr
     proven_sys_net_addr_t sys;
     internal_addr_to_sys(&at, &sys);
     proven_sys_socket_t s = PROVEN_SYS_SOCKET_INVALID;
-    proven_sys_net_result_t r = proven_sys_net_open_datagram(&sys, &s);
+    proven_sys_net_result_t r = shared ? proven_sys_net_open_shared(&sys, false, 0, &s) : proven_sys_net_open_datagram(&sys, &s);
     if (r != PROVEN_SYS_NET_OK) return internal_err_from_reason(r);
     if (bound) {
         proven_sys_net_addr_t actual;
@@ -775,6 +785,19 @@ proven_err_t proven_net_udp_open(proven_net_addr_t at, proven_net_udp_t *out, pr
     out->internal.family = (proven_u8)at.family;
     out->internal.open = true;
     return PROVEN_OK;
+}
+
+proven_err_t proven_net_udp_open(proven_net_addr_t at, proven_net_udp_t *out, proven_net_addr_t *bound) {
+    return net_udp_open(at, false, out, bound);
+}
+
+proven_err_t proven_net_udp_open_shared_(proven_net_addr_t at, proven_net_udp_t *out, proven_net_addr_t *bound) {
+    return net_udp_open(at, true, out, bound);
+}
+
+proven_err_t proven_net_udp_steer_(proven_net_udp_t *udp, proven_size_t n) {
+    if (!udp || !udp->internal.open || n < 1 || n > 255) return PROVEN_ERR_INVALID_ARG;
+    return internal_err_from_reason(proven_sys_net_udp_steer((proven_sys_socket_t)udp->internal.handle, (proven_u32)n));
 }
 
 proven_err_t proven_net_udp_send_to(proven_net_udp_t *udp, proven_net_addr_t to, proven_mem_view_t data,

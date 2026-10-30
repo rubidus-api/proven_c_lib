@@ -1245,7 +1245,7 @@ int main(void) {
         net_free(n);
     }
 
-    PROVEN_TEST_SECTION("the path's datagram size", "PMTU probing (RFC-0018 S-2): 1,452 reached; a path that carries no more than 1,280 found without a stall and without a congestion signal; a path that stops carrying the size found falls back and finds it again; quiet once found.", "Inspect pm_next, pm_passed, pm_lost and the probe in proven_quic_conn_send, and the fallbacks in detect_lost and on_loss_timeout.");
+    PROVEN_TEST_SECTION("the path's datagram size", "PMTU probing (RFC-0018 S-2): 1,452 reached; a path that carries no more than 1,280 found without a stall and without a congestion signal; a path that stops carrying the size found falls back and finds it again; quiet once found; a search again after the raise time, while data flows, finding a path that widened.", "Inspect pm_next, pm_passed, pm_lost and the probe in proven_quic_conn_send, and the fallbacks in detect_lost and on_loss_timeout.");
     {
         fresh(n, 160);
         run_for(n, 2000000);
@@ -1292,6 +1292,29 @@ int main(void) {
         xfer_open(n, t, 1, true, 1 << 20);
         PROVEN_TEST_ASSERT(run_xfers(n, t, 30000000), "a megabyte each way over the narrow path", "");
         PROVEN_TEST_ASSERT(stats(n, 0).packets_lost == 0 && stats(n, 1).packets_lost == 0, "with no packet lost: nothing was sent above what the path carries", "");
+        free(t);
+        net_free(n);
+
+        /* The narrow path widens (RFC 8899 section 5.3). With the raise time at 5 s: idle, nothing
+         * is sent for it; once data flows again after the time, a search finds 1,452. */
+        net_init(n, 164);
+        n->cfg[0].pmtu_raise_ms = n->cfg[1].pmtu_raise_ms = 5000;
+        n->cfg[0].idle_timeout_ms = n->cfg[1].idle_timeout_ms = 120000;
+        n->hook = hook_mtu_1280;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "the handshake completes", "");
+        run_for(n, 10000000);
+        PROVEN_TEST_ASSERT(stats(n, 0).datagram_size <= 1280, "the narrow path's size found", "");
+        n->hook = NULL;
+        const proven_u64 quiet = n->sent[0] + n->sent[1], probes = stats(n, 0).pmtu_probes;
+        run_for(n, 20000000);
+        PROVEN_TEST_ASSERT(n->sent[0] + n->sent[1] == quiet && stats(n, 0).pmtu_probes == probes, "idle past the raise time: nothing sent", "");
+        t = calloc(1, sizeof *t);
+        xfer_open(n, t, 0, true, 1 << 20);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 30000000), "a megabyte", "");
+        run_for(n, 2000000);
+        printf("  the path widened: client %zu after %llu probes\n", stats(n, 0).datagram_size, (unsigned long long)stats(n, 0).pmtu_probes);
+        PROVEN_TEST_ASSERT(stats(n, 0).datagram_size == 1452, "sending again after the raise time, the client finds the wider path's 1,452", "");
         free(t);
         net_free(n);
 

@@ -288,6 +288,12 @@ proven_err_t proven_http_event_h3_create_(proven_http_event_server_t *server);
 /* A UDP socket at `at` (the TCP listener's address, its port chosen). */
 [[nodiscard]]
 proven_err_t proven_http_event_h3_listen_(proven_http_event_server_t *server, proven_net_addr_t at);
+/* listen_port (RFC-0037): the port's UDP socket for loop `index` of `loops`, taken (`*udp` is
+ * left closed on success), bound at `at`; the group's key. INVALID_STATE once the server has had a
+ * socket. */
+[[nodiscard]]
+proven_err_t proven_http_event_h3_listen_port_(proven_http_event_server_t *server, proven_net_udp_t *udp, proven_net_addr_t at,
+                                               proven_size_t loops, proven_size_t index, const proven_byte_t key[32]);
 /* stop_listening: no new connection; each says goodbye, in two steps. */
 void proven_http_event_h3_stop_(proven_http_event_server_t *server);
 /* Every connection ended now: exchanges get on_done(PROVEN_ERR_RESET). */

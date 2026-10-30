@@ -8,6 +8,8 @@
 #include "proven/time.h"
 #include "proven/h2.h"
 #include "proven_internal_tls.h"
+#include "proven_internal_quic_net.h"
+#include "proven/random.h"
 
 /*
  * The event-driven HTTP/1.1 server.
@@ -868,6 +870,112 @@ proven_err_t proven_http_event_server_listen(proven_http_event_server_t *s, prov
     s->closed_to_new = false;                      /* listening again is taking connections again */
     if (bound) *bound = got;
     return PROVEN_OK;
+}
+
+// -----------------------------------------------------------------------------
+// Several loops on one port (RFC-0037)
+// -----------------------------------------------------------------------------
+
+struct proven_http_event_port {
+    proven_allocator_t alloc;
+    proven_size_t loops;
+    bool http3;
+    proven_net_addr_t bound;
+    proven_byte_t key[32];             /* the group's: Retry, NEW_TOKEN and stateless reset tokens good at every loop */
+    proven_net_listener_t *tcp;        /* `loops` of them; closed once a server has taken one */
+    proven_net_udp_t *udp;             /* the same, with `http3`; else null */
+};
+
+static void port_free(proven_http_event_port_t *p) {
+    for (proven_size_t i = 0; i < p->loops; ++i) {
+        if (proven_net_listener_is_open(&p->tcp[i])) (void)proven_net_listener_close(&p->tcp[i]);
+        if (p->udp && proven_net_udp_is_open(&p->udp[i])) (void)proven_net_udp_close(&p->udp[i]);
+    }
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = p->key, .size = sizeof p->key });
+    if (p->udp) p->alloc.free_fn(p->alloc.ctx, p->udp);
+    p->alloc.free_fn(p->alloc.ctx, p->tcp);
+    p->alloc.free_fn(p->alloc.ctx, p);
+}
+
+proven_err_t proven_http_event_port_open(proven_allocator_t alloc, proven_net_addr_t at, proven_size_t loops, bool http3,
+                                         proven_http_event_port_t **out, proven_net_addr_t *bound) {
+    if (!out) return PROVEN_ERR_INVALID_ARG;
+    *out = (void *)0;
+    if (!alloc.alloc_fn || !alloc.free_fn || loops < 1 || loops > 255) return PROVEN_ERR_INVALID_ARG;
+#if defined(PROVEN_NO_HTTP3)
+    if (http3) return PROVEN_ERR_UNSUPPORTED;
+#endif
+    proven_http_event_port_t *p = ev_alloc(alloc, sizeof *p);
+    if (!p) return PROVEN_ERR_NOMEM;
+    for (proven_size_t i = 0; i < sizeof *p; ++i) ((proven_byte_t *)p)[i] = 0;
+    p->alloc = alloc;
+    p->http3 = http3;
+    p->tcp = ev_alloc(alloc, loops * sizeof *p->tcp);
+    p->udp = http3 ? ev_alloc(alloc, loops * sizeof *p->udp) : (void *)0;
+    if (!p->tcp || (http3 && !p->udp)) {
+        if (p->tcp) alloc.free_fn(alloc.ctx, p->tcp);
+        if (p->udp) alloc.free_fn(alloc.ctx, p->udp);
+        alloc.free_fn(alloc.ctx, p);
+        return PROVEN_ERR_NOMEM;
+    }
+    for (proven_size_t i = 0; i < loops; ++i) {
+        p->tcp[i] = (proven_net_listener_t){0};
+        if (http3) p->udp[i] = (proven_net_udp_t){0};
+    }
+    p->loops = loops;
+    if (!proven_random_bytes(p->key, sizeof p->key)) { port_free(p); return PROVEN_ERR_IO; }
+    /* All at once and in order, here: the group's order is the order of joining, and the
+     * program's index is that order. Port 0 is any port free for both, as for listen. */
+    proven_err_t e = PROVEN_OK;
+    for (int tries = 0;; ++tries) {
+        proven_net_addr_t got;
+        e = proven_net_listen_shared_(at, 1024, &p->tcp[0], &got);
+        if (e == PROVEN_OK && http3) e = proven_net_udp_open_shared_(got, &p->udp[0], (void *)0);
+        if (e == PROVEN_ERR_BUSY && at.port == 0 && tries < 16) {
+            (void)proven_net_listener_close(&p->tcp[0]);
+            continue;
+        }
+        p->bound = got;
+        break;
+    }
+    for (proven_size_t i = 1; i < loops && e == PROVEN_OK; ++i) {
+        e = proven_net_listen_shared_(p->bound, 1024, &p->tcp[i], (void *)0);
+        if (e == PROVEN_OK && http3) e = proven_net_udp_open_shared_(p->bound, &p->udp[i], (void *)0);
+    }
+    if (e == PROVEN_OK && http3) e = proven_net_udp_steer_(&p->udp[0], loops);
+    if (e != PROVEN_OK) { port_free(p); return e; }
+    if (bound) *bound = p->bound;
+    *out = p;
+    return PROVEN_OK;
+}
+
+proven_err_t proven_http_event_server_listen_port(proven_http_event_server_t *s, proven_http_event_port_t *port, proven_size_t index) {
+    if (!s || !port || index >= port->loops) return PROVEN_ERR_INVALID_ARG;
+    if ((s->h3 != (void *)0) != port->http3) return PROVEN_ERR_INVALID_ARG;
+    if (!proven_net_listener_is_open(&port->tcp[index])) return PROVEN_ERR_INVALID_STATE;        /* taken */
+    if (s->draining || s->listener_count != 0) return PROVEN_ERR_INVALID_STATE;
+    proven_ev_listener_t *l = ev_alloc(s->alloc, sizeof *l);
+    if (!l) return PROVEN_ERR_NOMEM;
+    for (proven_size_t i = 0; i < sizeof *l; ++i) ((proven_byte_t *)l)[i] = 0;
+#if !defined(PROVEN_NO_HTTP3)
+    if (s->h3) {
+        const proven_err_t e = proven_http_event_h3_listen_port_(s, &port->udp[index], port->bound, port->loops, index, port->key);
+        if (e != PROVEN_OK) { s->alloc.free_fn(s->alloc.ctx, l); return e; }
+    }
+#endif
+    l->listener = port->tcp[index];
+    port->tcp[index] = (proven_net_listener_t){0};       /* the server's now */
+    l->server = s;
+    const bool want = !s->stopped && s->conn_count < s->cfg.max_connections;
+    s->listeners[s->listener_count++] = l;
+    if (want) ev_listener_arm(l);
+    s->accepting = want;
+    s->closed_to_new = false;
+    return PROVEN_OK;
+}
+
+void proven_http_event_port_close(proven_http_event_port_t *port) {
+    if (port) port_free(port);
 }
 
 void proven_http_event_server_stop_listening(proven_http_event_server_t *s) {

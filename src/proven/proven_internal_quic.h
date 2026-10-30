@@ -423,6 +423,7 @@ typedef struct {
     proven_u32 granularity_us;                     /* RFC 9002's timer granularity: the clock's tick. 0: 1,000 */
     proven_u32 max_ack_ranges;                     /* received packet ranges kept per space. 0: 64 */
     proven_u32 key_update_packets;                 /* 1-RTT packets sent under one key before this side updates it (RFC 9001 section 6.6: AES-GCM's limit is 2^23). 0: 2^22 */
+    proven_u32 pmtu_raise_ms;                      /* after a search that stopped below the largest size, how long before a larger one is tried again (RFC 8899's PMTU_RAISE_TIMER). 0: 600,000 */
     proven_byte_t static_key[32];                  /* a server: one key for all its connections (Retry tokens, stateless reset tokens). All zero: drawn per connection */
     bool newreno;                                  /* RFC 9002's NewReno instead of CUBIC (RFC 9438; RFC-0033): for tests and measurement only */
     bool no_ecn;                                   /* nothing marked and no counts reported (RFC-0035): for tests and measurement only */
@@ -434,6 +435,11 @@ typedef struct {
      * answers in the client's version; `upgrade_v2` moves a client that lists 2 there (tests only). */
     proven_u32 version;
     bool after_vn, prefer_v2, upgrade_v2;
+    /* A server that is one of `cid_loops` loops on one port (RFC-0037; 0 or 1: alone): every
+     * connection ID a connection issues - its first, NEW_CONNECTION_ID - has its first byte
+     * equal to `cid_loop` modulo `cid_loops`, which is what the port's program routes by. (Not a
+     * Retry's: the Initial that follows may reach any loop, and the group's key opens its token.) */
+    proven_u8 cid_loops, cid_loop;
 } proven_quic_config_t;
 
 /* The ECN field of a datagram (RFC 3168), as the IP header carries it. */

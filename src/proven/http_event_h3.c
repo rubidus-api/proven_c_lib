@@ -859,7 +859,10 @@ static void x_datagram(struct ev_h3 *x, h3e_t *e, proven_mem_view_t dg, const pr
         return;
     }
     /* A short header for a connection this server does not know (any more): a stateless reset,
-     * smaller than what came, so that two servers cannot keep one going between them. */
+     * smaller than what came, so that two servers cannot keep one going between them. Not for an
+     * ID another loop of the port issued: one that came here while the group changed, whose
+     * connection may be alive there (RFC-0037). */
+    if (x->qc.cid_loops > 1 && hd.dcid.len > 0 && hd.dcid.id[0] % x->qc.cid_loops != x->qc.cid_loop) return;
     n = proven_quic_stateless_reset(&x->qc, &hd.dcid, dg.size, (proven_mem_mut_t){ .ptr = x->out, .size = sizeof x->out });
     if (n > 0) e_send(e, *from, x->out, n);
 }
@@ -936,6 +939,8 @@ proven_err_t proven_http_event_h3_create_(proven_http_event_server_t *sv) {
     return PROVEN_OK;
 }
 
+static proven_err_t e_start(proven_http_event_server_t *sv, h3e_t *e, proven_net_addr_t got);
+
 proven_err_t proven_http_event_h3_listen_(proven_http_event_server_t *sv, proven_net_addr_t at) {
     struct ev_h3 *x = sv->h3;
     /* A socket kept for connections after stop_listening serves again, rather than a second
@@ -968,6 +973,33 @@ proven_err_t proven_http_event_h3_listen_(proven_http_event_server_t *sv, proven
     proven_net_addr_t got;
     proven_err_t r = proven_net_udp_open(at, &e->udp, &got);
     if (r != PROVEN_OK) return r;
+    return e_start(sv, e, got);
+}
+
+proven_err_t proven_http_event_h3_listen_port_(proven_http_event_server_t *sv, proven_net_udp_t *udp, proven_net_addr_t at,
+                                               proven_size_t loops, proven_size_t index, const proven_byte_t key[32]) {
+    struct ev_h3 *x = sv->h3;
+    /* Only a server that has never listened: its connection IDs and its key are the group's from
+     * the first connection on. */
+    for (proven_size_t i = 0; i < H3_ENDS; ++i) if (x->ends[i]) return PROVEN_ERR_INVALID_STATE;
+    h3e_t *e = h3_alloc(sv->alloc, sizeof *e);
+    if (!e) return PROVEN_ERR_NOMEM;
+    e->rbuf = h3_alloc(sv->alloc, H3_DATAGRAM);
+    if (!e->rbuf) { sv->alloc.free_fn(sv->alloc.ctx, e); return PROVEN_ERR_NOMEM; }
+    x->ends[0] = e;
+    proven_byte_t *rbuf = e->rbuf;
+    *e = (h3e_t){ .x = x, .server = sv, .rbuf = rbuf, .udp = *udp };
+    *udp = (proven_net_udp_t){0};                  /* the server's now */
+    for (int i = 0; i < 32; ++i) x->qc.static_key[i] = key[i];
+    x->qc.cid_loops = (proven_u8)loops;
+    x->qc.cid_loop = (proven_u8)index;
+    return e_start(sv, e, at);
+}
+
+/* A socket opened for `e`: what it is asked for, and the loop told of it. */
+static proven_err_t e_start(proven_http_event_server_t *sv, h3e_t *e, proven_net_addr_t got) {
+    struct ev_h3 *x = sv->h3;
+    proven_err_t r;
     (void)proven_net_udp_gro_(&e->udp);
     (void)proven_net_udp_dontfrag_(&e->udp);
     e->ecn = proven_net_udp_ecn_(&e->udp);

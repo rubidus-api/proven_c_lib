@@ -612,6 +612,7 @@ struct proven_quic_conn {
     unsigned pm_big_lost;               /* packets above the configured size lost since one was acknowledged */
     bool pm_out;
     proven_u64 pm_pn, pm_deadline;
+    proven_u64 pm_raise_at;             /* a search that stopped below the largest size: when to search again (0: never) */
 
     proven_quic_event_t ev[QC_EVENTS];
     unsigned ev_head, ev_n;
@@ -679,10 +680,20 @@ static void reset_token_for(const proven_byte_t key[32], const proven_quic_cid_t
     qcopy(token, mac, PROVEN_QUIC_RESET_TOKEN);
 }
 
+/* The first byte of an ID this side issues, as a server that is one of several loops on a port
+ * (RFC-0037): the loop's number modulo their count, the rest of the byte random. */
+static void cid_route(const proven_quic_config_t *cfg, proven_byte_t *id) {
+    if (cfg->cid_loops < 2) return;
+    unsigned v = (unsigned)id[0] - (unsigned)id[0] % cfg->cid_loops + cfg->cid_loop % cfg->cid_loops;
+    if (v > 255) v -= cfg->cid_loops;
+    id[0] = (proven_byte_t)v;
+}
+
 static void new_local_cid(proven_quic_conn_t *c, proven_qcid_t *e) {
     *e = (proven_qcid_t){ .seq = c->local_next_seq++, .active = true, .has_token = true };
     e->cid.len = QC_CID_LEN;
     random_bytes(c, e->cid.id, QC_CID_LEN);
+    cid_route(&c->cfg, e->cid.id);
     reset_token_for(c->static_key, &e->cid, e->token);
     push_event(c, (proven_quic_event_t){ .kind = PROVEN_QUIC_EV_CID_NEW, .cid = e->cid });
 }
@@ -1223,7 +1234,16 @@ static void pm_next(proven_quic_conn_t *c) {
     if (want > top) want = top;
     c->pm_tries = 0;
     c->pm_out = false;
-    if (want <= c->pm_good || (c->pm_bad && c->pm_bad - c->pm_good < QC_PM_STEP)) { c->pm_size = 0; c->pm_state = 2; return; }
+    if (want <= c->pm_good || (c->pm_bad && c->pm_bad - c->pm_good < QC_PM_STEP)) {
+        c->pm_size = 0;
+        c->pm_state = 2;
+        /* A size failed: the path may carry more later (a route that changes), so the search
+         * runs again after a while - from the size in use, at a cost of a few probes (RFC 8899
+         * section 5.3: PMTU_RAISE_TIMER). */
+        const proven_u64 raise = c->cfg.pmtu_raise_ms ? c->cfg.pmtu_raise_ms : 600000u;
+        c->pm_raise_at = c->pm_bad ? c->now + raise * 1000 : 0;
+        return;
+    }
     c->pm_size = want;
     c->pm_state = 1;
 }
@@ -2619,6 +2639,9 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
      * 8899 section 4.1: a probe carries probe data, not what the connection needs delivered). */
     if (c->confirmed && c->state == QS_OPEN && c->validated && c->sp[2].tx_ok && !c->challenge_wait) {
         if (c->pm_state == 0) pm_begin(c);
+        /* Searched again only while data is in flight: an idle connection sends nothing for it,
+         * and nothing it does not owe keeps the peer's idle timer from running out. */
+        if (c->pm_state == 2 && c->pm_raise_at && now >= c->pm_raise_at && c->bif > 0) pm_begin(c);
         if (c->pm_state == 1 && !c->pm_out && c->pm_size <= out.size) {
             proven_qpkt_t pk = { .lvl = 2, .pn = c->sp[2].next_pn, .pn_len = proven_quic_pn_len(c->sp[2].next_pn, c->sp[2].largest_acked_plus_one) };
             pk.hlen = proven_quic_short_header_put(&peer_cid(c)->cid, c->key_phase, pk.pn, pk.pn_len, (proven_mem_mut_t){ out.ptr, out.size });

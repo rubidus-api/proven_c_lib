@@ -1643,8 +1643,9 @@ UDP 소켓은 연결이 쓰는 동안 열려 있고, 같은 포트에 다시 lis
   - 보낸 양의 3배라는 한도도, `http3_retry`의 Retry도 없다 - 약 3.6 KB보다 큰 0-RTT 응답도 왕복 하나를 기다리지
   않는다. 확인되지 않는 토큰은 없는 것으로 다룬다.
 - **HTTP/3 위에서 없는 것:** WebSocket(`proven_ws_event_accept`는 그 스트림을 거절한다), 트레일러,
-  서버 푸시, 이쪽 스스로의 이주(클라이언트의 새 주소는 검증한다), 1이 아닌 QUIC 버전.
-  `proven_http_event_server_adopt`는 TCP 연결만 받으므로, 여러 루프가 UDP 포트 하나를 나눠 쓸 수 없다.
+  서버 푸시, 이쪽 스스로의 이주(클라이언트의 새 주소는 검증한다), 1과 2가 아닌 QUIC 버전.
+  `proven_http_event_server_adopt`는 TCP 연결만 받는다. 여러 루프는 `proven_http_event_port_open`으로
+  UDP 포트 하나를 나눠 쓴다(Linux; 15장 13절).
 - **이벤트 구동 클라이언트는 요청이 청하면 HTTP/3을 말한다**(10절). 이 서버의 `Alt-Svc`를 스스로 따르지는 않는다.
 
 **어떻게 시험했는가.** 등록된 시험이 루프백 UDP 위에서 이 라이브러리의 QUIC과 HTTP/3 엔진으로 만든

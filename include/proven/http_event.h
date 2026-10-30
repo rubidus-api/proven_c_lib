@@ -47,6 +47,8 @@ typedef struct proven_http_stream proven_http_stream_t;
 
 /** @brief The server. Opaque. */
 typedef struct proven_http_event_server proven_http_event_server_t;
+/** Sockets for several loops on one port (RFC-0037): proven_http_event_port_open. */
+typedef struct proven_http_event_port proven_http_event_port_t;
 
 typedef struct {
     /** A request head has arrived and passed the server's checks. Required. Respond here, or
@@ -93,7 +95,7 @@ typedef struct {
     bool compress_zstd;                  /**< offer Zstandard too: a response asked to be compressed goes as `zstd` when the request's `Accept-Encoding` weighs zstd at least as high as gzip (curl and browsers send both at one weight), and as gzip otherwise, as before. Faster than gzip by several times, at about gzip 1's size or less. false: gzip only */
     int compress_zstd_level;             /**< zstd.h's level, 1 (fastest) to 9; 6 is about gzip 6's size at three times its speed, and its tables are 1 MiB for a response streamed. 0: 1 */
     int compress_zstd_window_log;        /**< zstd.h's window, 10 to 23. A response written whole is compressed in place with tables sized to it; one streamed holds the window and 128 KiB as input buffer, 64 KiB of hash table at level 1 (768 KiB at 3), and about 500 KiB for a block, until it ends - about 0.8 MiB at the defaults. 0: 17 (128 KiB) */
-    bool http3;                          /**< true: HTTP/3 too (RFC 9114, over QUIC, RFC 9000). Needs `tls`, whose configuration must offer `h3` (and must not when this is false). Each proven_http_event_server_listen then opens a UDP socket on the same address and port as well - a listen whose UDP socket cannot be opened fails - and HTTP/1.1 and HTTP/2 responses carry `Alt-Svc: h3=":PORT"` unless the handler wrote an `Alt-Svc` of its own. The callbacks and the stream functions are the same for all three; WebSocket is not taken over HTTP/3. Of the fields above, `max_connections` counts QUIC connections too; `max_concurrent_streams` is also the request streams a client may open at once on one; `max_head_bytes` is also the largest field section taken; `head_timeout_ms` covers the QUIC handshake; and a QUIC connection on which nothing at all arrives is let go of a second after the larger of `idle_timeout_ms` and `head_timeout_ms` (QUIC's idle timeout). A QUIC connection holds up to `http3_window_bytes` of request bodies that have arrived and not been taken (per stream, and in all), and up to 256 KiB per stream and 1 MiB in all of response bytes sent and not yet acknowledged - that, not `max_buffered_output`, is what bounds writes on it. Connections are told apart by their connection IDs on one socket; proven_http_event_server_adopt takes TCP connections only. In a build with PROVEN_NO_HTTP3, proven_http_event_server_create returns PROVEN_ERR_UNSUPPORTED */
+    bool http3;                          /**< true: HTTP/3 too (RFC 9114, over QUIC, RFC 9000). Needs `tls`, whose configuration must offer `h3` (and must not when this is false). Each proven_http_event_server_listen then opens a UDP socket on the same address and port as well - a listen whose UDP socket cannot be opened fails - and HTTP/1.1 and HTTP/2 responses carry `Alt-Svc: h3=":PORT"` unless the handler wrote an `Alt-Svc` of its own. The callbacks and the stream functions are the same for all three; WebSocket is not taken over HTTP/3. Of the fields above, `max_connections` counts QUIC connections too; `max_concurrent_streams` is also the request streams a client may open at once on one; `max_head_bytes` is also the largest field section taken; `head_timeout_ms` covers the QUIC handshake; and a QUIC connection on which nothing at all arrives is let go of a second after the larger of `idle_timeout_ms` and `head_timeout_ms` (QUIC's idle timeout). A QUIC connection holds up to `http3_window_bytes` of request bodies that have arrived and not been taken (per stream, and in all), and up to 256 KiB per stream and 1 MiB in all of response bytes sent and not yet acknowledged - that, not `max_buffered_output`, is what bounds writes on it. Connections are told apart by their connection IDs on one socket; proven_http_event_server_adopt takes TCP connections only - several loops share one HTTP/3 port through proven_http_event_port_open (Linux). In a build with PROVEN_NO_HTTP3, proven_http_event_server_create returns PROVEN_ERR_UNSUPPORTED */
     bool http3_retry;                    /**< HTTP/3: answer every client's first packet with a Retry (RFC 9000 section 8.1.2), so that no state is kept for an address until it has shown that it receives there - one round trip more for every connection, for a server under load. Without it no more than three times what an address has sent is sent to it before it is validated, as always */
     proven_size_t http3_window_bytes;    /**< HTTP/3: request-body bytes a client may send on one stream, and on a connection as a whole, before the handler has taken them (QUIC's flow control, RFC 9000 section 4) - as `http2_window_bytes` is for HTTP/2. 0: it starts at 256 KiB per stream and 1 MiB per connection and grows - doubling while the bodies are read as fast as they come, up to 16 MiB per stream and 24 MiB per connection (since v0.71.0, RFC-0019); a body not read stops the growth. A value set here is fixed, as before. At most 2^31-1. proven_http_event_server_set_window lowers either while the server runs */
     proven_size_t http3_header_table_bytes; /**< HTTP/3: the QPACK dynamic table a client's encoder may fill for this server's decoder (RFC 9204; RFC-0032), said in SETTINGS with 16 streams that may wait for its inserts. Made only when a client first uses it: then about twice this per connection. 0: 4,096. 32 to 1 MiB. The same size bounds the table the server's encoder fills for the client (since v0.96.0), when the client allows one: it refers only to entries the client has acknowledged, so a client never waits, and never inserts a field marked sensitive or a short credential */
@@ -119,6 +121,54 @@ proven_err_t proven_http_event_server_create(proven_loop_t *loop, const proven_h
  *         numbers in all), so that the port is one free for both. */
 [[nodiscard]]
 proven_err_t proven_http_event_server_listen(proven_http_event_server_t *server, proven_net_addr_t at, proven_net_addr_t *bound);
+
+/**
+ * @brief One port for several loops, HTTP/3 included (Linux): a TCP listener per loop, and
+ *        with `http3` a UDP socket per loop, all on one address and port with SO_REUSEPORT.
+ *
+ * The system spreads TCP connections over the listeners. A UDP datagram goes to the socket of
+ * the loop that owns its QUIC connection, chosen by a small classic BPF program from the
+ * connection ID - not from the client's address, so a client whose address changes is still
+ * answered by its loop. Each server takes its share with proven_http_event_server_listen_port.
+ * Everything is opened here at once, on the calling thread, in order (the order is what the
+ * program counts by). `bound` (optional) receives the address, with the port chosen when `at`
+ * asked for port 0 - one free for both, as for proven_http_event_server_listen.
+ *
+ * Any process of the same user can join a port opened with SO_REUSEPORT. A QUIC connection ID
+ * from a port of `loops` loops shows, in its first byte, which loop issued it (log2(loops)
+ * bits, the same for the connections of that loop).
+ *
+ * @return PROVEN_ERR_INVALID_ARG (`loops` not 1 to 255, no allocator, no `out`),
+ *         PROVEN_ERR_UNSUPPORTED (not Linux; `http3` in a build without it; a kernel without
+ *         SO_REUSEPORT or its programs), PROVEN_ERR_NOMEM, or what opening a socket returned.
+ */
+[[nodiscard]]
+proven_err_t proven_http_event_port_open(proven_allocator_t alloc, proven_net_addr_t at, proven_size_t loops, bool http3,
+                                         proven_http_event_port_t **out, proven_net_addr_t *bound);
+
+/**
+ * @brief Serve loop `index`'s share of `port` - like proven_http_event_server_listen, but with
+ *        the port's sockets for that index. Called on the server's loop thread; each index
+ *        once. The server must not have listened before, and must have `http3` exactly when
+ *        the port has. Its HTTP/3 then uses the port's key for Retry, NEW_TOKEN and stateless
+ *        reset tokens, so a token one loop gave is good at another, and sends no stateless
+ *        reset for a connection ID another loop issued.
+ *
+ * Stop the servers of a port together: a socket that closes while others of its port go on
+ * changes where the system sends datagrams, and connections of other loops can be lost.
+ *
+ * @return PROVEN_ERR_INVALID_ARG (`index` past the port's loops, `http3` differing);
+ *         PROVEN_ERR_INVALID_STATE (the index taken, a server that has listened or is
+ *         shutting down); PROVEN_ERR_NOMEM; or what watching a socket returned - after which
+ *         the port's UDP socket for `index` is closed and the port is not to be used further.
+ */
+[[nodiscard]]
+proven_err_t proven_http_event_server_listen_port(proven_http_event_server_t *server, proven_http_event_port_t *port, proven_size_t index);
+
+/** @brief Close the sockets of `port` no server took, and free it. Call it once every
+ *         proven_http_event_server_listen_port on it has returned; the servers keep what they
+ *         took. Null is accepted. */
+void proven_http_event_port_close(proven_http_event_port_t *port);
 
 /**
  * @brief Close every connection and the listeners, and free the server. Exchanges still in

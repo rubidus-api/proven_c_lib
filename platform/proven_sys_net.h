@@ -103,6 +103,18 @@ proven_sys_net_result_t proven_sys_net_open_listener(const proven_sys_net_addr_t
 /** Open a datagram socket bound to `addr`. IPv4 and IPv6 only. */
 proven_sys_net_result_t proven_sys_net_open_datagram(const proven_sys_net_addr_t *addr, proven_sys_socket_t *out);
 
+/** Open a listening stream socket (`stream`) or a datagram socket bound to `addr` with
+ *  SO_REUSEPORT, so that others opened this way share the address and the system spreads what
+ *  arrives over them (RFC-0037). Linux only: UNSUPPORTED elsewhere. */
+proven_sys_net_result_t proven_sys_net_open_shared(const proven_sys_net_addr_t *addr, bool stream, int backlog,
+                                                   proven_sys_socket_t *out);
+
+/** Give the group of datagram sockets `sock` belongs to - `n` of them, 1 to 255, opened by
+ *  proven_sys_net_open_shared in turn - a program that picks the socket for each datagram from a
+ *  QUIC packet's destination connection ID: its first byte modulo `n` is the socket's place in
+ *  the order they were opened (SO_ATTACH_REUSEPORT_CBPF). Linux only: UNSUPPORTED elsewhere. */
+proven_sys_net_result_t proven_sys_net_udp_steer(proven_sys_socket_t sock, proven_u32 n);
+
 /**
  * Create a stream socket and start connecting it. OK means connected already; IN_PROGRESS means
  * wait for it to become writable and then ask proven_sys_net_connect_result. On any other

@@ -1763,8 +1763,9 @@ as they end HTTP/2 ones.
   back a round trip. A token that does not check is taken as none.
 - **Not over HTTP/3:** WebSocket (`proven_ws_event_accept` refuses the stream),
   trailers, server push, migration of this side's own (a client's new address is
-  validated), QUIC versions other than 1. `proven_http_event_server_adopt` takes TCP
-  connections only, so several loops cannot share one UDP port.
+  validated), QUIC versions other than 1 and 2. `proven_http_event_server_adopt` takes TCP
+  connections only; several loops share one UDP port through `proven_http_event_port_open`
+  (Linux; Chapter 15 section 13).
 - **The event-driven client speaks HTTP/3 when a request asks** (section 10); it never follows this server's `Alt-Svc` on its own.
 
 **How this was tested.** A registered test runs the server against a client made of this

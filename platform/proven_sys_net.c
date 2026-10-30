@@ -164,6 +164,7 @@ static void native_datagram_options(proven_native_socket_t s) {
 #include <netinet/tcp.h>
 #if defined(__linux__)
 #include <netinet/udp.h>
+#include <linux/filter.h>
 #endif
 
 typedef int proven_native_socket_t;
@@ -355,7 +356,7 @@ static void from_native(const struct sockaddr_storage *in, proven_native_len_t l
     }
 }
 
-static proven_sys_net_result_t open_bound(const proven_sys_net_addr_t *addr, int type, proven_native_socket_t *out) {
+static proven_sys_net_result_t open_bound(const proven_sys_net_addr_t *addr, int type, bool shared, proven_native_socket_t *out) {
     if (!net_ready()) return PROVEN_SYS_NET_ERROR;
     int af = native_family(addr->family);
     struct sockaddr_storage ss;
@@ -370,6 +371,20 @@ static proven_sys_net_result_t open_bound(const proven_sys_net_addr_t *addr, int
     }
     if (type == SOCK_STREAM && af != AF_UNIX) native_listener_options(s);
     if (type == SOCK_DGRAM) native_datagram_options(s);
+#if defined(__linux__) && defined(SO_REUSEPORT)
+    if (shared) {
+        int on = 1;
+        if (setsockopt(s, SOL_SOCKET, SO_REUSEPORT, &on, sizeof on) != 0) {
+            native_close(s);
+            return PROVEN_SYS_NET_UNSUPPORTED;
+        }
+    }
+#else
+    if (shared) {
+        native_close(s);
+        return PROVEN_SYS_NET_UNSUPPORTED;
+    }
+#endif
 
     if (bind(s, (const struct sockaddr *)&ss, len) != 0) {
         proven_sys_net_result_t r = net_fail();
@@ -385,10 +400,10 @@ static proven_sys_net_result_t open_bound(const proven_sys_net_addr_t *addr, int
     return PROVEN_SYS_NET_OK;
 }
 
-proven_sys_net_result_t proven_sys_net_open_listener(const proven_sys_net_addr_t *addr, int backlog,
-                                                     proven_sys_socket_t *out) {
+static proven_sys_net_result_t open_listener(const proven_sys_net_addr_t *addr, int backlog, bool shared,
+                                            proven_sys_socket_t *out) {
     proven_native_socket_t s = NATIVE_INVALID;
-    proven_sys_net_result_t r = open_bound(addr, SOCK_STREAM, &s);
+    proven_sys_net_result_t r = open_bound(addr, SOCK_STREAM, shared, &s);
     if (r != PROVEN_SYS_NET_OK) return r;
     if (listen(s, backlog > 0 ? backlog : SOMAXCONN) != 0) {
         r = net_fail();
@@ -399,15 +414,54 @@ proven_sys_net_result_t proven_sys_net_open_listener(const proven_sys_net_addr_t
     return PROVEN_SYS_NET_OK;
 }
 
-proven_sys_net_result_t proven_sys_net_open_datagram(const proven_sys_net_addr_t *addr, proven_sys_socket_t *out) {
+static proven_sys_net_result_t open_datagram(const proven_sys_net_addr_t *addr, bool shared, proven_sys_socket_t *out) {
     if (addr->family != PROVEN_SYS_NET_FAMILY_IPV4 && addr->family != PROVEN_SYS_NET_FAMILY_IPV6) {
         return PROVEN_SYS_NET_UNSUPPORTED;
     }
     proven_native_socket_t s = NATIVE_INVALID;
-    proven_sys_net_result_t r = open_bound(addr, SOCK_DGRAM, &s);
+    proven_sys_net_result_t r = open_bound(addr, SOCK_DGRAM, shared, &s);
     if (r != PROVEN_SYS_NET_OK) return r;
     *out = (proven_sys_socket_t)s;
     return PROVEN_SYS_NET_OK;
+}
+
+proven_sys_net_result_t proven_sys_net_open_listener(const proven_sys_net_addr_t *addr, int backlog,
+                                                     proven_sys_socket_t *out) {
+    return open_listener(addr, backlog, false, out);
+}
+
+proven_sys_net_result_t proven_sys_net_open_datagram(const proven_sys_net_addr_t *addr, proven_sys_socket_t *out) {
+    return open_datagram(addr, false, out);
+}
+
+proven_sys_net_result_t proven_sys_net_open_shared(const proven_sys_net_addr_t *addr, bool stream, int backlog,
+                                                   proven_sys_socket_t *out) {
+    return stream ? open_listener(addr, backlog, true, out) : open_datagram(addr, true, out);
+}
+
+proven_sys_net_result_t proven_sys_net_udp_steer(proven_sys_socket_t sock, proven_u32 n) {
+#if defined(__linux__) && defined(SO_ATTACH_REUSEPORT_CBPF)
+    if (n < 1 || n > 255) return PROVEN_SYS_NET_ADDR_INVALID;
+    /* The socket's index in the group: the destination connection ID's first byte modulo n -
+     * byte 6 of a long header (after the type, the version and the ID's length), byte 1 of a
+     * short one. Seen from the UDP payload; a datagram too short to load from ends the program
+     * with 0, the first socket. */
+    struct sock_filter f[] = {
+        BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 0),
+        BPF_JUMP(BPF_JMP | BPF_JSET | BPF_K, 0x80, 0, 2),
+        BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 6),
+        BPF_JUMP(BPF_JMP | BPF_JA, 1, 0, 0),
+        BPF_STMT(BPF_LD | BPF_B | BPF_ABS, 1),
+        BPF_STMT(BPF_ALU | BPF_MOD | BPF_K, n),
+        BPF_STMT(BPF_RET | BPF_A, 0),
+    };
+    struct sock_fprog prog = { .len = (unsigned short)(sizeof f / sizeof f[0]), .filter = f };
+    return setsockopt((proven_native_socket_t)sock, SOL_SOCKET, SO_ATTACH_REUSEPORT_CBPF, &prog, (socklen_t)sizeof prog) == 0
+        ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_UNSUPPORTED;
+#else
+    (void)sock; (void)n;
+    return PROVEN_SYS_NET_UNSUPPORTED;
+#endif
 }
 
 proven_sys_net_result_t proven_sys_net_connect_start(const proven_sys_net_addr_t *addr, proven_sys_socket_t *out) {

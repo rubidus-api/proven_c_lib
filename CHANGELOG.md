@@ -18,6 +18,36 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.100.0] - 2026-10-31
+
+### Added
+
+- **Several loops on one port, HTTP/3 included** (Linux; RFC-0037): `proven_http_event_port_open`
+  opens, at once and in order, a TCP listener and (with `http3`) a UDP socket for each of N loops on
+  one address and port with `SO_REUSEPORT`; each server takes its share with
+  `proven_http_event_server_listen_port`; `proven_http_event_port_close` frees the port. The system
+  spreads TCP connections. A small classic BPF program given to the UDP group picks the socket from
+  a QUIC packet's destination connection ID, and every connection ID a server of the port issues
+  names its loop in its first byte - so a client whose address changes is still answered by the loop
+  that has its connection. The servers share one static key (a Retry, NEW_TOKEN or stateless reset
+  token from one loop is good at another) and send no stateless reset for an ID another loop issued.
+  Elsewhere than Linux the port is `PROVEN_ERR_UNSUPPORTED`. Measured on 8 cores over loopback, this
+  library at both ends, 32 clients over HTTP/3: one loop 6.1 to 6.8 Gbit/s, two 10.1 to 11.2, four
+  15.3 to 18.2 (where HTTP/2 through the same port was 18.3: the clients sharing the machine are the
+  limit there). Manual chapter 15 section 13, with `ex_15_port.c`.
+
+### Changed
+
+- **QUIC searches for a larger datagram size again** (RFC 8899 section 5.3): a search that stopped
+  below 1,452 bytes because a size failed runs again ten minutes later, from the size in use, the
+  next time the connection sends with data in flight - a path that widens (a route that changes) is
+  used. An idle connection sends nothing for it.
+
+### Fixed
+
+- Manual chapter 17's list of what HTTP/3 lacks still said "QUIC versions other than 1" after
+  v0.99.0; it says 1 and 2.
+
 ## [0.99.0] - 2026-10-30
 
 ### Added
