@@ -72,9 +72,12 @@ struct proven_zstd_decoder {
     /* buffers, grown on demand and kept */
     proven_byte_t *hist, *inbuf, *lits;
     proven_size_t hist_cap, inbuf_cap, lits_cap;
-    /* proven_zstd_decode_all: a frame whose size is stated and fits is decoded straight into the
-     * caller's buffer - `hist` is then lent (`lent`), its own buffer kept in `own`, and `slack`
-     * is what of the caller's buffer lies past the frame (WILD at most) for the wide copies. */
+    /* A frame whose size is stated and fits in the caller's buffer is decoded straight into it
+     * when proven_zstd_decode_all asks (`direct`), or when the whole frame is in the call's input
+     * - `hist` is then lent (`lent`), its own buffer kept in `own`, and `slack` is what of the
+     * caller's buffer lies past the frame (WILD at most) for the wide copies. The frame ends in
+     * the call; nothing reads `hist` again before the next frame's header, which takes it back
+     * (or lends it again). */
     bool direct, lent;
     proven_byte_t *own;
     proven_size_t own_cap, slack;
@@ -811,6 +814,23 @@ static proven_err_t frame_header(proven_zstd_decoder_t *z) {
 }
 
 /* Gather header bytes into `hdr` until there are `need`. */
+/* Whether the rest of the frame's blocks, from `at`, are all in `in`: then they are decoded
+ * within this call, and may be decoded into the caller's buffer. */
+static bool frame_here(proven_mem_view_t in, proven_size_t at) {
+    for (;;) {
+        if (in.size - at < 3) return false;
+        const proven_u32 v = (proven_u32)in.ptr[at] | ((proven_u32)in.ptr[at + 1] << 8) | ((proven_u32)in.ptr[at + 2] << 16);
+        const unsigned type = (v >> 1) & 3;
+        if (type == 3) return false;                       /* refused on the ordinary path */
+        const proven_size_t size = type == 1 ? 1 : v >> 3;
+        at += 3;
+        if (in.size - at < size) return false;
+        at += size;
+        if (v & 1) break;
+    }
+    return true;                                       /* its checksum needs no history */
+}
+
 static bool gather(proven_zstd_decoder_t *z, proven_mem_view_t in, proven_size_t *ia) {
     while (z->have < z->need && *ia < in.size) z->hdr[z->have++] = in.ptr[(*ia)++];
     return z->have == z->need;
@@ -889,7 +909,7 @@ proven_err_t proven_zstd_decode(proven_zstd_decoder_t *z, proven_mem_view_t in, 
                 z->have = 0;
                 proven_err_t e = frame_header(z);
                 if (e != PROVEN_OK) { result = bad(z, e); going = false; break; }
-                if (z->direct && out.ptr && z->has_fcs && z->fcs <= out.size - oa) {
+                if (out.ptr && z->has_fcs && z->fcs <= out.size - oa && (z->direct || (in.ptr && frame_here(in, ia)))) {
                     if (!z->lent) { z->own = z->hist; z->own_cap = z->hist_cap; z->lent = true; }
                     z->hist = out.ptr + oa;
                     z->hist_cap = (proven_size_t)z->fcs;

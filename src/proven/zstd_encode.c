@@ -24,7 +24,7 @@
 #define WINDOW_LOG_MIN 10
 #define WINDOW_LOG_MAX 23
 #define WINDOW_LOG_DEFAULT 19
-#define LEVEL_MAX 9
+#define LEVEL_MAX 12
 #define LEVEL_DEFAULT 3
 #define SEQ_MAX 16384u                  /* sequences in one block; a block ends early when they run out */
 #define HUF_MAX_BITS 11
@@ -514,6 +514,12 @@ static const proven_params_t LEVELS[LEVEL_MAX + 1] = {
     { 2, 17, 17, 5, 12, 2 },           /* lazy2 */
     { 2, 17, 17, 5, 24, 2 },
     { 2, 17, 17, 4, 32, 2 },
+    /* 10 to 12 (RFC-0038 Z-1): libzstd's larger tables for them, each cut to the window and a known
+     * input as every level's; four-byte hashes (libzstd's are five: four is smaller on binaries and
+     * JSON here, within a point on C) and more candidates. */
+    { 2, 22, 21, 4, 48, 2 },
+    { 2, 22, 21, 4, 96, 2 },
+    { 2, 23, 22, 4, 128, 2 },
 };
 
 static proven_err_t grow(proven_zstd_encoder_t *z, void **buf, proven_size_t *cap, proven_size_t want, proven_size_t unit) {

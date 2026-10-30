@@ -418,6 +418,64 @@ int main(void) {
         PROVEN_TEST_ASSERT(bad == 0, "every distance from 1 to 40: decode_all and seven-byte steps give the data back", "Check copy_match: closer than eight, the pattern is copied from `step` back.");
     }
 
+    PROVEN_TEST_SECTION("one call with the whole frame",
+        "A frame that states its size, all of it in one call's input, with room for it in that call's output: decoded straight into the caller's buffer, as decode_all does - no history buffer allocated. A frame split over two calls is not, and its history survives the caller's reuse of the first call's buffer.",
+        "Check frame_here and the condition for `lent` in Z_HEADER of src/proven/zstd.c.");
+    {
+        /* 200,000 bytes of text in one frame that states its size. */
+        corpus(6, g_plain);
+        proven_size_t zn = 0, used = 0, made = 0;
+        PROVEN_TEST_ASSERT(proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap }, (proven_mem_view_t){ g_plain, 200000 },
+                                                  (proven_mem_mut_t){ g_in, sizeof g_in }, &zn) == PROVEN_OK && (g_in[4] & 0xc0) != 0,
+            "a frame that states its size", "");
+        proven_zstd_decoder_t *d = NULL;
+        bool done = false;
+        PROVEN_TEST_ASSERT(proven_zstd_decoder_create(counting(0), 0, &d) == PROVEN_OK, "a decoder", "");
+        PROVEN_TEST_ASSERT(proven_zstd_decode(d, (proven_mem_view_t){ g_in, zn }, &used, (proven_mem_mut_t){ g_out, 200000 }, &made, &done) == PROVEN_OK &&
+                           done && used == zn && made == 200000 && memcmp(g_out, g_plain, 200000) == 0, "decoded in one call", "");
+        printf("  the whole frame in one call: at most %u bytes held\n", (unsigned)g_count.peak);
+        PROVEN_TEST_ASSERT(g_count.peak < 160 * 1024, "holding the decoder and one block's literals, not the frame's 200,000 bytes", "");
+        proven_zstd_decoder_destroy(d);
+        /* A frame made here: 100,000 bytes as one RLE block (one byte of input), then 1,000 raw;
+         * single segment, its size in four bytes, no checksum. Taken whole the same way. */
+        proven_size_t hn = 0;
+        static const proven_byte_t head[] = { 0x28, 0xb5, 0x2f, 0xfd, 0xa0, 0x88, 0x8a, 0x01, 0x00 };   /* FCS 101,000 */
+        memcpy(g_cat, head, sizeof head); hn = sizeof head;
+        const proven_u32 rv = (100000u << 3) | (1u << 1), wv = (1000u << 3) | 1u;
+        g_cat[hn++] = (proven_byte_t)rv; g_cat[hn++] = (proven_byte_t)(rv >> 8); g_cat[hn++] = (proven_byte_t)(rv >> 16);
+        g_cat[hn++] = 'x';
+        g_cat[hn++] = (proven_byte_t)wv; g_cat[hn++] = (proven_byte_t)(wv >> 8); g_cat[hn++] = (proven_byte_t)(wv >> 16);
+        memcpy(g_cat + hn, g_plain, 1000); hn += 1000;
+        PROVEN_TEST_ASSERT(proven_zstd_decoder_create(counting(0), 0, &d) == PROVEN_OK, "a decoder", "");
+        bool same = proven_zstd_decode(d, (proven_mem_view_t){ g_cat, hn }, &used, (proven_mem_mut_t){ g_out, 101000 }, &made, &done) == PROVEN_OK &&
+                    done && used == hn && made == 101000 && memcmp(g_out + 100000, g_plain, 1000) == 0;
+        for (proven_size_t k = 0; k < 100000 && same; ++k) same = g_out[k] == 'x';
+        PROVEN_TEST_ASSERT(same && g_count.peak < 100000, "an RLE block and a raw one, in one call: right, and no 100,000-byte history", "");
+        proven_zstd_decoder_destroy(d);
+        /* A frame over two calls, each with room for all of it: the first call's output is the
+         * caller's to overwrite once it returns - the history must not live there. Its second
+         * half repeats its first, so the second call's matches reach back into the first's. */
+        memcpy(g_plain + 100000, g_plain, 100000);
+        PROVEN_TEST_ASSERT(proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap }, (proven_mem_view_t){ g_plain, 200000 },
+                                                  (proven_mem_mut_t){ g_in, sizeof g_in }, &zn) == PROVEN_OK, "a frame that repeats itself", "");
+        PROVEN_TEST_ASSERT(proven_zstd_decoder_create(g_heap, 0, &d) == PROVEN_OK, "a decoder", "");
+        proven_size_t u1 = 0, m1 = 0, u2 = 0, m2 = 0;
+        /* Split just after the first block, so that the first call ends with output made. */
+        const unsigned fhd = g_in[4], fcs_flag = fhd >> 6, single = (fhd >> 5) & 1;
+        static const unsigned DID[4] = { 0, 1, 2, 4 };
+        const proven_size_t blk = 5 + (single ? 0 : 1) + DID[fhd & 3] + (fcs_flag == 0 ? single : 1u << fcs_flag);
+        const proven_u32 v1 = (proven_u32)g_in[blk] | ((proven_u32)g_in[blk + 1] << 8) | ((proven_u32)g_in[blk + 2] << 16);
+        const proven_size_t half = blk + 3 + (((v1 >> 1) & 3) == 1 ? 1 : v1 >> 3) + 2;
+        PROVEN_TEST_ASSERT(proven_zstd_decode(d, (proven_mem_view_t){ g_in, half }, &u1, (proven_mem_mut_t){ g_out, 200000 }, &m1, &done) == PROVEN_OK && !done &&
+                           m1 > 0 && m1 < 200000, "the first block's input: its output", "");
+        memcpy(g_cat, g_out, m1);
+        memset(g_out, 0x55, sizeof g_out);
+        PROVEN_TEST_ASSERT(proven_zstd_decode(d, (proven_mem_view_t){ g_in + u1, zn - u1 }, &u2, (proven_mem_mut_t){ g_out2, 200000 }, &m2, &done) == PROVEN_OK &&
+                           done && m1 + m2 == 200000 && memcmp(g_cat, g_plain, m1) == 0 && memcmp(g_out2, g_plain + m1, m2) == 0,
+            "the rest, after the first call's buffer was overwritten: every byte right", "");
+        proven_zstd_decoder_destroy(d);
+    }
+
     PROVEN_TEST_SECTION("what every function refuses", "Arguments that cannot be right.", "");
     {
         proven_zstd_decoder_t *z = NULL;

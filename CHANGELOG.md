@@ -18,7 +18,28 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **Zstandard encoder levels 10 to 12** (RFC-0038 Z-1): lazy2 with libzstd's larger tables for those
+  levels (a hash of 2^22 to 2^23 entries and a chain of 2^21 to 2^22, each cut to the window) and 48,
+  96 and 128 candidates - for files compressed once and sent many times. Against libzstd's same levels
+  at `window_log` 23: 0.973 to 1.013 of its size on four inputs; 2 to 5 % smaller than level 9 at a
+  fifth to a half of its speed. Tables 8 MiB at the default window, up to 48 MiB at the largest. The
+  HTTP servers' `compress_zstd_level` stays 1 to 9.
+
 ### Changed
+
+- **The Brotli decoder is 5 to 8 % faster on text** (C, HTML, Markdown, JSON at qualities 1 to 11;
+  about the same on an executable): a meta-block's distance codes are taken apart once into a table
+  rather than at every command, and the last two bytes are read for the literals' contexts only when
+  the command has literals whose code depends on them. Against libbrotli 1.1.0 on text it is now at
+  0.62 to 0.75 of the speed (0.59 to 0.71 before). The decoder is about 24 KiB when made (22 before).
+  (A table of the 704 insert-and-copy codes was also tried: fewer instructions, slower - dropped.)
+- **A Zstandard frame given whole in one call is decoded straight into the caller's buffer** when the
+  frame states its size and the output has room for it - as `proven_zstd_decode_all` already did -
+  rather than through the decoder's own history: a 200,000-byte frame decodes holding about 20 KiB
+  instead of its 200,000 bytes, and skips the copy out of the history. A frame that arrives over
+  several calls is decoded as before.
 
 - **P-256 is faster with GCC 14** (and a little with GCC 16): its field's product, square and
   reduction work on named words instead of arrays, which GCC 14 kept in memory through the loops.

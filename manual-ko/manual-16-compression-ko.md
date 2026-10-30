@@ -753,7 +753,7 @@ int main(void) {
 | `compress_level` (두 서버 설정) | 1(가장 빠름)부터 9(가장 작음). -1은 압축 없이 저장만 한다. 0은 6. 측정값은 4절에 있다. | 범위를 벗어나면 `create`가 `INVALID_ARG`. |
 | `compress_window_bits` (둘 다) | 9부터 15: 스트림으로 쓰는 응답이 쓰이는 동안 쥐는 메모리(4절의 표). 0은 15. | 위와 같다. |
 | `compress_zstd` (두 서버 설정) | zstd에 gzip 이상의 가중치를 주는 요청에는 `zstd`로, 그 밖에는 gzip으로 압축한다. false: gzip만. | - |
-| `compress_zstd_level`, `compress_zstd_window_log` (둘 다) | 7절 인코더의 레벨(1부터 9, 0은 1)과 창(10부터 23, 0은 17). | 범위를 벗어나면 `create`가 `INVALID_ARG`. |
+| `compress_zstd_level`, `compress_zstd_window_log` (둘 다) | 7절 인코더의 레벨(1부터 9 - 미리 압축하는 파일용인 10부터 12는 아니다 - 0은 1)과 창(10부터 23, 0은 17). | 범위를 벗어나면 `create`가 `INVALID_ARG`. |
 | `decompress` (두 클라이언트 설정) | `Accept-Encoding: gzip`을 보내고 `gzip`과 `deflate` 본문을 푼다. | - |
 | `decompress_zstd` (두 클라이언트 설정) | `decompress`와 함께: `Accept-Encoding: zstd, gzip`을 보내고 `zstd` 본문도 푼다. | `decompress` 없이 켜면 `create`가 `INVALID_ARG`. |
 | `decompress_brotli` (두 클라이언트 설정) | `decompress`와 함께: `br`도 요청하고 `br` 본문도 푼다(v0.60.0부터). | `decompress` 없이 켜면 `create`가 `INVALID_ARG`. `PROVEN_NO_BROTLI` 빌드에서는 `UNSUPPORTED`. |
@@ -815,7 +815,7 @@ proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t 
 
 Zstandard(RFC 8878)는 DEFLATE보다 새 형식이다: `.zst` 파일, HTTP의 `Content-Encoding: zstd`(RFC 9659),
 일부 패키지 형식. 압축기는 gzip의 가장 빠른 것보다 빠른 데서부터 gzip의 가장 작은 것보다 작은 데까지
-고를 수 있고, 무엇으로 압축했든 빨리 풀린다. 이 라이브러리는 이것을 읽고, v0.58.0부터는 쓴다 - v0.59.0부터는 레벨 아홉으로(아래 "Zstandard 쓰기").
+고를 수 있고, 무엇으로 압축했든 빨리 풀린다. 이 라이브러리는 이것을 읽고, v0.58.0부터는 쓴다 - v0.59.0부터는 레벨 아홉, v0.101.0부터는 열둘로(아래 "Zstandard 쓰기").
 
 디코더는 3절의 해제기처럼 쓴다 - 상태 하나와, 있는 입력을 가져가고 있는 출력 자리를 채우는 한 걸음 -
 다만 형식 때문에 두 가지가 다르다:
@@ -975,7 +975,7 @@ proven_err_t proven_zstd_encode_all(const proven_zstd_encoder_options_t *options
 하려면 `_BLOCK`, 프레임을 끝내려면 `_FINISH`. 만드는 프레임은 어떤 Zstandard 디코더든 읽는다. 같은 입력에
 대해 libzstd가 썼을 바이트와 같지는 않다.
 
-**레벨 아홉, libzstd의 처음 아홉처럼.** 레벨 1은 해시 표 하나로, 레벨 2와 3은 둘로 일치를 찾는다(libzstd의
+**libzstd와 같은 레벨.** 레벨 1은 해시 표 하나로, 레벨 2와 3은 둘로 일치를 찾는다(libzstd의
 "fast"와 "double fast"). 레벨 4부터 9는 모든 위치를 해시 체인에 두고 그 앞쪽 4에서 32개를 보며, 찾은 가장 좋은
 일치를 고르거나(레벨 4와 5), 그 전에 한 바이트(6) 또는 두 바이트(7부터 9) 뒤에 더 좋은 것이 있는지 본다.
 블록마다 리터럴에는 Huffman 코드를, 시퀀스에는 FSE 표를 붙이는데, 표마다 그 블록에 드는 비용을 보고 고른다.
@@ -1001,6 +1001,23 @@ proven_err_t proven_zstd_encode_all(const proven_zstd_encoder_options_t *options
 더 작고, 속도는 절반쯤이다. 메가바이트 단위 입력에서는 libzstd의 높은 레벨이 더 큰 창과 표도 써서 0.3에서
 0.5포인트 더 작다.
 
+**레벨 10에서 12**(v0.101.0부터)는 다시 lazy2이고, libzstd가 그 레벨에 쓰는 더 큰 표 - 해시 2^22, 2^22,
+2^23 항목과 체인 2^21, 2^21, 2^22, 각각 창에 맞춰 줄인다 - 와 후보 48, 96, 128개를 쓴다: 한 번 압축해 여러 번
+보내는 파일용이다. 같은 레벨의 libzstd와, 다른 입력 넷에서 가장 큰 창(`window_log` 23)으로 비교했다(각 한 번,
+부하가 있는 머신이라 속도는 대략이다):
+
+| | C 소스 3.0 MB | HTML 페이지 330 KB | JSON 191 KB | 실행 파일 2.0 MB |
+|---|---|---|---|---|
+| 레벨 9, 이 라이브러리 / libzstd | 크기의 1.020 | 0.990 | 1.003 | 0.987 |
+| 레벨 10 | 1.001 | 0.991 | 1.002 | 0.974 |
+| 레벨 11 | 1.001 | 0.991 | 1.007 | 0.973 |
+| 레벨 12 | 0.997 | 0.988 | 1.013 | 0.973 |
+| 레벨 12 속도, 이 라이브러리 / libzstd | 4.7 / 23 MB/s | 21 / 50 | 41 / 23 | 4.6 / 19 |
+
+레벨 12는 레벨 9보다 2~5 % 작고, 속도는 그 5분의 1에서 절반이다. libzstd는 후보를 더 빨리 찾고(행에 둔다),
+256 KiB 아래에서는 레벨 11부터 이진 트리로 바꾼다 - JSON 줄의 차이다. 기본 창(19)에서는 표가 각각 2^20이고 C
+소스가 libzstd보다 2포인트 크다. libzstd는 이 레벨들에서 4 MiB를 쓴다.
+
 표는 v0.89.0 전에 잰 것이다. 그 뒤로 BMI2(플래그 없이 레지스터만큼 시프트)가 있는 x86 프로세서에서는 인코더가
 그것에 맞춰 컴파일한 블록 코더의 두 번째 빌드를 쓴다 - 같은 C, 같은 출력이고, 프로세서에 처음 물을 때 고른다.
 0.4~3.9 MB의 다른 입력 넷에서 레벨 1~3은 libzstd 속도의 0.76~0.88에서 0.82~0.96이 되었다.
@@ -1010,7 +1027,7 @@ proven_err_t proven_zstd_encode_all(const proven_zstd_encoder_options_t *options
 
 | | 메모리 |
 |---|---|
-| 해시 표(인코더를 만들거나 reset할 때 0으로 채운다) | 레벨 1에서 64 KiB, 2에서 96 KiB, 3과 4에서 768 KiB, 5부터 9에서 1 MiB(통째로 주는 버퍼가 짧으면 더 적다) |
+| 해시 표(인코더를 만들거나 reset할 때 0으로 채운다) | 레벨 1에서 64 KiB, 2에서 96 KiB, 3과 4에서 768 KiB, 5부터 9에서 1 MiB; 10부터 12에서 기본 창이면 8 MiB, 가장 큰 창이면 10과 11에서 24 MiB, 12에서 48 MiB(통째로 주는 버퍼가 짧으면 더 적다) |
 | 블록 하나의 일: 시퀀스, 리터럴, 출력 | 약 500 KiB |
 | 스트림의 입력 버퍼 | 창과 창의 절반, 또는 그보다 많으면 창과 128 KiB: 기본 512 KiB에서 768 KiB |
 
@@ -1097,7 +1114,7 @@ int main(void) {
 
 | API | 의도 | 반환 |
 |---|---|---|
-| `proven_zstd_encoder_create(&options, &z)` | 인코더: `level` 1부터 9(0은 libzstd의 기본값인 3), `window_log` 10부터 23(0은 19), `checksum`. 해시 표를 할당하고, 버퍼는 입력이 오는 대로. | `INVALID_ARG`, `NOMEM`. |
+| `proven_zstd_encoder_create(&options, &z)` | 인코더: `level` 1부터 12(0은 libzstd의 기본값인 3), `window_log` 10부터 23(0은 19), `checksum`. 해시 표를 할당하고, 버퍼는 입력이 오는 대로. | `INVALID_ARG`, `NOMEM`. |
 | `proven_zstd_encode(z, in, &consumed, out, &produced, flush, &done)` | `in`의 일부를 받고 `out`의 일부를 채운다. flush가 있으면 입력을 다 받고 더 나오는 것이 없을 때까지(FINISH면 `done`까지) 다시 부른다. | FINISH 뒤의 입력은 `INVALID_STATE`(먼저 reset). `NOMEM` - 그 뒤로는 reset할 때까지 모든 호출이 그렇게 말한다. `INVALID_ARG`. |
 | `proven_zstd_encoder_reset(z)` | 같은 옵션으로 새 프레임을 시작한다. 버퍼는 둔다. | 없음. |
 | `proven_zstd_encoder_destroy(z)` | 해제한다. NULL 허용. | 없음. |
@@ -1148,7 +1165,7 @@ Zstandard를 보낸다.
 
 | | 메모리 |
 |---|---|
-| 만든 디코더 | 약 22 KiB |
+| 만든 디코더 | 약 24 KiB |
 | 스트림을 푸는 동안 | 히스토리 - 출력이 닿은 만큼의 창, 최대 2^WBITS바이트와 32바이트 - 와 코드들: 인코더가 쓰는 것은 수십 KiB, 메타블록이 가질 수 있는 최대(세 종류마다 256개, 각각 코드 표가 될 수 있는 가장 큰 크기)는 1,343,024바이트 |
 
 **스트림 하나, 그 뒤에는 아무것도 없다.** Brotli 스트림은 gzip 멤버나 Zstandard 프레임처럼 잇달아 오지
@@ -1346,7 +1363,7 @@ Node의 libbrotli(따로 들어 있는 1.2.0)가 만든 144개 - 이 저장소�
 
 **7절의 인코더는** 자기 디코더와 libzstd에 대고 시험했다. 등록된 테스트는 열한 종류의 데이터(빈 것, 한
 바이트, 같은 바이트의 연속, 번호 붙은 줄, 먼 뒤를 복사하는 잡음, 무작위 바이트, 128개가 넘는 바이트 값 등)를
-아홉 레벨 모두와 세 창으로 통째로, 그리고 방식마다 한 레벨씩 스트림으로 - 조각마다 블록 flush, 출력은 한
+열두 레벨 모두와 세 창으로 통째로, 그리고 방식마다 한 레벨씩 스트림으로 - 조각마다 블록 flush, 출력은 한
 바이트씩 - 압축하고, 모든 프레임을 이 라이브러리의 디코더로 푼다. 이 디코더는 오프셋마다 프레임이 밝힌 창
 안인지 검사한다. 모든 레벨에서 스트림의 블록이 같은 입력을 통째로 압축한 블록과 바이트까지 같은지도 본다. 프레임
 헤더, 입력 8,000개에 대한 상한, flush, 끝과 reset, 압축 블록 안의 한 값 리터럴, 쥐는 메모리, 실패한 할당을

@@ -19,6 +19,7 @@
  * by the next eight bits of input and a second-level table for each longer prefix. */
 
 #define ROOT_BITS 8
+#define DIST_CODES_MAX (16 + 120 + (48 << 3))   /* NDIRECT at most 15 << 3, NPOSTFIX at most 3 */
 #define MAX_ALPHABET 704                /* the insert-and-copy code's; the others are smaller */
 /* The most entries a meta-block's codes can need: for each category a block type code (at most
  * 632 entries) and a block count code (396), the two context maps' codes (646 each), and 256
@@ -88,6 +89,10 @@ struct proven_brotli_decoder {
     int cat;                            /* the category whose block types are being read: 0 literal, 1 command, 2 distance */
     proven_category_t c[3];
     proven_u32 npostfix, ndirect, dist_alphabet;
+    /* Per distance code from 16 on, for the meta-block's NPOSTFIX and NDIRECT: its extra bits,
+     * and the distance with extra bits of zero - the distance is base + (extra << NPOSTFIX). */
+    proven_u8 dx_bits[DIST_CODES_MAX];
+    proven_u32 dx_base[DIST_CODES_MAX];
     proven_u32 index;                   /* progress through a list: context modes, a map, codes */
     proven_u32 ntrees, rlemax;          /* the map being read */
     bool map_distance;                  /* which map that is */
@@ -701,6 +706,19 @@ static unsigned context(const proven_brotli_decoder_t *b, unsigned mode) {
     }
 }
 
+/* The distance codes from 16 on for the meta-block's NPOSTFIX and NDIRECT (section 4): their
+ * extra bits, and their distance with extra bits of zero. Made once a meta-block. */
+static void distance_codes(proven_brotli_decoder_t *b) {
+    for (unsigned code = 16; code < b->dist_alphabet; ++code) {
+        if (code < 16 + b->ndirect) { b->dx_bits[code] = 0; b->dx_base[code] = code - 15; continue; }
+        const unsigned c = code - b->ndirect - 16;
+        const unsigned nbits = 1 + (c >> (b->npostfix + 1));
+        const proven_u32 offset = ((2u + ((c >> b->npostfix) & 1u)) << nbits) - 4;
+        b->dx_bits[code] = (proven_u8)nbits;
+        b->dx_base[code] = (offset << b->npostfix) + (c & ((1u << b->npostfix) - 1u)) + b->ndirect + 1;
+    }
+}
+
 /* The distance of the command (section 4) from its code and extra bits; 0 if invalid. */
 static inline proven_u32 distance_of(const proven_brotli_decoder_t *b, unsigned code, proven_u32 extra) {
     if (code < 16) {
@@ -709,16 +727,11 @@ static inline proven_u32 distance_of(const proven_brotli_decoder_t *b, unsigned 
         const proven_i64 d = (proven_i64)b->dist[(b->dist_at - 1 - WHICH[code]) & 3u] + DELTA[code];
         return d > 0 ? (proven_u32)d : 0;
     }
-    if (code < 16 + b->ndirect) return code - 15;
-    const unsigned c = code - b->ndirect - 16;
-    const unsigned nbits = 1 + (c >> (b->npostfix + 1));
-    const proven_u32 offset = ((2u + ((c >> b->npostfix) & 1u)) << nbits) - 4;
-    return ((offset + extra) << b->npostfix) + (c & ((1u << b->npostfix) - 1u)) + b->ndirect + 1;
+    return b->dx_base[code] + (extra << b->npostfix);
 }
 
 static inline unsigned distance_extra(const proven_brotli_decoder_t *b, unsigned code) {
-    if (code < 16 + b->ndirect) return 0;
-    return 1 + ((code - b->ndirect - 16) >> (b->npostfix + 1));
+    return code < 16 ? 0u : b->dx_bits[code];
 }
 
 /* --- the fast path --- */
@@ -891,7 +904,10 @@ static void fast(proven_brotli_decoder_t *b, proven_io_t *io) {
         proven_byte_t *ring = b->ring;
         const proven_size_t mask = b->cap - 1;
         proven_u64 pos = b->pos;
-        unsigned p1 = pos >= 1 ? ring[(pos - 1) & mask] : 0, p2 = pos >= 2 ? ring[(pos - 2) & mask] : 0;
+        /* The last two bytes, for the literals' contexts: read only when there are literals and
+         * their code depends on them. */
+        unsigned p1 = 0, p2 = 0;
+        if (insert > 0 && !one) { p1 = pos >= 1 ? ring[(pos - 1) & mask] : 0; p2 = pos >= 2 ? ring[(pos - 2) & mask] : 0; }
         proven_u32 n = insert, count = cl->count;
         unsigned mode = b->cmode[cl->type];
         while (n > 0) {
@@ -1085,6 +1101,7 @@ proven_err_t proven_brotli_decode(proven_brotli_decoder_t *b, proven_mem_view_t 
                 b->ndirect = peek(b, 2, 4) << b->npostfix;
                 drop(b, 6);
                 b->dist_alphabet = 16 + b->ndirect + (48u << b->npostfix);
+                distance_codes(b);
                 b->index = 0;
                 b->state = S_CMODES;
                 break;

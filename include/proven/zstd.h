@@ -118,20 +118,24 @@ proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t 
  * step with a flush. Its output is a Zstandard frame that any decoder reads - libzstd's, this
  * library's - and not the bytes libzstd would have written for the same input.
  *
- * Nine levels, as libzstd's first nine. Levels 1 to 3 are single-pass: level 1 looks up one
+ * Twelve levels, as libzstd's first twelve. Levels 1 to 3 are single-pass: level 1 looks up one
  * earlier position per position, by a hash of the next six bytes in a table of 2^14 entries;
  * levels 2 and 3 look up two, by hashes of eight bytes and of six (2^14 and 2^13 entries) or
  * five (2^17 and 2^16). Levels 4 to 9 keep every position in a hash chain (2^17 entries and a
  * chain of 2^16 or 2^17) and look at the first 4, 8, 12, 12, 24 and 32 of it: levels 4 and 5
  * take the best match found ("greedy"), 6 also looks one byte on for a better one ("lazy"),
  * 7 to 9 two bytes ("lazy2"). Level 6 is about gzip level 6's size at three times its speed.
+ * Levels 10 to 12 are lazy2 with larger tables (a hash of 2^22, 2^22 and 2^23 entries and a chain
+ * of 2^21, 2^21 and 2^22, each cut to the window) and 48, 96 and 128 candidates: for files
+ * compressed once and sent many times - a few megabytes a second, about 2 % smaller than level 9.
  * All try the repeat offsets first and skip ahead faster the longer they find nothing. Each block's
  * literals are Huffman-coded and its sequences FSE-coded, each table chosen per block by what
  * it would cost: the predefined one, one written for the block, the previous block's, or a
  * single symbol. A block that does not shrink is stored as it is.
  *
  * **Memory**, at most: the hash tables (64 KiB at level 1, 96 KiB at 2, 768 KiB at 3 and 4,
- * 1 MiB at 5 to 9 - and zeroed when an encoder is made or reset), about
+ * 1 MiB at 5 to 9; at 10 to 12 8 MiB with the default window, 24 MiB at 10 and 11 and 48 MiB at 12
+ * with the largest - and zeroed when an encoder is made or reset), about
  * 500 KiB for one block (its sequences, literals and output), and, for a stream, an input
  * buffer of the window and half a window (or of the window and 128 KiB, if that is more):
  * 768 KiB at the default window. Buffers grow with the input. proven_zstd_encode_all needs no
@@ -149,7 +153,7 @@ typedef enum {
 /** @brief What an encoder is made with. Zero-initialise, set `alloc`, and set what applies. */
 typedef struct {
     proven_allocator_t alloc;      /**< required */
-    int level;                     /**< 1 (fastest) to 9 (smallest); 0: 3, as libzstd's default */
+    int level;                     /**< 1 (fastest) to 12 (smallest); 0: 3, as libzstd's default. (The HTTP servers' `compress_zstd_level` stays 1 to 9: they compress as they send.) */
     int window_log;                /**< how far back a match may reach, as a power of two: 10 to 23 (8 MiB, the most RFC 9659 lets an HTTP client be asked for); 0: 19 (512 KiB) */
     bool checksum;                 /**< end each frame with the low 32 bits of its XXH64 */
 } proven_zstd_encoder_options_t;

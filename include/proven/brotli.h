@@ -46,7 +46,7 @@
 /** @brief The default window limit: 16 MiB, the largest window of RFC 7932 (2^24 - 16 bytes). */
 #define PROVEN_BROTLI_WINDOW_DEFAULT ((proven_u64)16 * 1024 * 1024)
 
-/** @brief A decompressor. Opaque; about 22 KiB when made, growing as described above. */
+/** @brief A decompressor. Opaque; about 24 KiB when made, growing as described above. */
 typedef struct proven_brotli_decoder proven_brotli_decoder_t;
 
 /**

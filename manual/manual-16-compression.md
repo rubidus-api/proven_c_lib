@@ -785,7 +785,7 @@ int main(void) {
 | `compress_level` (both server configurations) | 1 (fastest) to 9 (smallest); -1 stores without compressing. Zero is 6. Section 4 has the measurements. | `INVALID_ARG` from `create` outside that range. |
 | `compress_window_bits` (both) | 9 to 15: the memory a streamed response holds while it is written (section 4's table). Zero is 15. | the same. |
 | `compress_zstd` (both server configurations) | Compress in `zstd` for a request that weighs it at least as high as gzip; gzip otherwise. False: gzip only. | - |
-| `compress_zstd_level`, `compress_zstd_window_log` (both) | Section 7's encoder level (1 to 9, zero is 1) and window (10 to 23, zero is 17). | `INVALID_ARG` from `create` outside those ranges. |
+| `compress_zstd_level`, `compress_zstd_window_log` (both) | Section 7's encoder level (1 to 9 - not 10 to 12, which are for files compressed in advance - zero is 1) and window (10 to 23, zero is 17). | `INVALID_ARG` from `create` outside those ranges. |
 | `decompress` (both client configurations) | Send `Accept-Encoding: gzip` and decode `gzip` and `deflate` bodies. | - |
 | `decompress_zstd` (both client configurations) | With `decompress`: send `Accept-Encoding: zstd, gzip` and decode `zstd` bodies too. | `INVALID_ARG` from `create` without `decompress`. |
 | `decompress_brotli` (both client configurations) | With `decompress`: ask for `br` too and decode `br` bodies (since v0.60.0). | `INVALID_ARG` from `create` without `decompress`; `UNSUPPORTED` in a build with `PROVEN_NO_BROTLI`. |
@@ -859,7 +859,7 @@ proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t 
 Zstandard (RFC 8878) is a newer format than DEFLATE: `.zst` files, HTTP's
 `Content-Encoding: zstd` (RFC 9659), and some package formats. Its compressors range from
 faster than gzip's fastest to smaller than gzip's smallest; whatever was used, it decodes
-quickly. This library reads it, and since v0.58.0 writes it - at nine levels since v0.59.0 (below,
+quickly. This library reads it, and since v0.58.0 writes it - at nine levels since v0.59.0 and twelve since v0.101.0 (below,
 "Writing Zstandard").
 
 The decoder is used like section 3's decompressor - a state, and a step that takes what
@@ -1032,7 +1032,7 @@ The encoder is used like section 3's compressor: options (`alloc`, `level`, `win
 the frame. Its frames are read by any Zstandard decoder; they are not the bytes libzstd would
 have written for the same input.
 
-**Nine levels, as libzstd's first nine.** Level 1 finds matches through one hash table,
+**Levels as libzstd's.** Level 1 finds matches through one hash table,
 levels 2 and 3 through two (libzstd's "fast" and "double fast"); levels 4 to 9 keep every
 position in a hash chain and look at the first 4 to 32 of it, taking the best match found
 (levels 4 and 5) or first looking one byte on (6) or two (7 to 9) for a better one. Every
@@ -1062,6 +1062,25 @@ within a third of a point of the size. Level 6 looks at 12 candidates where libz
 about half the speed. On inputs of megabytes libzstd's higher levels also use a larger window
 and tables, and are 0.3 to 0.5 points smaller there.
 
+**Levels 10 to 12** (since v0.101.0) are lazy2 again with libzstd's larger tables for them - a hash of
+2^22, 2^22 and 2^23 entries and a chain of 2^21, 2^21 and 2^22, each cut to the window - and 48, 96
+and 128 candidates: for a file compressed once and sent many times. Against libzstd's same levels,
+on four other inputs at the largest window (`window_log` 23; one run each, on a loaded machine, so
+the speeds are rough):
+
+| | C sources, 3.0 MB | HTML page, 330 KB | JSON, 191 KB | an executable, 2.0 MB |
+|---|---|---|---|---|
+| level 9, this library / libzstd | 1.020 of its size | 0.990 | 1.003 | 0.987 |
+| level 10 | 1.001 | 0.991 | 1.002 | 0.974 |
+| level 11 | 1.001 | 0.991 | 1.007 | 0.973 |
+| level 12 | 0.997 | 0.988 | 1.013 | 0.973 |
+| speed at level 12, this library / libzstd | 4.7 / 23 MB/s | 21 / 50 | 41 / 23 | 4.6 / 19 |
+
+Level 12 is 2 to 5 % smaller than level 9, at a fifth to a half of its speed. libzstd finds its
+candidates faster (it keeps them in rows) and, below 256 KiB, switches to a binary tree at level 11 -
+the JSON row's point. With the default window (19) the tables are 2^20 each and the C sources 2
+points larger than libzstd's, which uses 4 MiB at these levels.
+
 The table was measured before v0.89.0. Since then, on an x86 processor with BMI2 (shifts by a
 register without the flags), the encoder runs a second build of its block coder compiled for
 it - the same C, the same output, chosen when the processor is first asked: on four other
@@ -1073,7 +1092,7 @@ its own buffer, and at most holds:
 
 | | Memory |
 |---|---|
-| Hash tables (zeroed when an encoder is made or reset) | 64 KiB at level 1, 96 KiB at 2, 768 KiB at 3 and 4, 1 MiB at 5 to 9 (less when a whole buffer is short) |
+| Hash tables (zeroed when an encoder is made or reset) | 64 KiB at level 1, 96 KiB at 2, 768 KiB at 3 and 4, 1 MiB at 5 to 9; at 10 to 12 8 MiB with the default window, and with the largest 24 MiB at 10 and 11, 48 MiB at 12 (less when a whole buffer is short) |
 | One block's work: its sequences, literals and output | about 500 KiB |
 | The input buffer of a stream | the window and half a window, or the window and 128 KiB if that is more: 768 KiB at the default 512 KiB |
 
@@ -1161,7 +1180,7 @@ int main(void) {
 
 | API | Intent | Return |
 |---|---|---|
-| `proven_zstd_encoder_create(&options, &z)` | An encoder: `level` 1 to 9 (zero is 3, libzstd's default), `window_log` 10 to 23 (zero is 19), `checksum`. Allocates its hash tables; its buffers come with input. | `INVALID_ARG`, `NOMEM`. |
+| `proven_zstd_encoder_create(&options, &z)` | An encoder: `level` 1 to 12 (zero is 3, libzstd's default), `window_log` 10 to 23 (zero is 19), `checksum`. Allocates its hash tables; its buffers come with input. | `INVALID_ARG`, `NOMEM`. |
 | `proven_zstd_encode(z, in, &consumed, out, &produced, flush, &done)` | Take some of `in`, give some of `out`. With a flush, call again until all input is taken and nothing more comes (for FINISH, until `done`). | `INVALID_STATE` for input after FINISH (reset first); `NOMEM`, after which every call says so until a reset; `INVALID_ARG`. |
 | `proven_zstd_encoder_reset(z)` | Start a new frame with the same options; the buffers are kept. | none. |
 | `proven_zstd_encoder_destroy(z)` | Free it. NULL is allowed. | none. |
@@ -1215,7 +1234,7 @@ needs more is `PROVEN_ERR_OUT_OF_BOUNDS` before anything is allocated for it. li
 
 | | Memory |
 |---|---|
-| A decoder, made | about 22 KiB |
+| A decoder, made | about 24 KiB |
 | While decoding a stream | its history - as much of the window as its output has reached, 2^WBITS bytes at most, and 32 more - and its codes: tens of KiB for what encoders write; 1,343,024 bytes for the most a meta-block can have (256 codes of each of its three kinds, each as large as a code's table can be) |
 
 **One stream, and nothing after it.** Brotli streams do not follow each other the way gzip
@@ -1439,7 +1458,7 @@ twice, and a client that did not ask was sent gzip.
 
 **The encoder of section 7 was tested** against its decoder and against libzstd. The
 registered test compresses eleven kinds of data (nothing, one byte, a run, numbered lines,
-noise with copies from far back, random bytes, more than 128 byte values, and more) at all nine
+noise with copies from far back, random bytes, more than 128 byte values, and more) at all twelve
 levels and three windows, whole and - at a level of each kind - streamed with a block flush
 after each piece and output a byte at a time, and decodes every frame with this library's
 decoder, which checks each offset against the window the frame states; it checks that a
