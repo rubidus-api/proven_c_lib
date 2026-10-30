@@ -291,6 +291,16 @@ static bool closed_event(proven_quic_conn_t *c, proven_quic_event_t *out) {
     return false;
 }
 
+/* Whether every captured long header that endpoint `side` sent is of `version`. */
+static bool all_long_in(const net_t *n, int side, proven_u32 version) {
+    for (proven_size_t i = 0; i < n->capn; ++i) {
+        proven_quic_hdr_t h;
+        if (n->cap[i].to != 1 - side || !(n->cap[i].b[0] & 0x80)) continue;
+        if (proven_quic_hdr_parse((proven_mem_view_t){ n->cap[i].b, n->cap[i].n }, 8, &h) && h.version != version) return false;
+    }
+    return true;
+}
+
 static void run_for(net_t *n, proven_u64 us) {
     const proven_u64 end = n->now + us;
     n->until = end;
@@ -334,6 +344,16 @@ static void drain_stream(net_t *n, xfers_t *t, const xfer_t *x, proven_u64 upto)
 
 /* Hooks. */
 static int g_hook_count;
+/* The server's first datagram to the client keeps its first packet (the Initial) alone: the
+ * client learns the server's version and waits for the rest (RFC-0036's 0-RTT test). */
+static int g_alone;
+static bool hook_server_initial_alone(net_t *n, int to, proven_byte_t *b, proven_size_t *len) {
+    (void)n;
+    proven_quic_hdr_t h;
+    if (to == 0 && g_alone++ == 0 && proven_quic_hdr_parse((proven_mem_view_t){ b, *len }, 8, &h) && h.len < *len) *len = h.len;
+    return true;
+}
+
 static bool hook_drop_all(net_t *n, int to, proven_byte_t *b, proven_size_t *len) { (void)n; (void)to; (void)b; (void)len; return false; }
 static bool hook_server_deaf_after_first(net_t *n, int to, proven_byte_t *b, proven_size_t *len) {
     (void)n; (void)b; (void)len;
@@ -692,6 +712,227 @@ int main(void) {
         proven_quic_event_t ev;
         PROVEN_TEST_ASSERT(closed_event(n->ep[0], &ev) && ev.remote && ev.code == PROVEN_QUIC_CONNECTION_REFUSED, "a version list without version 1 ends the attempt", "");
         net_free(n);
+    }
+
+    PROVEN_TEST_SECTION("QUIC version 2 (RFC-0036)",
+        "A client that starts in version 2 is answered in it, with no Version Negotiation; a server allowed to move a version-1 client that lists 2 does (compatible negotiation) and both sides end in 2; the ticket of such a connection makes the next one start in 2, resume and send early data, while a connection in version 1 neither offers it nor writes early; a client restarting after Version Negotiation refuses a server whose list says it would have chosen otherwise; a Version Negotiation that lists only 2 ends the attempt with 2 to start again in, one that lists the version started in is ignored; a NEW_TOKEN token of version 1 does not validate a version-2 client.",
+        "Inspect version_switch, client_order, client_pick, the version checks in apply_peer_params and read_datagram, token_bound, and quic_upgrade and the ticket checks in tls13.c.");
+    {
+        const proven_u32 V2 = PROVEN_QUIC_VERSION_2, V1 = PROVEN_QUIC_VERSION_1;
+        net_init(n, 600);
+        n->cfg[0].version = V2;
+        n->capture = true;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000) && n->replies == 0, "a client starting in version 2: no Version Negotiation", "");
+        xfers_t *t = calloc(1, sizeof *t);
+        xfer_open(n, t, 0, true, 100000);
+        xfer_open(n, t, 1, false, 100000);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 10000000), "streams both ways in version 2", "");
+        PROVEN_TEST_ASSERT(stats(n, 0).version == V2 && stats(n, 1).version == V2 && all_long_in(n, 0, V2) && all_long_in(n, 1, V2), "every long header of both sides in version 2", "");
+        net_free(n);
+
+        /* Compatible negotiation: the client starts in 1 and lists 2; a server allowed to moves. */
+        net_init(n, 601);
+        n->cfg[1].upgrade_v2 = true;
+        n->capture = true;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "a version-1 client and a server that moves to 2", "");
+        proven_quic_hdr_t h0;
+        PROVEN_TEST_ASSERT(proven_quic_hdr_parse((proven_mem_view_t){ n->cap[0].b, n->cap[0].n }, 8, &h0) && h0.version == V1 && all_long_in(n, 1, V2),
+            "the client's first Initial in 1, everything of the server's in 2", "");
+        t->n = 0;
+        xfer_open(n, t, 0, true, 100000);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 10000000) && stats(n, 0).version == V2 && stats(n, 1).version == V2, "and the connection carries on in 2", "");
+        net_free(n);
+        net_init(n, 602);
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000) && stats(n, 0).version == V1 && stats(n, 1).version == V1, "without the switch the server stays in 1 (RFC-0036 D-2)", "");
+        net_free(n);
+
+        /* The ticket of a connection that moved to 2: the next one starts in 2, resumes, writes early. */
+        proven_tls_options_t o = { .alloc = g_alloc, .anchors = g_anchors, .random = test_random, .now = test_now, .now_ctx = &g_now, .alpn = H3, .alpn_count = 1, .early_data = true };
+        proven_tls_config_t *ce = NULL, *se = NULL;
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &ce) == PROVEN_OK, "", "");
+        o = (proven_tls_options_t){ .alloc = g_alloc, .random = test_random, .now = test_now, .now_ctx = &g_now, .alpn = H3, .alpn_count = 1, .early_data = true,
+                                    .certificate_pem = pem(TP_SERVER_P256), .private_key_pem = pem(TP_SERVER_P256_KEY) };
+        PROVEN_TEST_ASSERT(proven_tls_config_create(&o, &se) == PROVEN_OK, "", "");
+        static proven_tls_session_t moved;
+        net_init(n, 603);
+        n->cfg[0].tls = ce; n->cfg[1].tls = se; n->cfg[1].upgrade_v2 = true;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 5000000), "", "");
+        run_for(n, 100000);
+        memcpy(&moved, &n->session, sizeof moved);
+        net_free(n);
+        net_init(n, 604);
+        n->cfg[0].tls = ce; n->cfg[1].tls = se;
+        memcpy(&n->session, &moved, sizeof moved);
+        n->capture = true;
+        net_start(n);
+        proven_u64 id;
+        PROVEN_TEST_ASSERT(proven_quic_stream_open(n->ep[0], true, &id) == PROVEN_OK, "a version-2 ticket: the next connection may write early", "");
+        PROVEN_TEST_ASSERT(run_handshake(n, 5000000) && proven_quic_conn_resumed(n->ep[0]) && stats(n, 0).early == 1 && stats(n, 0).version == V2 &&
+                           proven_quic_hdr_parse((proven_mem_view_t){ n->cap[0].b, n->cap[0].n }, 8, &h0) && h0.version == V2,
+            "it starts in 2, resumes and its early data is taken", "");
+        net_free(n);
+        net_init(n, 605);
+        n->cfg[0].tls = ce; n->cfg[1].tls = se; n->cfg[0].version = V1;
+        memcpy(&n->session, &moved, sizeof moved);
+        net_start(n);
+        PROVEN_TEST_ASSERT(proven_quic_stream_open(n->ep[0], true, &id) == PROVEN_ERR_INVALID_STATE, "a connection in 1 does not offer the version-2 ticket: no early data", "");
+        PROVEN_TEST_ASSERT(run_handshake(n, 5000000) && !proven_quic_conn_resumed(n->ep[0]), "and it does not resume (RFC 9369 section 5)", "");
+        net_free(n);
+        proven_tls_config_destroy(ce); proven_tls_config_destroy(se);
+
+        /* After a Version Negotiation that sent the client to 2: a server whose list has 1, which the
+         * client prefers, shows the negotiation was forged (RFC 9368 section 4). */
+        net_init(n, 606);
+        n->cfg[0].version = V2; n->cfg[0].after_vn = true;
+        net_start(n);
+        for (int k = 0; k < 400 && !stats(n, 0).closed; ++k) net_step(n);
+        proven_quic_event_t ev;
+        PROVEN_TEST_ASSERT(closed_event(n->ep[0], &ev) && !ev.remote && ev.code == PROVEN_QUIC_VERSION_NEGOTIATION_ERROR,
+            "a client restarted in 2 by a Version Negotiation, told by the server that it speaks 1: VERSION_NEGOTIATION_ERROR", "");
+        net_free(n);
+
+        /* Version Negotiation packets to a client that started in 1. */
+        for (int k = 0; k < 2; ++k) {
+            net_init(n, 607 + (unsigned)k);
+            n->hook = hook_drop_all;
+            n->capture = true;
+            net_start(n);
+            net_step(n);
+            proven_quic_hdr_t h;
+            PROVEN_TEST_ASSERT(n->capn >= 1 && proven_quic_hdr_parse((proven_mem_view_t){ n->cap[0].b, n->cap[0].n }, 8, &h), "", "");
+            proven_byte_t vn[64];
+            proven_size_t m = 0;
+            vn[m++] = 0x80; vn[m++] = 0; vn[m++] = 0; vn[m++] = 0; vn[m++] = 0;
+            vn[m++] = h.scid.len; memcpy(vn + m, h.scid.id, h.scid.len); m += h.scid.len;
+            vn[m++] = h.dcid.len; memcpy(vn + m, h.dcid.id, h.dcid.len); m += h.dcid.len;
+            vn[m++] = 0x6b; vn[m++] = 0x33; vn[m++] = 0x43; vn[m++] = 0xcf;
+            if (k == 1) { vn[m++] = 0; vn[m++] = 0; vn[m++] = 0; vn[m++] = 1; }
+            PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[0], (proven_mem_view_t){ vn, m }, &n->addr[1], 0, n->now) == PROVEN_OK, "", "");
+            if (k == 0) PROVEN_TEST_ASSERT(closed_event(n->ep[0], &ev) && ev.code == PROVEN_QUIC_CONNECTION_REFUSED && stats(n, 0).vn_version == V2,
+                "a list of version 2 alone: the attempt ends, with 2 to start again in", "");
+            else PROVEN_TEST_ASSERT(!closed_event(n->ep[0], &ev) && stats(n, 0).vn_version == 0, "a list that holds version 1, the one started in: ignored", "");
+            net_free(n);
+        }
+
+        /* version_information refused (RFC 9368 section 4): a client whose chosen version is not
+         * its Initial's; a server whose chosen version the client never offered. */
+        for (int k = 0; k < 2; ++k) {
+            net_init(n, 620 + (unsigned)k);
+            proven_quic_test_chosen_(k == 1, k == 0 ? V2 : 0x1a2a3a4a);
+            net_start(n);
+            for (int i = 0; i < 400 && !stats(n, 0).closed; ++i) net_step(n);
+            proven_quic_test_chosen_(k == 1, 0);
+            const bool closed0 = closed_event(n->ep[0], &ev);
+            if (k == 0) PROVEN_TEST_ASSERT(closed0 && ev.remote && ev.code == PROVEN_QUIC_VERSION_NEGOTIATION_ERROR,
+                "a client in 1 that says it chose 2: the server closes with VERSION_NEGOTIATION_ERROR", "");
+            else PROVEN_TEST_ASSERT(closed0 && !ev.remote && ev.code == PROVEN_QUIC_VERSION_NEGOTIATION_ERROR,
+                "a server that says it chose a version the client never offered: the client closes with VERSION_NEGOTIATION_ERROR", "");
+            net_free(n);
+        }
+
+        /* A Retry in another version than the one the client started in is ignored (RFC 9369 section 4.1). */
+        net_init(n, 622);
+        n->hook = hook_drop_all;
+        n->capture = true;
+        net_start(n);
+        net_step(n);
+        {
+            proven_quic_hdr_t h;
+            PROVEN_TEST_ASSERT(n->capn >= 1 && proven_quic_hdr_parse((proven_mem_view_t){ n->cap[0].b, n->cap[0].n }, 8, &h) && h.version == V1, "", "");
+            const proven_quic_cid_t scid = { .len = 8, .id = { 7, 7, 7, 7, 7, 7, 7, 7 } };
+            proven_byte_t rp[256];
+            for (int k = 0; k < 2; ++k) {
+                const proven_size_t rn = proven_quic_retry_build_v(k ? V1 : V2, &h.dcid, &h.scid, &scid, (proven_mem_view_t){ (const proven_byte_t *)"tok", 3 }, 0, (proven_mem_mut_t){ rp, sizeof rp });
+                const proven_u64 before = stats(n, 0).packets_dropped;
+                PROVEN_TEST_ASSERT(rn > 0 && proven_quic_conn_receive(n->ep[0], (proven_mem_view_t){ rp, rn }, &n->addr[1], 0, n->now) == PROVEN_OK, "", "");
+                if (k == 0) PROVEN_TEST_ASSERT(stats(n, 0).packets_dropped == before + 1, "a Retry of version 2 to a client that started in 1: dropped", "");
+                else PROVEN_TEST_ASSERT(stats(n, 0).packets_dropped == before, "the same Retry in version 1: taken", "");
+            }
+        }
+        net_free(n);
+
+        /* 0-RTT stays in the original version: a version-1 ticket, a server that moves the
+         * connection to 2, early data before and after the client learns it. */
+        {
+            proven_tls_options_t o2 = { .alloc = g_alloc, .anchors = g_anchors, .random = test_random, .now = test_now, .now_ctx = &g_now, .alpn = H3, .alpn_count = 1, .early_data = true };
+            proven_tls_config_t *ce2 = NULL, *se2 = NULL;
+            PROVEN_TEST_ASSERT(proven_tls_config_create(&o2, &ce2) == PROVEN_OK, "", "");
+            o2 = (proven_tls_options_t){ .alloc = g_alloc, .random = test_random, .now = test_now, .now_ctx = &g_now, .alpn = H3, .alpn_count = 1, .early_data = true,
+                                         .certificate_pem = pem(TP_SERVER_P256), .private_key_pem = pem(TP_SERVER_P256_KEY) };
+            PROVEN_TEST_ASSERT(proven_tls_config_create(&o2, &se2) == PROVEN_OK, "", "");
+            static proven_tls_session_t v1t;
+            net_init(n, 623);
+            n->cfg[0].tls = ce2; n->cfg[1].tls = se2;
+            net_start(n);
+            PROVEN_TEST_ASSERT(run_handshake(n, 5000000), "", "");
+            run_for(n, 100000);
+            memcpy(&v1t, &n->session, sizeof v1t);
+            net_free(n);
+            net_init(n, 624);
+            n->cfg[0].tls = ce2; n->cfg[1].tls = se2; n->cfg[1].upgrade_v2 = true;
+            memcpy(&n->session, &v1t, sizeof v1t);
+            n->capture = true;
+            g_alone = 0;
+            n->hook = hook_server_initial_alone;      /* the client in 2 before its handshake is done: early data goes on */
+            net_start(n);
+            /* A little early data first; more once the client has followed the server into 2,
+             * its handshake not done: that too goes as 0-RTT, and in version 1. */
+            proven_u64 sid;
+            static proven_byte_t early_bytes[3000];
+            proven_size_t took = 0;
+            PROVEN_TEST_ASSERT(proven_quic_stream_open(n->ep[0], true, &sid) == PROVEN_OK &&
+                               proven_quic_stream_write(n->ep[0], sid, (proven_mem_view_t){ early_bytes, 1000 }, false, &took) == PROVEN_OK && took == 1000, "", "");
+            for (int i = 0; i < 200 && !(stats(n, 0).version == V2 && !stats(n, 0).established); ++i) net_step(n);
+            PROVEN_TEST_ASSERT(stats(n, 0).version == V2 && !stats(n, 0).established, "the client in 2 before its handshake is done", "");
+            PROVEN_TEST_ASSERT(proven_quic_stream_write(n->ep[0], sid, (proven_mem_view_t){ early_bytes, sizeof early_bytes }, true, &took) == PROVEN_OK && took == sizeof early_bytes, "", "");
+            const proven_size_t before_caps = n->capn;
+            for (int i = 0; i < 400 && !stats(n, 0).confirmed; ++i) net_step(n);
+            unsigned zero_rtt = 0, after_switch = 0;
+            bool all_v1 = true;
+            for (proven_size_t i = 0; i < n->capn; ++i) {
+                proven_quic_hdr_t h;
+                proven_size_t at = 0;
+                while (n->cap[i].to == 1 && at < n->cap[i].n && (n->cap[i].b[at] & 0x80) && proven_quic_hdr_parse((proven_mem_view_t){ n->cap[i].b + at, n->cap[i].n - at }, 8, &h) && h.len > 0) {
+                    if (h.type == PROVEN_QUIC_PKT_0RTT) { ++zero_rtt; after_switch += i >= before_caps; all_v1 = all_v1 && h.version == V1; }
+                    at += h.len;
+                }
+            }
+            printf("  0-RTT packets from the client: %u, %u of them after it followed the server into 2; all in version 1: %s\n", zero_rtt, after_switch, all_v1 ? "yes" : "no");
+            PROVEN_TEST_ASSERT(stats(n, 0).early == 1 && stats(n, 0).version == V2 && after_switch > 0 && all_v1,
+                "a version-1 ticket's early data is taken by a server that moved to 2, and every 0-RTT packet - those after the move too - is in version 1 (RFC 9369 section 4.1)", "");
+            net_free(n);
+            proven_tls_config_destroy(ce2); proven_tls_config_destroy(se2);
+        }
+
+        /* A NEW_TOKEN token is its version's: one of 1 kept as if of 2 validates nothing. */
+        net_init(n, 610);
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 5000000), "", "");
+        run_for(n, 100000);
+        static proven_tls_session_t tk;
+        memcpy(&tk, &n->session, sizeof tk);
+        net_free(n);
+        proven_byte_t tok[255];
+        const proven_size_t tl = proven_tls_session_token_take_v_(&tk, V1, tok, sizeof tok);
+        PROVEN_TEST_ASSERT(tl > 0 && proven_tls_session_token_take_v_(&tk, V1, tok, sizeof tok) == 0, "a version-1 token, taken by a version-1 connection only", "");
+        for (int k = 0; k < 2; ++k) {
+            net_init(n, 611 + (unsigned)k);
+            n->now += 1000000;
+            if (k == 1) n->cfg[0].version = V2;
+            proven_tls_session_token_keep_v_(&n->session, k ? V2 : V1, (proven_mem_view_t){ tok, tl });
+            net_start(n);
+            while (!n->ep[1] && n->now < 30000000) net_step(n);
+            const bool at_once = n->ep[1] && stats(n, 1).path_validated;
+            PROVEN_TEST_ASSERT(run_handshake(n, 5000000), "", "");
+            if (k == 0) PROVEN_TEST_ASSERT(at_once, "the token in its own version: validated at once", "");
+            else PROVEN_TEST_ASSERT(!at_once, "the same token presented in version 2: as no token (RFC 9369 section 5)", "");
+            net_free(n);
+        }
+        free(t);
     }
 
     PROVEN_TEST_SECTION("closing", "An application's close reaches the peer with its code; both sides end after the closing period; nothing is sent while draining.", "");

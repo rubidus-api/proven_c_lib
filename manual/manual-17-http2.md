@@ -1687,6 +1687,13 @@ underneath:
   Congestion Experienced mark - a router saying its queue is filling - slows the sender as a loss
   would, with nothing lost and nothing sent again. The event client does the same. Elsewhere
   nothing is marked or read. There is no setting.
+- **QUIC version 2** (RFC 9369, negotiated as RFC 9368 says; since v0.99.0). The server answers
+  a client in the version it starts in, 1 or 2, and lists both when it answers another version.
+  The event client starts in version 1 and lists 2 as well, so a server that prefers 2 can move
+  it there without a round trip; against a server that speaks only 2 it starts again in 2 once,
+  as the same connection. Session tickets and NEW_TOKEN tokens belong to the version they came
+  from: a client whose last ticket came over 2 starts its next connection in 2, so resumption and
+  early data still work. Every downgrade check of RFC 9368 section 4 is made. No setting.
 
 | Setting | For HTTP/3 |
 |---|---|

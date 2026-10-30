@@ -18,6 +18,21 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.99.0] - 2026-10-30
+
+### Added
+
+- **QUIC version 2** (RFC 9369) **and version negotiation** (RFC 9368; RFC-0036), for the event server
+  and client: version 2's salt, labels, Retry key and type bits; the version_information transport
+  parameter sent, read and checked (a malformed one is a TRANSPORT_PARAMETER_ERROR; a chosen version
+  that does not match, or a server list that shows a Version Negotiation was forged, a
+  VERSION_NEGOTIATION_ERROR). The server answers a client in the version it starts in and lists both
+  versions in Version Negotiation; it does not move a version-1 client to 2 itself. The client starts
+  in 1 listing 2 (or in the version its ticket came from), follows a server that moves it
+  (compatible negotiation: 0-RTT stays in the original version), ignores a Version Negotiation that
+  lists the version it started in, and starts again in 2, once, when one lists only 2. Session
+  tickets, NEW_TOKEN and Retry tokens are bound to their version (RFC 9369 section 5).
+
 ## [0.98.0] - 2026-10-30
 
 ### Added

@@ -2,6 +2,7 @@
 #include "proven_test.h"
 #include "../src/proven/proven_internal_quic.h"
 #include "test_unit_quic_vectors.h"
+#include "test_unit_quic_vectors_v2.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -319,6 +320,69 @@ int main(void) {
                            memcmp(plain.ptr, client_payload, 100) == 0, "TLS_AES_256_GCM_SHA384 protects and opens with AES-256 for both keys", "");
     }
 
+    PROVEN_TEST_SECTION("QUIC version 2 (RFC 9369 appendix A; RFC-0036)", "The version 2 salt and labels: the Initial keys, the client's and the server's Initial as printed, the Retry with version 2's key and nonce, the ChaCha20 short header packet with \"quicv2 ku\"; the headers read as the types RFC 9369 section 3.2 gives.", "Check proven_quic_initial_secrets_v, proven_quic_keys_set_v, proven_quic_secret_update_v, proven_quic_retry_tag and the type bits in quic_frame.c.");
+    {
+        proven_byte_t d2[8], cs2[32], ss2[32];
+        unhex(QV2_DCID, d2, sizeof d2);
+        proven_quic_initial_secrets_v((proven_mem_view_t){ d2, 8 }, PROVEN_QUIC_VERSION_2, cs2, ss2);
+        PROVEN_TEST_ASSERT(equals_hex(cs2, 32, QV2_CLIENT_SECRET) && equals_hex(ss2, 32, QV2_SERVER_SECRET), "client_initial_secret and server_initial_secret from the version 2 salt", "");
+        proven_quic_keys_t ck2, sk2;
+        proven_quic_keys_set_v(&ck2, aes128, cs2, PROVEN_QUIC_VERSION_2);
+        proven_quic_keys_set_v(&sk2, aes128, ss2, PROVEN_QUIC_VERSION_2);
+        PROVEN_TEST_ASSERT(equals_hex(ck2.iv, 12, QV2_CLIENT_IV) && same_aes(&ck2.aead, QV2_CLIENT_KEY) && same_hp(&ck2.hp, QV2_CLIENT_HP) &&
+                           equals_hex(sk2.iv, 12, QV2_SERVER_IV) && same_aes(&sk2.aead, QV2_SERVER_KEY) && same_hp(&sk2.hp, QV2_SERVER_HP),
+            "each side's key, IV and header protection key under \"quicv2 key\", \"quicv2 iv\", \"quicv2 hp\"", "");
+        static proven_byte_t cp2[1162];
+        memset(cp2, 0, sizeof cp2);
+        unhex(QV2_CLIENT_CRYPTO, cp2, sizeof cp2);
+        proven_byte_t sample[16], mask[5], want[5];
+        unhex(QV2_CLIENT_SAMPLE, sample, 16);
+        unhex(QV2_CLIENT_MASK, want, 5);
+        proven_quic_hp_mask(&ck2, sample, mask);
+        PROVEN_TEST_ASSERT(memcmp(mask, want, 5) == 0 && protect_and_open(&ck2, QV2_CLIENT_HEADER, cp2, sizeof cp2, 2, QV2_CLIENT_PACKET, 0),
+            "the client's Initial protected as printed and opened again", "");
+        proven_byte_t payload[256];
+        proven_size_t n = unhex(QV2_SERVER_PAYLOAD, payload, sizeof payload);
+        PROVEN_TEST_ASSERT(protect_and_open(&sk2, QV2_SERVER_HEADER, payload, n, 1, QV2_SERVER_PACKET, 0), "the server's Initial as printed", "");
+        static proven_byte_t pk[1300];
+        proven_quic_hdr_t h;
+        n = unhex(QV2_CLIENT_PACKET, pk, sizeof pk);
+        bool types = proven_quic_hdr_parse((proven_mem_view_t){ pk, n }, 8, &h) && h.type == PROVEN_QUIC_PKT_INITIAL && h.version == PROVEN_QUIC_VERSION_2 && h.len == n;
+        proven_byte_t rp[128], tag[16];
+        n = unhex(QV2_RETRY_PACKET, rp, sizeof rp);
+        types = types && proven_quic_hdr_parse((proven_mem_view_t){ rp, n }, 8, &h) && h.type == PROVEN_QUIC_PKT_RETRY;
+        proven_quic_retry_tag((proven_mem_view_t){ d2, 8 }, (proven_mem_view_t){ rp, n - 16 }, tag);
+        PROVEN_TEST_ASSERT(memcmp(tag, rp + n - 16, 16) == 0 && proven_quic_retry_check((proven_mem_view_t){ d2, 8 }, (proven_mem_view_t){ rp, n }),
+            "the Retry's tag under version 2's key and nonce, chosen by the packet's Version field", "");
+        /* A header built in each version and read back as the same type. */
+        const proven_quic_cid_t a = { .len = 4, .id = { 1, 2, 3, 4 } }, b = { .len = 2, .id = { 9, 9 } };
+        const proven_quic_pkt_type_t kinds[3] = { PROVEN_QUIC_PKT_INITIAL, PROVEN_QUIC_PKT_0RTT, PROVEN_QUIC_PKT_HANDSHAKE };
+        for (int v = 0; v < 2; ++v) for (int k = 0; k < 3; ++k) {
+            proven_byte_t hb[64];
+            const proven_u32 ver = v ? PROVEN_QUIC_VERSION_2 : PROVEN_QUIC_VERSION_1;
+            const proven_size_t hl = proven_quic_long_header_put_v(ver, kinds[k], &a, &b, (proven_mem_view_t){ NULL, 0 }, 1, 1, 30, (proven_mem_mut_t){ hb, sizeof hb });
+            memset(hb + hl, 0, sizeof hb - hl);
+            types = types && hl > 0 && proven_quic_hdr_parse((proven_mem_view_t){ hb, hl + 30 + 16 > sizeof hb ? sizeof hb : hl + 30 + 16 }, 8, &h) && h.type == kinds[k] && h.version == ver;
+            if (v && k == 0) types = types && ((hb[0] >> 4) & 3) == 1;          /* version 2's Initial is 0b01 */
+        }
+        PROVEN_TEST_ASSERT(types, "version 2's type bits: Initial 0b01, 0-RTT 0b10, Handshake 0b11, Retry 0b00, written and read", "");
+        const proven_tls_suite_t *chacha = proven_tls_suite_find(PROVEN_TLS_CHACHA20_POLY1305_SHA256);
+        proven_byte_t secret[32], key[32];
+        proven_quic_keys_t chk2;
+        unhex(QV2_CHACHA_SECRET, secret, 32);
+        proven_quic_keys_set_v(&chk2, chacha, secret, PROVEN_QUIC_VERSION_2);
+        unhex(QV2_CHACHA_KEY, key, 32);
+        PROVEN_TEST_ASSERT(memcmp(chk2.aead.rk, key, 32) == 0 && equals_hex(chk2.iv, 12, QV2_CHACHA_IV) && equals_hex(chk2.hp.rk, 32, QV2_CHACHA_HP), "ChaCha20's key, IV and header protection key", "");
+        proven_quic_secret_update_v(chacha, secret, PROVEN_QUIC_VERSION_2);
+        PROVEN_TEST_ASSERT(equals_hex(secret, 32, QV2_CHACHA_KU), "\"quicv2 ku\": the next key phase's secret", "");
+        proven_byte_t plain[1];
+        unhex(QV2_CHACHA_PLAIN, plain, 1);
+        PROVEN_TEST_ASSERT(protect_and_open(&chk2, QV2_CHACHA_HEADER, plain, 1, QV2_CHACHA_PN, QV2_CHACHA_PACKET, QV2_CHACHA_PN - 1000), "the 21-byte short header packet as printed", "");
+        unsigned tried = 0;
+        PROVEN_TEST_ASSERT(every_change_refused(&ck2, QV2_CLIENT_PACKET, 18, 0, &tried) && every_change_refused(&sk2, QV2_SERVER_PACKET, 18, 0, &tried), "every change of the two Initials refused", "");
+        PROVEN_TEST_ASSERT(!protect_and_open(&ck, QV2_CLIENT_HEADER, cp2, sizeof cp2, 2, QV2_CLIENT_PACKET, 0), "version 1's keys do not make version 2's packet", "");
+    }
+
     PROVEN_TEST_SECTION("transport parameters (RFC 9000 section 18)", "The RFC's own ClientHello's, every parameter both ways, and each refusal.", "Check proven_quic_tp_encode and proven_quic_tp_decode.");
     {
         /* The quic_transport_parameters extension (0x0039) inside appendix A.2's ClientHello. */
@@ -399,6 +463,35 @@ int main(void) {
         PROVEN_TEST_ASSERT(tp_decode_hex("0f001b00" "404102" "7f7f" "3f06" "1234567890ab", false, &back) == 0 &&
                            tp_decode_hex("0f00" "c000000000000033" "00" "1f04aabbccdd", false, &back) == 0,
             "unknown and reserved parameters (27, 31 * N + 27, ids of every length) are skipped", "");
+        /* version_information (RFC 9368 section 3; RFC-0036). */
+        bool vi = tp_decode_hex("0f00" "1108" "00000001" "00000001", false, &back) == 0 && back.has_version_info && back.chosen_version == 1 && back.available_n == 1;
+        vi = vi && tp_decode_hex("0f00" "110c" "00000001" "000000016b3343cf", false, &back) == 0 && back.available_n == 2 && back.available[1] == PROVEN_QUIC_VERSION_2;
+        vi = vi && tp_decode_hex("0f00" "000100" "1104" "6b3343cf", true, &back) == 0 && back.chosen_version == PROVEN_QUIC_VERSION_2 && back.available_n == 0;
+        PROVEN_TEST_ASSERT(vi, "version_information read: a client's chosen version among its list; a server's list may be empty", "");
+        static const char *const vi_bad[] = {
+            "1108" "00000001" "6b3343cf",                   /* a client's chosen version not in its list */
+            "1104" "00000001",                              /* nor in an empty one */
+            "1105" "0000000100", "1103" "000001", "1100",   /* not a whole number of versions */
+            "1108" "00000000" "00000000",                   /* a zero chosen version */
+            "1108" "00000001" "00000000",                   /* a zero available version */
+            "1128" "00000001" "000000010000000100000001000000010000000100000001000000010000000100000001",   /* nine: more than kept */
+        };
+        bool vr = true;
+        for (proven_size_t i = 0; i < sizeof vi_bad / sizeof vi_bad[0]; ++i) {
+            snprintf(hex, sizeof hex, "0f00%s", vi_bad[i]);
+            vr = vr && tp_decode_hex(hex, false, &back) == PROVEN_QUIC_TRANSPORT_PARAMETER_ERROR;
+        }
+        vr = vr && tp_decode_hex("0f00" "000100" "1108" "00000000" "00000001", true, &back) == PROVEN_QUIC_TRANSPORT_PARAMETER_ERROR;
+        PROVEN_TEST_ASSERT(vr, "a malformed version_information, a zero version, or a client's chosen version missing from its list: TRANSPORT_PARAMETER_ERROR", "");
+        proven_quic_tp_t vt;
+        proven_quic_tp_defaults(&vt);
+        vt.has_initial_scid = true;
+        vt.has_version_info = true; vt.chosen_version = PROVEN_QUIC_VERSION_2; vt.available_n = 2;
+        vt.available[0] = PROVEN_QUIC_VERSION_2; vt.available[1] = PROVEN_QUIC_VERSION_1;
+        n = proven_quic_tp_encode(&vt, false, (proven_mem_mut_t){ enc, sizeof enc });
+        PROVEN_TEST_ASSERT(n > 0 && proven_quic_tp_decode((proven_mem_view_t){ enc, n }, false, &back) == 0 && memcmp(&back, &vt, sizeof vt) == 0,
+            "version_information written and read back", "");
+
         /* preferred_address: 4 + 2 + 16 + 2 + 1 + cid + 16. */
         const char *pa_ok = "0f00" "000100" "0d2d" "7f000001" "01bb" "00000000000000000000000000000001" "01bb" "04" "a1a2a3a4" "000102030405060708090a0b0c0d0e0f";
         const char *pa_zero = "0f00" "000100" "0d29" "7f000001" "01bb" "00000000000000000000000000000001" "01bb" "00" "000102030405060708090a0b0c0d0e0f";

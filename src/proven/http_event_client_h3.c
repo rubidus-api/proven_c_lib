@@ -98,6 +98,7 @@ struct c3conn {
     bool attached, sock_closed, sock_gone, waiting;   /* given to the loop; closed; `closed` come; a send wait asked for */
     bool dead, up, closed, over, client_going, bye;
     bool early;                        /* 0-RTT is open: requests that are safe to repeat may go before the handshake (RFC-0021) */
+    bool restarted;                    /* started again in the version a Version Negotiation named (RFC-0036) */
     proven_err_t send_failed;          /* RFC-0031: the system said the server cannot be reached; the round ends the connection */
     proven_err_t closed_why;           /* what the close means for a request that was never answered */
     proven_size_t pend_len;            /* datagrams the socket would not take */
@@ -767,6 +768,51 @@ static proven_c3req_t *c_find_req(const c3conn_t *c, proven_u64 id) {
 
 /* What a QUIC close means for a request: a certificate the TLS engine would not take, `h3`
  * refused, or a connection lost. (Its alerts come as 0x100 and the alert's number.) */
+/* The QUIC configuration of a connection of this client's. */
+static proven_quic_config_t c_qconfig(const proven_http_event_client_t *cl) {
+    return (proven_quic_config_t){
+        .alloc = cl->alloc, .tls = cl->cfg.tls,
+        .alpn = { .ptr = (const proven_byte_t *)"h3", .size = 2 },   /* offered alone, whatever else the configuration offers over TCP (RFC 9114 section 3.1) */
+        .stream_window = (proven_u32)cl->cfg.http3_window_bytes, .conn_window = (proven_u32)cl->cfg.http3_window_bytes,
+        /* No window configured: it starts at the engine's and grows while bodies are read (RFC-0019 section 9). */
+        .stream_window_max = cl->cfg.http3_window_bytes ? 0u : PROVEN_QUIC_STREAM_WINDOW_MAX,
+        .conn_window_max = cl->cfg.http3_window_bytes ? 0u : PROVEN_QUIC_CONN_WINDOW_MAX,
+        .idle_timeout_ms = (cl->cfg.idle_timeout_ms > cl->cfg.connect_timeout_ms ? cl->cfg.idle_timeout_ms : cl->cfg.connect_timeout_ms) + 1000,
+    };
+}
+
+/* A Version Negotiation packet named a version this client speaks and not the one it started in
+ * (RFC 9368 section 2.1; RFC-0036): the attempt starts again in it, once, on the same socket -
+ * the same connection to its requests and to RFC-0031's fallback timer. Not when a request is
+ * on a stream already (early data): those end as the close says. */
+static bool c_restart(c3conn_t *c) {
+    proven_quic_stats_t st;
+    proven_quic_conn_stats(c->q, &st);
+    if (c->restarted || st.vn_version == 0 || st.vn_version == st.version) return false;
+    for (const proven_c3req_t *r = c->reqs; r; r = r->next) if (r->has_id) return false;
+    proven_http_event_client_t *cl = c->client;
+    proven_quic_config_t qc = c_qconfig(cl);
+    qc.version = st.vn_version;
+    qc.after_vn = true;
+    proven_quic_conn_t *q = (void *)0;
+    proven_h3_conn_t *h3 = (void *)0;
+    const proven_quic_addr_t qa = proven_quic_addr_of_(&c->to);
+    proven_err_t e = proven_quic_conn_client_create(&qc, (proven_u8str_view_t){ .ptr = c->host, .size = c->host_len }, &c->session, &qa, c3_now_us(), &q);
+    if (e == PROVEN_OK) {
+        const proven_u32 list = cl->cfg.max_head_bytes > ((proven_size_t)1 << 20) ? (proven_u32)1 << 20 : (proven_u32)cl->cfg.max_head_bytes;
+        const proven_h3_config_t hc = { .alloc = cl->alloc, .server = false, .max_field_section_bytes = list, .qpack_capacity = (proven_u32)cl->cfg.http3_header_table_bytes };
+        e = proven_h3_conn_create(&hc, q, &h3);
+    }
+    if (e != PROVEN_OK) { proven_quic_conn_destroy(q); return false; }
+    proven_h3_conn_destroy(c->h3);
+    proven_quic_conn_destroy(c->q);
+    c->q = q;
+    c->h3 = h3;
+    c->restarted = true;
+    c->early = false;
+    return true;
+}
+
 static proven_err_t c_close_reason(const proven_h3_event_t *ev) {
     if (!ev->app && ev->code >= 0x100 && ev->code <= 0x1ff) {
         const proven_u64 alert = ev->code - 0x100;
@@ -828,6 +874,7 @@ static void c_event(c3conn_t *c, const proven_h3_event_t *ev) {
             else if (ev->quic.kind == PROVEN_QUIC_EV_EARLY) { c->early = true; c_submit_waiting(c); }
             break;
         case PROVEN_H3_EV_CLOSED:
+            if (!c->up && c_restart(c)) break;      /* the same attempt, in another version */
             c->closed = true;
             c->over = true;
             c->closed_why = c->up ? PROVEN_ERR_RESET : c_close_reason(ev);
@@ -1029,15 +1076,7 @@ static proven_err_t c_open(proven_http_event_client_t *cl, proven_u8str_view_t h
     proven_err_t e = proven_net_udp_open(proven_net_addr_any(to->family, 0), &c->udp, (void *)0);
     if (e == PROVEN_OK) { (void)proven_net_udp_gro_(&c->udp); (void)proven_net_udp_dontfrag_(&c->udp); c->ecn = proven_net_udp_ecn_(&c->udp); }
     if (e == PROVEN_OK) {
-        const proven_quic_config_t qc = {
-            .alloc = cl->alloc, .tls = cl->cfg.tls,
-            .alpn = { .ptr = (const proven_byte_t *)"h3", .size = 2 },   /* offered alone, whatever else the configuration offers over TCP (RFC 9114 section 3.1) */
-            .stream_window = (proven_u32)cl->cfg.http3_window_bytes, .conn_window = (proven_u32)cl->cfg.http3_window_bytes,
-            /* No window configured: it starts at the engine's and grows while bodies are read (RFC-0019 section 9). */
-            .stream_window_max = cl->cfg.http3_window_bytes ? 0u : PROVEN_QUIC_STREAM_WINDOW_MAX,
-            .conn_window_max = cl->cfg.http3_window_bytes ? 0u : PROVEN_QUIC_CONN_WINDOW_MAX,
-            .idle_timeout_ms = (cl->cfg.idle_timeout_ms > cl->cfg.connect_timeout_ms ? cl->cfg.idle_timeout_ms : cl->cfg.connect_timeout_ms) + 1000,
-        };
+        const proven_quic_config_t qc = c_qconfig(cl);
         const proven_quic_addr_t qa = proven_quic_addr_of_(to);
         /* An older connection to this origin, closing still, may have had a ticket since its last
          * request ended: it goes to the cache now, before this one is given what is there - a

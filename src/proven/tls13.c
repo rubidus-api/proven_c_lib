@@ -201,6 +201,11 @@ typedef struct {
     bool early_ready;
     proven_u8 early;
     int alpn_only;                                /* the one protocol of the configuration's list this connection may agree (its index), or -1: any */
+    /* The QUIC version (RFC-0036): the one in use and the original - the client's first. A
+     * ticket is offered and taken in the version it came from, which must be the original one
+     * (RFC 9369 section 5); new tickets are of the version in use. A server moves to
+     * `upgrade_to` (0: never) when the client's version_information lists it. */
+    proven_u32 version, orig_version, upgrade_to;
 } proven_tls_quic_t;
 #endif
 
@@ -959,6 +964,10 @@ static proven_tls_session_data_t *client_session(proven_tls_conn_t *c) {
     if (!suite || s->psk_len != suite->hash_len || s->ticket_len == 0 || s->ticket_len > PROVEN_TLS_SESSION_TICKET_MAX) return NULL;
     if (age < 0 || age >= (proven_i64)s->lifetime_s || age >= 604800) return NULL;
     if (s->name_len != c->server_name_len || !bytes_eq(s->name, c->server_name, s->name_len)) return NULL;
+#ifndef PROVEN_NO_HTTP3
+    /* A ticket of the other QUIC version is not offered (RFC 9369 section 5). */
+    if (is_quic(c) && (s->ticket_v2 != 0) != (c->quic->orig_version == PROVEN_QUIC_VERSION_2)) return NULL;
+#endif
     return s;
 }
 
@@ -1555,6 +1564,28 @@ static void limits_digest(const proven_tls_conn_t *c, proven_byte_t out[8]) {
 
 #endif
 
+#ifndef PROVEN_NO_HTTP3
+/* Compatible version negotiation (RFC 9368 section 2.3; RFC-0036), before anything this side
+ * sends is written: a server given a version to move to moves when the client's list has it,
+ * and its own version_information says so. Everything else about the list is the QUIC layer's
+ * to check. */
+static void quic_upgrade(proven_tls_conn_t *c) {
+    proven_tls_quic_t *q = c->quic;
+    const proven_quic_tp_t *peer = &q->tp_peer;
+    if (!q->upgrade_to || q->upgrade_to == q->version || !peer->has_version_info) return;
+    bool listed = false;
+    for (proven_size_t i = 0; i < peer->available_n; ++i) listed = listed || peer->available[i] == q->upgrade_to;
+    proven_quic_tp_t mine;
+    if (!listed || proven_quic_tp_decode((proven_mem_view_t){ .ptr = q->tp_local, .size = q->tp_local_len }, true, &mine) != 0) return;
+    mine.has_version_info = true;
+    mine.chosen_version = q->upgrade_to;
+    const proven_size_t n = proven_quic_tp_encode(&mine, true, (proven_mem_mut_t){ .ptr = q->tp_local, .size = sizeof q->tp_local });
+    if (n == 0) return;                           /* not reached: the same parameters fitted before */
+    q->tp_local_len = n;
+    q->version = q->upgrade_to;
+}
+#endif
+
 /* Whether a server takes the early data of a ClientHello whose ticket it accepted. In QUIC the
  * ticket's limits must be today's; over TCP the ticket must have been made over TCP (it carries
  * no limits). The protocol must be the ticket's - over TCP, none for none. */
@@ -1704,6 +1735,7 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, proven_rd_t body, 
         proven_u64 err = proven_quic_tp_decode((proven_mem_view_t){ .ptr = quic_tp.p, .size = quic_tp.n }, false, &c->quic->tp_peer);
         if (err != 0) return quic_fail(c, err);
         c->quic->have_peer = true;
+        quic_upgrade(c);
     }
 #else
     (void)quic_tp;
@@ -1776,7 +1808,13 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, proven_rd_t body, 
         for (proven_size_t i = 0; usable && i < modes.n; ++i) dhe = dhe || modes.p[i] == 1;
         if (usable && dhe && proven_tls_ticket_open(cfg, (proven_mem_view_t){ .ptr = identity.p, .size = identity.n }, &ticket)) {
             const proven_tls_suite_t *made = proven_tls_suite_find(ticket.suite);
-            if (made && made->hash == suite->hash && ticket.psk_len == suite->hash_len) {
+            /* A ticket of the other QUIC version is not taken (RFC 9369 section 5): a full handshake. */
+#ifndef PROVEN_NO_HTTP3
+            const bool v2_now = is_quic(c) && c->quic->orig_version == PROVEN_QUIC_VERSION_2;
+#else
+            const bool v2_now = false;
+#endif
+            if (made && made->hash == suite->hash && ticket.psk_len == suite->hash_len && ticket.quic_v2 == v2_now) {
                 proven_tls_transcript_t t = h->transcript, empty;
                 proven_byte_t early[PROVEN_HMAC_MAX_SIZE], key[PROVEN_HMAC_MAX_SIZE], th[PROVEN_HMAC_MAX_SIZE], want[PROVEN_HMAC_MAX_SIZE];
                 proven_tls_transcript_update(&t, (proven_mem_view_t){ .ptr = msg_start, .size = binders_at });
@@ -1987,6 +2025,9 @@ static proven_err_t server_send_ticket(proven_tls_conn_t *c) {
     proven_tls_config_random(cfg, age_add, 4);
     st.age_add = ((proven_u32)age_add[0] << 24) | ((proven_u32)age_add[1] << 16) | ((proven_u32)age_add[2] << 8) | age_add[3];
     st.alpn_index = c->alpn_index >= 0 ? (proven_u8)c->alpn_index : 0xff;
+#ifndef PROVEN_NO_HTTP3
+    st.quic_v2 = is_quic(c) && c->quic->version == PROVEN_QUIC_VERSION_2;
+#endif
     /* Early data: under a configuration that takes it - in QUIC with a protocol agreed, and the
      * limits the 0-RTT packets will assume; over TCP where this connection's owner takes it
      * (RFC-0027), with no limits recorded, which is what marks the ticket as made over TCP. */
@@ -2088,9 +2129,14 @@ static proven_err_t client_store_ticket(proven_tls_conn_t *c, proven_rd_t body) 
     proven_u16 token_len = s->token_len <= PROVEN_TLS_SESSION_TOKEN_MAX ? s->token_len : 0;
     proven_byte_t token[PROVEN_TLS_SESSION_TOKEN_MAX];
     for (proven_size_t i = 0; i < token_len; ++i) token[i] = s->token[i];
+    const proven_byte_t token_v2 = s->magic == PROVEN_TLS_SESSION_MAGIC ? s->token_v2 : 0;
     tls_wipe(s, sizeof *s);
     s->token_len = token_len;
     for (proven_size_t i = 0; i < token_len; ++i) s->token[i] = token[i];
+    s->token_v2 = token_v2;
+#ifndef PROVEN_NO_HTTP3
+    s->ticket_v2 = is_quic(c) && c->quic->version == PROVEN_QUIC_VERSION_2 ? 1 : 0;
+#endif
     s->suite = c->suite->id;
     s->psk_len = (proven_u16)c->suite->hash_len;
     proven_tls13_expand_label(c->suite->hash, c->resumption_master, "resumption", (proven_mem_view_t){ .ptr = nonce.p, .size = nonce.n }, s->psk, s->psk_len);
@@ -3254,7 +3300,7 @@ static proven_err_t quic_attach(proven_tls_conn_t *c, proven_mem_view_t tp, prov
 
 static proven_err_t client_create(const proven_tls_config_t *config, proven_u8str_view_t server_name, proven_tls_session_t *session,
                                   proven_mem_view_t hello, const proven_byte_t *x25519_private, const proven_mem_view_t *quic_tp, proven_u8str_view_t quic_alpn,
-                                  bool early, proven_tls_conn_t **out) {
+                                  proven_u32 quic_version, bool early, proven_tls_conn_t **out) {
     if (!out || !config || (server_name.size > 0 && !server_name.ptr) || server_name.size > 253) return PROVEN_ERR_INVALID_ARG;
     if (server_name.size == 0 && config->verify != PROVEN_TLS_VERIFY_PIN_ONLY) return PROVEN_ERR_INVALID_ARG;
     if (config->verify == PROVEN_TLS_VERIFY_CHAIN && !config->anchors) return PROVEN_ERR_INVALID_ARG;
@@ -3281,10 +3327,11 @@ static proven_err_t client_create(const proven_tls_config_t *config, proven_u8st
     if (quic_tp) {
         e = quic_attach(c, *quic_tp, quic_alpn);
         if (e != PROVEN_OK) { proven_tls_conn_destroy(c); return e; }
+        c->quic->version = c->quic->orig_version = quic_version;
         h->session_id_len = 0;
     }
 #else
-    (void)quic_tp; (void)quic_alpn;
+    (void)quic_tp; (void)quic_alpn; (void)quic_version;
 #endif
     proven_tls_config_random(config, h->x25519_priv, 32);
     if (hello.size > 0) {
@@ -3317,7 +3364,7 @@ void proven_tls_test_peek_write(const proven_tls_conn_t *conn, proven_tls_keys_t
 /* A client over TCP, offering early data or not. */
 static proven_err_t client_create_with(const proven_tls_config_t *config, proven_u8str_view_t server_name,
                                        proven_tls_session_t *session, bool early, proven_tls_conn_t **out) {
-    return client_create(config, server_name, session, (proven_mem_view_t){ .ptr = NULL, .size = 0 }, NULL, NULL, (proven_u8str_view_t){ 0 }, early, out);
+    return client_create(config, server_name, session, (proven_mem_view_t){ .ptr = NULL, .size = 0 }, NULL, NULL, (proven_u8str_view_t){ 0 }, 0, early, out);
 }
 
 proven_err_t proven_tls_client_create(const proven_tls_config_t *config, proven_u8str_view_t server_name,
@@ -3333,7 +3380,7 @@ proven_err_t proven_tls_client_create_early_(const proven_tls_config_t *config, 
 proven_err_t proven_tls_client_create_replay(const proven_tls_config_t *config, proven_u8str_view_t server_name,
                                              proven_mem_view_t hello, const proven_byte_t x25519_private[32], proven_tls_conn_t **out) {
     if (!hello.ptr || !x25519_private) return PROVEN_ERR_INVALID_ARG;
-    return client_create(config, server_name, NULL, hello, x25519_private, NULL, (proven_u8str_view_t){ 0 }, false, out);
+    return client_create(config, server_name, NULL, hello, x25519_private, NULL, (proven_u8str_view_t){ 0 }, 0, false, out);
 }
 
 proven_err_t proven_tls_server_create(const proven_tls_config_t *config, proven_tls_conn_t **out) {
@@ -3359,7 +3406,12 @@ proven_err_t proven_tls_quic_client_create_(const proven_tls_config_t *config, p
 
 proven_err_t proven_tls_quic_client_create_for_(const proven_tls_config_t *config, proven_u8str_view_t server_name, proven_tls_session_t *session,
                                                 proven_mem_view_t transport_params, proven_u8str_view_t alpn, proven_tls_conn_t **out) {
-    return client_create(config, server_name, session, (proven_mem_view_t){ .ptr = NULL, .size = 0 }, NULL, &transport_params, alpn, false, out);
+    return proven_tls_quic_client_create_v_(config, server_name, session, transport_params, alpn, PROVEN_QUIC_VERSION_1, out);
+}
+
+proven_err_t proven_tls_quic_client_create_v_(const proven_tls_config_t *config, proven_u8str_view_t server_name, proven_tls_session_t *session,
+                                              proven_mem_view_t transport_params, proven_u8str_view_t alpn, proven_u32 version, proven_tls_conn_t **out) {
+    return client_create(config, server_name, session, (proven_mem_view_t){ .ptr = NULL, .size = 0 }, NULL, &transport_params, alpn, version, false, out);
 }
 
 proven_err_t proven_tls_quic_server_create_(const proven_tls_config_t *config, proven_mem_view_t transport_params, proven_tls_conn_t **out) {
@@ -3367,14 +3419,24 @@ proven_err_t proven_tls_quic_server_create_(const proven_tls_config_t *config, p
 }
 
 proven_err_t proven_tls_quic_server_create_for_(const proven_tls_config_t *config, proven_mem_view_t transport_params, proven_u8str_view_t alpn, proven_tls_conn_t **out) {
+    return proven_tls_quic_server_create_v_(config, transport_params, alpn, PROVEN_QUIC_VERSION_1, 0, out);
+}
+
+proven_err_t proven_tls_quic_server_create_v_(const proven_tls_config_t *config, proven_mem_view_t transport_params, proven_u8str_view_t alpn,
+                                              proven_u32 version, proven_u32 upgrade_to, proven_tls_conn_t **out) {
     proven_tls_conn_t *c = NULL;
     proven_err_t e = proven_tls_server_create(config, &c);
     if (e != PROVEN_OK) return e;
     e = quic_attach(c, transport_params, alpn);
     if (e != PROVEN_OK) { proven_tls_conn_destroy(c); return e; }
+    c->quic->version = c->quic->orig_version = version;
+    c->quic->upgrade_to = upgrade_to;
     *out = c;
     return PROVEN_OK;
 }
+
+proven_u32 proven_tls_quic_version_(const proven_tls_conn_t *c) { return c && c->quic ? c->quic->version : 0; }
+void proven_tls_quic_set_version_(proven_tls_conn_t *c, proven_u32 version) { if (c && c->quic) c->quic->version = version; }
 
 proven_err_t proven_tls_quic_feed_(proven_tls_conn_t *c, proven_quic_level_t level, proven_mem_view_t in) {
     if (!c || !c->quic || (unsigned)level >= PROVEN_QUIC_LEVELS || (in.size > 0 && !in.ptr)) return PROVEN_ERR_INVALID_ARG;
@@ -3450,15 +3512,21 @@ bool proven_tls_quic_early_limits_(const proven_tls_conn_t *c, proven_u64 out[7]
 
 /* ---- A session's NEW_TOKEN token (RFC-0021 P-7): the QUIC layer's, kept beside the ticket ---- */
 
+#ifndef PROVEN_NO_HTTP3
 /* A record of this layout, or an empty one: the token's place is only trusted then. */
 static bool session_token_place(const proven_tls_session_data_t *s) {
     return (s->magic == PROVEN_TLS_SESSION_MAGIC || s->magic == 0) && s->token_len <= PROVEN_TLS_SESSION_TOKEN_MAX;
 }
 
 proven_size_t proven_tls_session_token_take_(proven_tls_session_t *session, proven_byte_t *out, proven_size_t cap) {
+    return proven_tls_session_token_take_v_(session, PROVEN_QUIC_VERSION_1, out, cap);
+}
+
+proven_size_t proven_tls_session_token_take_v_(proven_tls_session_t *session, proven_u32 version, proven_byte_t *out, proven_size_t cap) {
     if (!session) return 0;
     proven_tls_session_data_t *s = (proven_tls_session_data_t *)(void *)session->opaque;
     if (!session_token_place(s) || s->token_len == 0 || s->token_len > cap) return 0;
+    if ((s->token_v2 != 0) != (version == PROVEN_QUIC_VERSION_2)) return 0;       /* another version's (RFC 9369 section 5) */
     const proven_size_t n = s->token_len;
     for (proven_size_t i = 0; i < n; ++i) out[i] = s->token[i];
     tls_wipe(s->token, sizeof s->token);
@@ -3466,20 +3534,35 @@ proven_size_t proven_tls_session_token_take_(proven_tls_session_t *session, prov
     return n;
 }
 
+#endif
+
 void proven_tls_session_early_off_(proven_tls_session_t *session) {
     if (!session) return;
     proven_tls_session_data_t *s = (proven_tls_session_data_t *)(void *)session->opaque;
     if (s->magic == PROVEN_TLS_SESSION_MAGIC) s->early = 0;
 }
 
+#ifndef PROVEN_NO_HTTP3
 void proven_tls_session_token_keep_(proven_tls_session_t *session, proven_mem_view_t token) {
+    proven_tls_session_token_keep_v_(session, PROVEN_QUIC_VERSION_1, token);
+}
+
+void proven_tls_session_token_keep_v_(proven_tls_session_t *session, proven_u32 version, proven_mem_view_t token) {
     if (!session || !token.ptr || token.size == 0 || token.size > PROVEN_TLS_SESSION_TOKEN_MAX) return;
     proven_tls_session_data_t *s = (proven_tls_session_data_t *)(void *)session->opaque;
     if (!session_token_place(s)) tls_wipe(s, sizeof *s);              /* an older layout: nothing of it is used */
     tls_wipe(s->token, sizeof s->token);
     for (proven_size_t i = 0; i < token.size; ++i) s->token[i] = token.ptr[i];
     s->token_len = (proven_u16)token.size;
+    s->token_v2 = version == PROVEN_QUIC_VERSION_2 ? 1 : 0;
 }
+
+bool proven_tls_session_quic_v2_(const proven_tls_session_t *session) {
+    if (!session) return false;
+    const proven_tls_session_data_t *s = (const proven_tls_session_data_t *)(const void *)session->opaque;
+    return s->magic == PROVEN_TLS_SESSION_MAGIC && s->ticket_len > 0 && s->ticket_v2;
+}
+#endif
 
 /* Keep what remakes one direction's keys: for AES the key the schedule began from (the first
  * round keys are the key itself), for ChaCha20 the key it keeps where AES keeps its round keys. */

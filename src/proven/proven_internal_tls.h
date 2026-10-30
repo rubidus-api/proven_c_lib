@@ -327,6 +327,7 @@ typedef struct {
     proven_u32 age_add;
     proven_u8 alpn_index;
     proven_byte_t limits[8];
+    bool quic_v2;                                 /* made over QUIC version 2 (RFC-0036): taken only there */
 } proven_tls_ticket_state_t;
 
 #define PROVEN_TLS_TICKET_MAX 160
@@ -368,6 +369,9 @@ typedef struct {
     /* TCP (RFC-0027): the most early data the ticket allows (its max_early_data_size); 0: none.
      * After every field before it, so that a record written before it reads as 0. */
     proven_u32 early_max;
+    /* QUIC version 2 (RFC-0036): the ticket and the token came over it. After every field, so
+     * that an older record reads as version 1. */
+    proven_byte_t ticket_v2, token_v2;
 } proven_tls_session_data_t;
 #define PROVEN_TLS_SESSION_MAGIC ((proven_u32)0x70547333)      /* changed with the record's layout: an older record is simply empty */
 

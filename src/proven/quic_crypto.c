@@ -67,9 +67,17 @@ static const proven_byte_t INITIAL_SALT_V1[20] = {
 
 const proven_tls_suite_t *proven_quic_initial_suite(void) { return proven_tls_suite_find(PROVEN_TLS_AES_128_GCM_SHA256); }
 
+static const proven_byte_t INITIAL_SALT_V2[20] = {         /* RFC 9369 section 3.3.1 */
+    0x0d, 0xed, 0xe3, 0xde, 0xf7, 0x00, 0xa6, 0xdb, 0x81, 0x93, 0x81, 0xbe, 0x6e, 0x26, 0x9d, 0xcb, 0xf9, 0xbd, 0x2e, 0xd9 };
+
 void proven_quic_initial_secrets(proven_mem_view_t dcid, proven_byte_t client[32], proven_byte_t server[32]) {
+    proven_quic_initial_secrets_v(dcid, PROVEN_QUIC_VERSION_1, client, server);
+}
+
+void proven_quic_initial_secrets_v(proven_mem_view_t dcid, proven_u32 version, proven_byte_t client[32], proven_byte_t server[32]) {
     proven_byte_t initial[PROVEN_HMAC_MAX_SIZE];          /* the extract's output is declared at the largest size */
-    (void)proven_hkdf_extract(PROVEN_HMAC_SHA256, (proven_mem_view_t){ .ptr = INITIAL_SALT_V1, .size = sizeof INITIAL_SALT_V1 }, dcid, initial);
+    const proven_byte_t *salt = version == PROVEN_QUIC_VERSION_2 ? INITIAL_SALT_V2 : INITIAL_SALT_V1;
+    (void)proven_hkdf_extract(PROVEN_HMAC_SHA256, (proven_mem_view_t){ .ptr = salt, .size = 20 }, dcid, initial);
     proven_mem_view_t none = { .ptr = initial, .size = 0 };
     proven_tls13_expand_label(PROVEN_HMAC_SHA256, initial, "client in", none, client, 32);
     proven_tls13_expand_label(PROVEN_HMAC_SHA256, initial, "server in", none, server, 32);
@@ -87,21 +95,30 @@ static void hp_init(proven_crypto_aes_t *ctx, bool chacha, const proven_byte_t *
 }
 
 void proven_quic_keys_set(proven_quic_keys_t *keys, const proven_tls_suite_t *suite, const proven_byte_t *secret) {
+    proven_quic_keys_set_v(keys, suite, secret, PROVEN_QUIC_VERSION_1);
+}
+
+void proven_quic_keys_set_v(proven_quic_keys_t *keys, const proven_tls_suite_t *suite, const proven_byte_t *secret, proven_u32 version) {
+    const bool v2 = version == PROVEN_QUIC_VERSION_2;
     proven_byte_t key[32];
     proven_mem_view_t none = { .ptr = key, .size = 0 };
     keys->chacha = suite->chacha;
     keys->key_len = suite->key_len;
-    proven_tls13_expand_label(suite->hash, secret, "quic key", none, key, suite->key_len);
+    proven_tls13_expand_label(suite->hash, secret, v2 ? "quicv2 key" : "quic key", none, key, suite->key_len);
     cipher_init(&keys->aead, suite->chacha, key, suite->key_len);
-    proven_tls13_expand_label(suite->hash, secret, "quic iv", none, keys->iv, 12);
-    proven_tls13_expand_label(suite->hash, secret, "quic hp", none, key, suite->key_len);
+    proven_tls13_expand_label(suite->hash, secret, v2 ? "quicv2 iv" : "quic iv", none, keys->iv, 12);
+    proven_tls13_expand_label(suite->hash, secret, v2 ? "quicv2 hp" : "quic hp", none, key, suite->key_len);
     hp_init(&keys->hp, suite->chacha, key, suite->key_len);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = key, .size = sizeof key });
 }
 
 void proven_quic_secret_update(const proven_tls_suite_t *suite, proven_byte_t *secret) {
+    proven_quic_secret_update_v(suite, secret, PROVEN_QUIC_VERSION_1);
+}
+
+void proven_quic_secret_update_v(const proven_tls_suite_t *suite, proven_byte_t *secret, proven_u32 version) {
     proven_byte_t next[PROVEN_HMAC_MAX_SIZE];
-    proven_tls13_expand_label(suite->hash, secret, "quic ku", (proven_mem_view_t){ .ptr = next, .size = 0 }, next, suite->hash_len);
+    proven_tls13_expand_label(suite->hash, secret, version == PROVEN_QUIC_VERSION_2 ? "quicv2 ku" : "quic ku", (proven_mem_view_t){ .ptr = next, .size = 0 }, next, suite->hash_len);
     for (proven_size_t i = 0; i < suite->hash_len; ++i) secret[i] = next[i];
     proven_mem_wipe((proven_mem_mut_t){ .ptr = next, .size = sizeof next });
 }
@@ -195,6 +212,9 @@ bool proven_quic_unprotect_masked(const proven_quic_keys_t *keys, proven_byte_t 
 static const proven_byte_t RETRY_KEY_V1[16] = {
     0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a, 0x1d, 0x76, 0x6b, 0x54, 0xe3, 0x68, 0xc8, 0x4e };
 static const proven_byte_t RETRY_NONCE_V1[12] = { 0x46, 0x15, 0x99, 0xd3, 0x5d, 0x63, 0x2b, 0xf2, 0x23, 0x98, 0x25, 0xbb };
+static const proven_byte_t RETRY_KEY_V2[16] = {             /* RFC 9369 section 3.3.3 */
+    0x8f, 0xb4, 0xb0, 0x1b, 0x56, 0xac, 0x48, 0xe2, 0x60, 0xfb, 0xcb, 0xce, 0xad, 0x7c, 0xcc, 0x92 };
+static const proven_byte_t RETRY_NONCE_V2[12] = { 0xd8, 0x69, 0x69, 0xbc, 0x2d, 0x7c, 0x6d, 0x99, 0x90, 0xef, 0xb0, 0x4a };
 
 void proven_quic_retry_tag(proven_mem_view_t odcid, proven_mem_view_t retry, proven_byte_t tag[16]) {
     /* The tag is AES-128-GCM under a published key over nothing, with this pseudo-packet as
@@ -209,9 +229,11 @@ void proven_quic_retry_tag(proven_mem_view_t odcid, proven_mem_view_t retry, pro
     pseudo[n++] = (proven_byte_t)odcid.size;
     for (proven_size_t i = 0; i < odcid.size; ++i) pseudo[n++] = odcid.ptr[i];
     for (proven_size_t i = 0; i < retry.size; ++i) pseudo[n++] = retry.ptr[i];
+    /* The version from the packet's own Version field (bytes 1 to 4). */
+    const bool v2 = retry.size >= 5 && retry.ptr[1] == 0x6b && retry.ptr[2] == 0x33 && retry.ptr[3] == 0x43 && retry.ptr[4] == 0xcf;
     proven_crypto_aes_gcm_t ctx;
-    (void)proven_crypto_aes_gcm_init(&ctx, RETRY_KEY_V1, sizeof RETRY_KEY_V1);
-    proven_crypto_aes_gcm_seal(&ctx, RETRY_NONCE_V1, (proven_mem_view_t){ .ptr = pseudo, .size = n },
+    (void)proven_crypto_aes_gcm_init(&ctx, v2 ? RETRY_KEY_V2 : RETRY_KEY_V1, 16);
+    proven_crypto_aes_gcm_seal(&ctx, v2 ? RETRY_NONCE_V2 : RETRY_NONCE_V1, (proven_mem_view_t){ .ptr = pseudo, .size = n },
                                (proven_mem_view_t){ .ptr = pseudo, .size = 0 }, pseudo, tag);
 }
 
@@ -230,7 +252,7 @@ enum {
     TP_MAX_DATA = 0x04, TP_MAX_STREAM_DATA_BIDI_LOCAL = 0x05, TP_MAX_STREAM_DATA_BIDI_REMOTE = 0x06,
     TP_MAX_STREAM_DATA_UNI = 0x07, TP_MAX_STREAMS_BIDI = 0x08, TP_MAX_STREAMS_UNI = 0x09, TP_ACK_DELAY_EXPONENT = 0x0a,
     TP_MAX_ACK_DELAY = 0x0b, TP_DISABLE_MIGRATION = 0x0c, TP_PREFERRED_ADDRESS = 0x0d, TP_CID_LIMIT = 0x0e,
-    TP_INITIAL_SCID = 0x0f, TP_RETRY_SCID = 0x10
+    TP_INITIAL_SCID = 0x0f, TP_RETRY_SCID = 0x10, TP_VERSION_INFO = 0x11
 };
 
 #define STREAMS_MAX (((proven_u64)1) << 60)
@@ -323,6 +345,14 @@ proven_size_t proven_quic_tp_encode(const proven_quic_tp_t *tp, bool server, pro
     }
     if (tp->has_initial_scid) wr_cid(&w, TP_INITIAL_SCID, &tp->initial_scid);
     if (tp->has_retry_scid) wr_cid(&w, TP_RETRY_SCID, &tp->retry_scid);
+    if (tp->has_version_info) {
+        if (tp->available_n > PROVEN_QUIC_TP_VERSIONS) return 0;
+        proven_byte_t b[4 * (1 + PROVEN_QUIC_TP_VERSIONS)];
+        proven_size_t n = 0;
+        for (int k = 3; k >= 0; --k) b[n++] = (proven_byte_t)(tp->chosen_version >> (8 * k));
+        for (proven_size_t i = 0; i < tp->available_n; ++i) for (int k = 3; k >= 0; --k) b[n++] = (proven_byte_t)(tp->available[i] >> (8 * k));
+        wr_param(&w, TP_VERSION_INFO, b, n);
+    }
     return w.ok ? w.at : 0;
 }
 
@@ -346,7 +376,7 @@ proven_u64 proven_quic_tp_decode(proven_mem_view_t in, bool from_server, proven_
         proven_u64 len = proven_quic_rd_varint(&r);
         if (!r.ok || len > r.n) return bad;
         proven_quic_rd_t v = proven_quic_rd_take(&r, (proven_size_t)len);
-        if (id > TP_RETRY_SCID) continue;                       /* not known here, reserved or greased: skipped */
+        if (id > TP_VERSION_INFO) continue;                     /* not known here, reserved or greased: skipped */
         if (seen & ((proven_u32)1 << id)) return bad;
         seen |= (proven_u32)1 << id;
         switch (id) {
@@ -368,6 +398,22 @@ proven_u64 proven_quic_tp_decode(proven_mem_view_t in, bool from_server, proven_
                 if (len != 0) return bad;
                 tp->disable_active_migration = true;
                 break;
+            case TP_VERSION_INFO: {
+                /* RFC 9368 section 4: a parsing failure is a TRANSPORT_PARAMETER_ERROR. */
+                if (len < 4 || len % 4 != 0 || len / 4 - 1 > PROVEN_QUIC_TP_VERSIONS) return bad;
+                tp->chosen_version = (proven_u32)proven_quic_rd_uint(&v, 4);
+                if (tp->chosen_version == 0) return bad;
+                bool listed = false;
+                tp->available_n = (proven_u8)(len / 4 - 1);
+                for (proven_size_t i = 0; i < tp->available_n; ++i) {
+                    tp->available[i] = (proven_u32)proven_quic_rd_uint(&v, 4);
+                    if (tp->available[i] == 0) return bad;
+                    if (tp->available[i] == tp->chosen_version) listed = true;
+                }
+                if (!v.ok || (!from_server && !listed)) return bad;
+                tp->has_version_info = true;
+                break;
+            }
             case TP_PREFERRED_ADDRESS: {
                 if (!from_server) return bad;
                 proven_quic_preferred_address_t *pa = &tp->preferred_address;

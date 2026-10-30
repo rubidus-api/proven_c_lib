@@ -355,6 +355,18 @@ int main(void) {
                            same(fields[0].name, hname) && same(fields[0].value, hvalue), "an insert of both, decoded back whole", "");
         proven_qpack_dec_destroy(d);
 
+        /* A line that refers to an entry at or above the section's Required Insert Count, though
+         * the table holds it (RFC 9204 section 4.5.2): refused. */
+        PROVEN_TEST_ASSERT(proven_qpack_dec_create(proven_heap_allocator(), 4096, &d) == PROVEN_OK, "", "");
+        static const proven_byte_t two[] = { 0x3f, 0xe1, 0x1f, 0x41, 'a', 0x01, '1', 0x41, 'b', 0x01, '2' };   /* capacity 4,096; a: 1; b: 2 */
+        PROVEN_TEST_ASSERT(proven_qpack_dec_feed(d, (proven_mem_view_t){ two, sizeof two }) == 0 && proven_qpack_dec_inserts(d) == 2, "two entries", "");
+        PROVEN_TEST_ASSERT(dec_hex_d(d, "02" "00" "80", &count) == PROVEN_OK && count == 1 && sveq(fields[0].name, "a"),
+            "Required Insert Count 1, Base 1: the entry below it", "");
+        PROVEN_TEST_ASSERT(dec_hex_d(d, "02" "01" "80", &count) == PROVEN_ERR_INVALID_FORMAT && dec_hex_d(d, "02" "01" "40" "0178", &count) == PROVEN_ERR_INVALID_FORMAT && dec_hex_d(d, "02" "00" "40" "0178", &count) == PROVEN_OK &&
+                           dec_hex_d(d, "02" "00" "10", &count) == PROVEN_ERR_INVALID_FORMAT,
+            "Base 2 with Required Insert Count 1: entry 1, indexed, by its name, or post-base, is refused although the table holds it", "");
+        proven_qpack_dec_destroy(d);
+
         /* The whole appendix's encoder stream in random pieces gives the same table. */
         static proven_byte_t all[256];
         proven_size_t an = 0;

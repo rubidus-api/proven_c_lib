@@ -1,4 +1,4 @@
-# proven Test Matrix (v0.98.0)
+# proven Test Matrix (v0.99.0)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -343,7 +343,7 @@ The whole hosted suite also runs natively on Windows, cross-built with mingw-w64
 
 `-no-run` builds and installs every test executable and runs none. The build driver asks the compiler for its target (`-dumpmachine`); for a Windows target the executables are `.exe`, linked `-static` with `-lbcrypt`, and never `-ldl`. A maintainers' script (`win11kd-full-suite.sh`, not in this repository) builds both word sizes, sends the tracked tree and the executables to a Windows machine, and runs them there with `win11kd-run-suite.ps1`, which records PASS, FAIL, SKIP (a POSIX-only test that skipped itself - counted apart, since it proves nothing on Windows) and TIMEOUT per test.
 
-Last run, 2026-10-30, Windows 11 test VM (v0.98.0): x86-64 371 PASS, 0 FAIL, 10 SKIP; i686 the same. The ten skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_portability_compile_nonet`, `test_portability_compile_nobrotli` and `test_portability_compile_nohttp3` (they drive the host compiler through one), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
+Last run, 2026-10-30, Windows 11 test VM (v0.99.0): x86-64 371 PASS, 0 FAIL, 10 SKIP; i686 the same. The ten skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_portability_compile_nonet`, `test_portability_compile_nobrotli` and `test_portability_compile_nohttp3` (they drive the host compiler through one), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
 
 ## Test catalog
 
@@ -799,7 +799,7 @@ Failure tip: inspect `src/proven/tls_keys.c`. The step letter printed on failure
 
 ### `tests/test_unit_quic_crypto` - QUIC packet protection and transport parameters
 
-Intent: verify QUIC version 1 below the transport (RFC-0017 Q-1) - variable-length integers, packet numbers, packet protection, the Retry integrity tag and the transport parameters - against the published examples, byte for byte, and refuse every change. Internal code, reached through `src/proven/proven_internal_quic.h`.
+Intent: verify QUIC versions 1 and 2 below the transport (RFC-0017 Q-1, RFC-0036) - variable-length integers, packet numbers, packet protection, the Retry integrity tag and the transport parameters - against the published examples, byte for byte, and refuse every change. Internal code, reached through `src/proven/proven_internal_quic.h`.
 
 Sub-checks:
 
@@ -812,8 +812,10 @@ Sub-checks:
 - Transport parameters: those of RFC 9001's own ClientHello decode to the values it carries and the defaults for the rest, and are refused as a server's (no `original_destination_connection_id`); every parameter a server sends round-trips, a zero-length connection ID included; every buffer too small is refused; a client never sends what only a server may; a parameter at its default is left out and every prefix of a list is refused; each range limit (`max_udp_payload_size` 1,200 to 65,527, `ack_delay_exponent` to 20, `max_ack_delay` below 2^14, `active_connection_id_limit` from 2, stream counts to 2^60) is refused one past it and accepted at it; repeated, malformed, missing, server-only and oversized parameters are refused; unknown and reserved ones are skipped; a server's `preferred_address` is read and refused with a zero-length connection ID, cut short, or from a client, and is never sent.
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
+- QUIC version 2 (RFC 9369 appendix A; RFC-0036): the Initial secrets from version 2's salt, each side's key, IV and header protection key under the "quicv2" labels, the client's and the server's Initial protected as printed, the Retry's tag under version 2's key and nonce (chosen by the packet's Version field), the ChaCha20 short header packet and "quicv2 ku"; version 2's header types written and read; every change of the two Initials refused, and version 1's keys do not make version 2's packet.
+- version_information (RFC 9368 section 3): read from a client and a server (a server's list may be empty), written and read back; refused with TRANSPORT_PARAMETER_ERROR when not a whole number of versions, a version is zero, more than eight are listed, or a client's chosen version is missing from its list.
 
-Failure tip: inspect `src/proven/quic_crypto.c`. `tests/test_unit_quic_vectors.h` is the RFC's text, written by a private generator. Not covered here: a real peer - the private check drives aioquic's TLS engine against this library's in QUIC mode; the connection that uses these packets (`tests/test_unit_quic_conn`).
+Failure tip: inspect `src/proven/quic_crypto.c`. `tests/test_unit_quic_vectors.h` and `tests/test_unit_quic_vectors_v2.h` are the RFCs' text, written by a private generator. Not covered here: a real peer - the private check drives aioquic's TLS engine against this library's in QUIC mode; the connection that uses these packets (`tests/test_unit_quic_conn`).
 
 ### `tests/test_unit_quic_frame` - QUIC packet headers and frames
 
@@ -830,6 +832,7 @@ Sub-checks:
 - Malformed frames with their codes: a frame type in a longer encoding (PROTOCOL_VIOLATION); an unknown type, DATAGRAM included; STREAM and CRYPTO past 2^62 - 1; an empty NEW_TOKEN; MAX_STREAMS and STREAMS_BLOCKED above 2^60; NEW_CONNECTION_ID with no connection ID, with 21 bytes, or retiring above its own number; PATH_CHALLENGE with seven bytes; a CONNECTION_CLOSE reason past the packet. Writing a short PATH_CHALLENGE, an ACK through the general writer or an unknown type writes nothing.
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
+- Version negotiation lists versions 1 and 2 (RFC-0036).
 
 Failure tip: inspect `src/proven/quic_frame.c`.
 
@@ -864,6 +867,7 @@ Sub-checks:
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 - ECN (RFC-0035; RFC 9000 section 13.4): on a network that carries the marks both sides validate the path and every packet goes marked ECT(0), counted on arrival; a path that bleaches the marks, rewrites ECT(0) to ECT(1), drops what is marked, or starts bleaching after it was validated ends ECN on both sides and the transfer completes unmarked; a peer that reads no marks reports no counts and this side stops marking; CE marks are counted, acknowledged and answered as congestion with nothing lost, the window ending below that of the same transfer without them; after the server's path moves, ECN is tested and validated again there.
+- QUIC version 2 (RFC-0036): a client starting in 2 is answered in it with no Version Negotiation, every long header of both sides in 2; a server allowed to move a version-1 client that lists 2 does, and the connection carries on in 2 (without the switch it stays in 1); the ticket of such a connection makes the next start in 2, resume and send early data, while a connection in 1 neither offers it nor writes early; a version-1 ticket's early data is taken by a server that moves to 2, every 0-RTT packet - those sent after the client followed the server - in version 1; a client restarted in 2 by a Version Negotiation refuses a server that lists 1; a client in 1 that says it chose 2, and a server that says it chose a version never offered, are refused with VERSION_NEGOTIATION_ERROR; a Version Negotiation listing only 2 ends the attempt with 2 to start again in, one listing the version started in is ignored; a Retry of another version is dropped; a version-1 NEW_TOKEN token presented in 2 validates nothing.
 
 Failure tip: inspect `src/proven/quic_conn.c` (for the datagram size: `pm_next`, `pm_passed`, `pm_lost`, the probe in `proven_quic_conn_send`, and the fallbacks in `detect_lost` and `on_loss_timeout`). The network and the clock are the test's own, so a failure repeats with the same seed. Not covered here: another implementation over real UDP - the private check runs aioquic against this library through a lossy relay, in both roles.
 

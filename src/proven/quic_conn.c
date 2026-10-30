@@ -632,6 +632,14 @@ struct proven_quic_conn {
     proven_u8 ecn_state;
     unsigned ecn_tested, ecn_test_lost;
     proven_u8 rx_mark;
+    /* Versions (RFC-0036): the one in use, and the original - the client's first Initial's. A
+     * client's Initial keys come from `init_dcid` (its first DCID, or a Retry's SCID); a server
+     * that moved keeps the original version's Initial read key until a Handshake packet. */
+    proven_u32 version, orig_version;
+    proven_quic_cid_t init_dcid;
+    proven_quic_keys_t init_rx_orig;    /* SECRET */
+    bool init_rx_orig_ok;
+    proven_u32 vn_version;              /* a client told by Version Negotiation to start again in it */
 };
 
 /* Streams may be used: the handshake is complete, or early data is open - a client holding the
@@ -707,7 +715,35 @@ static bool cfg_valid(const proven_quic_config_t *in) {
     return in && proven_alloc_is_valid(in->alloc) && in->tls
         && (in->datagram_size == 0 || (in->datagram_size >= PROVEN_QUIC_MIN_INITIAL && in->datagram_size <= QC_MAX_DGRAM))
         && in->max_streams_bidi <= 1000000 && in->max_streams_uni <= 1000000
-        && (in->max_ack_ranges == 0 || in->max_ack_ranges >= 2);
+        && (in->max_ack_ranges == 0 || in->max_ack_ranges >= 2)
+        && (in->version == 0 || in->version == PROVEN_QUIC_VERSION_1 || in->version == PROVEN_QUIC_VERSION_2);
+}
+
+/* ---- Versions (RFC-0036; RFC 9368, RFC 9369) ---- */
+
+static proven_u32 g_test_chosen[2];     /* tests: the chosen version a client [0] or server [1] says, 0: its own */
+void proven_quic_test_chosen_(bool server, proven_u32 version) { g_test_chosen[server ? 1 : 0] = version; }
+
+static proven_u32 other_version(proven_u32 v) { return v == PROVEN_QUIC_VERSION_2 ? PROVEN_QUIC_VERSION_1 : PROVEN_QUIC_VERSION_2; }
+
+/* A client's versions in descending preference: 2 first when told to prefer it; after a
+ * Version Negotiation its own order, 1 first, whatever it was sent to (what the server's list
+ * is judged by); otherwise the one it started in - its ticket's - first. */
+static void client_order(const proven_quic_conn_t *c, proven_u32 out[2]) {
+    if (c->cfg.prefer_v2) { out[0] = PROVEN_QUIC_VERSION_2; out[1] = PROVEN_QUIC_VERSION_1; return; }
+    if (c->cfg.after_vn) { out[0] = PROVEN_QUIC_VERSION_1; out[1] = PROVEN_QUIC_VERSION_2; return; }
+    out[0] = c->orig_version; out[1] = other_version(c->orig_version);
+}
+
+/* The first of the client's order that `list` (and `also`, when not 0) holds; 0: none. */
+static proven_u32 client_pick(const proven_quic_conn_t *c, const proven_u32 *list, proven_size_t n, proven_u32 also) {
+    proven_u32 order[2];
+    client_order(c, order);
+    for (int k = 0; k < 2; ++k) {
+        if (order[k] == also) return order[k];
+        for (proven_size_t i = 0; i < n; ++i) if (list[i] == order[k]) return order[k];
+    }
+    return 0;
 }
 
 /* The transport parameters this side sends. */
@@ -726,6 +762,16 @@ static proven_size_t local_params(proven_quic_conn_t *c, proven_byte_t *out, pro
     tp.disable_active_migration = true;
     tp.has_initial_scid = true;
     tp.initial_scid = c->local[0].cid;
+    /* version_information (RFC 9368 section 3): a client its order, a server both versions. */
+    tp.has_version_info = true;
+    tp.chosen_version = c->version;
+    tp.available_n = 2;
+    if (c->server) { tp.available[0] = PROVEN_QUIC_VERSION_1; tp.available[1] = PROVEN_QUIC_VERSION_2; }
+    else client_order(c, tp.available);
+    if (g_test_chosen[c->server ? 1 : 0]) {
+        tp.chosen_version = g_test_chosen[c->server ? 1 : 0];
+        if (!c->server) tp.available[1] = tp.chosen_version;       /* listed: the rule tested is the server's own */
+    }
     if (c->server) {
         tp.has_original_dcid = true;
         tp.original_dcid = c->odcid;
@@ -944,6 +990,19 @@ static void apply_peer_params(proven_quic_conn_t *c, const proven_quic_tp_t *tp)
         if (tp->has_reset_token) { qcopy(c->peer[0].token, tp->reset_token, PROVEN_QUIC_RESET_TOKEN); c->peer[0].has_token = true; }
     }
     if (!ok) { conn_fail(c, PROVEN_QUIC_TRANSPORT_PARAMETER_ERROR, 0); return; }
+    /* Downgrade prevention (RFC 9368 section 4). */
+    bool vn_ok = true;
+    if (c->server) vn_ok = !tp->has_version_info || tp->chosen_version == c->orig_version;
+    else if (!tp->has_version_info) vn_ok = !c->cfg.after_vn;
+    else {
+        proven_u32 order[2];
+        client_order(c, order);
+        vn_ok = tp->chosen_version == c->version && (order[0] == c->version || order[1] == c->version);
+        /* After a Version Negotiation: would the client have chosen the same from what the
+         * server says it speaks? A forged Version Negotiation that hid a version fails here. */
+        if (vn_ok && c->cfg.after_vn) vn_ok = tp->available_n > 0 && client_pick(c, tp->available, tp->available_n, c->version) == c->version;
+    }
+    if (!vn_ok) { conn_fail(c, PROVEN_QUIC_VERSION_NEGOTIATION_ERROR, 0); return; }
     c->tx_max_data = tp->initial_max_data;
     c->peer_max_streams[0] = tp->initial_max_streams_bidi;
     c->peer_max_streams[1] = tp->initial_max_streams_uni;
@@ -975,8 +1034,8 @@ static void space_discard(proven_quic_conn_t *c, int lvl);
 static void next_keys(proven_quic_conn_t *c, const proven_byte_t *secret, const proven_quic_keys_t *cur, proven_quic_keys_t *out) {
     proven_byte_t next[PROVEN_HMAC_MAX_SIZE];
     qcopy(next, secret, c->secret_len);
-    proven_quic_secret_update(c->suite, next);
-    proven_quic_keys_set(out, c->suite, next);
+    proven_quic_secret_update_v(c->suite, next, c->version);
+    proven_quic_keys_set_v(out, c->suite, next, c->version);
     out->hp = cur->hp;                  /* header protection keys are never updated */
     proven_mem_wipe((proven_mem_mut_t){ .ptr = next, .size = sizeof next });
 }
@@ -1002,7 +1061,7 @@ static void zr_install(proven_quic_conn_t *c) {
     proven_byte_t secret[PROVEN_HMAC_MAX_SIZE];
     const proven_tls_suite_t *es = NULL;
     if (proven_tls_quic_early_secret_(c->tls, secret, &es) == 0) return;
-    proven_quic_keys_set(&c->zr, es, secret);
+    proven_quic_keys_set_v(&c->zr, es, secret, c->orig_version);   /* 0-RTT stays in the original version (RFC 9369 section 4.1) */
     proven_mem_wipe((proven_mem_mut_t){ .ptr = secret, .size = sizeof secret });
     proven_tls_quic_early_drop_(c->tls);
     c->zr_ok = true;
@@ -1073,7 +1132,30 @@ static void early_after(proven_quic_conn_t *c) {
 
 /* After the TLS engine has been fed: its output into CRYPTO, its secrets into keys, the
  * peer's parameters, the handshake's end, or its failure. */
+/* The Initial keys of the version in use, from `init_dcid`. */
+static void initial_keys_now(proven_quic_conn_t *c) {
+    proven_byte_t cs[32], ss[32];
+    proven_quic_initial_secrets_v((proven_mem_view_t){ .ptr = c->init_dcid.id, .size = c->init_dcid.len }, c->version, cs, ss);
+    proven_quic_keys_set_v(&c->sp[0].tx, proven_quic_initial_suite(), c->server ? ss : cs, c->version);
+    proven_quic_keys_set_v(&c->sp[0].rx, proven_quic_initial_suite(), c->server ? cs : ss, c->version);
+    c->sp[0].tx_ok = c->sp[0].rx_ok = true;
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = cs, .size = 32 });
+    proven_mem_wipe((proven_mem_mut_t){ .ptr = ss, .size = 32 });
+}
+
+/* Compatible negotiation moved the connection to `v` (RFC 9368 section 2.3): a server keeps the
+ * original version's Initial read key (RFC 9369 section 4.1); a client's tickets are then of it. */
+static void version_switch(proven_quic_conn_t *c, proven_u32 v) {
+    if (c->server) { c->init_rx_orig = c->sp[0].rx; c->init_rx_orig_ok = true; }
+    c->version = v;
+    initial_keys_now(c);
+    if (!c->server) proven_tls_quic_set_version_(c->tls, v);
+}
+
 static void tls_after(proven_quic_conn_t *c) {
+    /* A server that moved to another version while reading the ClientHello: before anything of
+     * its own is protected. */
+    if (c->server && proven_tls_quic_version_(c->tls) != c->version && proven_tls_quic_version_(c->tls) != 0) version_switch(c, proven_tls_quic_version_(c->tls));
     for (int lvl = 0; lvl < PROVEN_QUIC_LEVELS; ++lvl) {
         proven_mem_view_t out = proven_tls_quic_pending_(c->tls, (proven_quic_level_t)lvl);
         if (out.size == 0) continue;
@@ -1089,12 +1171,12 @@ static void tls_after(proven_quic_conn_t *c) {
         bool got = false;
         if (!sp->tx_ok) {
             const proven_size_t n = proven_tls_quic_secret_(c->tls, (proven_quic_level_t)lvl, true, secret);
-            if (n) { proven_quic_keys_set(&sp->tx, c->suite, secret); sp->tx_ok = true; got = true; if (lvl == 2) { qcopy(c->tx_secret, secret, n); c->secret_len = n; } }
+            if (n) { proven_quic_keys_set_v(&sp->tx, c->suite, secret, c->version); sp->tx_ok = true; got = true; if (lvl == 2) { qcopy(c->tx_secret, secret, n); c->secret_len = n; } }
         }
         if (!sp->rx_ok) {
             const proven_size_t n = proven_tls_quic_secret_(c->tls, (proven_quic_level_t)lvl, false, secret);
             if (n) {
-                proven_quic_keys_set(&sp->rx, c->suite, secret); sp->rx_ok = true; got = true; c->keys_new = true;
+                proven_quic_keys_set_v(&sp->rx, c->suite, secret, c->version); sp->rx_ok = true; got = true; c->keys_new = true;
                 if (lvl == 2) { qcopy(c->rx_secret, secret, n); c->secret_len = n; next_keys(c, c->rx_secret, &sp->rx, &c->rx_next); }
             }
         }
@@ -1759,7 +1841,7 @@ static proven_u64 on_frame(proven_quic_conn_t *c, int lvl, const proven_quic_fra
     case PROVEN_QUIC_FT_STOP_SENDING: return on_stop_sending(c, f);
     case PROVEN_QUIC_FT_NEW_TOKEN:
         if (c->server) return PROVEN_QUIC_PROTOCOL_VIOLATION;
-        proven_tls_session_token_keep_(c->session, f->data);   /* for the next connection to this server (RFC 9000 section 8.1.3) */
+        proven_tls_session_token_keep_v_(c->session, c->version, f->data);   /* for the next connection to this server (RFC 9000 section 8.1.3) */
         return 0;
     case PROVEN_QUIC_FT_MAX_DATA: if (f->value > c->tx_max_data) c->tx_max_data = f->value; return 0;
     case PROVEN_QUIC_FT_MAX_STREAM_DATA:
@@ -1817,8 +1899,8 @@ static proven_u64 on_frame_at(proven_quic_conn_t *c, int lvl, const proven_quic_
 static void tx_key_next(proven_quic_conn_t *c) {
     proven_qspace_t *sp = &c->sp[2];
     const proven_quic_keys_t tx = sp->tx;
-    proven_quic_secret_update(c->suite, c->tx_secret);
-    proven_quic_keys_set(&sp->tx, c->suite, c->tx_secret);
+    proven_quic_secret_update_v(c->suite, c->tx_secret, c->version);
+    proven_quic_keys_set_v(&sp->tx, c->suite, c->tx_secret, c->version);
     sp->tx.hp = tx.hp;                  /* header protection keys are never updated */
     c->key_phase = !c->key_phase;
     c->phase_sent = 0;
@@ -1833,7 +1915,7 @@ static void key_update_start(proven_quic_conn_t *c) {
     c->rx_prev = sp->rx; c->rx_prev_ok = true;
     c->rx_prev_until = c->now + 3 * pto_base(c);
     sp->rx = c->rx_next;
-    proven_quic_secret_update(c->suite, c->rx_secret);
+    proven_quic_secret_update_v(c->suite, c->rx_secret, c->version);
     next_keys(c, c->rx_secret, &sp->rx, &c->rx_next);
     c->phase_first_pn = sp->rx_largest_plus_one;
     tx_key_next(c);
@@ -1866,7 +1948,7 @@ static bool open_short(proven_quic_conn_t *c, proven_byte_t *pkt, proven_size_t 
     c->rx_prev = sp->rx; c->rx_prev_ok = true;
     c->rx_prev_until = c->now + 3 * pto_base(c);
     sp->rx = c->rx_next;
-    proven_quic_secret_update(c->suite, c->rx_secret);
+    proven_quic_secret_update_v(c->suite, c->rx_secret, c->version);
     next_keys(c, c->rx_secret, &sp->rx, &c->rx_next);
     c->phase_first_pn = *pn;
     tx_key_next(c);
@@ -1940,9 +2022,11 @@ static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_q
     proven_u64 pn;
     proven_size_t hlen;
     proven_mem_mut_t payload;
+    /* A server that moved reads the client's Initials of the original version with that version's key. */
+    const proven_quic_keys_t *rk = lvl == 0 && h->version != c->version ? &c->init_rx_orig : &sp->rx;
     const bool ok = zrtt ? proven_quic_unprotect(&c->zr, pkt, h->pn_offset, h->len, sp->rx_largest_plus_one, &pn, &hlen, &payload)
                   : lvl == 2 ? open_short(c, pkt, h->pn_offset, h->len, &pn, &hlen, &payload)
-                             : proven_quic_unprotect(&sp->rx, pkt, h->pn_offset, h->len, sp->rx_largest_plus_one, &pn, &hlen, &payload);
+                             : proven_quic_unprotect(rk, pkt, h->pn_offset, h->len, sp->rx_largest_plus_one, &pn, &hlen, &payload);
     if (!ok) { ++c->st.packets_dropped; return c->state >= QS_CLOSING ? -1 : 0; }
     if (seen(sp, pn)) { ++c->st.packets_dropped; return 0; }
     if (c->state == QS_CLOSING) {
@@ -1975,6 +2059,7 @@ static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_q
     if (c->server && lvl == 1) {
         c->validated = true;            /* RFC 9000 section 8.1: a Handshake packet validates the address */
         space_discard(c, PROVEN_QUIC_LEVEL_INITIAL);
+        if (c->init_rx_orig_ok) { proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&c->init_rx_orig, .size = sizeof c->init_rx_orig }); c->init_rx_orig_ok = false; }
     }
     if (!c->server && lvl == 0 && !c->got_server_initial) {
         c->got_server_initial = true;
@@ -2041,8 +2126,9 @@ static void read_datagram(proven_quic_conn_t *c, proven_byte_t *d, proven_size_t
         if (first) short_first = h.type == PROVEN_QUIC_PKT_SHORT;
         first = false;
         if (!c->server && h.type == PROVEN_QUIC_PKT_RETRY) {
-            /* A Retry: once, before anything from the server, checked by its tag (RFC 9000 section 17.2.5). */
-            if (c->retried || c->got_server_initial || !cid_eq(&h.dcid, &c->local[0].cid) || cid_eq(&h.scid, &c->odcid) || h.token.size > sizeof c->token
+            /* A Retry: once, before anything from the server, in the version this client started
+             * in (RFC 9369 section 4.1), checked by its tag (RFC 9000 section 17.2.5). */
+            if (c->retried || c->got_server_initial || h.version != c->version || !cid_eq(&h.dcid, &c->local[0].cid) || cid_eq(&h.scid, &c->odcid) || h.token.size > sizeof c->token
                 || !proven_quic_retry_check((proven_mem_view_t){ .ptr = c->odcid.id, .size = c->odcid.len }, (proven_mem_view_t){ .ptr = d + at, .size = h.len })) {
                 ++c->st.packets_dropped;
                 break;
@@ -2052,12 +2138,8 @@ static void read_datagram(proven_quic_conn_t *c, proven_byte_t *d, proven_size_t
             c->peer[0].cid = h.scid;
             qcopy(c->token, h.token.ptr, h.token.size);
             c->token_len = h.token.size;
-            proven_byte_t cs[32], ss[32];
-            proven_quic_initial_secrets((proven_mem_view_t){ .ptr = h.scid.id, .size = h.scid.len }, cs, ss);
-            proven_quic_keys_set(&c->sp[0].tx, proven_quic_initial_suite(), cs);
-            proven_quic_keys_set(&c->sp[0].rx, proven_quic_initial_suite(), ss);
-            proven_mem_wipe((proven_mem_mut_t){ .ptr = cs, .size = 32 });
-            proven_mem_wipe((proven_mem_mut_t){ .ptr = ss, .size = 32 });
+            c->init_dcid = h.scid;
+            initial_keys_now(c);
             proven_qspace_t *sp = &c->sp[0];
             for (proven_size_t i = 0; i < sp->sent_n; ++i) sent_gone(c, sp, &sp->sent[i]);
             sp->sent_n = 0;
@@ -2067,13 +2149,21 @@ static void read_datagram(proven_quic_conn_t *c, proven_byte_t *d, proven_size_t
             break;
         }
         if (!c->server && h.type == PROVEN_QUIC_PKT_VN) {
-            /* Version negotiation before anything else from the server, naming no version 1. */
-            bool v1 = false;
-            for (proven_size_t i = 0; i + 4 <= h.token.size; i += 4) {
+            /* Version negotiation before anything else from the server. One that lists the version
+             * this client started in is ignored, and so is any after a restart (RFC 9368 section 4);
+             * one that lists a version this client speaks ends this attempt with that version to
+             * start again in (stats: vn_version); one that lists none ends it. */
+            proven_u32 listed[16];
+            proven_size_t nl = 0;
+            bool orig = false;
+            for (proven_size_t i = 0; i + 4 <= h.token.size && nl < 16; i += 4) {
                 const proven_byte_t *v = h.token.ptr + i;
-                if (v[0] == 0 && v[1] == 0 && v[2] == 0 && v[3] == 1) v1 = true;
+                listed[nl] = (proven_u32)v[0] << 24 | (proven_u32)v[1] << 16 | (proven_u32)v[2] << 8 | v[3];
+                if (listed[nl] == c->orig_version) orig = true;
+                ++nl;
             }
-            if (!c->got_server_initial && !c->retried && !v1 && cid_eq(&h.dcid, &c->local[0].cid) && cid_eq(&h.scid, &c->odcid)) {
+            if (!c->got_server_initial && !c->retried && !orig && !c->cfg.after_vn && cid_eq(&h.dcid, &c->local[0].cid) && cid_eq(&h.scid, &c->odcid)) {
+                c->vn_version = client_pick(c, listed, nl, 0);
                 c->close_code = PROVEN_QUIC_CONNECTION_REFUSED;
                 c->state = QS_DRAINING;
                 c->close_deadline = c->now;
@@ -2081,6 +2171,22 @@ static void read_datagram(proven_quic_conn_t *c, proven_byte_t *d, proven_size_t
                 enter_closed_event(c);
             }
             break;
+        }
+        /* A long header of another version (RFC 9369 section 4.1): a client follows a server's
+         * first Initial into a version it offered, until the server's CRYPTO data has come in
+         * the original one; a server reads the client's Initials and 0-RTT packets of the
+         * original version; anything else of another version is dropped. */
+        if (h.type == PROVEN_QUIC_PKT_INITIAL || h.type == PROVEN_QUIC_PKT_HANDSHAKE || h.type == PROVEN_QUIC_PKT_0RTT) {
+            if (h.version != c->version) {
+                proven_u32 order[2];
+                client_order(c, order);
+                const bool follow = !c->server && h.type == PROVEN_QUIC_PKT_INITIAL && !c->sp[1].rx_ok && c->version == c->orig_version
+                                    && (order[0] == h.version || order[1] == h.version);
+                const bool original = c->server && h.version == c->orig_version
+                                      && ((h.type == PROVEN_QUIC_PKT_INITIAL && c->init_rx_orig_ok) || h.type == PROVEN_QUIC_PKT_0RTT);
+                if (follow) version_switch(c, h.version);
+                else if (!original) { ++c->st.packets_dropped; at += h.len; continue; }
+            }
         }
         /* RFC 9000 section 14.1: a server drops an Initial in a datagram under 1,200 bytes. */
         if (c->server && h.type == PROVEN_QUIC_PKT_INITIAL && n < PROVEN_QUIC_MIN_INITIAL) { ++c->st.packets_dropped; at += h.len; continue; }
@@ -2134,32 +2240,33 @@ static void token_aead(const proven_quic_config_t *cfg, bool retry, proven_crypt
 
 /* What a NEW_TOKEN token is bound to: its kind and the address without its port - a client's
  * next connection comes from another port (RFC 9000 section 8.1.3). */
-static proven_size_t token_bound(const proven_quic_addr_t *a, proven_byte_t out[1 + 32]) {
+static proven_size_t token_bound(const proven_quic_addr_t *a, proven_u32 version, proven_byte_t out[2 + 32]) {
     proven_size_t n = 0;
     out[n++] = QC_TOKEN_NEW;
+    out[n++] = version == PROVEN_QUIC_VERSION_2 ? 2 : 1;        /* a token is its version's (RFC 9369 section 5) */
     for (proven_size_t i = 0; i < a->len && i < sizeof a->b; ++i) if (a->port_len == 0 || i < a->port_at || i >= (proven_size_t)a->port_at + a->port_len) out[n++] = a->b[i];
     return n;
 }
 
 /* kind, nonce, then sealed: the time it was made. */
-static void new_token_make(const proven_quic_config_t *cfg, const proven_quic_addr_t *to, proven_u64 now, proven_byte_t tok[QC_NEW_TOKEN_LEN]) {
+static void new_token_make(const proven_quic_config_t *cfg, const proven_quic_addr_t *to, proven_u32 version, proven_u64 now, proven_byte_t tok[QC_NEW_TOKEN_LEN]) {
     proven_crypto_aes_gcm_t aead;
     token_aead(cfg, false, &aead);
-    proven_byte_t plain[8], bound[1 + 32];
+    proven_byte_t plain[8], bound[2 + 32];
     for (int i = 0; i < 8; ++i) plain[i] = (proven_byte_t)(now >> (56 - 8 * i));
     tok[0] = QC_TOKEN_NEW;
     proven_tls_config_random(cfg->tls, tok + 1, 12);
-    const proven_size_t bn = token_bound(to, bound);
+    const proven_size_t bn = token_bound(to, version, bound);
     proven_crypto_aes_gcm_seal(&aead, tok + 1, (proven_mem_view_t){ .ptr = bound, .size = bn }, (proven_mem_view_t){ .ptr = plain, .size = 8 }, tok + 13, tok + 21);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&aead, .size = sizeof aead });
 }
 
-static bool new_token_ok(const proven_quic_config_t *cfg, proven_mem_view_t tok, const proven_quic_addr_t *from, proven_u64 now) {
+static bool new_token_ok(const proven_quic_config_t *cfg, proven_mem_view_t tok, const proven_quic_addr_t *from, proven_u32 version, proven_u64 now) {
     if (tok.size != QC_NEW_TOKEN_LEN || tok.ptr[0] != QC_TOKEN_NEW || !static_key_set(cfg)) return false;
     proven_crypto_aes_gcm_t aead;
     token_aead(cfg, false, &aead);
-    proven_byte_t plain[8], bound[1 + 32];
-    const proven_size_t bn = token_bound(from, bound);
+    proven_byte_t plain[8], bound[2 + 32];
+    const proven_size_t bn = token_bound(from, version, bound);
     const bool ok = proven_crypto_aes_gcm_open(&aead, tok.ptr + 1, (proven_mem_view_t){ .ptr = bound, .size = bn }, (proven_mem_view_t){ .ptr = tok.ptr + 13, .size = 8 }, tok.ptr + 21, plain);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&aead, .size = sizeof aead });
     if (!ok) return false;
@@ -2277,7 +2384,7 @@ static void put_control(proven_quic_conn_t *c, proven_quic_wr_t *w, proven_qsent
     }
     if (c->token_owed) {
         proven_byte_t tok[QC_NEW_TOKEN_LEN];
-        new_token_make(&c->cfg, &c->peer_addr, c->now, tok);
+        new_token_make(&c->cfg, &c->peer_addr, c->version, c->now, tok);
         proven_quic_frame_t f = { .type = PROVEN_QUIC_FT_NEW_TOKEN, .data = { .ptr = tok, .size = sizeof tok } };
         if (put_rec(w, rec, &f, FR_NEW_TOKEN, 0)) c->token_owed = false;
     }
@@ -2351,7 +2458,8 @@ static bool build_packet(proven_quic_conn_t *c, int lvl, proven_byte_t *buf, pro
     const proven_quic_cid_t *dcid = &peer_cid(c)->cid;
     proven_mem_mut_t out = { buf, room };
     if (lvl == 2) pk->hlen = proven_quic_short_header_put(dcid, c->key_phase, pk->pn, pk->pn_len, out);
-    else pk->hlen = proven_quic_long_header_put(lvl == 0 ? PROVEN_QUIC_PKT_INITIAL : lvl == 1 ? PROVEN_QUIC_PKT_HANDSHAKE : PROVEN_QUIC_PKT_0RTT, dcid, &c->local[0].cid,
+    else pk->hlen = proven_quic_long_header_put_v(lvl == QC_ZRTT ? c->orig_version : c->version,
+                                                  lvl == 0 ? PROVEN_QUIC_PKT_INITIAL : lvl == 1 ? PROVEN_QUIC_PKT_HANDSHAKE : PROVEN_QUIC_PKT_0RTT, dcid, &c->local[0].cid,
                                                 (proven_mem_view_t){ .ptr = c->token, .size = c->server ? 0 : c->token_len }, pk->pn, pk->pn_len, 0, out);
     if (pk->hlen == 0 || room < pk->hlen + 16 + 8) return false;
     proven_quic_wr_t w = { buf + pk->hlen, 0, room - pk->hlen - 16, true };
@@ -2826,6 +2934,8 @@ void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s)
     s->spurious_losses = c->spurious;
     s->datagram_size = c->datagram;
     s->ecn_state = c->ecn_state;
+    s->version = c->version;
+    s->vn_version = c->vn_version;
 }
 
 bool proven_quic_conn_resumed(const proven_quic_conn_t *c) { return c && c->tls && c->complete && proven_tls_resumed(c->tls); }
@@ -2943,13 +3053,8 @@ static proven_quic_conn_t *conn_new(const proven_quic_config_t *cfg, bool server
 }
 
 static void initial_keys(proven_quic_conn_t *c, const proven_quic_cid_t *dcid) {
-    proven_byte_t cs[32], ss[32];
-    proven_quic_initial_secrets((proven_mem_view_t){ .ptr = dcid->id, .size = dcid->len }, cs, ss);
-    proven_quic_keys_set(&c->sp[0].tx, proven_quic_initial_suite(), c->server ? ss : cs);
-    proven_quic_keys_set(&c->sp[0].rx, proven_quic_initial_suite(), c->server ? cs : ss);
-    c->sp[0].tx_ok = c->sp[0].rx_ok = true;
-    proven_mem_wipe((proven_mem_mut_t){ .ptr = cs, .size = 32 });
-    proven_mem_wipe((proven_mem_mut_t){ .ptr = ss, .size = 32 });
+    c->init_dcid = *dcid;
+    initial_keys_now(c);
 }
 
 proven_err_t proven_quic_conn_client_create(const proven_quic_config_t *cfg, proven_u8str_view_t server_name, proven_tls_session_t *session,
@@ -2963,12 +3068,14 @@ proven_err_t proven_quic_conn_client_create(const proven_quic_config_t *cfg, pro
     c->odcid.len = QC_CID_LEN;
     random_bytes(c, c->odcid.id, QC_CID_LEN);
     c->peer[0] = (proven_qcid_t){ .seq = 0, .cid = c->odcid, .active = true };
+    /* The version: as asked, or the one the session's ticket came over (RFC-0036). */
+    c->version = c->orig_version = cfg->version ? cfg->version : proven_tls_session_quic_v2_(session) ? PROVEN_QUIC_VERSION_2 : PROVEN_QUIC_VERSION_1;
     initial_keys(c, &c->odcid);
     c->session = session;
-    c->token_len = proven_tls_session_token_take_(session, c->token, sizeof c->token);   /* used once */
+    c->token_len = proven_tls_session_token_take_v_(session, c->version, c->token, sizeof c->token);   /* used once */
     proven_byte_t tp[256];
     const proven_size_t tpn = local_params(c, tp, sizeof tp);
-    proven_err_t e = tpn ? proven_tls_quic_client_create_for_(cfg->tls, server_name, session, (proven_mem_view_t){ .ptr = tp, .size = tpn }, cfg->alpn, &c->tls)
+    proven_err_t e = tpn ? proven_tls_quic_client_create_v_(cfg->tls, server_name, session, (proven_mem_view_t){ .ptr = tp, .size = tpn }, cfg->alpn, c->version, &c->tls)
                          : PROVEN_ERR_INVALID_ARG;
     if (e != PROVEN_OK) { proven_quic_conn_destroy(c); return e; }
     tls_after(c);
@@ -2993,10 +3100,12 @@ proven_err_t proven_quic_conn_server_create(const proven_quic_config_t *cfg, con
     c->validated = accept->retried || accept->validated;
     c->peer[0] = (proven_qcid_t){ .seq = 0, .cid = h.scid, .active = true };
     c->peer_initial_scid = h.scid;
+    c->version = c->orig_version = h.version;
     initial_keys(c, &h.dcid);
     proven_byte_t tp[256];
     const proven_size_t tpn = local_params(c, tp, sizeof tp);
-    proven_err_t e = tpn ? proven_tls_quic_server_create_for_(cfg->tls, (proven_mem_view_t){ .ptr = tp, .size = tpn }, cfg->alpn, &c->tls) : PROVEN_ERR_INVALID_ARG;
+    const proven_u32 up = cfg->upgrade_v2 && c->version == PROVEN_QUIC_VERSION_1 ? PROVEN_QUIC_VERSION_2 : 0;
+    proven_err_t e = tpn ? proven_tls_quic_server_create_v_(cfg->tls, (proven_mem_view_t){ .ptr = tp, .size = tpn }, cfg->alpn, c->version, up, &c->tls) : PROVEN_ERR_INVALID_ARG;
     if (e != PROVEN_OK) { proven_quic_conn_destroy(c); return e; }
     e = proven_quic_conn_receive(c, datagram, from, ecn, now);
     if (e != PROVEN_OK) { proven_quic_conn_destroy(c); return e; }
@@ -3048,15 +3157,22 @@ proven_quic_stateless_t proven_quic_server_stateless(const proven_quic_config_t 
     }
     if (h.type != PROVEN_QUIC_PKT_INITIAL || d.size < PROVEN_QUIC_MIN_INITIAL || h.dcid.len < 8) return PROVEN_QUIC_STATELESS_DROP;
     accept->odcid = h.dcid;
+    accept->version = h.version;
     /* A NEW_TOKEN token of this server's for this address: validated, and no Retry is needed. One
      * that does not open is as no token at all (RFC 9000 section 8.1.3). */
     if (h.token.size > 0 && h.token.ptr[0] == QC_TOKEN_NEW) {
-        if (new_token_ok(cfg, h.token, from, now)) { accept->validated = true; return PROVEN_QUIC_STATELESS_ACCEPT; }
+        if (new_token_ok(cfg, h.token, from, h.version, now)) { accept->validated = true; return PROVEN_QUIC_STATELESS_ACCEPT; }
         h.token.size = 0;
     }
     if (!require_retry) return PROVEN_QUIC_STATELESS_ACCEPT;
     proven_crypto_aes_gcm_t aead;
     token_aead(cfg, true, &aead);
+    /* A Retry token's associated data: the version - a client must not change it under the
+     * token (RFC 9369 section 4.1) - and the address. */
+    proven_byte_t aad[1 + sizeof from->b];
+    aad[0] = h.version == PROVEN_QUIC_VERSION_2 ? 2 : 1;
+    qcopy(aad + 1, from->b, from->len);
+    const proven_mem_view_t ad = { .ptr = aad, .size = 1 + (proven_size_t)from->len };
     if (h.token.size == 0) {
         /* A Retry carrying a token: its kind, a nonce, then sealed {time, odcid, the Retry's scid},
          * the address as associated data. */
@@ -3070,10 +3186,10 @@ proven_quic_stateless_t proven_quic_server_stateless(const proven_quic_config_t 
         for (int i = 7; i >= 0; --i) plain[n++] = (proven_byte_t)(now >> (8 * i));
         plain[n++] = h.dcid.len; qcopy(plain + n, h.dcid.id, h.dcid.len); n += h.dcid.len;
         plain[n++] = scid.len; qcopy(plain + n, scid.id, scid.len); n += scid.len;
-        proven_crypto_aes_gcm_seal(&aead, tok + 1, (proven_mem_view_t){ .ptr = from->b, .size = from->len }, (proven_mem_view_t){ .ptr = plain, .size = n }, tok + 13, tok + 13 + n);
+        proven_crypto_aes_gcm_seal(&aead, tok + 1, ad, (proven_mem_view_t){ .ptr = plain, .size = n }, tok + 13, tok + 13 + n);
         proven_byte_t r;
         proven_tls_config_random(cfg->tls, &r, 1);
-        *out_len = proven_quic_retry_build(&h.dcid, &h.scid, &scid, (proven_mem_view_t){ .ptr = tok, .size = 13 + n + 16 }, r, out);
+        *out_len = proven_quic_retry_build_v(h.version, &h.dcid, &h.scid, &scid, (proven_mem_view_t){ .ptr = tok, .size = 13 + n + 16 }, r, out);
         proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&aead, .size = sizeof aead });
         return *out_len ? PROVEN_QUIC_STATELESS_REPLY : PROVEN_QUIC_STATELESS_DROP;
     }
@@ -3082,7 +3198,7 @@ proven_quic_stateless_t proven_quic_server_stateless(const proven_quic_config_t 
     proven_byte_t plain[8 + 1 + 20 + 1 + 20];
     const proven_size_t clen = h.token.size >= 29 ? h.token.size - 29 : 0;
     bool ok = h.token.ptr[0] == QC_TOKEN_RETRY && h.token.size >= 1 + 12 + 16 + 10 && clen <= sizeof plain
-              && proven_crypto_aes_gcm_open(&aead, h.token.ptr + 1, (proven_mem_view_t){ .ptr = from->b, .size = from->len },
+              && proven_crypto_aes_gcm_open(&aead, h.token.ptr + 1, ad,
                                             (proven_mem_view_t){ .ptr = h.token.ptr + 13, .size = clen }, h.token.ptr + 13 + clen, plain);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&aead, .size = sizeof aead });
     if (!ok) return PROVEN_QUIC_STATELESS_DROP;

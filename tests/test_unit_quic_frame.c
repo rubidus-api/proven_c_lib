@@ -140,11 +140,11 @@ int main(void) {
     {
         proven_quic_cid_t a = cid_hex("0102030405"), b = cid_hex("a1a2a3a4a5a6a7a8");
         proven_size_t n = proven_quic_vn_build(&a, &b, 0x55, (proven_mem_mut_t){ buf, sizeof buf });
-        PROVEN_TEST_ASSERT(n == 1 + 4 + 1 + 5 + 1 + 8 + 4 && (buf[0] & 0x80) && proven_quic_hdr_parse((proven_mem_view_t){ buf, n }, 8, &h) &&
+        PROVEN_TEST_ASSERT(n == 1 + 4 + 1 + 5 + 1 + 8 + 8 && (buf[0] & 0x80) && proven_quic_hdr_parse((proven_mem_view_t){ buf, n }, 8, &h) &&
                            h.type == PROVEN_QUIC_PKT_VN && cid_eq(&h.dcid, "0102030405") && cid_eq(&h.scid, "a1a2a3a4a5a6a7a8") &&
-                           equals_hex(h.token.ptr, h.token.size, "00000001"),
-            "version negotiation lists version 1", "");
-        PROVEN_TEST_ASSERT(!proven_quic_hdr_parse((proven_mem_view_t){ buf, n - 1 }, 8, &h) && !proven_quic_hdr_parse((proven_mem_view_t){ buf, n - 4 }, 8, &h),
+                           equals_hex(h.token.ptr, h.token.size, "000000016b3343cf"),
+            "version negotiation lists version 1 and version 2 (RFC-0036)", "");
+        PROVEN_TEST_ASSERT(!proven_quic_hdr_parse((proven_mem_view_t){ buf, n - 1 }, 8, &h) && !proven_quic_hdr_parse((proven_mem_view_t){ buf, n - 8 }, 8, &h),
             "a version list that is not whole, or empty, is refused", "");
         n = unhex("c0" "1a2a3a4a" "04" "01020304" "00" "ffffffff", pkt, sizeof pkt);
         PROVEN_TEST_ASSERT(proven_quic_hdr_parse((proven_mem_view_t){ pkt, n }, 8, &h) && h.type == PROVEN_QUIC_PKT_OTHER_VERSION && h.version == 0x1a2a3a4a &&
