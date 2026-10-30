@@ -40,6 +40,12 @@ typedef WSAPOLLFD proven_native_pollfd_t;
 #endif
 /* UDP send and receive offload (USO, URO), from the Windows SDK's ws2ipdef.h; mingw-w64's
  * headers have none of them. */
+#ifndef IP_ECN
+#define IP_ECN 50
+#endif
+#ifndef IPV6_ECN
+#define IPV6_ECN 50
+#endif
 #ifndef UDP_SEND_MSG_SIZE
 #define UDP_SEND_MSG_SIZE 2
 #endif
@@ -743,6 +749,8 @@ static void gso_probe(proven_sys_socket_t sock) {
         atomic_store_explicit(&g_gso_refused, true, memory_order_relaxed);
     atomic_store_explicit(&g_gso_probed, true, memory_order_relaxed);
 }
+#elif defined(__linux__)
+static atomic_bool g_gso_refused, g_gso_worked;   /* headers without UDP_SEGMENT: never set */
 #endif
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -778,94 +786,178 @@ static BOOL CALLBACK recvmsg_find(PINIT_ONCE once, PVOID param, PVOID *context) 
 
 void proven_sys_net_segments_off_for_test_(bool off) { atomic_store_explicit(&g_segments_off, off, memory_order_relaxed); }
 
+#if defined(__linux__) || defined(_WIN32) || defined(_WIN64)
+/* ECN on sends (RFC-0035): a control message per send. A system that refuses it - before it has
+ * ever taken one - is not asked again in this process, and what was to go marked goes unmarked:
+ * the connection's ECN validation then fails on its own. */
+static atomic_bool g_ecn_refused;
+static atomic_bool g_ecn_worked;
+
+static bool ecn_refusal(bool refused) {
+    if (!refused || atomic_load_explicit(&g_ecn_worked, memory_order_relaxed)) return false;
+    atomic_store_explicit(&g_ecn_refused, true, memory_order_relaxed);
+    return true;
+}
+
+#if defined(__linux__)
+/* One sendmsg of `n` bytes: datagrams of `gso` bytes when not 0 (UDP_SEGMENT), with the ECN field
+ * `ecn` when not 0. 0 when sent (`*sent` bytes), else the error. */
+static int msg_send(proven_sys_socket_t sock, const unsigned char *p, proven_size_t n, proven_size_t gso, const struct sockaddr_storage *ss,
+                    proven_native_len_t sl, proven_sys_net_family_t family, proven_u8 ecn, proven_size_t *sent) {
+    struct iovec iov = { .iov_base = (void *)(proven_uintptr_t)p, .iov_len = (size_t)n };
+    union { char b[CMSG_SPACE(sizeof(proven_u16)) + CMSG_SPACE(sizeof(int))]; struct cmsghdr align; } ctl;
+    memset(&ctl, 0, sizeof ctl);
+    struct msghdr msg;
+    memset(&msg, 0, sizeof msg);
+    msg.msg_name = (void *)(proven_uintptr_t)ss;
+    msg.msg_namelen = sl;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = ctl.b;
+    msg.msg_controllen = sizeof ctl.b;
+    size_t used = 0;
+    struct cmsghdr *c = CMSG_FIRSTHDR(&msg);
+#if defined(UDP_SEGMENT)
+    if (gso) {
+        c->cmsg_level = IPPROTO_UDP;
+        c->cmsg_type = UDP_SEGMENT;
+        c->cmsg_len = CMSG_LEN(sizeof(proven_u16));
+        const proven_u16 size = (proven_u16)gso;
+        memcpy(CMSG_DATA(c), &size, sizeof size);
+        used += CMSG_SPACE(sizeof(proven_u16));
+        c = CMSG_NXTHDR(&msg, c);
+    }
+#else
+    (void)gso;
+#endif
+    if (ecn) {
+        const int tos = ecn & 3;
+        c->cmsg_level = family == PROVEN_SYS_NET_FAMILY_IPV6 ? IPPROTO_IPV6 : IPPROTO_IP;
+        c->cmsg_type = family == PROVEN_SYS_NET_FAMILY_IPV6 ? IPV6_TCLASS : IP_TOS;
+        c->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(c), &tos, sizeof tos);
+        used += CMSG_SPACE(sizeof(int));
+    }
+    msg.msg_controllen = used;
+    if (used == 0) msg.msg_control = NULL;
+    for (;;) {
+        const ssize_t k = sendmsg((proven_native_socket_t)sock, &msg, NATIVE_SEND_FLAGS);
+        if (k >= 0) { *sent = (proven_size_t)k; return 0; }
+        const int e = net_last_error();
+        if (!net_interrupted(e)) return e;
+    }
+}
+
+static bool msg_would_block(int e) {
+    return e == EAGAIN
+#if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
+        || e == EWOULDBLOCK
+#endif
+        ;
+}
+#define MSG_REFUSED(e) ((e) == EINVAL || (e) == ENOPROTOOPT || (e) == EOPNOTSUPP)
+#elif defined(_WIN32) || defined(_WIN64)
+static int msg_send(proven_sys_socket_t sock, const unsigned char *p, proven_size_t n, proven_size_t gso, const struct sockaddr_storage *ss,
+                    proven_native_len_t sl, proven_sys_net_family_t family, proven_u8 ecn, proven_size_t *sent) {
+    WSABUF b = { .len = (ULONG)n, .buf = (CHAR *)(proven_uintptr_t)p };
+    union { char b[WSA_CMSG_SPACE(sizeof(DWORD)) + WSA_CMSG_SPACE(sizeof(INT))]; WSACMSGHDR align; } ctl;
+    memset(&ctl, 0, sizeof ctl);
+    WSAMSG msg;
+    memset(&msg, 0, sizeof msg);
+    msg.name = (LPSOCKADDR)(proven_uintptr_t)ss;
+    msg.namelen = sl;
+    msg.lpBuffers = &b;
+    msg.dwBufferCount = 1;
+    msg.Control.buf = ctl.b;
+    msg.Control.len = (ULONG)sizeof ctl.b;
+    ULONG used = 0;
+    WSACMSGHDR *c = WSA_CMSG_FIRSTHDR(&msg);
+    if (gso) {
+        c->cmsg_level = IPPROTO_UDP;
+        c->cmsg_type = UDP_SEND_MSG_SIZE;
+        c->cmsg_len = WSA_CMSG_LEN(sizeof(DWORD));
+        const DWORD size = (DWORD)gso;
+        memcpy(WSA_CMSG_DATA(c), &size, sizeof size);
+        used += (ULONG)WSA_CMSG_SPACE(sizeof(DWORD));
+        c = WSA_CMSG_NXTHDR(&msg, c);
+    }
+    if (ecn) {
+        const INT mark = ecn & 3;
+        c->cmsg_level = family == PROVEN_SYS_NET_FAMILY_IPV6 ? IPPROTO_IPV6 : IPPROTO_IP;
+        c->cmsg_type = family == PROVEN_SYS_NET_FAMILY_IPV6 ? IPV6_ECN : IP_ECN;
+        c->cmsg_len = WSA_CMSG_LEN(sizeof(INT));
+        memcpy(WSA_CMSG_DATA(c), &mark, sizeof mark);
+        used += (ULONG)WSA_CMSG_SPACE(sizeof(INT));
+    }
+    msg.Control.len = used;
+    if (used == 0) msg.Control.buf = NULL;
+    DWORD k = 0;
+    if (WSASendMsg((proven_native_socket_t)sock, &msg, 0, &k, NULL, NULL) == 0) { *sent = (proven_size_t)k; return 0; }
+    return net_last_error();
+}
+
+static bool msg_would_block(int e) { return e == WSAEWOULDBLOCK; }
+#define MSG_REFUSED(e) ((e) == WSAEINVAL || (e) == WSAENOPROTOOPT || (e) == WSAEOPNOTSUPP)
+#endif
+#endif
+
 proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, const void *buf, proven_size_t total,
-                                                     proven_size_t seg, const proven_sys_net_addr_t *to, proven_size_t *sent) {
+                                                     proven_size_t seg, const proven_sys_net_addr_t *to, proven_u8 ecn, proven_size_t *sent) {
     const unsigned char *p = (const unsigned char *)buf;
     *sent = 0;
     if (total == 0) return PROVEN_SYS_NET_OK;
     if (seg == 0 || total > PROVEN_SYS_NET_SEGMENTS_MAX_BYTES || (total + seg - 1) / seg > PROVEN_SYS_NET_SEGMENTS_MAX_COUNT) return PROVEN_SYS_NET_TOO_BIG;
-#if defined(__linux__) && defined(UDP_SEGMENT)
-    if (total > seg && !atomic_load_explicit(&g_segments_off, memory_order_relaxed)) gso_probe(sock);
-    if (total > seg && !atomic_load_explicit(&g_segments_off, memory_order_relaxed) && !atomic_load_explicit(&g_gso_refused, memory_order_relaxed)) {
+#if defined(__linux__) || defined(_WIN32) || defined(_WIN64)
+    proven_u8 mark = atomic_load_explicit(&g_ecn_refused, memory_order_relaxed) ? 0 : (proven_u8)(ecn & 3);
+    bool gso = false;
+#if (defined(__linux__) && defined(UDP_SEGMENT)) || defined(_WIN32) || defined(_WIN64)
+    if (total > seg && !atomic_load_explicit(&g_segments_off, memory_order_relaxed)) {
+        gso_probe(sock);
+        gso = !atomic_load_explicit(&g_gso_refused, memory_order_relaxed);
+    }
+#endif
+    if (gso || mark) {
         struct sockaddr_storage ss;
         const proven_native_len_t sl = to_native(to, &ss);
         if (sl == 0) return PROVEN_SYS_NET_ADDR_INVALID;
-        struct iovec iov = { .iov_base = (void *)(proven_uintptr_t)p, .iov_len = (size_t)total };
-        union { char b[CMSG_SPACE(sizeof(proven_u16))]; struct cmsghdr align; } ctl;
-        memset(&ctl, 0, sizeof ctl);
-        struct msghdr msg;
-        memset(&msg, 0, sizeof msg);
-        msg.msg_name = &ss;
-        msg.msg_namelen = sl;
-        msg.msg_iov = &iov;
-        msg.msg_iovlen = 1;
-        msg.msg_control = ctl.b;
-        msg.msg_controllen = sizeof ctl.b;
-        struct cmsghdr *c = CMSG_FIRSTHDR(&msg);
-        c->cmsg_level = IPPROTO_UDP;
-        c->cmsg_type = UDP_SEGMENT;
-        c->cmsg_len = CMSG_LEN(sizeof(proven_u16));
-        const proven_u16 size = (proven_u16)seg;
-        memcpy(CMSG_DATA(c), &size, sizeof size);
-        for (;;) {
-            const ssize_t n = sendmsg((proven_native_socket_t)sock, &msg, NATIVE_SEND_FLAGS);
-            if (n >= 0) {
+        /* GSO (Linux) or USO (Windows): one call. */
+        while (gso) {
+            proven_size_t n = 0;
+            const int e = msg_send(sock, p, total, seg, &ss, sl, to->family, mark, &n);
+            if (e == 0) {
                 atomic_store_explicit(&g_gso_worked, true, memory_order_relaxed);
-                *sent = (proven_size_t)n;
-                return (proven_size_t)n == total ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_ERROR;
+                if (mark) atomic_store_explicit(&g_ecn_worked, true, memory_order_relaxed);
+                *sent = n;
+                return n == total ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_ERROR;
             }
-            const int e = net_last_error();
-            if (net_interrupted(e)) continue;
-            if (e == EAGAIN
-#if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
-                || e == EWOULDBLOCK
-#endif
-                ) return PROVEN_SYS_NET_WOULD_BLOCK;
+            if (msg_would_block(e)) return PROVEN_SYS_NET_WOULD_BLOCK;
+            if (mark && ecn_refusal(MSG_REFUSED(e))) { mark = 0; continue; }   /* the mark, not the batch: again without it */
             /* Any other failure: this batch goes one datagram at a time - not dropped, which would
              * read as a path that lost them all. Remembered for the process only while GSO has
              * never worked here: afterwards the same errors (EINVAL when a route's MTU has
              * shrunk below the segment size, EMSGSIZE) belong to this batch, not to the kernel. */
-            if ((e == EIO || e == EINVAL || e == ENOPROTOOPT || e == EOPNOTSUPP) && !atomic_load_explicit(&g_gso_worked, memory_order_relaxed))
+            if (MSG_REFUSED(e) && !atomic_load_explicit(&g_gso_worked, memory_order_relaxed))
                 atomic_store_explicit(&g_gso_refused, true, memory_order_relaxed);
             break;
         }
-    }
-#elif defined(_WIN32) || defined(_WIN64)
-    /* USO (RFC-0018 section 12): one WSASendMsg with UDP_SEND_MSG_SIZE, under Linux's rules. */
-    if (total > seg && !atomic_load_explicit(&g_segments_off, memory_order_relaxed)) gso_probe(sock);
-    if (total > seg && !atomic_load_explicit(&g_segments_off, memory_order_relaxed) && !atomic_load_explicit(&g_gso_refused, memory_order_relaxed)) {
-        struct sockaddr_storage ss;
-        const proven_native_len_t sl = to_native(to, &ss);
-        if (sl == 0) return PROVEN_SYS_NET_ADDR_INVALID;
-        WSABUF b = { .len = (ULONG)total, .buf = (CHAR *)(proven_uintptr_t)p };
-        union { char b[WSA_CMSG_SPACE(sizeof(DWORD))]; WSACMSGHDR align; } ctl;
-        memset(&ctl, 0, sizeof ctl);
-        WSAMSG msg;
-        memset(&msg, 0, sizeof msg);
-        msg.name = (LPSOCKADDR)&ss;
-        msg.namelen = sl;
-        msg.lpBuffers = &b;
-        msg.dwBufferCount = 1;
-        msg.Control.buf = ctl.b;
-        msg.Control.len = (ULONG)sizeof ctl.b;
-        WSACMSGHDR *c = WSA_CMSG_FIRSTHDR(&msg);
-        c->cmsg_level = IPPROTO_UDP;
-        c->cmsg_type = UDP_SEND_MSG_SIZE;
-        c->cmsg_len = WSA_CMSG_LEN(sizeof(DWORD));
-        const DWORD size = (DWORD)seg;
-        memcpy(WSA_CMSG_DATA(c), &size, sizeof size);
-        DWORD n = 0;
-        if (WSASendMsg((proven_native_socket_t)sock, &msg, 0, &n, NULL, NULL) == 0) {
-            atomic_store_explicit(&g_gso_worked, true, memory_order_relaxed);
-            *sent = (proven_size_t)n;
-            return (proven_size_t)n == total ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_ERROR;
+        /* One datagram at a time, marked. */
+        while (mark && *sent < total) {
+            const proven_size_t n = total - *sent < seg ? total - *sent : seg;
+            proven_size_t k = 0;
+            const int e = msg_send(sock, p + *sent, n, 0, &ss, sl, to->family, mark, &k);
+            if (e == 0) {
+                atomic_store_explicit(&g_ecn_worked, true, memory_order_relaxed);
+                if (k != n) return PROVEN_SYS_NET_ERROR;
+                *sent += n;
+                continue;
+            }
+            if (msg_would_block(e)) return PROVEN_SYS_NET_WOULD_BLOCK;
+            if (ecn_refusal(MSG_REFUSED(e))) { mark = 0; break; }
+            return net_reason(e);
         }
-        const int e = net_last_error();
-        if (e == WSAEWOULDBLOCK) return PROVEN_SYS_NET_WOULD_BLOCK;
-        if ((e == WSAEINVAL || e == WSAENOPROTOOPT || e == WSAEOPNOTSUPP) && !atomic_load_explicit(&g_gso_worked, memory_order_relaxed))
-            atomic_store_explicit(&g_gso_refused, true, memory_order_relaxed);
-        /* and this batch goes one datagram at a time */
     }
+#else
+    (void)ecn;
 #endif
     while (*sent < total) {
         const proven_size_t n = total - *sent < seg ? total - *sent : seg;
@@ -875,6 +967,49 @@ proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, c
     }
     return PROVEN_SYS_NET_OK;
 }
+
+proven_sys_net_result_t proven_sys_net_udp_ecn(proven_sys_socket_t sock, proven_sys_net_family_t family) {
+    const bool v6 = family == PROVEN_SYS_NET_FAMILY_IPV6;
+#if defined(__linux__) && defined(IP_RECVTOS) && defined(IPV6_RECVTCLASS)
+    const int on = 1;
+    return setsockopt((proven_native_socket_t)sock, v6 ? IPPROTO_IPV6 : IPPROTO_IP, v6 ? IPV6_RECVTCLASS : IP_RECVTOS, &on, (socklen_t)sizeof on) == 0
+        ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_UNSUPPORTED;
+#elif defined(_WIN32) || defined(_WIN64)
+    /* Read through WSARecvMsg's control data only. */
+    proven_native_socket_t ns = (proven_native_socket_t)sock;
+    InitOnceExecuteOnce(&g_recvmsg_once, recvmsg_find, &ns, NULL);
+    if (!g_recvmsg) return PROVEN_SYS_NET_UNSUPPORTED;
+    const DWORD on = 1;
+    return setsockopt(ns, v6 ? IPPROTO_IPV6 : IPPROTO_IP, v6 ? IPV6_ECN : IP_ECN, (const char *)&on, (int)sizeof on) == 0
+        ? PROVEN_SYS_NET_OK : PROVEN_SYS_NET_UNSUPPORTED;
+#else
+    (void)sock; (void)v6;
+    return PROVEN_SYS_NET_UNSUPPORTED;
+#endif
+}
+
+#if defined(__linux__)
+/* The ECN field in a received control message (IP_TOS: one byte; IPV6_TCLASS: an int), or -1
+ * when the message is not one. */
+static int ecn_of(const struct cmsghdr *c) {
+    if (c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_TOS && c->cmsg_len >= CMSG_LEN(1)) return *(const unsigned char *)CMSG_DATA(c) & 3;
+    if (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_TCLASS && c->cmsg_len >= CMSG_LEN(sizeof(int))) {
+        int v = 0;
+        memcpy(&v, CMSG_DATA(c), sizeof v);
+        return v & 3;
+    }
+    return -1;
+}
+#elif defined(_WIN32) || defined(_WIN64)
+static int ecn_of(const WSACMSGHDR *c) {
+    const bool ip = c->cmsg_level == IPPROTO_IP && (c->cmsg_type == IP_ECN || c->cmsg_type == IP_TOS);
+    const bool ip6 = c->cmsg_level == IPPROTO_IPV6 && (c->cmsg_type == IPV6_ECN || c->cmsg_type == IPV6_TCLASS);
+    if ((!ip && !ip6) || c->cmsg_len < WSA_CMSG_LEN(sizeof(INT))) return -1;
+    INT v = 0;
+    memcpy(&v, WSA_CMSG_DATA(c), sizeof v);
+    return v & 3;
+}
+#endif
 
 proven_sys_net_result_t proven_sys_net_udp_gro(proven_sys_socket_t sock) {
 #if defined(__linux__) && defined(UDP_GRO)
@@ -922,9 +1057,10 @@ proven_sys_net_result_t proven_sys_net_udp_dontfrag(proven_sys_socket_t sock, pr
 }
 
 proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, void *buf, proven_size_t cap,
-                                                     proven_size_t *received, proven_size_t *seg, proven_sys_net_addr_t *from) {
+                                                     proven_size_t *received, proven_size_t *seg, proven_u8 *ecn, proven_sys_net_addr_t *from) {
     *seg = 0;
-#if defined(__linux__) && defined(UDP_GRO)
+    if (ecn) *ecn = 0;
+#if defined(__linux__)
     *received = 0;
     for (;;) {
         struct sockaddr_storage ss;
@@ -944,10 +1080,14 @@ proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, v
             *received = (proven_size_t)n;
             if (from) from_native(&ss, msg.msg_namelen, from);
             for (struct cmsghdr *c = CMSG_FIRSTHDR(&msg); c; c = CMSG_NXTHDR(&msg, c)) {
+                const int mark = ecn_of(c);
+                if (mark >= 0) { if (ecn) *ecn = (proven_u8)mark; continue; }
+#if defined(UDP_GRO)
                 if (c->cmsg_level != IPPROTO_UDP || c->cmsg_type != UDP_GRO) continue;
                 int size = 0;
                 memcpy(&size, CMSG_DATA(c), sizeof size);
                 if (size > 0 && (proven_size_t)size < *received) *seg = (proven_size_t)size;
+#endif
             }
             return (msg.msg_flags & MSG_TRUNC) ? PROVEN_SYS_NET_TRUNCATED : PROVEN_SYS_NET_OK;
         }
@@ -985,6 +1125,8 @@ proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, v
     *received = (proven_size_t)n;
     if (from) from_native(&ss, msg.namelen, from);
     for (WSACMSGHDR *c = WSA_CMSG_FIRSTHDR(&msg); c; c = WSA_CMSG_NXTHDR(&msg, c)) {
+        const int mark = ecn_of(c);
+        if (mark >= 0) { if (ecn) *ecn = (proven_u8)mark; continue; }
         if (c->cmsg_level != IPPROTO_UDP || c->cmsg_type != UDP_COALESCED_INFO) continue;
         DWORD size = 0;
         memcpy(&size, WSA_CMSG_DATA(c), sizeof size);
@@ -1598,14 +1740,17 @@ proven_sys_net_result_t proven_sys_net_ov_recv_msg(proven_uintptr_t port, proven
     return ov_started(now, skip);
 }
 
-void proven_sys_net_ov_msg_done(const proven_sys_net_msg_t *msg, proven_u32 bytes, proven_size_t *seg, proven_sys_net_addr_t *from) {
+void proven_sys_net_ov_msg_done(const proven_sys_net_msg_t *msg, proven_u32 bytes, proven_size_t *seg, proven_u8 *ecn, proven_sys_net_addr_t *from) {
     const port_msg_t *m = (const port_msg_t *)(const void *)msg;
     *seg = 0;
+    if (ecn) *ecn = 0;
     if (from) from_native(&m->from, m->plain ? m->fromlen : m->msg.namelen, from);
     if (m->plain) return;
     WSAMSG copy = m->msg;
     for (WSACMSGHDR *c = WSA_CMSG_FIRSTHDR(&copy); c; c = WSA_CMSG_NXTHDR(&copy, c)) {
         if (c->cmsg_len < sizeof(WSACMSGHDR)) break;          /* nothing written there */
+        const int mark = ecn_of(c);
+        if (mark >= 0) { if (ecn) *ecn = (proven_u8)mark; continue; }
         if (c->cmsg_level != IPPROTO_UDP || c->cmsg_type != UDP_COALESCED_INFO) continue;
         DWORD size = 0;
         memcpy(&size, WSA_CMSG_DATA(c), sizeof size);
@@ -2422,19 +2567,23 @@ proven_sys_net_result_t proven_sys_net_ov_recv_msg(proven_uintptr_t port, proven
     return PROVEN_SYS_NET_IN_PROGRESS;
 }
 
-void proven_sys_net_ov_msg_done(const proven_sys_net_msg_t *msg, proven_u32 bytes, proven_size_t *seg, proven_sys_net_addr_t *from) {
+void proven_sys_net_ov_msg_done(const proven_sys_net_msg_t *msg, proven_u32 bytes, proven_size_t *seg, proven_u8 *ecn, proven_sys_net_addr_t *from) {
     const ring_msg_t *m = (const ring_msg_t *)(const void *)msg;
     *seg = 0;
+    if (ecn) *ecn = 0;
     if (from) from_native(&m->from, m->m.msg_namelen, from);
-#if defined(UDP_GRO)
     struct msghdr copy = m->m;
     for (struct cmsghdr *c = CMSG_FIRSTHDR(&copy); c; c = CMSG_NXTHDR(&copy, c)) {
+        const int mark = ecn_of(c);
+        if (mark >= 0) { if (ecn) *ecn = (proven_u8)mark; continue; }
+#if defined(UDP_GRO)
         if (c->cmsg_level != IPPROTO_UDP || c->cmsg_type != UDP_GRO) continue;
         int size = 0;
         memcpy(&size, CMSG_DATA(c), sizeof size);
         if (size > 0 && (proven_u32)size < bytes) *seg = (proven_size_t)size;
+#endif
     }
-#else
+#if !defined(UDP_GRO)
     (void)bytes;
 #endif
 }

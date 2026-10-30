@@ -336,6 +336,9 @@ bool proven_quic_ack_next(proven_quic_ack_iter_t *it, proven_u64 *lo, proven_u64
  * fit (at least the first); `ack_delay` already scaled down by the exponent. Returns the
  * ranges written, 0 when not even the first fits. */
 proven_size_t proven_quic_ack_put(proven_quic_wr_t *w, const proven_u64 (*ranges)[2], proven_size_t count, proven_u64 ack_delay);
+/* The same as ACK_ECN (0x03) with the counts ECT(0), ECT(1), ECN-CE after the ranges (RFC 9000
+ * section 19.3.2); `ecn` NULL writes a plain ACK. */
+proven_size_t proven_quic_ack_put_ecn(proven_quic_wr_t *w, const proven_u64 (*ranges)[2], proven_size_t count, proven_u64 ack_delay, const proven_u64 ecn[3]);
 
 /* What a frame type is: allowed in Initial and Handshake packets (PADDING, PING, ACK, CRYPTO,
  * CONNECTION_CLOSE 0x1c); ack-eliciting (all but ACK, PADDING, CONNECTION_CLOSE); probing
@@ -381,7 +384,14 @@ typedef struct {
     proven_u32 key_update_packets;                 /* 1-RTT packets sent under one key before this side updates it (RFC 9001 section 6.6: AES-GCM's limit is 2^23). 0: 2^22 */
     proven_byte_t static_key[32];                  /* a server: one key for all its connections (Retry tokens, stateless reset tokens). All zero: drawn per connection */
     bool newreno;                                  /* RFC 9002's NewReno instead of CUBIC (RFC 9438; RFC-0033): for tests and measurement only */
+    bool no_ecn;                                   /* nothing marked and no counts reported (RFC-0035): for tests and measurement only */
 } proven_quic_config_t;
+
+/* The ECN field of a datagram (RFC 3168), as the IP header carries it. */
+#define PROVEN_QUIC_ECN_NOT_ECT 0
+#define PROVEN_QUIC_ECN_ECT1 1
+#define PROVEN_QUIC_ECN_ECT0 2
+#define PROVEN_QUIC_ECN_CE 3
 
 typedef struct proven_quic_conn proven_quic_conn_t;
 
@@ -439,15 +449,17 @@ proven_err_t proven_quic_conn_client_create(const proven_quic_config_t *cfg, pro
                                            const proven_quic_addr_t *server, proven_u64 now, proven_quic_conn_t **out);
 /* A server's connection for an ACCEPTed datagram, which it then reads. */
 proven_err_t proven_quic_conn_server_create(const proven_quic_config_t *cfg, const proven_quic_accept_t *accept, proven_mem_view_t datagram,
-                                           const proven_quic_addr_t *from, proven_u64 now, proven_quic_conn_t **out);
+                                           const proven_quic_addr_t *from, proven_u8 ecn, proven_u64 now, proven_quic_conn_t **out);
 void proven_quic_conn_destroy(proven_quic_conn_t *c);
 
-/* A datagram from `from`. A packet that does not open or breaks no rule worth closing over is
+/* A datagram from `from`, with the ECN field it arrived with (PROVEN_QUIC_ECN_*; NOT_ECT when the
+ * system does not say). A packet that does not open or breaks no rule worth closing over is
  * dropped; a rule broken closes the connection (an event). PROVEN_ERR_NOMEM only. */
-proven_err_t proven_quic_conn_receive(proven_quic_conn_t *c, proven_mem_view_t datagram, const proven_quic_addr_t *from, proven_u64 now);
-/* The next datagram to send now, into `out` (at least 1,452 bytes), and where: `*len` 0 when
- * nothing may go now (call again after the deadline or after receiving). */
-proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven_mem_mut_t out, proven_size_t *len, proven_quic_addr_t *to);
+proven_err_t proven_quic_conn_receive(proven_quic_conn_t *c, proven_mem_view_t datagram, const proven_quic_addr_t *from, proven_u8 ecn, proven_u64 now);
+/* The next datagram to send now, into `out` (at least 1,452 bytes), where, and with which ECN
+ * mark (`ecn` may be NULL: the caller cannot mark): `*len` 0 when nothing may go now (call again
+ * after the deadline or after receiving). */
+proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven_mem_mut_t out, proven_size_t *len, proven_quic_addr_t *to, proven_u8 *ecn);
 /* When to call proven_quic_conn_timeout next; UINT64 max when nothing is waiting. */
 proven_u64 proven_quic_conn_deadline(const proven_quic_conn_t *c);
 void proven_quic_conn_timeout(proven_quic_conn_t *c, proven_u64 now);
@@ -478,6 +490,10 @@ typedef struct {
     proven_size_t datagram_size;                   /* what a datagram may take on this path now */
     proven_u64 pmtu_probes, pmtu_probes_lost;      /* PMTU probes sent, and not acknowledged in time */
     proven_u8 early;                               /* 0-RTT (RFC-0021): 0 none, 1 accepted, 2 refused */
+    proven_u8 ecn_state;                           /* RFC-0035, this path: 0 testing, 1 unknown, 2 capable, 3 failed */
+    proven_u64 ecn_marked;                         /* packets sent marked ECT(0) */
+    proven_u64 ecn_received[3];                    /* packets received ECT(0), ECT(1), CE, all spaces */
+    proven_u64 ecn_ce_events;                      /* increases of the peer's CE count acted on */
 } proven_quic_stats_t;
 void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s);
 /* Tests only: `payload` read as the frames of a packet that opened at `lvl` (3: a 0-RTT packet;

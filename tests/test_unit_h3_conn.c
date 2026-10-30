@@ -119,12 +119,12 @@ static void deliver(net_t *n, int to, proven_byte_t *b, proven_size_t len, const
                                                                  (proven_mem_mut_t){ out, sizeof out }, &olen, &acc);
         if (r == PROVEN_QUIC_STATELESS_REPLY) { net_send(n, 1, out, olen); return; }
         if (r == PROVEN_QUIC_STATELESS_ACCEPT) {
-            PROVEN_TEST_ASSERT(proven_quic_conn_server_create(&n->cfg[1], &acc, (proven_mem_view_t){ b, len }, from, n->now, &n->ep[1]) == PROVEN_OK, "the server's connection", "");
+            PROVEN_TEST_ASSERT(proven_quic_conn_server_create(&n->cfg[1], &acc, (proven_mem_view_t){ b, len }, from, 0, n->now, &n->ep[1]) == PROVEN_OK, "the server's connection", "");
             make_h3(n, 1);
         }
         return;
     }
-    if (n->ep[to]) PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[to], (proven_mem_view_t){ b, len }, from, n->now) == PROVEN_OK, "a datagram is taken", "");
+    if (n->ep[to]) PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[to], (proven_mem_view_t){ b, len }, from, 0, n->now) == PROVEN_OK, "a datagram is taken", "");
 }
 
 static void app_pump(net_t *n);
@@ -137,7 +137,7 @@ static void net_step(net_t *n) {
         for (int k = 0; k < 512; ++k) {
             proven_size_t len = 0;
             proven_quic_addr_t to;
-            PROVEN_TEST_ASSERT(proven_quic_conn_send(n->ep[i], n->now, (proven_mem_mut_t){ out, sizeof out }, &len, &to) == PROVEN_OK, "send", "");
+            PROVEN_TEST_ASSERT(proven_quic_conn_send(n->ep[i], n->now, (proven_mem_mut_t){ out, sizeof out }, &len, &to, NULL) == PROVEN_OK, "send", "");
             if (len == 0) break;
             net_send(n, i, out, len);
         }

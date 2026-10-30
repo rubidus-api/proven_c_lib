@@ -220,7 +220,8 @@ typedef struct loop_udp {
     void *ctx;
     proven_byte_t *buf;
     proven_net_addr_t *from;
-    proven_u32 cap, n, seg;               /* n, seg: an answer waiting on the done list */
+    proven_u32 cap, n, seg;               /* n, seg, ecn: an answer waiting on the done list */
+    proven_u8 ecn;
 #if LOOP_HAS_CP
     proven_sys_net_msg_t msg;
     proven_loop_timer_t wait;             /* a send wait's answer */
@@ -765,17 +766,17 @@ static void loop_run_done(proven_loop_t *l) {
 }
 
 
-static void udp_received(proven_loop_t *l, loop_udp_t *u, proven_err_t err, proven_size_t n, proven_size_t seg) {
+static void udp_received(proven_loop_t *l, loop_udp_t *u, proven_err_t err, proven_size_t n, proven_size_t seg, proven_u8 ecn) {
     u->node.flags &= (proven_u8)~(F_RECV | F_CANCEL);
     l->delivering_udp = u;
-    u->fns->received(u->ctx, err, n, seg);
+    u->fns->received(u->ctx, err, n, seg, ecn);
     if (l->delivering_udp == u) l->delivering_udp = (void *)0;
 }
 
 static void udp_deliver(proven_loop_t *l, loop_udp_t *u) {
     proven_u8 bits = u->node.done;
     u->node.done = 0;
-    if (bits & D_RECEIVED) udp_received(l, u, (proven_err_t)u->node.err, u->n, u->seg);
+    if (bits & D_RECEIVED) udp_received(l, u, (proven_err_t)u->node.err, u->n, u->seg, u->ecn);
     if ((bits & D_WRITABLE) && u->fns->writable) u->fns->writable(u->ctx, u->node.state == S_CLOSING ? PROVEN_ERR_CANCELLED : PROVEN_OK);
     if ((bits & D_CLOSED) && u->node.state == S_CLOSING) {
         u->node.state = S_NONE;
@@ -790,10 +791,10 @@ static void udp_deliver(proven_loop_t *l, loop_udp_t *u) {
 
 /* One receive now. True when there is an answer: datagrams, or nothing worth waiting on. An
  * oversized datagram (none of QUIC's) and a reported error of an earlier send are passed over. */
-static bool udp_try(loop_udp_t *u, proven_err_t *err, proven_size_t *n, proven_size_t *seg) {
+static bool udp_try(loop_udp_t *u, proven_err_t *err, proven_size_t *n, proven_size_t *seg, proven_u8 *ecn) {
     for (int i = 0; i < 4; ++i) {
         proven_size_t s = 0;
-        proven_result_size_t r = proven_net_udp_recv_segments_(u->udp, (proven_mem_mut_t){ .ptr = u->buf, .size = u->cap }, &s, u->from);
+        proven_result_size_t r = proven_net_udp_recv_marked_(u->udp, (proven_mem_mut_t){ .ptr = u->buf, .size = u->cap }, &s, ecn, u->from);
         if (r.err == PROVEN_ERR_TIMEOUT) return false;
         if (r.err != PROVEN_OK) continue;
         *err = PROVEN_OK; *n = r.value; *seg = s;
@@ -822,7 +823,8 @@ static void udp_event(proven_loop_t *l, loop_udp_t *u, proven_u8 got) {
         if (u->node.done & D_RECEIVED) return;
         proven_err_t err = PROVEN_OK;
         proven_size_t n = 0, seg = 0;
-        if (udp_try(u, &err, &n, &seg)) udp_received(l, u, err, n, seg);
+        proven_u8 ecn = 0;
+        if (udp_try(u, &err, &n, &seg, &ecn)) udp_received(l, u, err, n, seg, ecn);
     }
 }
 
@@ -851,11 +853,13 @@ LOOP_WAY proven_err_t SEL_(proven_loop_udp_recv_)(proven_loop_t *l, proven_loop_
     if (l->delivering_udp == u) {
         proven_err_t err = PROVEN_OK;
         proven_size_t n = 0, seg = 0;
-        if (udp_try(u, &err, &n, &seg)) {
+        proven_u8 ecn = 0;
+        if (udp_try(u, &err, &n, &seg, &ecn)) {
             u->node.flags |= F_RECV;
             u->node.err = (proven_u16)err;
             u->n = (proven_u32)n;
             u->seg = (proven_u32)seg;
+            u->ecn = ecn;
             node_queue(l, &u->node, D_RECEIVED);
             return PROVEN_OK;
         }
@@ -882,7 +886,7 @@ LOOP_WAY void SEL_(proven_loop_udp_close_)(proven_loop_t *l, proven_loop_udp_t *
     if (u->node.kind != KIND_UDP || u->node.state != S_OPEN) return;
     proven_u8 bits = D_CLOSED;
     if (u->node.flags & F_RECV) {
-        if (!(u->node.done & D_RECEIVED)) { u->node.err = (proven_u16)PROVEN_ERR_CANCELLED; u->n = 0; u->seg = 0; }
+        if (!(u->node.done & D_RECEIVED)) { u->node.err = (proven_u16)PROVEN_ERR_CANCELLED; u->n = 0; u->seg = 0; u->ecn = 0; }
         else u->node.err = (proven_u16)PROVEN_ERR_CANCELLED;      /* datagrams taken and not delivered are dropped */
         bits |= D_RECEIVED;
     }
@@ -1320,7 +1324,7 @@ static void udp_maybe_closed(proven_loop_t *l, loop_udp_t *u) {
 static void udp_took(loop_udp_t *u, proven_u32 got) {
     proven_size_t seg = 0;
     proven_sys_net_addr_t from;
-    proven_sys_net_ov_msg_done(&u->msg, got, &seg, &from);
+    proven_sys_net_ov_msg_done(&u->msg, got, &seg, &u->ecn, &from);
     proven_net_addr_from_sys_(&from, u->from);
     u->node.err = (proven_u16)PROVEN_OK;
     u->n = got;
@@ -1340,6 +1344,7 @@ static void udp_post(proven_loop_t *l, loop_udp_t *u) {
     }
     u->node.err = (proven_u16)sys_err(r);
     u->n = u->seg = 0;
+    u->ecn = 0;
     node_queue(l, &u->node, D_RECEIVED);
 }
 
@@ -1347,18 +1352,18 @@ static void udp_ov_done(proven_loop_t *l, loop_udp_t *u, const proven_sys_net_do
     ov_back(l, &u->node, F_OVR);
     u->node.flags &= (proven_u8)~F_CANCEL;
     if (u->node.state != S_OPEN) {
-        udp_received(l, u, PROVEN_ERR_CANCELLED, 0, 0);
+        udp_received(l, u, PROVEN_ERR_CANCELLED, 0, 0, 0);
         udp_maybe_closed(l, u);
         return;
     }
     if (d->failed) {
         const proven_sys_net_result_t r = proven_sys_net_ov_result((proven_sys_socket_t)u->udp->internal.handle, &u->ov);
         if (r == PROVEN_SYS_NET_TRUNCATED || r == PROVEN_SYS_NET_RESET) { udp_post(l, u); return; }
-        udp_received(l, u, r == PROVEN_SYS_NET_OK ? PROVEN_ERR_IO : sys_err(r), 0, 0);
+        udp_received(l, u, r == PROVEN_SYS_NET_OK ? PROVEN_ERR_IO : sys_err(r), 0, 0, 0);
         return;
     }
     udp_took(u, d->bytes);
-    udp_received(l, u, PROVEN_OK, u->n, u->seg);
+    udp_received(l, u, PROVEN_OK, u->n, u->seg, u->ecn);
 }
 
 LOOP_WAY proven_err_t CP_(proven_loop_udp_attach_)(proven_loop_t *l, proven_loop_udp_t *udp_op, proven_net_udp_t *udp, const proven_loop_udp_fns_t *fns, void *ctx) {

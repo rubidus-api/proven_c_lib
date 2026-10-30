@@ -159,9 +159,16 @@ proven_sys_net_result_t proven_sys_net_send_to(proven_sys_socket_t sock, const v
  *  on Windows likewise (UDP_SEND_MSG_SIZE, USO; RFC-0018 section 12); everywhere else, and
  *  after a refusal, one datagram at a time. `sent` says how many bytes
  *  went - all of them on OK; on WOULD_BLOCK a whole number of datagrams, the rest not sent. At
- *  most PROVEN_SYS_NET_SEGMENTS_MAX_BYTES and _MAX_COUNT datagrams. */
+ *  most PROVEN_SYS_NET_SEGMENTS_MAX_BYTES and _MAX_COUNT datagrams. `ecn` (0 to 3, RFC 3168) is
+ *  the ECN field of every datagram (RFC-0035): a control message beside the batch's (Linux IP_TOS
+ *  / IPV6_TCLASS, Windows IP_ECN / IPV6_ECN); 0 or where the system refuses it, none. */
 proven_sys_net_result_t proven_sys_net_send_segments(proven_sys_socket_t sock, const void *buf, proven_size_t total,
-                                                     proven_size_t seg, const proven_sys_net_addr_t *to, proven_size_t *sent);
+                                                     proven_size_t seg, const proven_sys_net_addr_t *to, proven_u8 ecn, proven_size_t *sent);
+
+/** Ask to be told the ECN field of what arrives (RFC-0035): Linux IP_RECVTOS / IPV6_RECVTCLASS,
+ *  Windows IP_ECN / IPV6_ECN (with WSARecvMsg at hand). `family` is the socket's. UNSUPPORTED
+ *  elsewhere - where nothing is marked on sending either. */
+proven_sys_net_result_t proven_sys_net_udp_ecn(proven_sys_socket_t sock, proven_sys_net_family_t family);
 
 /** Ask for UDP_GRO (Linux) or URO (Windows, UDP_RECV_MAX_COALESCED_SIZE, at most
  *  PROVEN_SYS_NET_SEGMENTS_MAX_BYTES): the system may then hand several datagrams of one sender
@@ -175,9 +182,10 @@ proven_sys_net_result_t proven_sys_net_udp_gro(proven_sys_socket_t sock);
 proven_sys_net_result_t proven_sys_net_udp_dontfrag(proven_sys_socket_t sock, proven_sys_net_family_t family);
 
 /** proven_sys_net_recv_from, and in `seg` the size of each datagram when the buffer holds
- *  several (a GRO or URO receive; the last may be shorter), or 0 when it holds one. */
+ *  several (a GRO or URO receive; the last may be shorter), or 0 when it holds one; in `ecn`
+ *  (may be NULL) the ECN field they arrived with, 0 when the system did not say. */
 proven_sys_net_result_t proven_sys_net_recv_segments(proven_sys_socket_t sock, void *buf, proven_size_t cap,
-                                                     proven_size_t *received, proven_size_t *seg, proven_sys_net_addr_t *from);
+                                                     proven_size_t *received, proven_size_t *seg, proven_u8 *ecn, proven_sys_net_addr_t *from);
 
 /** For tests: true makes the process send one datagram at a time and ask for no GRO or URO, as
  *  every platform but Linux and Windows does. */
@@ -396,10 +404,11 @@ proven_sys_net_result_t proven_sys_net_ov_connect_done(proven_sys_socket_t sock)
  *  the control data that carries the size of coalesced datagrams. */
 typedef struct { proven_u64 w[40]; } proven_sys_net_msg_t;
 /** A datagram receive into `buf`. When it has finished, proven_sys_net_ov_msg_done reads the
- *  size of each datagram (`*seg`, 0 for one) and the sender. */
+ *  size of each datagram (`*seg`, 0 for one), the ECN field (`*ecn`, may be NULL; 0 when not
+ *  said) and the sender. */
 proven_sys_net_result_t proven_sys_net_ov_recv_msg(proven_uintptr_t port, proven_sys_socket_t sock, proven_sys_net_ov_t *ov, proven_sys_net_msg_t *msg,
                                                    void *buf, proven_size_t cap, bool skip, proven_u32 *bytes);
-void proven_sys_net_ov_msg_done(const proven_sys_net_msg_t *msg, proven_u32 bytes, proven_size_t *seg, proven_sys_net_addr_t *from);
+void proven_sys_net_ov_msg_done(const proven_sys_net_msg_t *msg, proven_u32 bytes, proven_size_t *seg, proven_u8 *ecn, proven_sys_net_addr_t *from);
 
 #endif
 

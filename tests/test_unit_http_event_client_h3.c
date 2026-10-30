@@ -249,6 +249,8 @@ struct raw {
     bool control;                                  /* its control stream is open */
     proven_u64 reset_id, reset_at;                 /* a stream to reset at that time (0: none), once what went before has arrived */
     int requests, rejected, conns;                 /* requests seen; how many /rejected has refused; connections taken */
+    bool ecn;                                      /* its socket reads and sets the ECN field (RFC-0035) */
+    proven_quic_stats_t last;                      /* the connection's counters when it was last read */
     struct { proven_u64 id; proven_byte_t buf[2048]; proven_size_t len; bool used; } st[16];
 };
 
@@ -259,6 +261,7 @@ static void raw_start(raw_t *x, const proven_tls_config_t *tls) {
     proven_net_addr_t at;
     PROVEN_TEST_ASSERT(proven_net_udp_open(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &x->udp, &at) == PROVEN_OK, "the scripted server's socket", "");
     x->port = at.port;
+    x->ecn = proven_net_udp_ecn_(&x->udp);
     x->qc = (proven_quic_config_t){ .alloc = g_heap, .tls = tls };
     g_raw = x;
 }
@@ -382,15 +385,17 @@ static void raw_pump(raw_t *x) {
     static proven_byte_t dg[2048];
     for (;;) {
         proven_net_addr_t from;
-        proven_result_size_t r = proven_net_udp_recv_from(&x->udp, (proven_mem_mut_t){ dg, sizeof dg }, &from, proven_net_deadline_in(0));
+        proven_size_t seg = 0;
+        proven_u8 ecn = 0;
+        proven_result_size_t r = proven_net_udp_recv_marked_(&x->udp, (proven_mem_mut_t){ dg, sizeof dg }, &seg, &ecn, &from);
         if (r.err != PROVEN_OK) break;
         const proven_quic_addr_t qa = proven_quic_addr_of_(&from);
-        if (x->q) { (void)proven_quic_conn_receive(x->q, (proven_mem_view_t){ dg, r.value }, &qa, raw_now()); continue; }
+        if (x->q) { (void)proven_quic_conn_receive(x->q, (proven_mem_view_t){ dg, r.value }, &qa, ecn, raw_now()); continue; }
         proven_quic_accept_t acc;
         proven_byte_t reply[1500];
         proven_size_t n = 0;
         if (proven_quic_server_stateless(&x->qc, (proven_mem_view_t){ dg, r.value }, &qa, raw_now(), false, (proven_mem_mut_t){ reply, sizeof reply }, &n, &acc) != PROVEN_QUIC_STATELESS_ACCEPT) continue;
-        PROVEN_TEST_ASSERT(proven_quic_conn_server_create(&x->qc, &acc, (proven_mem_view_t){ dg, r.value }, &qa, raw_now(), &x->q) == PROVEN_OK, "the scripted server takes a connection", "");
+        PROVEN_TEST_ASSERT(proven_quic_conn_server_create(&x->qc, &acc, (proven_mem_view_t){ dg, r.value }, &qa, ecn, raw_now(), &x->q) == PROVEN_OK, "the scripted server takes a connection", "");
         x->peer = from;
         x->control = false;
         x->conns++;
@@ -425,9 +430,13 @@ static void raw_pump(raw_t *x) {
         proven_byte_t out[1500];
         proven_size_t len = 0;
         proven_quic_addr_t to;
-        if (proven_quic_conn_send(x->q, raw_now(), (proven_mem_mut_t){ out, sizeof out }, &len, &to) != PROVEN_OK || len == 0) break;
-        (void)proven_net_udp_send_to(&x->udp, x->peer, (proven_mem_view_t){ out, len }, proven_net_deadline_in(100));
+        proven_u8 mark = 0;
+        if (proven_quic_conn_send(x->q, raw_now(), (proven_mem_mut_t){ out, sizeof out }, &len, &to, x->ecn ? &mark : NULL) != PROVEN_OK || len == 0) break;
+        proven_size_t sent = 0;
+        if (!mark || proven_net_udp_send_marked_(&x->udp, x->peer, (proven_mem_view_t){ out, len }, len, mark, &sent) == PROVEN_ERR_TIMEOUT)
+            (void)proven_net_udp_send_to(&x->udp, x->peer, (proven_mem_view_t){ out, len }, proven_net_deadline_in(100));
     }
+    proven_quic_conn_stats(x->q, &x->last);
     if (closed) { proven_quic_conn_destroy(x->q); x->q = NULL; }
 }
 
@@ -684,6 +693,13 @@ int main(void) {
         RAW_GET("/interim");
         PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_OK && c.responses == 1 && c.status == 200 && c.got == 5 && c.last && memcmp(c.first, "hello", 5) == 0,
             "a 103 before the answer is passed over: one response, 200, and its body", "");
+        /* ECN (RFC-0035) through the client's socket and loop: the scripted server's marks are
+         * counted by the client (the server's path validates) and the client marks its own. */
+        printf("  ECN: the scripted server's path %u (2: capable), %llu marked by it, %llu ECT(0) from the client\n", x.last.ecn_state,
+               (unsigned long long)x.last.ecn_marked, (unsigned long long)x.last.ecn_received[0]);
+#if defined(__linux__)
+        PROVEN_TEST_ASSERT(x.ecn && x.last.ecn_state == 2 && x.last.ecn_received[0] > 0, "ECN through the client's driver: the server's marks counted there, the client's sent marked", "");
+#endif
         RAW_GET("/interim-only");
         PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_RESET && c.responses == 0, "a stream that ends after an interim response: PROVEN_ERR_RESET, no response", "");
         RAW_GET("/upper");

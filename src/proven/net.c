@@ -815,23 +815,32 @@ proven_result_size_t proven_net_udp_recv_from(proven_net_udp_t *udp, proven_mem_
 }
 
 proven_err_t proven_net_udp_send_segments_(proven_net_udp_t *udp, proven_net_addr_t to, proven_mem_view_t data, proven_size_t seg, proven_size_t *sent) {
+    return proven_net_udp_send_marked_(udp, to, data, seg, 0, sent);
+}
+
+proven_err_t proven_net_udp_send_marked_(proven_net_udp_t *udp, proven_net_addr_t to, proven_mem_view_t data, proven_size_t seg, proven_u8 ecn, proven_size_t *sent) {
     *sent = 0;
     if (!udp || (data.size > 0 && !data.ptr) || seg == 0) return PROVEN_ERR_INVALID_ARG;
     if (!udp->internal.open) return PROVEN_ERR_INVALID_STATE;
     proven_sys_net_addr_t sys;
     internal_addr_to_sys(&to, &sys);
-    const proven_sys_net_result_t r = proven_sys_net_send_segments((proven_sys_socket_t)udp->internal.handle, data.ptr, data.size, seg, &sys, sent);
+    const proven_sys_net_result_t r = proven_sys_net_send_segments((proven_sys_socket_t)udp->internal.handle, data.ptr, data.size, seg, &sys, ecn, sent);
     return r == PROVEN_SYS_NET_WOULD_BLOCK ? PROVEN_ERR_TIMEOUT : internal_err_from_reason(r);
 }
 
 proven_result_size_t proven_net_udp_recv_segments_(proven_net_udp_t *udp, proven_mem_mut_t dest, proven_size_t *seg, proven_net_addr_t *from) {
+    return proven_net_udp_recv_marked_(udp, dest, seg, NULL, from);
+}
+
+proven_result_size_t proven_net_udp_recv_marked_(proven_net_udp_t *udp, proven_mem_mut_t dest, proven_size_t *seg, proven_u8 *ecn, proven_net_addr_t *from) {
     proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
     *seg = 0;
+    if (ecn) *ecn = 0;
     if (!udp || (dest.size > 0 && !dest.ptr)) { res.err = PROVEN_ERR_INVALID_ARG; return res; }
     if (!udp->internal.open) { res.err = PROVEN_ERR_INVALID_STATE; return res; }
     proven_size_t n = 0;
     proven_sys_net_addr_t sys;
-    const proven_sys_net_result_t r = proven_sys_net_recv_segments((proven_sys_socket_t)udp->internal.handle, dest.ptr, dest.size, &n, seg, &sys);
+    const proven_sys_net_result_t r = proven_sys_net_recv_segments((proven_sys_socket_t)udp->internal.handle, dest.ptr, dest.size, &n, seg, ecn, &sys);
     if (r == PROVEN_SYS_NET_OK || r == PROVEN_SYS_NET_TRUNCATED) {
         res.value = n;
         res.err = internal_err_from_reason(r);
@@ -844,6 +853,12 @@ proven_result_size_t proven_net_udp_recv_segments_(proven_net_udp_t *udp, proven
 
 bool proven_net_udp_gro_(proven_net_udp_t *udp) {
     return udp && udp->internal.open && proven_sys_net_udp_gro((proven_sys_socket_t)udp->internal.handle) == PROVEN_SYS_NET_OK;
+}
+
+bool proven_net_udp_ecn_(proven_net_udp_t *udp) {
+    if (!udp || !udp->internal.open) return false;
+    const proven_sys_net_family_t f = udp->internal.family == PROVEN_NET_FAMILY_IPV6 ? PROVEN_SYS_NET_FAMILY_IPV6 : PROVEN_SYS_NET_FAMILY_IPV4;
+    return proven_sys_net_udp_ecn((proven_sys_socket_t)udp->internal.handle, f) == PROVEN_SYS_NET_OK;
 }
 
 bool proven_net_udp_dontfrag_(proven_net_udp_t *udp) {

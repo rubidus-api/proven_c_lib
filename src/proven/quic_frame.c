@@ -357,10 +357,15 @@ bool proven_quic_ack_next(proven_quic_ack_iter_t *it, proven_u64 *lo, proven_u64
 }
 
 proven_size_t proven_quic_ack_put(proven_quic_wr_t *w, const proven_u64 (*ranges)[2], proven_size_t count, proven_u64 ack_delay) {
+    return proven_quic_ack_put_ecn(w, ranges, count, ack_delay, NULL);
+}
+
+proven_size_t proven_quic_ack_put_ecn(proven_quic_wr_t *w, const proven_u64 (*ranges)[2], proven_size_t count, proven_u64 ack_delay, const proven_u64 ecn[3]) {
     if (count == 0 || !w->ok) return 0;
     const proven_u64 largest = ranges[0][1], first = ranges[0][1] - ranges[0][0];
     const proven_size_t room = w->cap - w->n;
     proven_size_t need = 1 + proven_quic_varint_len(largest) + proven_quic_varint_len(ack_delay) + proven_quic_varint_len(first);
+    if (ecn) for (int i = 0; i < 3; ++i) need += proven_quic_varint_len(ecn[i]);
     /* As many further ranges as fit, with the count's own length counted. */
     proven_size_t k = 0, pairs = 0;
     for (proven_size_t i = 1; i < count; ++i) {
@@ -370,7 +375,7 @@ proven_size_t proven_quic_ack_put(proven_quic_wr_t *w, const proven_u64 (*ranges
         pairs += add; ++k;
     }
     if (need + proven_quic_varint_len(k) + pairs > room) return 0;
-    proven_quic_wr_varint(w, PROVEN_QUIC_FT_ACK);
+    proven_quic_wr_varint(w, ecn ? PROVEN_QUIC_FT_ACK_ECN : PROVEN_QUIC_FT_ACK);
     proven_quic_wr_varint(w, largest);
     proven_quic_wr_varint(w, ack_delay);
     proven_quic_wr_varint(w, k);
@@ -379,6 +384,7 @@ proven_size_t proven_quic_ack_put(proven_quic_wr_t *w, const proven_u64 (*ranges
         proven_quic_wr_varint(w, ranges[i - 1][0] - ranges[i][1] - 2);
         proven_quic_wr_varint(w, ranges[i][1] - ranges[i][0]);
     }
+    if (ecn) for (int i = 0; i < 3; ++i) proven_quic_wr_varint(w, ecn[i]);
     return w->ok ? k + 1 : 0;
 }
 

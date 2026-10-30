@@ -80,6 +80,9 @@ struct h3e {
     bool sock_closing;                 /* closed, the loop's `closed` not come yet: the slot is not used again before */
     bool orphan;                       /* the server's HTTP/3 is gone: `closed` frees this */
     bool waiting;                      /* a send wait is asked for */
+    bool ecn;                          /* the system reads and sets the ECN field here (RFC-0035) */
+    proven_u8 rx_ecn;                  /* the ECN field of the datagrams being read */
+    proven_u8 pend_ecn;                /* and of those kept */
     proven_size_t pend_len;            /* datagrams the socket would not take: nothing more goes until it has */
     proven_size_t pend_seg;            /* their size (the last may be shorter) */
     proven_net_addr_t pend_to;
@@ -282,19 +285,20 @@ static void e_close(h3e_t *e) {
 
 /* Datagrams of `seg` bytes (the last may be shorter) out in one call where the platform can. What
  * the socket will not take now is kept, and the socket watched until it will. */
-static void e_send_batch(h3e_t *e, proven_net_addr_t to, const proven_byte_t *p, proven_size_t n, proven_size_t seg) {
+static void e_send_batch(h3e_t *e, proven_net_addr_t to, const proven_byte_t *p, proven_size_t n, proven_size_t seg, proven_u8 ecn) {
     if (!e->open || e->pend_len > 0 || n == 0) return;
     proven_size_t sent = 0;
-    const proven_err_t r = proven_net_udp_send_segments_(&e->udp, to, (proven_mem_view_t){ .ptr = p, .size = n }, seg, &sent);
+    const proven_err_t r = proven_net_udp_send_marked_(&e->udp, to, (proven_mem_view_t){ .ptr = p, .size = n }, seg, ecn, &sent);
     if (r != PROVEN_ERR_TIMEOUT || n - sent > sizeof e->pend) return;      /* sent, or lost as UDP may lose it */
     proven_sys_mem_copy(e->pend, p + sent, n - sent);
     e->pend_len = n - sent;
     e->pend_seg = seg;
+    e->pend_ecn = ecn;
     e->pend_to = to;
     x_rearm(e->x);
 }
 
-static void e_send(h3e_t *e, proven_net_addr_t to, const proven_byte_t *p, proven_size_t n) { e_send_batch(e, to, p, n, n); }
+static void e_send(h3e_t *e, proven_net_addr_t to, const proven_byte_t *p, proven_size_t n) { e_send_batch(e, to, p, n, n, 0); }
 
 static bool h3_addr_same(const proven_net_addr_t *a, const proven_net_addr_t *b) {
     if (a->family != b->family || a->port != b->port || a->scope_id != b->scope_id) return false;
@@ -417,32 +421,35 @@ static bool d_over(const h3d_t *d) {
 static void d_send(h3d_t *d) {
     if (d->dead) return;
     struct ev_h3 *x = d->x;
-    /* Gathered while they are one size and go to one address (RFC-0018 S-3): a different address
-     * or a larger datagram (a PMTU probe) sends what is gathered first; a shorter one ends the
-     * batch; so do the platform's limits and the end of the round. */
+    /* Gathered while they are one size, go to one address and carry one ECN mark (RFC-0018 S-3,
+     * RFC-0035): a different address or mark or a larger datagram (a PMTU probe) sends what is
+     * gathered first; a shorter one ends the batch; so do the platform's limits and the end of
+     * the round. */
     proven_size_t at = 0, seg = 0;
     int count = 0, k = 0;
     proven_net_addr_t bto = d->peer;
+    proven_u8 bmark = 0;
     for (; k < H3_SENDS; ++k) {
         if (at == 0 && (d->e->pend_len > 0 || !d->e->open)) { d_mark(d); return; }
-        if (H3_BATCH - at < H3_OUT) { e_send_batch(d->e, bto, x->batch, at, seg); at = 0; count = 0; --k; continue; }
+        if (H3_BATCH - at < H3_OUT) { e_send_batch(d->e, bto, x->batch, at, seg, bmark); at = 0; count = 0; --k; continue; }
         proven_size_t len = 0;
         proven_quic_addr_t to;
-        if (proven_quic_conn_send(d->q, h3_now_us(), (proven_mem_mut_t){ .ptr = x->batch + at, .size = H3_OUT }, &len, &to) != PROVEN_OK || len == 0) break;
+        proven_u8 mark = 0;
+        if (proven_quic_conn_send(d->q, h3_now_us(), (proven_mem_mut_t){ .ptr = x->batch + at, .size = H3_OUT }, &len, &to, d->e->ecn ? &mark : NULL) != PROVEN_OK || len == 0) break;
         d->peer = h3_naddr(&to);
-        if (at > 0 && (len > seg || !h3_addr_same(&d->peer, &bto))) {
-            e_send_batch(d->e, bto, x->batch, at, seg);
+        if (at > 0 && (len > seg || mark != bmark || !h3_addr_same(&d->peer, &bto))) {
+            e_send_batch(d->e, bto, x->batch, at, seg, bmark);
             /* The socket would not take all of it: this datagram is lost as UDP may lose it, and
              * nothing more is asked of the engine until the socket takes what is kept. */
             if (d->e->pend_len > 0) { d_mark(d); return; }
             proven_sys_mem_move(x->batch, x->batch + at, len);
             at = 0; count = 0;
         }
-        if (at == 0) { seg = len; bto = d->peer; }
+        if (at == 0) { seg = len; bto = d->peer; bmark = mark; }
         at += len;
-        if (len < seg || ++count == PROVEN_NET_UDP_BATCH_COUNT) { e_send_batch(d->e, bto, x->batch, at, seg); at = 0; count = 0; }
+        if (len < seg || ++count == PROVEN_NET_UDP_BATCH_COUNT) { e_send_batch(d->e, bto, x->batch, at, seg, bmark); at = 0; count = 0; }
     }
-    if (at > 0) e_send_batch(d->e, bto, x->batch, at, seg);
+    if (at > 0) e_send_batch(d->e, bto, x->batch, at, seg, bmark);
     if (k == H3_SENDS) d_mark(d);       /* more, next round: the other connections have theirs first */
 }
 
@@ -802,7 +809,7 @@ static void x_accept(struct ev_h3 *x, h3e_t *e, const proven_quic_accept_t *acc,
     h3d_t *d = h3_alloc(sv->alloc, sizeof *d);
     if (!d) return;
     const proven_quic_addr_t qa = h3_qaddr(from);
-    if (proven_quic_conn_server_create(&x->qc, acc, dg, &qa, h3_now_us(), &d->q) != PROVEN_OK) { sv->alloc.free_fn(sv->alloc.ctx, d); return; }
+    if (proven_quic_conn_server_create(&x->qc, acc, dg, &qa, e->rx_ecn, h3_now_us(), &d->q) != PROVEN_OK) { sv->alloc.free_fn(sv->alloc.ctx, d); return; }
     const proven_u32 list = sv->cfg.max_head_bytes > ((proven_size_t)1 << 20) ? (proven_u32)1 << 20 : (proven_u32)sv->cfg.max_head_bytes;
     const proven_h3_config_t hc = { .alloc = sv->alloc, .server = true, .max_field_section_bytes = list, .qpack_capacity = (proven_u32)sv->cfg.http3_header_table_bytes };
     if (proven_h3_conn_create(&hc, d->q, &d->h3) != PROVEN_OK) {
@@ -837,7 +844,7 @@ static void x_datagram(struct ev_h3 *x, h3e_t *e, proven_mem_view_t dg, const pr
     if (d) {
         if (d->dead) return;
         const proven_quic_addr_t qa = h3_qaddr(from);
-        if (proven_quic_conn_receive(d->q, dg, &qa, h3_now_us()) != PROVEN_OK) { d_close(d, PROVEN_ERR_NOMEM); return; }
+        if (proven_quic_conn_receive(d->q, dg, &qa, e->rx_ecn, h3_now_us()) != PROVEN_OK) { d_close(d, PROVEN_ERR_NOMEM); return; }
         d_mark(d);
         return;
     }
@@ -857,10 +864,11 @@ static void x_datagram(struct ev_h3 *x, h3e_t *e, proven_mem_view_t dg, const pr
     if (n > 0) e_send(e, *from, x->out, n);
 }
 
-static void e_received(void *ctx, proven_err_t err, proven_size_t n, proven_size_t seg) {
+static void e_received(void *ctx, proven_err_t err, proven_size_t n, proven_size_t seg, proven_u8 ecn) {
     h3e_t *e = ctx;
     if (err != PROVEN_OK || !e->open) return;
     struct ev_h3 *x = e->x;
+    e->rx_ecn = ecn;
     /* Several datagrams of one sender coalesced by the system (GRO): each as if alone. */
     const proven_size_t step = seg ? seg : n;
     for (proven_size_t off = 0; off < n && e->open; off += step)
@@ -877,7 +885,7 @@ static void e_writable(void *ctx, proven_err_t err) {
     if (err != PROVEN_OK || !e->open) return;
     if (e->pend_len > 0) {
         proven_size_t sent = 0;
-        const proven_err_t r = proven_net_udp_send_segments_(&e->udp, e->pend_to, (proven_mem_view_t){ .ptr = e->pend, .size = e->pend_len }, e->pend_seg, &sent);
+        const proven_err_t r = proven_net_udp_send_marked_(&e->udp, e->pend_to, (proven_mem_view_t){ .ptr = e->pend, .size = e->pend_len }, e->pend_seg, e->pend_ecn, &sent);
         if (r != PROVEN_ERR_TIMEOUT) e->pend_len = 0;
         else if (sent > 0) { proven_sys_mem_move(e->pend, e->pend + sent, e->pend_len - sent); e->pend_len -= sent; }
     }
@@ -962,6 +970,7 @@ proven_err_t proven_http_event_h3_listen_(proven_http_event_server_t *sv, proven
     if (r != PROVEN_OK) return r;
     (void)proven_net_udp_gro_(&e->udp);
     (void)proven_net_udp_dontfrag_(&e->udp);
+    e->ecn = proven_net_udp_ecn_(&e->udp);
     r = proven_loop_udp_attach_(sv->loop, &e->lu, &e->udp, &e_fns, e);
     if (r == PROVEN_OK) r = proven_loop_udp_recv_(sv->loop, &e->lu, (proven_mem_mut_t){ .ptr = e->rbuf, .size = H3_DATAGRAM }, &e->from);
     if (r != PROVEN_OK) {

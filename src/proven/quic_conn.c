@@ -25,6 +25,8 @@
 #define QC_EVENTS 32
 #define QC_MAX_SENT 8192                /* packets in flight per space */
 #define QC_INF ((proven_u64)-1)
+enum { QC_ECN_TESTING, QC_ECN_UNKNOWN, QC_ECN_CAPABLE, QC_ECN_FAILED };
+#define QC_ECN_TEST_PACKETS 10          /* marked before the path is known to carry the marks (RFC 9000 appendix A.4) */
 
 static const proven_u64 Q_STREAM_LIMIT = (((proven_u64)1) << 62) - 1;
 
@@ -450,6 +452,8 @@ typedef struct {
     proven_u32 size;                    /* bytes in flight; 0 when not counted */
     bool ack_eliciting, in_flight;
     bool zero_rtt;                      /* sent under the 0-RTT key: lost as a whole if early data is refused */
+    proven_u8 ecn;                      /* the datagram's ECN mark (RFC-0035) */
+    bool ecn_test;                      /* marked while the path's ECN was being tested */
     proven_u8 nfr;
     proven_qfrec_t fr[QC_MAX_FRAMES];
 } proven_qsent_t;
@@ -477,9 +481,13 @@ typedef struct {
     proven_byte_t *pending[QC_PENDING];
     proven_size_t pending_len[QC_PENDING];
     proven_quic_addr_t pending_from[QC_PENDING];
+    proven_u8 pending_ecn[QC_PENDING];
     unsigned pending_n;
     proven_u64 lost_pn[32], lost_gap[32];   /* recently declared lost, and how far below the largest acknowledged (QC_INF: by time) */
     unsigned lost_at;
+    /* ECN (RFC-0035): packets received ECT(0), ECT(1), CE - what ACK_ECN reports; the peer's
+     * counts as last accepted; packets sent marked ECT(0). */
+    proven_u64 rx_ecn[3], peer_ecn[3], tx_ect0;
 } proven_qspace_t;
 
 typedef struct {
@@ -619,6 +627,11 @@ struct proven_quic_conn {
     bool keys_new;                      /* a level's read keys arrived: datagrams held for them are read again */
     proven_u64 idle_start;              /* the last packet received, or the first ack-eliciting one sent after it */
     bool pace_blocked;                  /* something waited for pacing at the last send */
+    /* ECN on this path (RFC-0035; RFC 9000 section 13.4.2, appendix A.4): its state, the
+     * testing packets sent and lost, and the mark of the datagram being read. */
+    proven_u8 ecn_state;
+    unsigned ecn_tested, ecn_test_lost;
+    proven_u8 rx_mark;
 };
 
 /* Streams may be used: the handshake is complete, or early data is open - a client holding the
@@ -1262,6 +1275,47 @@ static void cc_acked(proven_quic_conn_t *c, const proven_qsent_t *p, proven_u64 
     if (c->cwnd > CU_CAP) c->cwnd = CU_CAP;
 }
 
+/* ---- ECN (RFC-0035; RFC 9000 section 13.4, RFC 9002 section 7.1) ---- */
+
+/* The mark for the datagrams sent now: ECT(0) while the path is tested and once it is known to
+ * carry the marks; none while unknown or after the path failed validation. */
+static proven_u8 ecn_mark(const proven_quic_conn_t *c) {
+    if (c->cfg.no_ecn) return PROVEN_QUIC_ECN_NOT_ECT;
+    if (c->ecn_state == QC_ECN_CAPABLE) return PROVEN_QUIC_ECN_ECT0;
+    if (c->ecn_state == QC_ECN_TESTING && c->ecn_tested < QC_ECN_TEST_PACKETS) return PROVEN_QUIC_ECN_ECT0;
+    return PROVEN_QUIC_ECN_NOT_ECT;
+}
+
+/* A new path is tested again; packets marked on the old one no longer count for it. */
+static void ecn_path_new(proven_quic_conn_t *c) {
+    c->ecn_state = QC_ECN_TESTING;
+    c->ecn_tested = c->ecn_test_lost = 0;
+    for (int i = 0; i < PROVEN_QUIC_LEVELS; ++i) for (proven_size_t k = 0; k < c->sp[i].sent_n; ++k) c->sp[i].sent[k].ecn_test = false;
+}
+
+/* The counts of an ACK frame whose largest acknowledged grew: checked against what it newly
+ * acknowledges (`marked` packets sent ECT(0), the latest sent at `newest`), then a CE increase
+ * is a congestion event. Counts that cannot be right end ECN on the path. */
+static void ecn_on_ack(proven_quic_conn_t *c, int lvl, const proven_quic_frame_t *f, proven_u64 marked, proven_u64 newest) {
+    proven_qspace_t *sp = &c->sp[lvl];
+    if (c->ecn_state == QC_ECN_FAILED || c->cfg.no_ecn) return;
+    if (f->type != PROVEN_QUIC_FT_ACK_ECN) { if (marked) c->ecn_state = QC_ECN_FAILED; return; }
+    const proven_u64 *n = f->ecn;
+    /* None goes down; none above what was sent marked (only ECT(0) is sent here, so an ECT(1)
+     * count means the network rewrote the mark); ECT(0) and CE together account for every
+     * marked packet newly acknowledged. */
+    if (n[0] < sp->peer_ecn[0] || n[1] < sp->peer_ecn[1] || n[2] < sp->peer_ecn[2] || n[1] != 0
+        || n[0] > sp->tx_ect0 || n[2] > sp->tx_ect0 - n[0]
+        || (n[0] - sp->peer_ecn[0]) + (n[2] - sp->peer_ecn[2]) < marked) {
+        c->ecn_state = QC_ECN_FAILED;
+        return;
+    }
+    const bool ce = n[2] > sp->peer_ecn[2];
+    for (int i = 0; i < 3; ++i) sp->peer_ecn[i] = n[i];
+    if (marked) c->ecn_state = QC_ECN_CAPABLE;
+    if (ce) { ++c->st.ecn_ce_events; cc_congestion_event(c, newest); }
+}
+
 static void update_rtt(proven_quic_conn_t *c, proven_u64 latest, proven_u64 ack_delay) {
     c->latest_rtt = latest;
     if (!c->have_rtt) {
@@ -1403,6 +1457,8 @@ static void detect_lost(proven_quic_conn_t *c, int lvl) {
             }
             sent_gone(c, sp, p);
             ++c->st.packets_lost;
+            /* Every packet of the test lost: the path drops what is marked (RFC 9000 section 13.4.2.2). */
+            if (p->ecn_test && c->ecn_state < QC_ECN_CAPABLE && ++c->ecn_test_lost >= QC_ECN_TEST_PACKETS) c->ecn_state = QC_ECN_FAILED;
             if (p->size > c->cfg.datagram_size) ++c->pm_big_lost;
             continue;
         }
@@ -1433,12 +1489,13 @@ static void detect_lost(proven_quic_conn_t *c, int lvl) {
 static proven_u64 on_ack(proven_quic_conn_t *c, int lvl, const proven_quic_frame_t *f) {
     proven_qspace_t *sp = &c->sp[lvl];
     if (f->largest >= sp->next_pn) return PROVEN_QUIC_PROTOCOL_VIOLATION;
-    if (f->largest + 1 > sp->largest_acked_plus_one) sp->largest_acked_plus_one = f->largest + 1;
+    const bool grew = f->largest + 1 > sp->largest_acked_plus_one;   /* counts are read only from an ACK that moves forward */
+    if (grew) sp->largest_acked_plus_one = f->largest + 1;
     if (lvl == PROVEN_QUIC_LEVEL_APPLICATION && f->largest >= c->phase_first_sent) c->phase_acked = true;
     proven_quic_ack_iter_t it = proven_quic_ack_iter(f);
     proven_u64 lo, hi;
     bool newly = false, eliciting = false;
-    proven_u64 largest_time = 0;
+    proven_u64 largest_time = 0, marked = 0, newest = 0;
     bool largest_new = false;
     const proven_u64 bif_before = c->bif;
     /* The ranges come highest first and the records lowest first: each range is found by a
@@ -1452,6 +1509,8 @@ static proven_u64 on_ack(proven_quic_conn_t *c, int lvl, const proven_quic_frame
             newly = true;
             if (p->ack_eliciting) eliciting = true;
             if (p->pn == f->largest) { largest_new = true; largest_time = p->time; }
+            if (p->ecn == PROVEN_QUIC_ECN_ECT0) ++marked;
+            if (p->time > newest) newest = p->time;
             sent_gone(c, sp, p);
             if (p->size > c->cfg.datagram_size) c->pm_big_lost = 0;
             for (unsigned j = 0; j < p->nfr; ++j) frame_acked(c, lvl, &p->fr[j]);
@@ -1480,6 +1539,7 @@ static proven_u64 on_ack(proven_quic_conn_t *c, int lvl, const proven_quic_frame
         it = proven_quic_ack_iter(f);
         while (proven_quic_ack_next(&it, &lo, &hi)) if (c->pm_pn >= lo && c->pm_pn <= hi) { c->pm_out = false; pm_passed(c); break; }
     }
+    if (grew) ecn_on_ack(c, lvl, f, marked, newest);
     if (!newly) return 0;
     if (largest_new && eliciting) {
         proven_u64 delay = 0;
@@ -1541,6 +1601,10 @@ static void on_loss_timeout(proven_quic_conn_t *c) {
         if (space < 2) sendq_resend_all(&c->mem, &sp->crypto_tx);
     }
     ++c->pto_count;
+    /* A probe timeout ends the ECN test: the probes go unmarked, so a path that drops marked
+     * packets delays the connection by one timeout, not ten (RFC 9000 appendix A.4). The marks
+     * sent may still be validated by a later acknowledgement. */
+    if (c->ecn_state == QC_ECN_TESTING && c->ecn_tested > 0) c->ecn_state = QC_ECN_UNKNOWN;
     /* Two probe timeouts in a row with a size raised by probing: a path that drops every
      * full-sized packet acknowledges nothing, so no loss is ever detected and the probes, full
      * of data, are dropped too. Back to the configured size, and search again (RFC 8899
@@ -1819,6 +1883,7 @@ static void hold(proven_quic_conn_t *c, int lvl, const proven_byte_t *p, proven_
     sp->pending[sp->pending_n] = copy;
     sp->pending_len[sp->pending_n] = n;
     sp->pending_from[sp->pending_n] = *from;
+    sp->pending_ecn[sp->pending_n] = c->rx_mark;
     ++sp->pending_n;
 }
 
@@ -1931,7 +1996,17 @@ static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_q
         if (sp->discarded) break;       /* HANDSHAKE_DONE took this space away */
     }
     if (c->state >= QS_DRAINING) return -1;
-    if (!sp->discarded) ack_note(c, lvl, pn, eliciting);
+    if (!sp->discarded) {
+        ack_note(c, lvl, pn, eliciting);
+        /* Counted once per packet, in its space (RFC 9000 section 13.4.1); a CE mark on an
+         * ack-eliciting packet is acknowledged at once (section 13.2.1). */
+        if (c->rx_mark) {
+            const int k = c->rx_mark == PROVEN_QUIC_ECN_ECT0 ? 0 : c->rx_mark == PROVEN_QUIC_ECN_ECT1 ? 1 : 2;
+            ++sp->rx_ecn[k];
+            ++c->st.ecn_received[k];
+            if (k == 2 && eliciting) sp->ack_deadline = c->now;
+        }
+    }
     /* The client writes 1-RTT now: a server needs the 0-RTT key no longer (RFC 9001 section 4.9.3). */
     if (c->server && lvl == 2 && !zrtt && c->zr_ok) zr_drop(c);
     ++c->st.packets_received;
@@ -1951,6 +2026,7 @@ static int read_packet(proven_quic_conn_t *c, proven_byte_t *pkt, const proven_q
         c->pm_state = 0; c->pm_out = false;
         cc_init(c);
         c->have_rtt = false;
+        ecn_path_new(c);
     }
     check_mem(c);
     return 1;
@@ -2148,7 +2224,8 @@ static void put_ack(proven_quic_conn_t *c, int lvl, proven_quic_wr_t *w) {
     proven_size_t n = 0;
     for (proven_size_t i = sp->rcvd.n; i > 0 && n < 64; --i, ++n) { ranges[n][0] = sp->rcvd.r[i - 1].lo; ranges[n][1] = sp->rcvd.r[i - 1].hi - 1; }
     const proven_u64 delay = lvl == 2 && c->now > sp->rx_largest_time ? (c->now - sp->rx_largest_time) >> 3 : 0;
-    if (proven_quic_ack_put(w, (const proven_u64 (*)[2])ranges, n, delay) == 0) return;
+    const bool counts = sp->rx_ecn[0] || sp->rx_ecn[1] || sp->rx_ecn[2];
+    if (proven_quic_ack_put_ecn(w, (const proven_u64 (*)[2])ranges, n, delay, counts ? sp->rx_ecn : NULL) == 0) return;
     sp->ack_any = sp->ack_owed = false;
     sp->ack_count = 0;
 }
@@ -2309,7 +2386,7 @@ static bool build_packet(proven_quic_conn_t *c, int lvl, proven_byte_t *buf, pro
 }
 
 /* Header protection and the AEAD over every packet of the datagram; the records kept. */
-static proven_size_t seal(proven_quic_conn_t *c, proven_byte_t *buf, proven_qpkt_t *pk, int n) {
+static proven_size_t seal(proven_quic_conn_t *c, proven_byte_t *buf, proven_qpkt_t *pk, int n, proven_u8 mark) {
     proven_size_t total = 0;
     for (int i = 0; i < n; ++i) {
         proven_qpkt_t *p = &pk[i];
@@ -2326,6 +2403,7 @@ static proven_size_t seal(proven_quic_conn_t *c, proven_byte_t *buf, proven_qpkt
         ++sp->next_pn;
         if (p->lvl == 2) ++c->phase_sent;
         ++c->st.packets_sent;
+        if (mark == PROVEN_QUIC_ECN_ECT0) { ++sp->tx_ect0; ++c->st.ecn_marked; }
         const bool in_flight = p->eliciting || p->padded;
         if (in_flight && sp->sent_n < QC_MAX_SENT) {
             if (sp->sent_n == sp->sent_cap) {
@@ -2339,6 +2417,9 @@ static proven_size_t seal(proven_quic_conn_t *c, proven_byte_t *buf, proven_qpkt
             r->pn = p->pn; r->time = c->now; r->size = (proven_u32)len;
             r->ack_eliciting = p->eliciting; r->in_flight = true;
             r->zero_rtt = p->lvl == QC_ZRTT;
+            r->ecn = mark;
+            r->ecn_test = mark && c->ecn_state == QC_ECN_TESTING;
+            if (r->ecn_test && ++c->ecn_tested >= QC_ECN_TEST_PACKETS) c->ecn_state = QC_ECN_UNKNOWN;
             c->bif += len;
             if (p->eliciting) {
                 ++sp->ack_eliciting_in_flight;
@@ -2351,7 +2432,7 @@ static proven_size_t seal(proven_quic_conn_t *c, proven_byte_t *buf, proven_qpkt
     return total;
 }
 
-static proven_size_t send_close(proven_quic_conn_t *c, proven_byte_t *buf, proven_size_t room) {
+static proven_size_t send_close(proven_quic_conn_t *c, proven_byte_t *buf, proven_size_t room, proven_u8 mark) {
     proven_qpkt_t pk[3];
     int n = 0;
     proven_size_t at = 0;
@@ -2370,14 +2451,18 @@ static proven_size_t send_close(proven_quic_conn_t *c, proven_byte_t *buf, prove
         for (proven_size_t i = 0; i < add; ++i) buf[last->at + last->hlen + last->payload + i] = 0;
         last->payload += add;
     }
-    return seal(c, buf, pk, n);
+    return seal(c, buf, pk, n, mark);
 }
 
-proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven_mem_mut_t out, proven_size_t *len, proven_quic_addr_t *to) {
+proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven_mem_mut_t out, proven_size_t *len, proven_quic_addr_t *to, proven_u8 *ecn) {
     *len = 0;
+    if (ecn) *ecn = PROVEN_QUIC_ECN_NOT_ECT;
     if (!c || out.size < QC_MAX_DGRAM) return PROVEN_ERR_INVALID_ARG;
     c->now = now;
     *to = c->peer_addr;
+    /* One mark for the whole datagram; none when the caller cannot set it. */
+    const proven_u8 mark = ecn ? ecn_mark(c) : PROVEN_QUIC_ECN_NOT_ECT;
+    if (ecn) *ecn = mark;
     c->pace_blocked = false;
     if (c->state == QS_DRAINING || c->state == QS_CLOSED) return PROVEN_OK;
     proven_size_t budget = c->datagram;
@@ -2392,7 +2477,7 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
         if (c->close_unsent) { c->close_unsent = false; c->close_deadline = now + 3 * pto_base(c); }
         if (!c->close_owed || budget < 64) return PROVEN_OK;
         c->close_owed = false;
-        *len = send_close(c, out.ptr, budget);
+        *len = send_close(c, out.ptr, budget, mark);
         c->amp_tx += *len;
         return PROVEN_OK;
     }
@@ -2412,7 +2497,8 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
         pk.payload = w.n; pk.padded = true;
         c->resp[i].owed = false;
         *to = c->resp[i].to;
-        *len = seal(c, out.ptr, &pk, 1);
+        if (ecn) *ecn = PROVEN_QUIC_ECN_NOT_ECT;    /* another path: not this one's to test */
+        *len = seal(c, out.ptr, &pk, 1, PROVEN_QUIC_ECN_NOT_ECT);
         return PROVEN_OK;
     }
     /* A PMTU probe (RFC-0018 S-2): once the handshake is confirmed and the path validated, a
@@ -2432,7 +2518,7 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
                 while (w.n < w.cap) w.p[w.n++] = 0;
                 pk.payload = w.n; pk.eliciting = false; pk.padded = false;
                 c->pm_pn = pk.pn;
-                *len = seal(c, out.ptr, &pk, 1);
+                *len = seal(c, out.ptr, &pk, 1, mark);
                 c->pm_out = true;
                 ++c->pm_tries;
                 c->pm_deadline = now + (pto_base(c) << (c->pto_count < 6 ? c->pto_count : 6));
@@ -2492,7 +2578,7 @@ proven_err_t proven_quic_conn_send(proven_quic_conn_t *c, proven_u64 now, proven
     }
     bool sent_handshake = false;
     for (int i = 0; i < n; ++i) if (pk[i].lvl == 1) sent_handshake = true;
-    *len = seal(c, out.ptr, pk, n);
+    *len = seal(c, out.ptr, pk, n, mark);
     c->amp_tx += *len;
     c->st.bytes_sent += *len;
     c->pace_tokens -= qmin(c->pace_tokens, *len);
@@ -2536,7 +2622,7 @@ void proven_quic_conn_timeout(proven_quic_conn_t *c, proven_u64 now) {
     }
     if (c->challenge_wait && now >= c->challenge_deadline) {
         c->challenge_wait = false;
-        if (c->has_old) { c->peer_addr = c->old_addr; c->validated = true; c->has_old = false; }
+        if (c->has_old) { c->peer_addr = c->old_addr; c->validated = true; c->has_old = false; ecn_path_new(c); }
     }
     if (c->pm_out && now >= c->pm_deadline) pm_lost(c);
     if (c->loss_timer != QC_INF && now >= c->loss_timer) on_loss_timeout(c);
@@ -2550,10 +2636,11 @@ static void replay_held(proven_quic_conn_t *c) {
             proven_qspace_t *sp = &c->sp[lvl];
             if ((!sp->rx_ok && !(lvl == 2 && c->zr_ok)) || sp->pending_n == 0) continue;
             const unsigned n = sp->pending_n;
-            proven_byte_t *held[QC_PENDING]; proven_size_t lens[QC_PENDING]; proven_quic_addr_t from[QC_PENDING];
-            for (unsigned i = 0; i < n; ++i) { held[i] = sp->pending[i]; lens[i] = sp->pending_len[i]; from[i] = sp->pending_from[i]; }
+            proven_byte_t *held[QC_PENDING]; proven_size_t lens[QC_PENDING]; proven_quic_addr_t from[QC_PENDING]; proven_u8 marks[QC_PENDING];
+            for (unsigned i = 0; i < n; ++i) { held[i] = sp->pending[i]; lens[i] = sp->pending_len[i]; from[i] = sp->pending_from[i]; marks[i] = sp->pending_ecn[i]; }
             sp->pending_n = 0;
             for (unsigned i = 0; i < n; ++i) {
+                c->rx_mark = marks[i];
                 if (c->state < QS_DRAINING) read_datagram(c, held[i], lens[i], &from[i]);
                 qfree(&c->mem, held[i], lens[i]);
             }
@@ -2561,7 +2648,7 @@ static void replay_held(proven_quic_conn_t *c) {
     }
 }
 
-proven_err_t proven_quic_conn_receive(proven_quic_conn_t *c, proven_mem_view_t d, const proven_quic_addr_t *from, proven_u64 now) {
+proven_err_t proven_quic_conn_receive(proven_quic_conn_t *c, proven_mem_view_t d, const proven_quic_addr_t *from, proven_u8 ecn, proven_u64 now) {
     if (!c || !from || (d.size && !d.ptr)) return PROVEN_ERR_INVALID_ARG;
     c->now = now;
     if (c->state == QS_DRAINING || c->state == QS_CLOSED || d.size == 0 || d.size > 65527) return PROVEN_OK;
@@ -2574,6 +2661,7 @@ proven_err_t proven_quic_conn_receive(proven_quic_conn_t *c, proven_mem_view_t d
     }
     qcopy(c->scratch, d.ptr, d.size);
     const proven_u64 before = c->st.packets_received;
+    c->rx_mark = c->cfg.no_ecn ? PROVEN_QUIC_ECN_NOT_ECT : (proven_u8)(ecn & 3);
     read_datagram(c, c->scratch, d.size, from);
     if (c->st.packets_received != before) c->idle_start = now;
     replay_held(c);
@@ -2737,6 +2825,7 @@ void proven_quic_conn_stats(const proven_quic_conn_t *c, proven_quic_stats_t *s)
     s->key_updates = c->key_updates;
     s->spurious_losses = c->spurious;
     s->datagram_size = c->datagram;
+    s->ecn_state = c->ecn_state;
 }
 
 bool proven_quic_conn_resumed(const proven_quic_conn_t *c) { return c && c->tls && c->complete && proven_tls_resumed(c->tls); }
@@ -2889,7 +2978,7 @@ proven_err_t proven_quic_conn_client_create(const proven_quic_config_t *cfg, pro
 }
 
 proven_err_t proven_quic_conn_server_create(const proven_quic_config_t *cfg, const proven_quic_accept_t *accept, proven_mem_view_t datagram,
-                                           const proven_quic_addr_t *from, proven_u64 now, proven_quic_conn_t **out) {
+                                           const proven_quic_addr_t *from, proven_u8 ecn, proven_u64 now, proven_quic_conn_t **out) {
     if (!out || !accept || !from || !cfg_valid(cfg)) return PROVEN_ERR_INVALID_ARG;
     *out = NULL;
     proven_quic_hdr_t h;
@@ -2909,7 +2998,7 @@ proven_err_t proven_quic_conn_server_create(const proven_quic_config_t *cfg, con
     const proven_size_t tpn = local_params(c, tp, sizeof tp);
     proven_err_t e = tpn ? proven_tls_quic_server_create_for_(cfg->tls, (proven_mem_view_t){ .ptr = tp, .size = tpn }, cfg->alpn, &c->tls) : PROVEN_ERR_INVALID_ARG;
     if (e != PROVEN_OK) { proven_quic_conn_destroy(c); return e; }
-    e = proven_quic_conn_receive(c, datagram, from, now);
+    e = proven_quic_conn_receive(c, datagram, from, ecn, now);
     if (e != PROVEN_OK) { proven_quic_conn_destroy(c); return e; }
     *out = c;
     return PROVEN_OK;

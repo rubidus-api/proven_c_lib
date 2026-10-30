@@ -46,7 +46,8 @@ void proven_loop_after_cancel_(proven_loop_t *loop, proven_loop_after_t *after);
  * Internal: UDP on the loop (RFC-0025 step 5), for HTTP/3's sockets. A receive goes into a buffer
  * of the caller's - never a receive of nothing, which on Windows would lose the datagram - and is
  * answered once with what one receive took: `n` bytes, several datagrams of one sender of `seg`
- * bytes each when the system coalesced them (GRO; `seg` 0: one datagram), from `*from`. The
+ * bytes each when the system coalesced them (GRO; `seg` 0: one datagram), from `*from`, with the
+ * ECN field `ecn` (0 when the system did not say; proven_net_udp_ecn_ asks for it). The
  * buffer and `*from` are the loop's until then. Armed again from inside `received`, the next
  * receive is tried at once and still answered from the loop. Sends are the caller's own
  * (proven_net_udp_send_segments_); when one says PROVEN_ERR_TIMEOUT, proven_loop_udp_send_wait_
@@ -54,7 +55,7 @@ void proven_loop_after_cancel_(proven_loop_t *loop, proven_loop_after_t *after);
  * `closed` after everything in flight has been answered (PROVEN_ERR_CANCELLED).
  */
 typedef struct proven_loop_udp_fns {
-    void (*received)(void *ctx, proven_err_t err, proven_size_t n, proven_size_t seg);
+    void (*received)(void *ctx, proven_err_t err, proven_size_t n, proven_size_t seg, proven_u8 ecn);
     void (*writable)(void *ctx, proven_err_t err);
     void (*closed)(void *ctx);
 } proven_loop_udp_fns_t;

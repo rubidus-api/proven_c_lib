@@ -40,7 +40,7 @@ static const proven_u8str_view_t H3[1] = { { (const proven_byte_t *)"h3", 2 } };
 
 /* ---- The network ---- */
 
-typedef struct { proven_byte_t b[1500]; proven_size_t n; proven_u64 at; int to; proven_quic_addr_t from; } dg_t;
+typedef struct { proven_byte_t b[1500]; proven_size_t n; proven_u64 at; int to; proven_quic_addr_t from; proven_u8 ecn; } dg_t;
 
 typedef struct net net_t;
 struct net {
@@ -63,30 +63,40 @@ struct net {
     bool (*hook)(net_t *n, int to, proven_byte_t *b, proven_size_t *len);
     int replies;                        /* stateless replies the server sent */
     proven_u64 until;                   /* the clock does not jump past it (0: no bound) */
+    /* ECN on the path (RFC-0035): marks are carried as sent unless the path bleaches them,
+     * rewrites ECT(0) to ECT(1), drops every marked datagram, or marks CE (per thousand). */
+    bool ecn_bleach, ecn_ect1, ecn_drop_marked;
+    unsigned ecn_ce;
+    proven_u64 marked[2];               /* datagrams each side sent marked */
 };
 
 static proven_u64 nrand(net_t *n) { n->rng ^= n->rng << 13; n->rng ^= n->rng >> 7; n->rng ^= n->rng << 17; return n->rng; }
 
-static void net_push(net_t *n, int to, const proven_byte_t *b, proven_size_t len, const proven_quic_addr_t *from, proven_u64 at) {
+static void net_push(net_t *n, int to, const proven_byte_t *b, proven_size_t len, const proven_quic_addr_t *from, proven_u64 at, proven_u8 ecn) {
     if (n->qn == n->qcap) { n->qcap = n->qcap ? n->qcap * 2 : 256; n->q = realloc(n->q, n->qcap * sizeof *n->q); }
     dg_t *d = &n->q[n->qn++];
-    memcpy(d->b, b, len); d->n = len; d->at = at; d->to = to; d->from = *from;
+    memcpy(d->b, b, len); d->n = len; d->at = at; d->to = to; d->from = *from; d->ecn = ecn;
 }
 
-static void net_send(net_t *n, int from_ep, const proven_byte_t *b, proven_size_t len, const proven_quic_addr_t *to_addr) {
+static void net_send(net_t *n, int from_ep, const proven_byte_t *b, proven_size_t len, const proven_quic_addr_t *to_addr, proven_u8 ecn) {
     if (to_addr) n->last_to[from_ep] = *to_addr;
     ++n->sent[from_ep];
     n->bytes[from_ep] += len;
+    if (ecn) ++n->marked[from_ep];
     if (n->capture) {
         if (n->capn == n->capcap) { n->capcap = n->capcap ? n->capcap * 2 : 256; n->cap = realloc(n->cap, n->capcap * sizeof *n->cap); }
         dg_t *d = &n->cap[n->capn++];
-        memcpy(d->b, b, len); d->n = len; d->to = 1 - from_ep; d->from = n->addr[from_ep];
+        memcpy(d->b, b, len); d->n = len; d->to = 1 - from_ep; d->from = n->addr[from_ep]; d->ecn = ecn;
     }
     if (n->loss && nrand(n) % 1000 < n->loss) { ++n->lost; return; }
+    if (ecn && n->ecn_drop_marked) { ++n->lost; return; }
+    if (n->ecn_bleach) ecn = PROVEN_QUIC_ECN_NOT_ECT;
+    else if (ecn == PROVEN_QUIC_ECN_ECT0 && n->ecn_ect1) ecn = PROVEN_QUIC_ECN_ECT1;
+    if (ecn && n->ecn_ce && nrand(n) % 1000 < n->ecn_ce) ecn = PROVEN_QUIC_ECN_CE;
     proven_u64 at = n->now + n->delay + (n->jitter ? nrand(n) % n->jitter : 0);
     if (n->reorder && nrand(n) % 1000 < n->reorder) at += n->delay + 1000;
-    net_push(n, 1 - from_ep, b, len, &n->addr[from_ep], at);
-    if (n->dup && nrand(n) % 1000 < n->dup) net_push(n, 1 - from_ep, b, len, &n->addr[from_ep], at + 300);
+    net_push(n, 1 - from_ep, b, len, &n->addr[from_ep], at, ecn);
+    if (n->dup && nrand(n) % 1000 < n->dup) net_push(n, 1 - from_ep, b, len, &n->addr[from_ep], at + 300, ecn);
 }
 
 static void net_init(net_t *n, unsigned seed) {
@@ -113,7 +123,7 @@ static void net_free(net_t *n) {
 }
 
 /* A datagram reaches endpoint `to`; the server is made from its first one. */
-static void deliver(net_t *n, int to, proven_byte_t *b, proven_size_t len, const proven_quic_addr_t *from) {
+static void deliver(net_t *n, int to, proven_byte_t *b, proven_size_t len, const proven_quic_addr_t *from, proven_u8 ecn) {
     if (n->hook && !n->hook(n, to, b, &len)) return;
     if (to == 1 && !n->ep[1]) {
         static proven_byte_t out[1500];
@@ -121,12 +131,12 @@ static void deliver(net_t *n, int to, proven_byte_t *b, proven_size_t len, const
         proven_quic_accept_t acc;
         proven_quic_stateless_t r = proven_quic_server_stateless(&n->cfg[1], (proven_mem_view_t){ b, len }, from, n->now, n->require_retry,
                                                                  (proven_mem_mut_t){ out, sizeof out }, &olen, &acc);
-        if (r == PROVEN_QUIC_STATELESS_REPLY) { ++n->replies; net_send(n, 1, out, olen, from); return; }
+        if (r == PROVEN_QUIC_STATELESS_REPLY) { ++n->replies; net_send(n, 1, out, olen, from, 0); return; }
         if (r == PROVEN_QUIC_STATELESS_ACCEPT)
-            PROVEN_TEST_ASSERT(proven_quic_conn_server_create(&n->cfg[1], &acc, (proven_mem_view_t){ b, len }, from, n->now, &n->ep[1]) == PROVEN_OK, "the server's connection", "");
+            PROVEN_TEST_ASSERT(proven_quic_conn_server_create(&n->cfg[1], &acc, (proven_mem_view_t){ b, len }, from, ecn, n->now, &n->ep[1]) == PROVEN_OK, "the server's connection", "");
         return;
     }
-    if (n->ep[to]) PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[to], (proven_mem_view_t){ b, len }, from, n->now) == PROVEN_OK, "a datagram is taken", "");
+    if (n->ep[to]) PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[to], (proven_mem_view_t){ b, len }, from, ecn, n->now) == PROVEN_OK, "a datagram is taken", "");
 }
 
 /* One turn: each side sends what it may, the clock moves to the next thing, it happens. */
@@ -137,10 +147,11 @@ static void net_step(net_t *n) {
         for (int k = 0; k < 512; ++k) {
             proven_size_t len = 0;
             proven_quic_addr_t to;
-            PROVEN_TEST_ASSERT(proven_quic_conn_send(n->ep[i], n->now, (proven_mem_mut_t){ out, sizeof out }, &len, &to) == PROVEN_OK, "send", "");
+            proven_u8 ecn = 0;
+            PROVEN_TEST_ASSERT(proven_quic_conn_send(n->ep[i], n->now, (proven_mem_mut_t){ out, sizeof out }, &len, &to, &ecn) == PROVEN_OK, "send", "");
             if (len == 0) break;
             PROVEN_TEST_ASSERT(len <= 1452, "a datagram within the size", "");
-            net_send(n, i, out, len, &to);
+            net_send(n, i, out, len, &to, ecn);
         }
     }
     proven_u64 next = (proven_u64)-1;
@@ -156,7 +167,7 @@ static void net_step(net_t *n) {
         if (best == n->qn) break;
         dg_t d = n->q[best];
         n->q[best] = n->q[--n->qn];
-        deliver(n, d.to, d.b, d.n, &d.from);
+        deliver(n, d.to, d.b, d.n, &d.from, d.ecn);
     }
     for (int i = 0; i < 2; ++i) if (n->ep[i] && proven_quic_conn_deadline(n->ep[i]) <= n->now) proven_quic_conn_timeout(n->ep[i], n->now);
 }
@@ -344,7 +355,7 @@ static bool hook_reset_from_server(net_t *n, int to, proven_byte_t *b, proven_si
     memcpy(dcid.id, b + 1, 8);
     static proven_byte_t out[64];
     proven_size_t r = proven_quic_stateless_reset(&n->cfg[1], &dcid, *len, (proven_mem_mut_t){ out, sizeof out });
-    if (r) { ++g_hook_count; net_push(n, 0, out, r, &n->addr[1], n->now + n->delay); }
+    if (r) { ++g_hook_count; net_push(n, 0, out, r, &n->addr[1], n->now + n->delay, 0); }
     return false;
 }
 
@@ -677,7 +688,7 @@ int main(void) {
         vn[k++] = h.scid.len; memcpy(vn + k, h.scid.id, h.scid.len); k += h.scid.len;
         vn[k++] = h.dcid.len; memcpy(vn + k, h.dcid.id, h.dcid.len); k += h.dcid.len;
         vn[k++] = 0x1a; vn[k++] = 0x2a; vn[k++] = 0x3a; vn[k++] = 0x4a;
-        PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[0], (proven_mem_view_t){ vn, k }, &n->addr[1], n->now) == PROVEN_OK, "", "");
+        PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[0], (proven_mem_view_t){ vn, k }, &n->addr[1], 0, n->now) == PROVEN_OK, "", "");
         proven_quic_event_t ev;
         PROVEN_TEST_ASSERT(closed_event(n->ep[0], &ev) && ev.remote && ev.code == PROVEN_QUIC_CONNECTION_REFUSED, "a version list without version 1 ends the attempt", "");
         net_free(n);
@@ -718,8 +729,8 @@ int main(void) {
         static proven_byte_t out[1500];
         proven_size_t len = 0;
         proven_quic_addr_t to;
-        PROVEN_TEST_ASSERT(proven_quic_conn_send(n->ep[0], n->now, (proven_mem_mut_t){ out, sizeof out }, &len, &to) == PROVEN_OK && len > 0, "the client's close", "");
-        PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[1], (proven_mem_view_t){ out, len }, &n->addr[0], n->now) == PROVEN_OK, "reaches the server before its own close went out", "");
+        PROVEN_TEST_ASSERT(proven_quic_conn_send(n->ep[0], n->now, (proven_mem_mut_t){ out, sizeof out }, &len, &to, NULL) == PROVEN_OK && len > 0, "the client's close", "");
+        PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[1], (proven_mem_view_t){ out, len }, &n->addr[0], 0, n->now) == PROVEN_OK, "reaches the server before its own close went out", "");
         n->hook = hook_drop_all;
         run_for(n, 1000000);
         PROVEN_TEST_ASSERT(stats(n, 1).closed, "the server is over within a second, its draining period", "");
@@ -884,7 +895,7 @@ int main(void) {
             const proven_size_t len = proven_quic_protect(&ck, dg, hl, 2, 1000 + (proven_u64)padded, plen);
             const proven_size_t dlen = padded ? 1200 : len;   /* the rest of a padded datagram is zeros: no packet */
             const proven_u64 before = stats(n, 1).packets_received;
-            PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[1], (proven_mem_view_t){ dg, dlen }, &n->addr[0], n->now) == PROVEN_OK, "", "");
+            PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[1], (proven_mem_view_t){ dg, dlen }, &n->addr[0], 0, n->now) == PROVEN_OK, "", "");
             if (!padded) PROVEN_TEST_ASSERT(stats(n, 1).packets_received == before, "an Initial in a datagram of 70 bytes is dropped", "");
             else PROVEN_TEST_ASSERT(stats(n, 1).packets_received == before + 1, "the same packet in a datagram of 1,200 bytes is read: the drop was the size", "");
         }
@@ -1288,11 +1299,11 @@ int main(void) {
             for (proven_size_t bit = 0; bit < d->n * 8; bit += (bit < 64 * 8 ? 1 : 29)) {
                 memcpy(b, d->b, d->n);
                 b[bit / 8] ^= (proven_byte_t)(1u << (bit % 8));
-                PROVEN_TEST_ASSERT(proven_quic_conn_receive(to, (proven_mem_view_t){ b, d->n }, &d->from, n->now) == PROVEN_OK, "", "");
+                PROVEN_TEST_ASSERT(proven_quic_conn_receive(to, (proven_mem_view_t){ b, d->n }, &d->from, 0, n->now) == PROVEN_OK, "", "");
                 ++tried;
             }
             for (proven_size_t cut = 0; cut < d->n; cut += (cut < 64 ? 1 : 17)) {
-                PROVEN_TEST_ASSERT(proven_quic_conn_receive(to, (proven_mem_view_t){ d->b, cut }, &d->from, n->now) == PROVEN_OK, "", "");
+                PROVEN_TEST_ASSERT(proven_quic_conn_receive(to, (proven_mem_view_t){ d->b, cut }, &d->from, 0, n->now) == PROVEN_OK, "", "");
                 ++tried;
             }
         }
@@ -1300,7 +1311,7 @@ int main(void) {
         /* The same datagrams again, unchanged: every packet in them is one already processed. */
         const proven_u64 before0 = stats(n, 0).packets_received, before1 = stats(n, 1).packets_received;
         for (proven_size_t i = 0; i < n->capn; ++i)
-            PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[n->cap[i].to], (proven_mem_view_t){ n->cap[i].b, n->cap[i].n }, &n->cap[i].from, n->now) == PROVEN_OK, "", "");
+            PROVEN_TEST_ASSERT(proven_quic_conn_receive(n->ep[n->cap[i].to], (proven_mem_view_t){ n->cap[i].b, n->cap[i].n }, &n->cap[i].from, 0, n->now) == PROVEN_OK, "", "");
         PROVEN_TEST_ASSERT(stats(n, 0).packets_received == before0 && stats(n, 1).packets_received == before1,
             "a packet number already processed is not processed again (RFC 9000 section 12.3)", "");
         PROVEN_TEST_ASSERT(!stats(n, 0).closed && !stats(n, 1).closed, "neither side closed", "");
@@ -1309,6 +1320,123 @@ int main(void) {
         t->n = 0;
         xfer_open(n, t, 1, true, 50000);
         PROVEN_TEST_ASSERT(run_xfers(n, t, 10000000), "and a new transfer goes through", "");
+        free(t);
+        net_free(n);
+    }
+
+    PROVEN_TEST_SECTION("ECN (RFC-0035)", "RFC 9000 section 13.4 on the simulated network: a path that carries the marks is validated by both sides and every packet goes marked; one that bleaches them, rewrites ECT(0) to ECT(1) or drops what is marked fails validation and the connection goes on unmarked; a side that reads no marks reports no counts and the other stops marking; CE marks are counted, acknowledged and answered as congestion with nothing lost; a new path is tested again.", "Check ecn_mark, ecn_on_ack, ecn_path_new and the counting in read_packet (src/proven/quic_conn.c), and the ACK_ECN writer in quic_frame.c.");
+    {
+        enum { TESTING, UNKNOWN, CAPABLE, FAILED };
+        /* A clean path: both validate, and marked packets are counted on arrival. */
+        net_init(n, 300);
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "", "");
+        xfers_t *t = calloc(1, sizeof *t);
+        xfer_open(n, t, 0, false, 300000);
+        xfer_open(n, t, 1, false, 300000);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 30000000), "a transfer each way", "");
+        proven_quic_stats_t a = stats(n, 0), b = stats(n, 1);
+        printf("  clean: client %u, %llu marked, %llu ECT(0) received; server %u, %llu marked, %llu received\n", a.ecn_state, (unsigned long long)a.ecn_marked,
+               (unsigned long long)a.ecn_received[0], b.ecn_state, (unsigned long long)b.ecn_marked, (unsigned long long)b.ecn_received[0]);
+        PROVEN_TEST_ASSERT(a.ecn_state == CAPABLE && b.ecn_state == CAPABLE, "a path that carries the marks: both sides validate it", "");
+        PROVEN_TEST_ASSERT(a.ecn_marked > 200 && b.ecn_marked > 200 && a.ecn_received[0] > 200 && b.ecn_received[0] > 200, "and mark what they send; each counts what arrives marked", "");
+        PROVEN_TEST_ASSERT(a.ecn_received[1] == 0 && a.ecn_received[2] == 0 && a.ecn_ce_events == 0 && b.ecn_ce_events == 0, "no ECT(1), no CE, no congestion read into them", "");
+        const proven_u64 clean_cwnd = b.cwnd;
+        free(t);
+        net_free(n);
+
+        /* Paths that spoil the marks: validation fails, the transfer goes through unmarked. */
+        for (int k = 0; k < 3; ++k) {
+            net_init(n, 310 + (unsigned)k);
+            if (k == 0) n->ecn_bleach = true;
+            if (k == 1) n->ecn_ect1 = true;
+            if (k == 2) n->ecn_drop_marked = true;
+            net_start(n);
+            PROVEN_TEST_ASSERT(run_handshake(n, 120000000), "the handshake completes", "");
+            const proven_u64 m0 = n->marked[0], m1 = n->marked[1];
+            t = calloc(1, sizeof *t);
+            xfer_open(n, t, 0, false, 200000);
+            xfer_open(n, t, 1, false, 200000);
+            PROVEN_TEST_ASSERT(run_xfers(n, t, 60000000), "and a transfer each way", "");
+            a = stats(n, 0); b = stats(n, 1);
+            printf("  %s: client %u, server %u; marked during the transfer %llu, %llu\n", k == 0 ? "bleached" : k == 1 ? "ECT(1)" : "marked dropped", a.ecn_state, b.ecn_state,
+                   (unsigned long long)(n->marked[0] - m0), (unsigned long long)(n->marked[1] - m1));
+            if (k < 2) PROVEN_TEST_ASSERT(a.ecn_state == FAILED && b.ecn_state == FAILED, k == 0 ? "marks bleached on the way: validation fails on both sides" : "ECT(0) rewritten to ECT(1): validation fails on both sides", "");
+            else PROVEN_TEST_ASSERT(a.ecn_state != CAPABLE && b.ecn_state != CAPABLE && a.ecn_state != TESTING && b.ecn_state != TESTING, "every marked datagram dropped: the test ends and nothing is marked after it", "");
+            PROVEN_TEST_ASSERT(n->marked[0] == m0 && n->marked[1] == m1, "nothing marked after the test", "");
+            free(t);
+            net_free(n);
+        }
+
+        /* A path that starts bleaching after it was validated: the counts stop growing under
+         * marked packets newly acknowledged, and validation fails then. */
+        net_init(n, 315);
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "", "");
+        PROVEN_TEST_ASSERT(stats(n, 0).ecn_state == CAPABLE && stats(n, 1).ecn_state == CAPABLE, "validated first", "");
+        n->ecn_bleach = true;
+        t = calloc(1, sizeof *t);
+        xfer_open(n, t, 0, false, 200000);
+        xfer_open(n, t, 1, false, 200000);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 30000000), "", "");
+        PROVEN_TEST_ASSERT(stats(n, 0).ecn_state == FAILED && stats(n, 1).ecn_state == FAILED, "marks bleached after validation: the counts fall short of the marked packets acknowledged, and ECN ends", "");
+        free(t);
+        net_free(n);
+
+        /* A server that reads no marks: no counts, and the client stops marking. */
+        net_init(n, 320);
+        n->cfg[1].no_ecn = true;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "", "");
+        a = stats(n, 0); b = stats(n, 1);
+        PROVEN_TEST_ASSERT(a.ecn_state == FAILED && b.ecn_marked == 0 && b.ecn_received[0] == 0, "a peer that reports no counts: this side's validation fails; that side marks nothing and counts nothing", "");
+        net_free(n);
+
+        /* CE: counted, answered as congestion; nothing lost. */
+        net_init(n, 330);
+        n->delay = 20000;
+        n->ecn_ce = 5;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "", "");
+        t = calloc(1, sizeof *t);
+        xfer_open(n, t, 1, false, 4000000);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 60000000), "a transfer under CE marks", "");
+        a = stats(n, 0); b = stats(n, 1);
+        printf("  CE: %llu marked CE at the client, %llu congestion events at the server, %llu lost; window %llu (clean %llu)\n", (unsigned long long)a.ecn_received[2],
+               (unsigned long long)b.ecn_ce_events, (unsigned long long)b.packets_lost, (unsigned long long)b.cwnd, (unsigned long long)clean_cwnd);
+        PROVEN_TEST_ASSERT(a.ecn_received[2] > 0 && b.ecn_ce_events > 0 && b.ecn_ce_events <= a.ecn_received[2], "CE marks reach the sender as congestion events, at most one each", "");
+        PROVEN_TEST_ASSERT(b.packets_lost == 0 && n->lost == 0 && b.ecn_state == CAPABLE, "with nothing lost, and the path stays capable", "");
+        free(t);
+        net_free(n);
+
+        net_init(n, 331);
+        n->delay = 20000;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "", "");
+        t = calloc(1, sizeof *t);
+        xfer_open(n, t, 1, false, 4000000);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 60000000), "", "");
+        PROVEN_TEST_ASSERT(b.cwnd < stats(n, 1).cwnd, "the window under CE marks ends below the window of the same transfer without them", "");
+        free(t);
+        net_free(n);
+
+        /* A new path is tested again: failed on a bleaching path, capable after the client moves to a clean one. */
+        net_init(n, 340);
+        n->ecn_bleach = true;
+        net_start(n);
+        PROVEN_TEST_ASSERT(run_handshake(n, 10000000), "", "");
+        t = calloc(1, sizeof *t);
+        xfer_open(n, t, 0, false, 50000);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 10000000), "", "");
+        PROVEN_TEST_ASSERT(stats(n, 1).ecn_state == FAILED, "", "");
+        n->ecn_bleach = false;
+        n->addr[0].b[5] = 0x41;                  /* the client's NAT moved it */
+        t->n = 0;
+        xfer_open(n, t, 0, false, 300000);
+        xfer_open(n, t, 1, false, 300000);
+        PROVEN_TEST_ASSERT(run_xfers(n, t, 30000000), "", "");
+        b = stats(n, 1);
+        PROVEN_TEST_ASSERT(b.path_validations == 1 && b.ecn_state == CAPABLE, "after the server's path moved, ECN is tested again there and validates", "");
         free(t);
         net_free(n);
     }

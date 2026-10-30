@@ -462,9 +462,9 @@ typedef struct {
     proven_size_t total;
 } udp_case_t;
 
-static void u_received(void *ctx, proven_err_t err, proven_size_t n, proven_size_t seg) {
+static void u_received(void *ctx, proven_err_t err, proven_size_t n, proven_size_t seg, proven_u8 ecn) {
     udp_case_t *u = ctx;
-    (void)seg;
+    (void)seg; (void)ecn;
     PROVEN_TEST_ASSERT(!g_inside, "a UDP receive is never answered inside the call that started it", g_kind);
     u->received++; u->err = err;
     if (u->order_n < 8) u->order[u->order_n++] = 1;
@@ -609,15 +609,21 @@ typedef struct {
     int received;
     bool bad;
     unsigned run;
+    proven_u8 want;                     /* the ECN mark the batch was sent with (RFC-0035) */
+    bool wrong_mark;                    /* a receive said another mark than the one sent */
+    unsigned marked_seen;               /* receives that said the mark sent, not 0 */
 } useg_t;
 
 static proven_byte_t seg_pattern(unsigned run, unsigned dg, proven_size_t i) { return (proven_byte_t)(run * 31 + dg * 7 + i * 13 + (i >> 8)); }
 
-static void s_received(void *ctx, proven_err_t err, proven_size_t n, proven_size_t seg) {
+static void s_received(void *ctx, proven_err_t err, proven_size_t n, proven_size_t seg, proven_u8 ecn) {
     useg_t *u = ctx;
     PROVEN_TEST_ASSERT(!g_inside, "a UDP receive is never answered inside the call that started it", g_kind);
     u->received++;
     if (err != PROVEN_OK) { u->bad = true; return; }
+    /* The system may not say the mark (0); it never says another. */
+    if (ecn != 0 && ecn != u->want) u->wrong_mark = true;
+    if (ecn != 0 && ecn == u->want) ++u->marked_seen;
     if (seg) ++u->batches;
     const proven_size_t step = seg ? seg : n;
     for (proven_size_t off = 0; off < n; off += step) {
@@ -651,6 +657,7 @@ static void case_udp_segments(void) {
                            proven_net_udp_open(proven_net_addr_ipv4(127, 0, 0, 1, 0), &peer, NULL) == PROVEN_OK, "two UDP sockets", g_kind);
         const bool gro = proven_net_udp_gro_(&u.udp);
         if (forced) PROVEN_TEST_ASSERT(!gro, "with the one-at-a-time way forced, no URO either", g_kind);
+        const bool ecn = proven_net_udp_ecn_(&u.udp);
         const proven_err_t ae = proven_loop_udp_attach_(g_loop, &u.lu, &u.udp, &g_sfns, &u);
         const proven_err_t re = proven_loop_udp_recv_(g_loop, &u.lu, (proven_mem_mut_t){ u.buf, sizeof u.buf }, &u.from);
         PROVEN_TEST_ASSERT(ae == PROVEN_OK && re == PROVEN_OK, "attached, a receive in flight", g_kind);
@@ -663,8 +670,9 @@ static void case_udp_segments(void) {
                 total += len;
             }
             u.run = run; u.count = 0;
+            u.want = k % 3 == 0 ? 0 : k % 3 == 1 ? 2 : 1;      /* none, ECT(0), ECT(1) in turn */
             proven_size_t sent = 0;
-            PROVEN_TEST_ASSERT(proven_net_udp_send_segments_(&peer, at, (proven_mem_view_t){ out, total }, shapes[k].seg, &sent) == PROVEN_OK && sent == total,
+            PROVEN_TEST_ASSERT(proven_net_udp_send_marked_(&peer, at, (proven_mem_view_t){ out, total }, shapes[k].seg, u.want, &sent) == PROVEN_OK && sent == total,
                                "a batch is sent whole", g_kind);
             const proven_net_deadline_t end = proven_net_deadline_in(3000);
             while (u.count < n && !u.bad && proven_time_monotonic_now() < end) (void)proven_loop_poll(g_loop, proven_net_deadline_in(20));
@@ -673,8 +681,13 @@ static void case_udp_segments(void) {
             if (!shape) printf("  FAILED: %u x %zu + %zu: %u datagrams received%s\n", shapes[k].count, shapes[k].seg, shapes[k].tail, u.count, u.bad ? ", a byte or an answer wrong" : "");
             PROVEN_TEST_ASSERT(shape, "the loop's receives bring every datagram, its size and every byte, in order", g_kind);
         }
-        printf("  %s, %s: receives through the loop that held several datagrams: %u (the system's choice)\n",
-               g_kind, forced ? "one at a time (forced)" : gro ? "the platform's way, URO/GRO on" : "the platform's way, no URO/GRO here", u.batches);
+        printf("  %s, %s: receives through the loop that held several datagrams: %u (the system's choice); ECN asked %s, marked receives seen %u\n",
+               g_kind, forced ? "one at a time (forced)" : gro ? "the platform's way, URO/GRO on" : "the platform's way, no URO/GRO here", u.batches,
+               ecn ? "yes" : "no", u.marked_seen);
+        PROVEN_TEST_ASSERT(!u.wrong_mark, "a receive reports the ECN mark sent, or none - never another (RFC-0035)", g_kind);
+#if defined(__linux__)
+        PROVEN_TEST_ASSERT(ecn && u.marked_seen > 0, "Linux keeps the mark on loopback: the loop's receives report it", g_kind);
+#endif
         int closed_before = u.received;
         proven_loop_udp_close_(g_loop, &u.lu);
         (void)until_moves(&u.received, closed_before);      /* the receive in flight, CANCELLED */

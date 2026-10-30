@@ -1,6 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "../src/proven/proven_internal_h3.h"
+#include "../src/proven/proven_internal_quic_net.h"
 #include "test_unit_tls_pki.h"
 #include <stdatomic.h>
 #include <stdio.h>
@@ -303,6 +304,7 @@ typedef struct {
     proven_h3_conn_t *h;
     proven_tls_session_t session;
     bool established, closed, remote_close, mute;
+    bool ecn;                          /* this socket reads and sets the ECN field (RFC-0035) */
     int first_type;                    /* the first datagram's first byte, high nibble: 0xf for a Retry; -1 before one has come */
     proven_u64 close_code;
     int goaways;
@@ -327,6 +329,7 @@ static bool cl_open(cl_t *c, proven_u16 port) {
     c->server = proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, port);
     c->first_type = -1;
     if (proven_net_udp_open(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &c->udp, NULL) != PROVEN_OK) return false;
+    c->ecn = proven_net_udp_ecn_(&c->udp);
     const proven_quic_config_t qc = { .alloc = g_heap, .tls = g_client_tls };
     const proven_quic_addr_t sa = qaddr(&c->server);
     if (proven_quic_conn_client_create(&qc, sv("example.test"), &c->session, &sa, us_now(), &c->q) != PROVEN_OK) return false;
@@ -407,8 +410,12 @@ static void cl_pump(cl_t *c, proven_u32 ms) {
     for (int k = 0; k < 256; ++k) {                /* after the close too: its CONNECTION_CLOSE goes out */
         proven_size_t len = 0;
         proven_quic_addr_t to;
-        if (proven_quic_conn_send(c->q, us_now(), (proven_mem_mut_t){ dg, sizeof dg }, &len, &to) != PROVEN_OK || len == 0) break;
-        if (!c->mute) (void)proven_net_udp_send_to(&c->udp, c->server, (proven_mem_view_t){ dg, len }, proven_net_deadline_in(100));
+        proven_u8 mark = 0;
+        if (proven_quic_conn_send(c->q, us_now(), (proven_mem_mut_t){ dg, sizeof dg }, &len, &to, c->ecn ? &mark : NULL) != PROVEN_OK || len == 0) break;
+        if (c->mute) continue;
+        proven_size_t sent = 0;
+        if (!mark || proven_net_udp_send_marked_(&c->udp, c->server, (proven_mem_view_t){ dg, len }, len, mark, &sent) == PROVEN_ERR_TIMEOUT)
+            (void)proven_net_udp_send_to(&c->udp, c->server, (proven_mem_view_t){ dg, len }, proven_net_deadline_in(100));
     }
     proven_u64 now = us_now(), until = now + (proven_u64)ms * 1000;
     const proven_u64 d = proven_quic_conn_deadline(c->q);
@@ -416,11 +423,18 @@ static void cl_pump(cl_t *c, proven_u32 ms) {
     const proven_net_deadline_t wait = until <= now ? PROVEN_NET_DONT_WAIT : proven_time_monotonic_now() + (proven_time_t)(until - now) * 1000;
     proven_net_addr_t from;
     const proven_quic_addr_t sa = qaddr(&c->server);
-    proven_result_size_t r = proven_net_udp_recv_from(&c->udp, (proven_mem_mut_t){ dg, sizeof dg }, &from, wait);
+    /* The first datagram waited for, every one with its ECN field (no GRO asked: one each). */
+    proven_size_t seg = 0;
+    proven_u8 ecn = 0;
+    proven_result_size_t r = proven_net_udp_recv_marked_(&c->udp, (proven_mem_mut_t){ dg, sizeof dg }, &seg, &ecn, &from);
+    while (r.err == PROVEN_ERR_TIMEOUT && wait != PROVEN_NET_DONT_WAIT && proven_time_monotonic_now() < wait) {
+        proven_time_sleep(1);
+        r = proven_net_udp_recv_marked_(&c->udp, (proven_mem_mut_t){ dg, sizeof dg }, &seg, &ecn, &from);
+    }
     while (r.err == PROVEN_OK) {
         if (c->first_type < 0 && r.value > 0) c->first_type = dg[0] >> 4;
-        (void)proven_quic_conn_receive(c->q, (proven_mem_view_t){ dg, r.value }, &sa, us_now());
-        r = proven_net_udp_recv_from(&c->udp, (proven_mem_mut_t){ dg, sizeof dg }, &from, PROVEN_NET_DONT_WAIT);
+        (void)proven_quic_conn_receive(c->q, (proven_mem_view_t){ dg, r.value }, &sa, ecn, us_now());
+        r = proven_net_udp_recv_marked_(&c->udp, (proven_mem_mut_t){ dg, sizeof dg }, &seg, &ecn, &from);
     }
     now = us_now();
     if (proven_quic_conn_deadline(c->q) <= now) proven_quic_conn_timeout(c->q, now);
@@ -585,6 +599,18 @@ static void case_requests(proven_u16 port) {
     const int last = c->n;
     PROVEN_TEST_ASSERT(last == 29, "every request was taken by the client's engine", "");
     PROVEN_TEST_ASSERT(cl_wait(c, 0, last, 20000), "every response ends", "");
+    {
+        /* ECN (RFC-0035) through the server's socket and loop: the client's marks reach the
+         * server's engine (its counts validate the client's path) and the server marks what it
+         * sends. Linux keeps the marks on loopback; elsewhere they are reported. */
+        proven_quic_stats_t st;
+        proven_quic_conn_stats(c->q, &st);
+        printf("  ECN: the client's path %u (2: capable), %llu marked by the client, %llu ECT(0) from the server\n", st.ecn_state,
+               (unsigned long long)st.ecn_marked, (unsigned long long)st.ecn_received[0]);
+#if defined(__linux__)
+        PROVEN_TEST_ASSERT(c->ecn && st.ecn_state == 2 && st.ecn_received[0] > 100, "ECN through the server's driver: the client's marks counted there, the server's sent marked", "");
+#endif
+    }
     PROVEN_TEST_ASSERT(c->r[hello].status == 200 && body_is(&c->r[hello], "hello") && c->r[hello].has_date && c->r[hello].has_length, "a whole response, with Date and its length", "");
     PROVEN_TEST_ASSERT(!c->r[hello].hop, "the handler's Keep-Alive is not sent over HTTP/3", "");
     PROVEN_TEST_ASSERT(!c->r[hello].alt, "and no Alt-Svc on HTTP/3 itself", "");

@@ -1680,6 +1680,13 @@ underneath:
   not read stops the growth, so a paused one holds no more than the window it had (v0.71.0).
   The send buffers grow with what the path carries (twice the congestion window), within what the
   peer has granted, up to the same caps.
+- **ECN** (RFC 9000 section 13.4; since v0.98.0). On Linux and Windows the datagrams leave
+  marked ECT(0), and the marks that arrive are counted and reported to the peer in its
+  acknowledgements. Each path is tested first: one that bleaches the marks, rewrites them or
+  drops what is marked fails the test, and the connection goes on unmarked, as before. A
+  Congestion Experienced mark - a router saying its queue is filling - slows the sender as a loss
+  would, with nothing lost and nothing sent again. The event client does the same. Elsewhere
+  nothing is marked or read. There is no setting.
 
 | Setting | For HTTP/3 |
 |---|---|

@@ -18,6 +18,22 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.98.0] - 2026-10-30
+
+### Added
+
+- **ECN for QUIC** (RFC 9000 section 13.4, RFC 9002 section 7.1; RFC-0035), on Linux and Windows,
+  for the event server and client in both roles: datagrams leave marked ECT(0) through a control
+  message per send (Linux `IP_TOS` / `IPV6_TCLASS`, Windows `IP_ECN` / `IPV6_ECN`; GSO batches
+  are split where the mark changes); the ECN field of what arrives is read on every receive path
+  (readiness, IOCP, io_uring, GRO batches) and counted per packet number space, and
+  acknowledgements carry the counts (ACK_ECN). Each path is validated: the first ten packets are
+  marked, then none until an acknowledgement shows the marks arrived; missing counts, counts below
+  the marked packets newly acknowledged, an ECT(1) count, counts above what was sent, or every
+  test packet lost end ECN on the path, and a probe timeout ends the test. A path a server moves
+  to is tested again. A rise in the CE count is a congestion event, as a loss is, with nothing
+  retransmitted. No setting; elsewhere nothing is marked or read.
+
 ## [0.97.0] - 2026-10-30
 
 ### Added

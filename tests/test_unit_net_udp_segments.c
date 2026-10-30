@@ -142,6 +142,46 @@ int main(void) {
     proven_net_udp_segments_off_for_test_(false);
     printf("  receives that held several datagrams: %u (the system's choice; 0 where it does not coalesce)\n", coalesced);
 
+    /* ECN (RFC-0035): the mark of a datagram alone and of a batch, both families. */
+    for (int fam = 0; fam < 2; ++fam) {
+        const proven_net_family_t f = fam ? PROVEN_NET_FAMILY_IPV6 : PROVEN_NET_FAMILY_IPV4;
+        proven_net_udp_t es, er;
+        proven_net_addr_t er_at;
+        if (proven_net_udp_open(proven_net_addr_loopback(f, 0), &er, &er_at) != PROVEN_OK) { printf("  ECN: no %s loopback here\n", fam ? "IPv6" : "IPv4"); continue; }
+        PROVEN_TEST_ASSERT(proven_net_udp_open(proven_net_addr_loopback(f, 0), &es, NULL) == PROVEN_OK, "a sender", "");
+        const bool asked = proven_net_udp_ecn_(&er);
+        (void)proven_net_udp_gro_(&er);
+        unsigned seen = 0;
+        bool wrong = false;
+        for (int k = 0; k < 4; ++k) {
+            const proven_u8 mark = k & 1 ? 1 : 2;                    /* ECT(0), ECT(1) */
+            const proven_size_t total = k < 2 ? 900 : 3 * 1000;      /* alone; a batch of three */
+            for (proven_size_t i = 0; i < total; ++i) out[i] = (proven_byte_t)(i * 7 + (proven_size_t)k);
+            PROVEN_TEST_ASSERT(proven_net_udp_send_marked_(&es, er_at, (proven_mem_view_t){ out, total }, k < 2 ? total : 1000, mark, &sent) == PROVEN_OK && sent == total,
+                               "marked datagrams are sent", "");
+            proven_size_t got = 0;
+            for (int idle = 0; got < total && idle < 500;) {
+                proven_size_t seg = 0;
+                proven_u8 ecn = 0xff;
+                proven_net_addr_t from;
+                const proven_result_size_t res = proven_net_udp_recv_marked_(&er, (proven_mem_mut_t){ in, 65536 }, &seg, &ecn, &from);
+                if (res.err == PROVEN_ERR_TIMEOUT) { proven_time_sleep(1); ++idle; continue; }
+                PROVEN_TEST_ASSERT(res.err == PROVEN_OK, "a marked datagram is received", "");
+                got += res.value;
+                if (ecn == mark) ++seen;
+                else if (ecn != 0) wrong = true;
+            }
+            PROVEN_TEST_ASSERT(got == total, "every marked datagram arrives", "");
+        }
+        printf("  ECN over %s: asked %s, receives reporting the mark sent %u\n", fam ? "IPv6" : "IPv4", asked ? "yes" : "no", seen);
+        PROVEN_TEST_ASSERT(!wrong, "a receive reports the mark sent, or none", "");
+#if defined(__linux__)
+        PROVEN_TEST_ASSERT(asked && seen >= 4, "Linux keeps the mark on loopback, alone and in a batch", "");
+#endif
+        (void)proven_net_udp_close(&es);
+        (void)proven_net_udp_close(&er);
+    }
+
     (void)proven_net_udp_close(&s);
     (void)proven_net_udp_close(&r);
     PROVEN_TEST_PASS("batched datagrams arrive as the datagrams they were");
