@@ -2180,6 +2180,9 @@ static void read_datagram(proven_quic_conn_t *c, proven_byte_t *d, proven_size_t
             if (h.version != c->version) {
                 proven_u32 order[2];
                 client_order(c, order);
+                /* Not "no server Initial yet": a server may acknowledge in the original version
+                 * before it has the whole ClientHello and then move (RFC 9368 section 2.3). What
+                 * settles the version is the server's CRYPTO data - its Handshake keys here. */
                 const bool follow = !c->server && h.type == PROVEN_QUIC_PKT_INITIAL && !c->sp[1].rx_ok && c->version == c->orig_version
                                     && (order[0] == h.version || order[1] == h.version);
                 const bool original = c->server && h.version == c->orig_version
