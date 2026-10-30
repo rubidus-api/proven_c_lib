@@ -18,6 +18,16 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **P-256 is faster with GCC 14** (and a little with GCC 16): its field's product, square and
+  reduction work on named words instead of arrays, which GCC 14 kept in memory through the loops.
+  Measured (curve benchmark, -O3, one core): with GCC 14 a public key 114 to 89 us, ECDH 319 to
+  248, ECDSA signing 142 to 117, verification 254 to 206 (0.78 to 0.83 of the time); with GCC 16
+  0.87 to 0.93; with Clang the same. Branch-free as before at every optimisation level (the
+  constant-time check under Valgrind, both limb sizes, -O0 and -O2); Wycheproof's 5,622 cases
+  agree.
+
 ## [0.100.0] - 2026-10-31
 
 ### Added

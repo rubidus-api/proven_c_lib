@@ -311,6 +311,10 @@ bool proven_crypto_aes_hw_available(void);
  * infinity on either side - against the complete formulas, for P = k G with k in [1, n-1]. */
 [[nodiscard]] bool proven_crypto_ec_test_mul2(proven_crypto_ec_curve_t curve, const proven_byte_t *k1_be, const proven_byte_t *k2_be, proven_mem_view_t pub);
 [[nodiscard]] bool proven_crypto_ec_test_vartime_add(proven_crypto_ec_curve_t curve, const proven_byte_t *k_be);
+/* P-256's own reduction of t[0..8) (least significant word first; t / 2^256 mod p for a t whose
+ * upper four words are below p) against the general code: 1 the same, 0 not, -1 where the build
+ * has no field of P-256's own or t is not such a value. */
+[[nodiscard]] int proven_crypto_ec_test_p256_reduce(const proven_u64 t[8]);
 
 /* ---- RSA signing (RFC 8017). Everything in a key but n and e is SECRET. ---- */
 

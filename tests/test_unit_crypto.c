@@ -731,6 +731,57 @@ int main(void) {
         }
         proven_crypto_ec_force_general_(false);
         PROVEN_TEST_ASSERT(refused, "a point off the curve is refused by both", "");
+#if defined(__SIZEOF_INT128__)
+        /* The reduction alone, on values made for its rare paths. A value t = U 2^256 - m p
+         * reduces to U before its last subtraction, whatever m (the reduction finds that m from
+         * t's low words); with m near 2^256, t is below p^2. U from p to 2p, chosen word by
+         * word: p + d with d's second word all ones in its upper half makes U's second word
+         * small, so the subtraction of p borrows across it - a path random values reach with
+         * odds of 2^-32. */
+        static const proven_u64 P[4] = { 0xffffffffffffffffull, 0x00000000ffffffffull, 0, 0xffffffff00000001ull };
+        static const proven_u64 D1[] = { 0, 1, 0xffffffff00000000ull, 0xffffffff00000001ull, 0xfffffffffffffffeull, 0xffffffffffffffffull, 0x00000000ffffffffull, 0x8000000000000000ull };
+        static const proven_u64 D0[] = { 0, 1, 0xfffffffffffffffeull, 0xffffffffffffffffull, 0x0123456789abcdefull };
+        static const proven_u64 D2[] = { 0, 1, 0xffffffffffffffffull };
+        int agreed = 0, tried = 0, skipped = 0;
+        for (size_t a = 0; a < sizeof D0 / sizeof D0[0]; ++a)
+            for (size_t b = 0; b < sizeof D1 / sizeof D1[0]; ++b)
+                for (size_t e = 0; e < sizeof D2 / sizeof D2[0]; ++e)
+                    for (int below = 0; below < 2; ++below)
+                        for (unsigned r = 0; r < 3; ++r) {
+                            /* U = p + d, or p - 1 - d (below p: no subtraction); d3 = 0. */
+                            const proven_u64 d[4] = { D0[a], D1[b], D2[e], 0 };
+                            proven_u64 u[5] = { 0 };
+                            unsigned __int128 v = 0;
+                            if (!below) {
+                                proven_u64 c = 0;
+                                for (int i = 0; i < 4; ++i) { v = (unsigned __int128)P[i] + d[i] + c; u[i] = (proven_u64)v; c = (proven_u64)(v >> 64); }
+                                u[4] = c;
+                            } else {
+                                proven_u64 bw = 1;                 /* p - 1 - d */
+                                for (int i = 0; i < 4; ++i) { v = (unsigned __int128)P[i] - d[i] - bw; u[i] = (proven_u64)v; bw = (proven_u64)(v >> 64) & 1u; }
+                                if (bw) continue;
+                            }
+                            /* m = 2^256 - 1 - r (and a middle word changed for r = 2). */
+                            proven_u64 m[4] = { ~(proven_u64)r, ~(proven_u64)0, r == 2 ? 0x7fffffffffffffffull : ~(proven_u64)0, ~(proven_u64)0 };
+                            proven_u64 mp[8] = { 0 };
+                            for (int i = 0; i < 4; ++i) {
+                                proven_u64 c = 0;
+                                for (int j = 0; j < 4; ++j) { v = (unsigned __int128)m[i] * P[j] + mp[i + j] + c; mp[i + j] = (proven_u64)v; c = (proven_u64)(v >> 64); }
+                                mp[i + 4] = c;
+                            }
+                            /* t = U 2^256 - m p, in nine words; skipped when negative or past eight. */
+                            proven_u64 t[9] = { 0, 0, 0, 0, u[0], u[1], u[2], u[3], u[4] }, bw = 0;
+                            for (int i = 0; i < 9; ++i) { v = (unsigned __int128)t[i] - (i < 8 ? mp[i] : 0) - bw; t[i] = (proven_u64)v; bw = (proven_u64)(v >> 64) & 1u; }
+                            if (bw || t[8]) { skipped++; continue; }
+                            const int got = proven_crypto_ec_test_p256_reduce(t);
+                            if (got < 0) { skipped++; continue; }
+                            tried++;
+                            if (got == 1) agreed++;
+                        }
+        printf("  P-256's reduction alone: %d of %d made values agree with the general code (%d not applicable)\n", agreed, tried, skipped);
+        PROVEN_TEST_ASSERT(agreed == tried && (tried >= 300 || proven_crypto_ec_test_p256_reduce((const proven_u64[8]){ 0 }) < 0),
+            "P-256's reduction, on values made to reach its rare borrows and carries, agrees with the general code", "");
+#endif
     }
 
     // ---------------------------------------------------------------

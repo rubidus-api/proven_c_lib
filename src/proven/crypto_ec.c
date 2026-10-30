@@ -327,7 +327,10 @@ static const proven_byte_t EC_P384_GTAB[16][96] = {
  * compiler, and GCC 16 and Clang make good add-with-carry chains of them. (Tried and dropped,
  * RFC-0028 S-6: GCC's __builtin_addcll, which becomes conditional jumps on the values at -O0
  * and -Og - ct-poison found them; carries as comparisons, slower; helper functions for the
- * carries, and forcing the field functions inline, both slower with GCC 16.) */
+ * carries, and forcing the field functions inline, both slower with GCC 16.) The product, the
+ * square and the reduction work on named words rather than arrays (v0.101.0): GCC 14 kept the
+ * arrays in memory through their loops, 0.78-0.83 of the time with it, 0.87-0.93 with GCC 16,
+ * the same with Clang. */
 
 #if PROVEN_CRYPTO_MP_LIMB_BITS == 64 && defined(__SIZEOF_INT128__)
 #define EC_P256_FIELD 1
@@ -335,71 +338,85 @@ __extension__ typedef unsigned __int128 ec_u128;
 #define P256_P3 0xffffffff00000001ull
 static const proven_u64 P256_P[4] = { 0xffffffffffffffffull, 0x00000000ffffffffull, 0, P256_P3 };
 
-/* t[0..8) = a value below p^2: t / 2^256 mod p into o, fully reduced. */
-static inline void p256_reduce(proven_u64 o[4], proven_u64 t[8]) {
+/* Every carry is the high half of a 128-bit sum - branch-free at every optimisation level. */
+#define P256_MAC(t, x, y, c) do { const ec_u128 v_ = (ec_u128)(x) * (y) + (t) + (c); (t) = (proven_u64)v_; (c) = (proven_u64)(v_ >> 64); } while (0)
+/* One step of the reduction: m = t0, the low word, cleared by adding m p, and what it carries
+ * into the four words above it (m (2^64 - 1) only carries m on, m (2^32 - 1) plus that is m 2^32,
+ * the third limb is zero, the fourth one multiplication). */
+#define P256_RED(m, t1, t2, t3, t4, top) do {                                         \
+        ec_u128 v_ = (ec_u128)(t1) + ((ec_u128)(m) << 32);                            \
+        (t1) = (proven_u64)v_;                                                        \
+        v_ = (ec_u128)(t2) + (proven_u64)(v_ >> 64);                                  \
+        (t2) = (proven_u64)v_;                                                        \
+        v_ = (ec_u128)(t3) + (ec_u128)(m) * P256_P3 + (proven_u64)(v_ >> 64);         \
+        (t3) = (proven_u64)v_;                                                        \
+        v_ = (ec_u128)(t4) + (proven_u64)(v_ >> 64) + (top);                          \
+        (t4) = (proven_u64)v_;                                                        \
+        (top) = (proven_u64)(v_ >> 64);                                               \
+    } while (0)
+
+/* t0..t7, a value below p^2: t / 2^256 mod p into o, fully reduced. */
+static inline void p256_reduce8(proven_u64 o[4], proven_u64 t0, proven_u64 t1, proven_u64 t2, proven_u64 t3,
+                                proven_u64 t4, proven_u64 t5, proven_u64 t6, proven_u64 t7) {
     proven_u64 top = 0;
-    for (int i = 0; i < 4; ++i) {
-        const proven_u64 m = t[i];
-        ec_u128 v = (ec_u128)t[i + 1] + ((ec_u128)m << 32);
-        t[i + 1] = (proven_u64)v;
-        v = (ec_u128)t[i + 2] + (proven_u64)(v >> 64);
-        t[i + 2] = (proven_u64)v;
-        v = (ec_u128)t[i + 3] + (ec_u128)m * P256_P3 + (proven_u64)(v >> 64);
-        t[i + 3] = (proven_u64)v;
-        v = (ec_u128)t[i + 4] + (proven_u64)(v >> 64) + top;
-        t[i + 4] = (proven_u64)v;
-        top = (proven_u64)(v >> 64);
-    }
-    /* t[4..8) and top: below 2p. One subtraction, chosen by mask. */
-    proven_u64 d[4], borrow = 0;
-    for (int i = 0; i < 4; ++i) {
-        const ec_u128 v = (ec_u128)t[4 + i] - P256_P[i] - borrow;
-        d[i] = (proven_u64)v;
-        borrow = (proven_u64)(v >> 64) & 1u;
-    }
+    P256_RED(t0, t1, t2, t3, t4, top);
+    P256_RED(t1, t2, t3, t4, t5, top);
+    P256_RED(t2, t3, t4, t5, t6, top);
+    P256_RED(t3, t4, t5, t6, t7, top);
+    /* t4..t7 and top: below 2p. One subtraction, chosen by mask. */
+    ec_u128 v = (ec_u128)t4 - P256_P[0];
+    const proven_u64 d0 = (proven_u64)v;
+    v = (ec_u128)t5 - P256_P[1] - ((proven_u64)(v >> 64) & 1u);
+    const proven_u64 d1 = (proven_u64)v;
+    v = (ec_u128)t6 - ((proven_u64)(v >> 64) & 1u);
+    const proven_u64 d2 = (proven_u64)v;
+    v = (ec_u128)t7 - P256_P3 - ((proven_u64)(v >> 64) & 1u);
+    const proven_u64 d3 = (proven_u64)v, borrow = (proven_u64)(v >> 64) & 1u;
     const proven_u64 keep = (proven_u64)0 - ((top | (borrow ^ 1u)) & 1u);       /* all ones: take d */
-    for (int i = 0; i < 4; ++i) o[i] = (d[i] & keep) | (t[4 + i] & ~keep);
+    o[0] = (d0 & keep) | (t4 & ~keep);
+    o[1] = (d1 & keep) | (t5 & ~keep);
+    o[2] = (d2 & keep) | (t6 & ~keep);
+    o[3] = (d3 & keep) | (t7 & ~keep);
 }
 
 static void p256_mul(proven_u64 o[4], const proven_u64 a[4], const proven_u64 b[4]) {
-    proven_u64 t[8] = { 0 };
-    for (int i = 0; i < 4; ++i) {
-        proven_u64 c = 0;
-        for (int j = 0; j < 4; ++j) {
-            const ec_u128 v = (ec_u128)a[j] * b[i] + t[i + j] + c;
-            t[i + j] = (proven_u64)v;
-            c = (proven_u64)(v >> 64);
-        }
-        t[i + 4] = c;
-    }
-    p256_reduce(o, t);
+    const proven_u64 a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
+    proven_u64 t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4, t5, t6, t7, c, bi;
+    bi = b[0]; c = 0;
+    P256_MAC(t0, a0, bi, c); P256_MAC(t1, a1, bi, c); P256_MAC(t2, a2, bi, c); P256_MAC(t3, a3, bi, c); t4 = c;
+    bi = b[1]; c = 0;
+    P256_MAC(t1, a0, bi, c); P256_MAC(t2, a1, bi, c); P256_MAC(t3, a2, bi, c); P256_MAC(t4, a3, bi, c); t5 = c;
+    bi = b[2]; c = 0;
+    P256_MAC(t2, a0, bi, c); P256_MAC(t3, a1, bi, c); P256_MAC(t4, a2, bi, c); P256_MAC(t5, a3, bi, c); t6 = c;
+    bi = b[3]; c = 0;
+    P256_MAC(t3, a0, bi, c); P256_MAC(t4, a1, bi, c); P256_MAC(t5, a2, bi, c); P256_MAC(t6, a3, bi, c); t7 = c;
+    p256_reduce8(o, t0, t1, t2, t3, t4, t5, t6, t7);
 }
 
 static void p256_sqr(proven_u64 o[4], const proven_u64 a[4]) {
-    proven_u64 t[8] = { 0 };
+    const proven_u64 a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
     /* The six products of different limbs once, doubled, then the four squares. */
-    for (int i = 0; i < 3; ++i) {
-        proven_u64 c = 0;
-        for (int j = i + 1; j < 4; ++j) {
-            const ec_u128 v = (ec_u128)a[i] * a[j] + t[i + j] + c;
-            t[i + j] = (proven_u64)v;
-            c = (proven_u64)(v >> 64);
-        }
-        t[i + 4] = c;
-    }
-    t[7] = t[6] >> 63;
-    for (int k = 6; k > 0; --k) t[k] = (t[k] << 1) | (t[k - 1] >> 63);
-    t[0] <<= 1;
-    proven_u64 c = 0;
-    for (int i = 0; i < 4; ++i) {
-        const ec_u128 sq = (ec_u128)a[i] * a[i];
-        ec_u128 v = (ec_u128)t[2 * i] + (proven_u64)sq + c;
-        t[2 * i] = (proven_u64)v;
-        v = (ec_u128)t[2 * i + 1] + (proven_u64)(sq >> 64) + (proven_u64)(v >> 64);
-        t[2 * i + 1] = (proven_u64)v;
-        c = (proven_u64)(v >> 64);
-    }
-    p256_reduce(o, t);
+    proven_u64 t1 = 0, t2 = 0, t3 = 0, t4, t5, t6, t7, c;
+    c = 0; P256_MAC(t1, a0, a1, c); P256_MAC(t2, a0, a2, c); P256_MAC(t3, a0, a3, c); t4 = c;
+    c = 0; P256_MAC(t3, a1, a2, c); P256_MAC(t4, a1, a3, c); t5 = c;
+    c = 0; P256_MAC(t5, a2, a3, c); t6 = c;
+    t7 = t6 >> 63;
+    t6 = (t6 << 1) | (t5 >> 63); t5 = (t5 << 1) | (t4 >> 63); t4 = (t4 << 1) | (t3 >> 63);
+    t3 = (t3 << 1) | (t2 >> 63); t2 = (t2 << 1) | (t1 >> 63); t1 <<= 1;
+    proven_u64 t0;
+    ec_u128 sq, v;
+    sq = (ec_u128)a0 * a0; t0 = (proven_u64)sq;
+    v = (ec_u128)t1 + (proven_u64)(sq >> 64); t1 = (proven_u64)v;
+    sq = (ec_u128)a1 * a1;
+    v = (ec_u128)t2 + (proven_u64)sq + (proven_u64)(v >> 64); t2 = (proven_u64)v;
+    v = (ec_u128)t3 + (proven_u64)(sq >> 64) + (proven_u64)(v >> 64); t3 = (proven_u64)v;
+    sq = (ec_u128)a2 * a2;
+    v = (ec_u128)t4 + (proven_u64)sq + (proven_u64)(v >> 64); t4 = (proven_u64)v;
+    v = (ec_u128)t5 + (proven_u64)(sq >> 64) + (proven_u64)(v >> 64); t5 = (proven_u64)v;
+    sq = (ec_u128)a3 * a3;
+    v = (ec_u128)t6 + (proven_u64)sq + (proven_u64)(v >> 64); t6 = (proven_u64)v;
+    v = (ec_u128)t7 + (proven_u64)(sq >> 64) + (proven_u64)(v >> 64); t7 = (proven_u64)v;
+    p256_reduce8(o, t0, t1, t2, t3, t4, t5, t6, t7);
 }
 
 static void p256_add(proven_u64 o[4], const proven_u64 a[4], const proven_u64 b[4]) {
@@ -1181,6 +1198,33 @@ bool proven_crypto_ec_test_generator_table(proven_crypto_ec_curve_t curve) {
         for (proven_size_t j = 0; j < 2 * c.bytes; ++j) if (got[j] != want[j]) return false;
     }
     return true;
+}
+
+int proven_crypto_ec_test_p256_reduce(const proven_u64 t[8]) {
+#if EC_P256_FIELD
+    proven_ec_curve_t c;
+    if (!ec_curve_init(&c, PROVEN_CRYPTO_EC_P256)) return -1;
+    proven_crypto_limb_t lo[4], hi[4], one[4] = { 1, 0, 0, 0 }, x[4], want[4], got[4];
+    for (int i = 0; i < 4; ++i) { lo[i] = t[i]; hi[i] = t[4 + i]; }
+    if (!proven_crypto_mp_lt(hi, c.p.n, 4)) return -1;
+    /* t / R = hi + lo / R (mod p): lo brought below p (it is below 2p), then lo R^-1 by the
+     * general Montgomery product with 1, then the general modular addition. */
+    if (!proven_crypto_mp_lt(lo, c.p.n, 4)) {
+        proven_u64 borrow = 0;
+        for (int i = 0; i < 4; ++i) {
+            const ec_u128 v = (ec_u128)lo[i] - P256_P[i] - borrow;
+            lo[i] = (proven_u64)v;
+            borrow = (proven_u64)(v >> 64) & 1u;
+        }
+    }
+    proven_crypto_mp_montmul(&c.p, x, lo, one);
+    proven_crypto_mp_add(&c.p, want, hi, x);
+    p256_reduce8(got, t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7]);
+    return proven_crypto_mp_eq(got, want, 4) != 0;
+#else
+    (void)t;
+    return -1;
+#endif
 }
 
 /* k * G by the table and by the general walk, for any k below the order - zero too, which no
