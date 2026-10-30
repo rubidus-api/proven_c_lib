@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.101.0] - 2026-10-31
+
 ### Added
 
 - **Zstandard encoder levels 10 to 12** (RFC-0038 Z-1): lazy2 with libzstd's larger tables for those
