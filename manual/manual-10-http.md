@@ -399,6 +399,18 @@ whole file is the worst possible outcome of a download.
 **After an error the connection is finished.** Once framing is wrong, where the next message
 begins is unknown. Answer if you can, and close.
 
+**Trailers** (since v0.106.0) are fields sent after the last chunk - a checksum or a status the
+sender knows only at the end. The decoder checks them and passes over them unless you ask:
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_http_body_keep_trailers(&body, buf)` | After `init`: copy the trailer section into `buf` as it arrives. | `proven_err_t`: `INVALID_ARG` for no buffer. A section larger than `buf` (or `PROVEN_HTTP_MAX_TRAILER_BYTES`) makes `feed` fail with `OUT_OF_BOUNDS`. |
+| `proven_http_body_trailers(&body, fields, cap, &count)` | Once `done`: the fields, as views into `buf`. None for a body that was not chunked. | `proven_err_t`: `INVALID_STATE` before the end or without a kept section; `OUT_OF_BOUNDS` for more than `cap`. |
+| `proven_http_trailer_allowed(name)` | May this field be a trailer (RFC 9110 section 6.5.1)? | `bool`: false for fields that frame or route the message, control the request, authenticate, or describe the content (`Content-Length`, `Host`, `Authorization`, `Set-Cookie`, `Content-Type`...), and for pseudo-fields. |
+
+A received field that may not be a trailer is left out of what `proven_http_body_trailers` gives
+back: a `Content-Length` after the body must not be taken for the one the head should have sent.
+
 Compiled and run by the test suite - a request arriving in four awkward pieces:
 
 <!-- example: manual/examples/en/ex_10_http_request.c -->
@@ -525,6 +537,7 @@ length, and advances it; on failure the length does not move and nothing before 
 | `proven_http_write_chunk_begin(out, &len, size)` | the line that starts a chunk of `size` bytes (not 0) |
 | `proven_http_write_chunk_end(out, &len)` | the CRLF after a chunk's data |
 | `proven_http_write_last_chunk(out, &len)` | the zero chunk and empty trailers that end a chunked body |
+| `proven_http_write_trailers(out, &len, fields, count)` | the zero chunk and a trailer section; `INVALID_ARG` for a field `proven_http_trailer_allowed` refuses (since v0.106.0) |
 
 All return `proven_err_t`: `PROVEN_ERR_OUT_OF_BOUNDS` when it does not fit, and
 `PROVEN_ERR_INVALID_ARG` when what you asked it to write would not be the thing it is named for.
@@ -1222,6 +1235,5 @@ int main(void) {
   was sent. Two helpers read the headers involved (`proven_http_accepts_coding`,
   `proven_http_content_coding`), and the servers and clients built on this codec can compress
   and decode `gzip`: [Chapter 16](manual-16-compression.md), section 6.
-- **Trailers.** After a chunked body they are checked and skipped, not returned.
 - **A public suffix list**, and so cookies shared across subdomains - see section 12.
 - **`Negotiate`, `NTLM` and bearer-token flows.** A bearer token is a header you write yourself.

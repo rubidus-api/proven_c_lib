@@ -487,7 +487,13 @@ static void expect_cases(void) {
         proven_net_listener_t listener;
         PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 4, &listener, &at) == PROVEN_OK, "a listener the test answers on", "");
         t0 = proven_time_monotonic_now();
-        PROVEN_TEST_ASSERT(start_expect(client, &c, url(false, at.port, "/up"), mv("0123456789"), 0) == PROVEN_OK, "a POST of ten bytes, with expect_continue", "");
+        /* kind 0 writes its body, kind 1 gives it whole: a body held either way. */
+        if (kind == 0)
+            PROVEN_TEST_ASSERT(start_expect(client, &c, url(false, at.port, "/up"), (proven_mem_view_t){ 0 }, 10) == PROVEN_OK &&
+                               proven_http_event_request_write(c.request, mv("0123456789")).value == 10 && proven_http_event_request_end(c.request) == PROVEN_OK,
+                               "a POST of ten bytes written at once, with expect_continue", "");
+        else
+            PROVEN_TEST_ASSERT(start_expect(client, &c, url(false, at.port, "/up"), mv("0123456789"), 0) == PROVEN_OK, "a POST of ten bytes, with expect_continue", "");
         proven_net_conn_t conn;
         bool accepted = false;
         for (int i = 0; i < 500 && !accepted; ++i) { spin(5); accepted = proven_net_accept(&listener, PROVEN_NET_DONT_WAIT, &conn, NULL) == PROVEN_OK; }

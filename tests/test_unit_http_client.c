@@ -171,6 +171,26 @@ static void origin(void *ctx, proven_http_exchange_t *x) {
             proven_http_header_t h[2] = { { sv("WWW-Authenticate"), sv("Basic realm=\"proven\"") }, { sv("WWW-Authenticate"), sv(DIGEST_CHALLENGE_1) } };
             (void)proven_http_exchange_respond(x, 401, h, 2, mv("who?"));
         }
+    } else if (proven_u8str_view_eq(t, sv("/trailers"))) {
+        /* v0.106.0: the request's trailers read after its body, and answered with trailers of the response's own. */
+        proven_size_t n = 0;
+        for (;;) {
+            proven_result_size_t got = proven_http_exchange_read(x, (proven_mem_mut_t){ .ptr = body + n, .size = sizeof body - n });
+            if (got.err != PROVEN_OK) break;
+            n += got.value;
+        }
+        proven_http_header_t tr[4];
+        proven_size_t tc = 0;
+        proven_u8str_view_t sum = sv("none");
+        if (proven_http_exchange_trailers(x, tr, 4, &tc) == PROVEN_OK) (void)proven_http_header_find(tr, tc, sv("X-Sum"), &sum);
+        int len = snprintf(text, sizeof text, "%zu bytes, %zu trailers, X-Sum %.*s", (size_t)n, (size_t)tc, (int)sum.size, (const char *)sum.ptr);
+        if (proven_http_exchange_begin(x, 200, NULL, 0, PROVEN_HTTP_LENGTH_UNKNOWN) != PROVEN_OK) return;
+        (void)proven_http_exchange_write(x, (proven_mem_view_t){ .ptr = (const proven_byte_t *)text, .size = (proven_size_t)len });
+        /* A field that may not be a trailer is refused before anything ends: the response can still be ended. */
+        const proven_http_header_t refused[1] = { { sv("Content-Type"), sv("text/plain") } };
+        const bool checked = proven_http_exchange_end_trailers(x, refused, 1) == PROVEN_ERR_INVALID_ARG;
+        const proven_http_header_t out[2] = { { sv("X-Status"), checked ? sv("done") : sv("ended by a refused field") }, { sv("Server-Timing"), sv("db;dur=3") } };
+        (void)proven_http_exchange_end_trailers(x, out, 2);
     } else if (proven_u8str_view_eq(t, sv("/authint"))) {
         proven_size_t n = 0;
         for (;;) {
@@ -811,6 +831,31 @@ int main(void) {
         PROVEN_TEST_ASSERT(e == PROVEN_OK && resp.status == 200 && proven_u8str_view_eq(header_of(&resp, "X-Framing"), sv("chunked")), "a PUT from a stream is sent chunked", "");
         PROVEN_TEST_ASSERT(take_body(&resp) == PROVEN_ERR_EOF && g_body_len == sizeof big && memcmp(g_body, big, sizeof big) == 0, "and arrives whole", "");
         proven_http_client_finish(&resp);
+
+        /* Trailers both ways (v0.106.0): after a streamed request body, and after a chunked response. */
+        {
+            const proven_http_header_t tr[1] = { { sv("X-Sum"), sv("c0ffee") } };
+            req = (proven_http_client_request_t){ .method = sv("PUT"), .url = url_at(o.port, "/trailers"),
+                  .body_stream = proven_reader_from_view(&rv, (proven_u8str_view_t){ .ptr = big, .size = 1000 }), .trailers = tr, .trailer_count = 1 };
+            e = proven_http_client_send(client, &req, &resp);
+            proven_http_header_t got[4];
+            proven_size_t gc = 9;
+            const proven_err_t early = e == PROVEN_OK ? proven_http_client_trailers(&resp, got, 4, &gc) : PROVEN_ERR_INVALID_ARG;
+            PROVEN_TEST_ASSERT(e == PROVEN_OK && resp.status == 200 && early == PROVEN_ERR_INVALID_STATE && take_body(&resp) == PROVEN_ERR_EOF &&
+                               body_is("1000 bytes, 1 trailers, X-Sum c0ffee"), "the server read the body and the trailer sent after it; before the response's end its own trailers are not there", "");
+            PROVEN_TEST_ASSERT(proven_http_client_trailers(&resp, got, 4, &gc) == PROVEN_OK && gc == 2 && proven_u8str_view_eq(got[0].name, sv("X-Status")) &&
+                               proven_u8str_view_eq(got[0].value, sv("done")) && proven_u8str_view_eq(got[1].value, sv("db;dur=3")), "and the response's trailers are read after its body - written after a refused field was turned away without ending the response", "");
+            proven_http_client_finish(&resp);
+            const proven_http_header_t badt[1] = { { sv("Content-Length"), sv("1") } };
+            req = (proven_http_client_request_t){ .method = sv("PUT"), .url = url_at(o.port, "/trailers"), .body = mv("x"), .trailers = tr, .trailer_count = 1 };
+            PROVEN_TEST_ASSERT(proven_http_client_send(client, &req, &resp) == PROVEN_ERR_INVALID_ARG, "trailers with a body in memory: PROVEN_ERR_INVALID_ARG", "");
+            req = (proven_http_client_request_t){ .method = sv("PUT"), .url = url_at(o.port, "/trailers"), .body_stream = proven_reader_from_view(&rv, sv("y")), .trailers = badt, .trailer_count = 1 };
+            PROVEN_TEST_ASSERT(proven_http_client_send(client, &req, &resp) == PROVEN_ERR_INVALID_ARG, "a field that may not be a trailer: PROVEN_ERR_INVALID_ARG", "");
+            e = proven_http_client_get(client, url_at(o.port, "/hello"), &resp);
+            PROVEN_TEST_ASSERT(e == PROVEN_OK && take_body(&resp) == PROVEN_ERR_EOF && proven_http_client_trailers(&resp, got, 4, &gc) == PROVEN_OK && gc == 0,
+                               "a response with a length has no trailers", "");
+            proven_http_client_finish(&resp);
+        }
 
         req = (proven_http_client_request_t){ .method = sv("POST"), .url = url_at(o.port, "/echo"), .body = mv("x"), .body_stream = proven_reader_from_view(&rv, sv("y")) };
         PROVEN_TEST_ASSERT(proven_http_client_send(client, &req, &resp) == PROVEN_ERR_INVALID_ARG, "both a body and a stream: PROVEN_ERR_INVALID_ARG", "");

@@ -77,6 +77,7 @@ struct sv_conn {
     bool keep;
     bool compress_asked;               /* the handler asked for this response to be compressed */
     proven_http_compressor_t_ *zip;    /* it is: the body goes through this, and `out` holds what comes out */
+    proven_byte_t *trailers;           /* a chunked request's trailer section, kept (allocated for the first such request, kept with the connection) */
 };
 
 struct proven_http_exchange { proven_sv_conn_t conn; };
@@ -322,11 +323,15 @@ proven_err_t proven_http_exchange_flush(proven_http_exchange_t *exchange) {
     return sv_zip(c, (proven_mem_view_t){ 0 }, PROVEN_DEFLATE_FLUSH_SYNC);
 }
 
-proven_err_t proven_http_exchange_end(proven_http_exchange_t *exchange) {
-    if (!exchange) return PROVEN_ERR_INVALID_ARG;
-    proven_sv_conn_t *c = &exchange->conn;
+static proven_err_t sv_end(proven_sv_conn_t *c, const proven_http_header_t *trailers, proven_size_t count) {
     if (!c->response_begun) return PROVEN_ERR_INVALID_STATE;
-    if (c->response_ended) return PROVEN_OK;
+    if (c->response_ended) return count > 0 ? PROVEN_ERR_INVALID_STATE : PROVEN_OK;
+    if (count > 0) {
+        /* Trailers go after the last chunk: a response with a length has nowhere to put them.
+         * Checked before anything ends; written at the end, after a compressor's last bytes. */
+        if (!c->chunked_out || c->head_only) return PROVEN_ERR_INVALID_STATE;
+        for (proven_size_t i = 0; i < count; ++i) if (!proven_http_trailer_allowed(trailers[i].name)) return PROVEN_ERR_INVALID_ARG;
+    }
     c->response_ended = true;
     /* Fewer bytes than were promised: the message cannot be completed, and the only honest
      * signal left is to close before its announced end. */
@@ -343,9 +348,33 @@ proven_err_t proven_http_exchange_end(proven_http_exchange_t *exchange) {
         if (cut_short) return PROVEN_OK;
     }
     if (c->chunked_out && !c->io_failed) {
+        if (count > 0) {
+            proven_size_t tl = 0;
+            proven_err_t e = proven_http_write_trailers((proven_mem_mut_t){ .ptr = c->out, .size = c->out_cap }, &tl, trailers, count);
+            if (e != PROVEN_OK) { c->close_after = true; return e; }    /* the body cannot be ended now */
+            return sv_send(c, (proven_mem_view_t){ .ptr = c->out, .size = tl });
+        }
         return sv_send(c, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"0\r\n\r\n", .size = 5 });
     }
     return PROVEN_OK;
+}
+
+proven_err_t proven_http_exchange_end(proven_http_exchange_t *exchange) {
+    if (!exchange) return PROVEN_ERR_INVALID_ARG;
+    return sv_end(&exchange->conn, (void *)0, 0);
+}
+
+proven_err_t proven_http_exchange_end_trailers(proven_http_exchange_t *exchange, const proven_http_header_t *fields, proven_size_t count) {
+    if (!exchange || count == 0 || !fields) return PROVEN_ERR_INVALID_ARG;
+    return sv_end(&exchange->conn, fields, count);
+}
+
+proven_err_t proven_http_exchange_trailers(const proven_http_exchange_t *exchange, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count) {
+    if (count) *count = 0;
+    if (!exchange || !count || (cap > 0 && !fields)) return PROVEN_ERR_INVALID_ARG;
+    const proven_sv_conn_t *c = &exchange->conn;
+    if (!c->body_done) return PROVEN_ERR_INVALID_STATE;
+    return proven_http_body_trailers(&c->body, fields, cap, count);
 }
 
 proven_err_t proven_http_exchange_respond(proven_http_exchange_t *exchange, proven_u16 status,
@@ -746,6 +775,7 @@ static void sv_free_dead(proven_http_server_t *s) {
     while (s->dead) {
         proven_sv_conn_t *c = s->dead;
         s->dead = c->next_dead;
+        if (c->trailers) sv_free(s->cfg.alloc, c->trailers);
         sv_free(s->cfg.alloc, c);
     }
 }
@@ -866,6 +896,11 @@ static bool sv_service(proven_http_server_t *s, proven_sv_conn_t *c) {
         if (!refuse) {
             e = proven_http_body_init(&c->body, framing, s->cfg.max_body_bytes);
             if (e != PROVEN_OK) refuse = 413;
+        }
+        /* A chunked body's trailers are kept for the handler (proven_http_exchange_trailers). */
+        if (!refuse && framing.kind == PROVEN_HTTP_BODY_CHUNKED) {
+            if (!c->trailers) c->trailers = sv_alloc(s->cfg.alloc, PROVEN_HTTP_MAX_TRAILER_BYTES);
+            if (!c->trailers || proven_http_body_keep_trailers(&c->body, (proven_mem_mut_t){ .ptr = c->trailers, .size = PROVEN_HTTP_MAX_TRAILER_BYTES }) != PROVEN_OK) refuse = 500;
         }
         /* HTTP/1.1 requires Host; without it a request cannot be routed, and a server that
          * guesses is the back end a smuggled request is aimed at. */

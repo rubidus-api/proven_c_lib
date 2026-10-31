@@ -312,6 +312,28 @@ proven_err_t proven_http_exchange_flush(proven_http_exchange_t *exchange);
 proven_err_t proven_http_exchange_end(proven_http_exchange_t *exchange);
 
 /**
+ * @brief End a response written in pieces with no length (proven_http_exchange_begin with
+ *        PROVEN_HTTP_LENGTH_UNKNOWN, so chunked) with trailer fields after it (since v0.106.0): what a
+ *        sender can only know at the end - a checksum, a signature, a status (gRPC's `grpc-status`).
+ *        A client that does not read trailers passes over them.
+ * @return PROVEN_ERR_INVALID_STATE for a response with a length (or to HEAD), or one already ended;
+ *         PROVEN_ERR_INVALID_ARG for no fields, or a field proven_http_trailer_allowed refuses; as
+ *         proven_http_exchange_end otherwise.
+ */
+[[nodiscard]]
+proven_err_t proven_http_exchange_end_trailers(proven_http_exchange_t *exchange, const proven_http_header_t *fields, proven_size_t count);
+
+/**
+ * @brief The trailer fields that followed a chunked request body (since v0.106.0), once
+ *        proven_http_exchange_read has returned PROVEN_ERR_EOF: views good until the handler returns.
+ *        None for a body that was not chunked.
+ * @return PROVEN_ERR_INVALID_STATE before the body's end; PROVEN_ERR_OUT_OF_BOUNDS for more fields
+ *         than `cap`.
+ */
+[[nodiscard]]
+proven_err_t proven_http_exchange_trailers(const proven_http_exchange_t *exchange, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count);
+
+/**
  * @brief Answer `101 Switching Protocols` and take the connection out of the server.
  *
  * For a request that asks to change protocol - `Upgrade: websocket`, say. The server writes the

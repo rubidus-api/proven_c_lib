@@ -639,9 +639,11 @@
 #define xcv_http_body_end proven_http_body_end
 #define xcv_http_body_feed proven_http_body_feed
 #define xcv_http_body_init proven_http_body_init
+#define xcv_http_body_keep_trailers proven_http_body_keep_trailers
 #define xcv_http_body_kind_t proven_http_body_kind_t
 #define xcv_http_body_received proven_http_body_received
 #define xcv_http_body_t proven_http_body_t
+#define xcv_http_body_trailers proven_http_body_trailers
 #define xcv_http_byteranges_write_content_type proven_http_byteranges_write_content_type
 #define xcv_http_byteranges_write_part proven_http_byteranges_write_part
 #define xcv_http_client_config_t proven_http_client_config_t
@@ -655,6 +657,7 @@
 #define xcv_http_client_response_t proven_http_client_response_t
 #define xcv_http_client_send proven_http_client_send
 #define xcv_http_client_t proven_http_client_t
+#define xcv_http_client_trailers proven_http_client_trailers
 #define xcv_http_client_upgrade proven_http_client_upgrade
 #define xcv_http_coding_t proven_http_coding_t
 #define xcv_http_content_coding proven_http_content_coding
@@ -713,12 +716,14 @@
 #define xcv_http_exchange_compress proven_http_exchange_compress
 #define xcv_http_exchange_early proven_http_exchange_early
 #define xcv_http_exchange_end proven_http_exchange_end
+#define xcv_http_exchange_end_trailers proven_http_exchange_end_trailers
 #define xcv_http_exchange_flush proven_http_exchange_flush
 #define xcv_http_exchange_peer proven_http_exchange_peer
 #define xcv_http_exchange_read proven_http_exchange_read
 #define xcv_http_exchange_request proven_http_exchange_request
 #define xcv_http_exchange_respond proven_http_exchange_respond
 #define xcv_http_exchange_t proven_http_exchange_t
+#define xcv_http_exchange_trailers proven_http_exchange_trailers
 #define xcv_http_exchange_upgrade proven_http_exchange_upgrade
 #define xcv_http_exchange_write proven_http_exchange_write
 #define xcv_http_framing_t proven_http_framing_t
@@ -783,6 +788,7 @@
 #define xcv_http_stream_user proven_http_stream_user
 #define xcv_http_stream_write proven_http_stream_write
 #define xcv_http_tls_wrap_fn proven_http_tls_wrap_fn
+#define xcv_http_trailer_allowed proven_http_trailer_allowed
 #define xcv_http_write_chunk_begin proven_http_write_chunk_begin
 #define xcv_http_write_chunk_end proven_http_write_chunk_end
 #define xcv_http_write_content_range proven_http_write_content_range
@@ -793,6 +799,7 @@
 #define xcv_http_write_range proven_http_write_range
 #define xcv_http_write_request_line proven_http_write_request_line
 #define xcv_http_write_status_line proven_http_write_status_line
+#define xcv_http_write_trailers proven_http_write_trailers
 #define xcv_i16 proven_i16
 #define xcv_i32 proven_i32
 #define xcv_i64 proven_i64

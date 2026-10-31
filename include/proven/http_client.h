@@ -114,6 +114,8 @@ typedef struct {
     proven_size_t header_count;
     proven_mem_view_t body;                 /**< a body held in memory: sent with `Content-Length` */
     proven_reader_t body_stream;            /**< or, when valid, a body read from here and sent chunked */
+    const proven_http_header_t *trailers;   /**< with `body_stream`: trailer fields sent after the last chunk (since v0.106.0); each must pass proven_http_trailer_allowed. Not over HTTP/3 (PROVEN_ERR_UNSUPPORTED), not with a body in memory (PROVEN_ERR_INVALID_ARG) */
+    proven_size_t trailer_count;
     proven_u8str_view_t upgrade;            /**< a protocol to change to (`websocket`): sends `Connection: Upgrade` and `Upgrade`; empty: none */
     bool expect_continue;                   /**< for a request with a body: send `Expect: 100-continue` and the head first, and the body only when the server says to go on (or says nothing for `expect_timeout_ms`). A server that answers at once instead - 401, 413, 417 - is not sent the body at all, and that answer is the response; the connection is then not kept. Do not set an `Expect` header of your own with it. Over HTTP/3 the body goes at once */
     bool http3;                             /**< send this request over HTTP/3: an `https` URL, on a client with `http3` (otherwise PROVEN_ERR_INVALID_ARG). Not through a proxy and not with `upgrade` (PROVEN_ERR_UNSUPPORTED). A redirect keeps HTTP/3 within the same origin; to another it is an ordinary request (HTTP/1.1, through `tls_wrap` - without it, the redirect is returned, not followed) */
@@ -211,6 +213,16 @@ proven_err_t proven_http_client_get(proven_http_client_t *client, proven_u8str_v
  */
 [[nodiscard]]
 proven_result_size_t proven_http_client_read(proven_http_client_response_t *response, proven_mem_mut_t dest);
+
+/**
+ * @brief The trailer fields that followed a chunked response body (since v0.106.0), once
+ *        proven_http_client_read has returned PROVEN_ERR_EOF: views good until
+ *        proven_http_client_finish. None for a body that was not chunked.
+ * @return PROVEN_ERR_INVALID_STATE before the body's end; PROVEN_ERR_OUT_OF_BOUNDS for more fields
+ *         than `cap`; PROVEN_ERR_UNSUPPORTED for a response over HTTP/3.
+ */
+[[nodiscard]]
+proven_err_t proven_http_client_trailers(const proven_http_client_response_t *response, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count);
 
 /**
  * @brief Read the rest of the body and append it to `out`, growing it with `alloc`.

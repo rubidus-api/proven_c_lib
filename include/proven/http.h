@@ -32,7 +32,8 @@
  * Each of these is something real software accepts and real attacks use.
  *
  * What is NOT here: HTTP/2 and HTTP/3; content codings (gzip); cookies;
- * authentication. Trailers after a chunked body are checked and skipped, not handed back.
+ * authentication. Trailers after a chunked body are checked and skipped unless asked for
+ * (proven_http_body_keep_trailers, since v0.106.0).
  *
  * Not part of the socket layer: `PROVEN_NO_NET` does not remove this header.
  */
@@ -273,6 +274,8 @@ typedef struct {
     proven_u64 total;           /* payload bytes delivered so far */
     proven_u64 max_body;
     proven_u32 line_bytes;      /* bytes of chunk-size line or trailer section seen */
+    proven_u32 trailer_cap;     /* proven_http_body_keep_trailers: room in `trailers`, where the section is kept */
+    proven_byte_t *trailers;
 } proven_http_body_t;
 
 /** @brief Largest chunk-size line (size, extensions, CRLF) the decoder accepts. */
@@ -324,6 +327,38 @@ proven_err_t proven_http_body_end(const proven_http_body_t *body);
 /** @brief Body bytes delivered so far. */
 [[nodiscard]]
 proven_u64 proven_http_body_received(const proven_http_body_t *body);
+
+/**
+ * @brief Keep the trailer section of a chunked body (since v0.106.0): the fields sent after the last
+ *        chunk (RFC 9112 section 7.1.2), which are otherwise checked and passed over. Call it after
+ *        proven_http_body_init, before the body ends. The section is copied into `buf` as it arrives.
+ * @return PROVEN_ERR_INVALID_ARG for no buffer. A section larger than `buf` (or than
+ *         PROVEN_HTTP_MAX_TRAILER_BYTES) makes proven_http_body_feed fail with PROVEN_ERR_OUT_OF_BOUNDS.
+ */
+[[nodiscard]]
+proven_err_t proven_http_body_keep_trailers(proven_http_body_t *body, proven_mem_mut_t buf);
+
+/**
+ * @brief The trailer fields of a body that has ended, read from what proven_http_body_keep_trailers
+ *        kept: views into its buffer, in the order sent. None for a body that was not chunked. A field
+ *        proven_http_trailer_allowed refuses is left out: it is not taken for what the head said.
+ * @return PROVEN_ERR_INVALID_STATE before the end, or without kept trailers; PROVEN_ERR_OUT_OF_BOUNDS
+ *         for more fields than `cap`.
+ */
+[[nodiscard]]
+proven_err_t proven_http_body_trailers(const proven_http_body_t *body, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count);
+
+/**
+ * @brief Whether a field may be sent as a trailer (RFC 9110 section 6.5.1): not one that frames the
+ *        message, routes it, controls the request, authenticates, or says how to process the content
+ *        - `Content-Length`, `Transfer-Encoding`, `Trailer`, `Host`, `Connection`, `Keep-Alive`, `TE`,
+ *        `Upgrade`, `Expect`, `Max-Forwards`, `Cache-Control`, `Pragma`, `Range`, `Authorization`,
+ *        `Proxy-Authorization`, `WWW-Authenticate`, `Proxy-Authenticate`, `Cookie`, `Set-Cookie`,
+ *        `Age`, `Date`, `Expires`, `Location`, `Retry-After`, `Vary`, `Content-Encoding`,
+ *        `Content-Type`, `Content-Range`, and any pseudo-field. Names compare without case.
+ */
+[[nodiscard]]
+bool proven_http_trailer_allowed(proven_u8str_view_t name);
 
 // -----------------------------------------------------------------------------
 // Writing
@@ -390,6 +425,12 @@ proven_err_t proven_http_write_chunk_end(proven_mem_mut_t out, proven_size_t *le
 /** @brief Append the zero-size chunk and empty trailer section that end a chunked body. */
 [[nodiscard]]
 proven_err_t proven_http_write_last_chunk(proven_mem_mut_t out, proven_size_t *len);
+
+/** @brief Append the zero-size chunk and a trailer section of `fields` (since v0.106.0).
+ *  @return PROVEN_ERR_INVALID_ARG for a field proven_http_trailer_allowed refuses, or one that is not
+ *          a valid field; PROVEN_ERR_OUT_OF_BOUNDS. */
+[[nodiscard]]
+proven_err_t proven_http_write_trailers(proven_mem_mut_t out, proven_size_t *len, const proven_http_header_t *fields, proven_size_t count);
 
 // -----------------------------------------------------------------------------
 // Ranges

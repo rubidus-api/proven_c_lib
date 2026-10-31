@@ -79,6 +79,7 @@ typedef struct {
     proven_http_header_t headers[CL_MAX_HEADERS];
     proven_http_response_t res;
     proven_http_body_t body;
+    proven_byte_t trailers[PROVEN_HTTP_MAX_TRAILER_BYTES];   /* a chunked response's trailer section (proven_http_client_trailers) */
     bool body_done;
     bool keep_alive;
     bool reused;
@@ -797,7 +798,15 @@ static proven_err_t cl_exchange(proven_cl_call_t *call, const proven_http_client
             if (w.err == PROVEN_OK) w = proven_transport_write_all(t, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"\r\n", .size = 2 }, cl_io_deadline(c));
             if (w.err != PROVEN_OK) break;
         }
-        if (w.err == PROVEN_OK) w = proven_transport_write_all(t, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"0\r\n\r\n", .size = 5 }, cl_io_deadline(c));
+        if (w.err == PROVEN_OK && req->trailer_count > 0) {
+            /* The last chunk with the caller's trailers, written into the (free) head buffer. */
+            proven_size_t tl = 0;
+            e = proven_http_write_trailers((proven_mem_mut_t){ .ptr = call->buf, .size = call->buf_cap }, &tl, req->trailers, req->trailer_count);
+            if (e != PROVEN_OK) return e;
+            w = proven_transport_write_all(t, (proven_mem_view_t){ .ptr = call->buf, .size = tl }, cl_io_deadline(c));
+        } else if (w.err == PROVEN_OK) {
+            w = proven_transport_write_all(t, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"0\r\n\r\n", .size = 5 }, cl_io_deadline(c));
+        }
         if (w.err == PROVEN_ERR_TIMEOUT) return w.err;
         if (w.err != PROVEN_OK) { write_failed = w.err; body_unsent = true; }
     }
@@ -846,6 +855,7 @@ static proven_err_t cl_exchange(proven_cl_call_t *call, const proven_http_client
     e = proven_http_response_framing(&call->res, proven_http_method_from_text(at->method), &framing);
     if (e != PROVEN_OK) return e;
     e = proven_http_body_init(&call->body, framing, UINT64_MAX);
+    if (e == PROVEN_OK && framing.kind == PROVEN_HTTP_BODY_CHUNKED) e = proven_http_body_keep_trailers(&call->body, (proven_mem_mut_t){ .ptr = call->trailers, .size = sizeof call->trailers });
     if (e != PROVEN_OK) return e;
     call->body_done = framing.kind == PROVEN_HTTP_BODY_NONE || (framing.kind == PROVEN_HTTP_BODY_LENGTH && framing.length == 0);
     call->keep_alive = proven_http_response_keep_alive(&call->res) && framing.kind != PROVEN_HTTP_BODY_UNTIL_CLOSE &&
@@ -1224,6 +1234,10 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
     }
     bool streaming = proven_reader_is_valid(request->body_stream);
     if (streaming && request->body.size > 0) return PROVEN_ERR_INVALID_ARG;
+    /* Trailers follow the last chunk: only a body that goes chunked has one. */
+    if (request->trailer_count > 0 && (!request->trailers || !streaming)) return PROVEN_ERR_INVALID_ARG;
+    for (proven_size_t i = 0; i < request->trailer_count; ++i) if (!proven_http_trailer_allowed(request->trailers[i].name)) return PROVEN_ERR_INVALID_ARG;
+    if (request->trailer_count > 0 && request->http3) return PROVEN_ERR_UNSUPPORTED;
     if (request->http3 && !client->cfg.http3) return PROVEN_ERR_INVALID_ARG;
     if (request->http3 && request->upgrade.size > 0) return PROVEN_ERR_UNSUPPORTED;     /* HTTP/3 changes protocol no such way */
 
@@ -1499,6 +1513,18 @@ proven_err_t proven_http_client_read_all(proven_http_client_response_t *response
         total += take;
         if (r.value > room) return PROVEN_ERR_OUT_OF_BOUNDS;
     }
+}
+
+proven_err_t proven_http_client_trailers(const proven_http_client_response_t *response, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count) {
+    if (count) *count = 0;
+    if (!response || !count || (cap > 0 && !fields)) return PROVEN_ERR_INVALID_ARG;
+    const proven_cl_call_t *call = response->internal;
+    if (!call) return PROVEN_ERR_INVALID_STATE;
+#if !defined(PROVEN_NO_HTTP3)
+    if (call->h3) return PROVEN_ERR_UNSUPPORTED;
+#endif
+    if (!call->body_done) return PROVEN_ERR_INVALID_STATE;
+    return proven_http_body_trailers(&call->body, fields, cap, count);
 }
 
 void proven_http_client_finish(proven_http_client_response_t *response) {

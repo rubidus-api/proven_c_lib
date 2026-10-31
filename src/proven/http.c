@@ -105,7 +105,9 @@ static proven_err_t http_version(proven_http_cur_t *c, proven_u8 *minor) {
 }
 
 /* Header fields up to and including the empty line. */
-static proven_err_t http_fields(proven_http_cur_t *c, proven_http_header_t *headers, proven_size_t cap, proven_size_t *count) {
+/* `trailers`: leave out the fields that may not be trailers (RFC 9110 section 6.5.1), so that one
+ * received is dropped rather than taken for what the head said. */
+static proven_err_t http_fields_of(proven_http_cur_t *c, proven_http_header_t *headers, proven_size_t cap, proven_size_t *count, bool trailers) {
     *count = 0;
     for (;;) {
         if (c->pos >= c->n) return http_short(c);
@@ -139,11 +141,16 @@ static proven_err_t http_fields(proven_http_cur_t *c, proven_http_header_t *head
         c->pos++;
         while (value_end > value_start && http_is_ows(c->p[value_end - 1])) value_end--;
 
+        if (trailers && !proven_http_trailer_allowed((proven_u8str_view_t){ .ptr = c->p + name_start, .size = name_end - name_start })) continue;
         if (*count >= cap) return PROVEN_ERR_OUT_OF_BOUNDS;
         headers[*count].name = (proven_u8str_view_t){ .ptr = c->p + name_start, .size = name_end - name_start };
         headers[*count].value = (proven_u8str_view_t){ .ptr = c->p + value_start, .size = value_end - value_start };
         (*count)++;
     }
+}
+
+static proven_err_t http_fields(proven_http_cur_t *c, proven_http_header_t *headers, proven_size_t cap, proven_size_t *count) {
+    return http_fields_of(c, headers, cap, count, false);
 }
 
 proven_err_t proven_http_parse_request(proven_mem_view_t data, proven_http_header_t *headers, proven_size_t header_cap,
@@ -626,6 +633,11 @@ proven_err_t proven_http_body_feed(proven_http_body_t *body, proven_mem_view_t i
 
     while (i < in.size) {
         proven_byte_t c = in.ptr[i];
+        if (body->trailers && body->state >= HTTP_B_TRAILER_START && body->state <= HTTP_B_FINAL_LF) {
+            /* The trailer section, kept as it comes - its last CRLF too, so that it reads as a head's fields. */
+            if (body->line_bytes >= body->trailer_cap) return http_body_fail(body, PROVEN_ERR_OUT_OF_BOUNDS);
+            body->trailers[body->line_bytes] = c;    /* line_bytes counts the section's bytes so far */
+        }
         switch (body->state) {
             case HTTP_B_DATA: {
                 proven_size_t take = in.size - i;
@@ -729,6 +741,35 @@ proven_err_t proven_http_body_feed(proven_http_body_t *body, proven_mem_view_t i
     }
     *consumed = i;
     return PROVEN_OK;
+}
+
+proven_err_t proven_http_body_keep_trailers(proven_http_body_t *body, proven_mem_mut_t buf) {
+    if (!body || !buf.ptr || buf.size == 0) return PROVEN_ERR_INVALID_ARG;
+    body->trailers = buf.ptr;
+    body->trailer_cap = buf.size < PROVEN_HTTP_MAX_TRAILER_BYTES ? (proven_u32)buf.size : PROVEN_HTTP_MAX_TRAILER_BYTES;
+    return PROVEN_OK;
+}
+
+proven_err_t proven_http_body_trailers(const proven_http_body_t *body, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count) {
+    if (count) *count = 0;
+    if (!body || !count || (cap > 0 && !fields)) return PROVEN_ERR_INVALID_ARG;
+    if (!body->done) return PROVEN_ERR_INVALID_STATE;
+    if (body->kind != PROVEN_HTTP_BODY_CHUNKED) return PROVEN_OK;
+    if (!body->trailers) return PROVEN_ERR_INVALID_STATE;
+    /* The section through its final LF, which ended the body without being counted. */
+    proven_http_cur_t cur = { .p = body->trailers, .n = (proven_size_t)body->line_bytes + 1, .capped = true, .pos = 0 };
+    proven_err_t e = http_fields_of(&cur, fields, cap, count, true);
+    return e == PROVEN_OK ? PROVEN_OK : e == PROVEN_ERR_OUT_OF_BOUNDS ? e : PROVEN_ERR_INVALID_FORMAT;
+}
+
+bool proven_http_trailer_allowed(proven_u8str_view_t name) {
+    if (name.size == 0 || name.ptr[0] == ':') return false;
+    static const char *const NOT[] = { "Content-Length", "Transfer-Encoding", "Trailer", "Host", "Connection", "Keep-Alive", "TE", "Upgrade",
+                                       "Expect", "Max-Forwards", "Cache-Control", "Pragma", "Range", "Authorization", "Proxy-Authorization",
+                                       "WWW-Authenticate", "Proxy-Authenticate", "Cookie", "Set-Cookie", "Age", "Date", "Expires", "Location",
+                                       "Retry-After", "Vary", "Content-Encoding", "Content-Type", "Content-Range" };
+    for (proven_size_t i = 0; i < sizeof NOT / sizeof NOT[0]; ++i) if (proven_u8str_view_eq_ascii_ci(name, http_cstr(NOT[i]))) return false;
+    return true;
 }
 
 proven_err_t proven_http_body_end(const proven_http_body_t *body) {
@@ -863,6 +904,23 @@ proven_err_t proven_http_write_chunk_begin(proven_mem_mut_t out, proven_size_t *
 
 proven_err_t proven_http_write_chunk_end(proven_mem_mut_t out, proven_size_t *len) {
     return proven_http_write_head_end(out, len);
+}
+
+proven_err_t proven_http_write_trailers(proven_mem_mut_t out, proven_size_t *len, const proven_http_header_t *fields, proven_size_t count) {
+    if (!len || (count > 0 && !fields)) return PROVEN_ERR_INVALID_ARG;
+    for (proven_size_t i = 0; i < count; ++i) {
+        if (!http_is_token(fields[i].name) || !proven_http_trailer_allowed(fields[i].name)) return PROVEN_ERR_INVALID_ARG;
+        for (proven_size_t k = 0; k < fields[i].value.size; ++k) if (!http_is_field_byte(fields[i].value.ptr[k])) return PROVEN_ERR_INVALID_ARG;
+    }
+    const proven_size_t start = *len;
+    proven_http_w_t w;
+    if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
+    http_put_cstr(&w, "0\r\n");
+    proven_err_t e = http_w_end(&w, len);
+    for (proven_size_t i = 0; i < count && e == PROVEN_OK; ++i) e = proven_http_write_header(out, len, fields[i].name, fields[i].value);
+    if (e == PROVEN_OK) e = proven_http_write_head_end(out, len);
+    if (e != PROVEN_OK) *len = start;
+    return e;
 }
 
 proven_err_t proven_http_write_last_chunk(proven_mem_mut_t out, proven_size_t *len) {

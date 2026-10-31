@@ -707,8 +707,11 @@ static void run_cap(proven_job_sys_t *loop_thread) {
                        proven_ws_conn_connect(client, ws_url(at.port, "/hold"), NULL, 0, sv(""), &wcfg, &c[1], &status) == PROVEN_OK, "two WebSockets", "");
     proven_ws_conn_t *x = NULL;
     status = 0;
-    PROVEN_TEST_ASSERT(proven_ws_conn_connect(client, ws_url(at.port, "/hold"), NULL, 0, sv(""), &wcfg, &x, &status) == PROVEN_ERR_REFUSED && status == 503 && x == NULL &&
-                       atomic_load(&g_accept_error) == PROVEN_ERR_BUSY, "a third is refused with 503, and the handler was told PROVEN_ERR_BUSY", "");
+    atomic_store(&g_accept_error, 0);
+    const bool refused = proven_ws_conn_connect(client, ws_url(at.port, "/hold"), NULL, 0, sv(""), &wcfg, &x, &status) == PROVEN_ERR_REFUSED && status == 503 && x == NULL;
+    /* The 503 is sent inside proven_ws_conn_accept, before the handler records what it returned. */
+    for (int i = 0; i < 400 && atomic_load(&g_accept_error) == 0; ++i) proven_time_sleep(5);
+    PROVEN_TEST_ASSERT(refused && atomic_load(&g_accept_error) == PROVEN_ERR_BUSY, "a third is refused with 503, and the handler was told PROVEN_ERR_BUSY", "");
     /* One of the two closed, on the server's side: its place is free again. */
     for (int i = 0; i < 200 && atomic_load(&g_held_n) < 2; ++i) proven_time_sleep(5);
     proven_ws_conn_destroy(g_held[0]);

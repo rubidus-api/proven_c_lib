@@ -592,6 +592,146 @@ commit_download();
 
 이름 해석에는 9장에서처럼 기한이 없다. `connect_timeout_ms`는 이름이 해석된 뒤부터 센다.
 
+### 트레일러
+
+v0.106.0부터 두 드라이버가 청크 본문 뒤에 오는 필드를 넘겨주고, 자기 본문 뒤에 보낸다(HTTP/1.1에서).
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_http_exchange_trailers(x, fields, cap, &count)` | 핸들러에서, `proven_http_exchange_read`가 `PROVEN_ERR_EOF`를 돌려준 뒤: 요청의 트레일러, 핸들러가 돌아갈 때까지 유효한 뷰로. | `proven_err_t`: 본문의 끝 전이면 `INVALID_STATE`; `cap`보다 많으면 `OUT_OF_BOUNDS`. |
+| `proven_http_exchange_end_trailers(x, fields, count)` | `PROVEN_HTTP_LENGTH_UNKNOWN`으로(그래서 chunked로) 시작한 응답을 뒤에 트레일러를 붙여 끝낸다. | `proven_err_t`: 길이가 있는 응답, `HEAD`에 대한 응답, 이미 끝난 응답이면 `INVALID_STATE`; 필드가 없거나 `proven_http_trailer_allowed`가 거절하는 필드면 `INVALID_ARG`. |
+| `request.trailers`, `request.trailer_count` | `body_stream`과 함께: 클라이언트가 마지막 청크 뒤에 보내는 필드. | 메모리의 본문이나 거절되는 필드면 `send`가 `INVALID_ARG`로 실패; HTTP/3에서는 `UNSUPPORTED`. |
+| `proven_http_client_trailers(&response, fields, cap, &count)` | `proven_http_client_read`가 `PROVEN_ERR_EOF`를 돌려준 뒤: 응답의 트레일러, `proven_http_client_finish`까지 유효. | `proven_err_t`: 끝 전이면 `INVALID_STATE`; `OUT_OF_BOUNDS`; HTTP/3에서는 `UNSUPPORTED`. |
+
+청크가 아닌 본문에는 트레일러가 없다: 함수는 개수 0으로 성공한다. 받은 필드 중 트레일러일 수 없는 것
+(`Content-Length`, `Set-Cookie`...)은 버린다(10장 6절). 트레일러를 읽지 않는 상대는 건너뛰므로, 받는 쪽이
+없어도 되는 것에 맞다: 체크섬, 시간 측정, 스트림 뒤의 상태.
+
+테스트 스위트가 컴파일하고 실행한다:
+
+<!-- example: manual/examples/ko/ex_11_trailers.c -->
+```c
+#include <string.h>
+
+/*
+ * 트레일러: 본문 뒤에 오는 필드. 보내는 쪽이 끝에 가서야 아는 것 - 올린 파일의 체크섬, 스트림 뒤의
+ * 상태 - 을 위한 것이다. 여기서는 클라이언트가 체크섬을 트레일러로 붙여 올리고, 서버가 그것을 확인해
+ * 자기 트레일러로 답한다; 그 다음 같은 일을 코덱만으로 한다.
+ */
+
+static proven_http_server_t *g_server;
+
+static unsigned sum_of(const proven_byte_t *p, proven_size_t n) { unsigned s = 0; for (proven_size_t i = 0; i < n; ++i) s = s * 31 + p[i]; return s; }
+
+static void handle(void *ctx, proven_http_exchange_t *x) {
+    (void)ctx;
+    static proven_byte_t body[4096];
+    proven_size_t n = 0;
+    for (;;) {
+        proven_result_size_t got = proven_http_exchange_read(x, (proven_mem_mut_t){ body + n, sizeof body - n });
+        if (got.err != PROVEN_OK) break;           /* PROVEN_ERR_EOF: 본문이 끝났고, 트레일러가 와 있다 */
+        n += got.value;
+    }
+    /* 트레일러는 본문을 끝까지 읽은 뒤에. */
+    proven_http_header_t trailers[4];
+    proven_size_t count = 0;
+    proven_u8str_view_t claimed = { 0 };
+    bool good = proven_http_exchange_trailers(x, trailers, 4, &count) == PROVEN_OK &&
+                proven_http_header_find(trailers, count, PROVEN_LIT("X-Checksum"), &claimed);
+    char mine[16];
+    const int ml = snprintf(mine, sizeof mine, "%u", sum_of(body, n));
+    good = good && claimed.size == (proven_size_t)ml && memcmp(claimed.ptr, mine, claimed.size) == 0;
+    /* 트레일러가 있는 응답은 길이 없이 조각으로 써서 chunked로 가게 한다. */
+    if (proven_http_exchange_begin(x, 200, NULL, 0, PROVEN_HTTP_LENGTH_UNKNOWN) != PROVEN_OK) return;
+    (void)proven_http_exchange_write(x, proven_mem_view_from_u8(PROVEN_LIT("stored\n")));
+    const proven_http_header_t status = { PROVEN_LIT("X-Upload"), good ? PROVEN_LIT("verified") : PROVEN_LIT("corrupt") };
+    (void)proven_http_exchange_end_trailers(x, &status, 1);
+}
+
+static void serve(void *arg) {
+    (void)arg;
+    (void)proven_http_server_run(g_server);
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    proven_http_server_config_t server_config = { .alloc = heap, .handler = handle };
+    EXAMPLE_REQUIRE(proven_http_server_create(&server_config, &g_server) == PROVEN_OK, "a server");
+    proven_net_addr_t at;
+    proven_err_t err = proven_http_server_listen(g_server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at);
+    if (err == PROVEN_ERR_PERMISSION || err == PROVEN_ERR_UNSUPPORTED) {
+        printf("no sockets in this environment; nothing to show\n");
+        proven_http_server_destroy(g_server);
+        return EXAMPLE_OK();
+    }
+    EXAMPLE_REQUIRE(err == PROVEN_OK, "it listens");
+    proven_job_sys_t *threads = NULL;
+    proven_job_group_t running;
+    proven_job_group_init(&running);
+    EXAMPLE_REQUIRE(proven_job_system_init(heap, 1, 4, &threads) == PROVEN_OK && proven_job_group_submit(threads, &running, serve, NULL) == PROVEN_OK,
+                    "its loop runs on another thread");
+
+    proven_http_client_config_t client_config = { .alloc = heap };
+    proven_http_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_client_create(&client_config, &client) == PROVEN_OK, "a client");
+    char url[64];
+    const int url_len = snprintf(url, sizeof url, "http://127.0.0.1:%u/upload", (unsigned)at.port);
+
+    /* 올리기: 스트림에서 오는 본문(그래서 chunked), 그 뒤에 체크섬을 트레일러로. */
+    static const char data[] = "the bytes of a file, sent as they are read";
+    char sum[16];
+    const int sl = snprintf(sum, sizeof sum, "%u", sum_of((const proven_byte_t *)data, sizeof data - 1));
+    const proven_http_header_t trailer = { PROVEN_LIT("X-Checksum"), { (const proven_byte_t *)sum, (proven_size_t)sl } };
+    EXAMPLE_REQUIRE(proven_http_trailer_allowed(trailer.name) && !proven_http_trailer_allowed(PROVEN_LIT("Content-Length")),
+                    "a checksum may be a trailer; a field that frames the message may not");
+    proven_reader_view_t rv;
+    proven_http_client_request_t request = { .method = PROVEN_LIT("PUT"), .url = { (const proven_byte_t *)url, (proven_size_t)url_len },
+                                             .body_stream = proven_reader_from_view(&rv, (proven_u8str_view_t){ (const proven_byte_t *)data, sizeof data - 1 }), .trailers = &trailer, .trailer_count = 1 };
+    proven_http_client_response_t response;
+    EXAMPLE_REQUIRE(proven_http_client_send(client, &request, &response) == PROVEN_OK && response.status == 200, "the upload is answered");
+    proven_byte_t text[64];
+    proven_size_t got = 0;
+    for (;;) {
+        proven_result_size_t r = proven_http_client_read(&response, (proven_mem_mut_t){ text + got, sizeof text - got });
+        if (r.err != PROVEN_OK) break;
+        got += r.value;
+    }
+    /* 응답의 트레일러, 본문 뒤에. */
+    proven_http_header_t back[4];
+    proven_size_t count = 0;
+    proven_u8str_view_t verdict = { 0 };
+    EXAMPLE_REQUIRE(proven_http_client_trailers(&response, back, 4, &count) == PROVEN_OK && proven_http_header_find(back, count, PROVEN_LIT("X-Upload"), &verdict) &&
+                    proven_u8str_view_eq(verdict, PROVEN_LIT("verified")), "the server says, after its body, that the checksum matched");
+    proven_http_client_finish(&response);
+    proven_http_client_destroy(client);
+    proven_http_server_stop(g_server);
+    proven_job_group_wait(threads, &running);
+    proven_http_server_destroy(g_server);
+    proven_job_system_close(threads);
+    proven_job_system_destroy(threads);
+
+    /* 코덱만으로: 마지막 청크 뒤에 트레일러 구역을 쓰고, 다시 읽는다. */
+    proven_byte_t wire[128];
+    proven_size_t len = 0;
+    const proven_http_header_t done = { PROVEN_LIT("grpc-status"), PROVEN_LIT("0") };
+    EXAMPLE_REQUIRE(proven_http_write_chunk_begin((proven_mem_mut_t){ wire, sizeof wire }, &len, 2) == PROVEN_OK && (memcpy(wire + len, "ok", 2), len += 2, true) &&
+                    proven_http_write_chunk_end((proven_mem_mut_t){ wire, sizeof wire }, &len) == PROVEN_OK &&
+                    proven_http_write_trailers((proven_mem_mut_t){ wire, sizeof wire }, &len, &done, 1) == PROVEN_OK, "a chunked body of two bytes and a trailer");
+    proven_http_body_t body;
+    proven_byte_t keep[PROVEN_HTTP_MAX_TRAILER_BYTES];
+    proven_size_t used = 0;
+    proven_mem_view_t payload;
+    bool ended = false;
+    EXAMPLE_REQUIRE(proven_http_body_init(&body, (proven_http_framing_t){ .kind = PROVEN_HTTP_BODY_CHUNKED }, 1024) == PROVEN_OK &&
+                    proven_http_body_keep_trailers(&body, (proven_mem_mut_t){ keep, sizeof keep }) == PROVEN_OK, "a decoder that keeps the trailers");
+    for (proven_size_t at2 = 0; !ended && at2 < len; at2 += used)
+        EXAMPLE_REQUIRE(proven_http_body_feed(&body, (proven_mem_view_t){ wire + at2, len - at2 }, &used, &payload, &ended) == PROVEN_OK, "the bytes");
+    EXAMPLE_REQUIRE(ended && proven_http_body_trailers(&body, back, 4, &count) == PROVEN_OK && count == 1 && proven_u8str_view_eq(back[0].value, PROVEN_LIT("0")),
+                    "and its trailer read back");
+    return EXAMPLE_OK();
+}
+```
+
 ## 8. 리다이렉트, 인증 요구, 쿠키
 
 **리다이렉트**(`301`, `302`, `303`, `307`, `308`)는 `max_redirects`까지 따르고, 각 `Location`은 그것을
@@ -1065,6 +1205,5 @@ int main(void) {
   서버의 `compress_zstd`가, Brotli는 클라이언트에서만 `decompress_brotli`가 켠다): [16장](manual-16-compression-ko.md) 6절.
 - **WebSocket**은 이 두 헤더에 없다. §11 위에 지은 [12장](manual-12-websocket-ko.md)에 있다.
 - 서버의 **라우터, 정적 파일, 세션, 미들웨어**. 클라이언트의 **재시도, 캐시, 호스트별 연결 한도**.
-- 양쪽 방향의 **트레일러**.
 - **프록시 자동 설정, `no_proxy`의 주소 범위.** (프록시에 대한 Digest: v0.105.0부터, 9절. 이벤트 구동
   클라이언트의 `expect_continue`: v0.106.0부터, [15장](manual-15-event-loop-ko.md).)

@@ -661,9 +661,11 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_http_body_end` | `proven_http_body_end` |
 | `xcv_http_body_feed` | `proven_http_body_feed` |
 | `xcv_http_body_init` | `proven_http_body_init` |
+| `xcv_http_body_keep_trailers` | `proven_http_body_keep_trailers` |
 | `xcv_http_body_kind_t` | `proven_http_body_kind_t` |
 | `xcv_http_body_received` | `proven_http_body_received` |
 | `xcv_http_body_t` | `proven_http_body_t` |
+| `xcv_http_body_trailers` | `proven_http_body_trailers` |
 | `xcv_http_byteranges_write_content_type` | `proven_http_byteranges_write_content_type` |
 | `xcv_http_byteranges_write_part` | `proven_http_byteranges_write_part` |
 | `xcv_http_client_config_t` | `proven_http_client_config_t` |
@@ -677,6 +679,7 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_http_client_response_t` | `proven_http_client_response_t` |
 | `xcv_http_client_send` | `proven_http_client_send` |
 | `xcv_http_client_t` | `proven_http_client_t` |
+| `xcv_http_client_trailers` | `proven_http_client_trailers` |
 | `xcv_http_client_upgrade` | `proven_http_client_upgrade` |
 | `xcv_http_coding_t` | `proven_http_coding_t` |
 | `xcv_http_content_coding` | `proven_http_content_coding` |
@@ -735,12 +738,14 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_http_exchange_compress` | `proven_http_exchange_compress` |
 | `xcv_http_exchange_early` | `proven_http_exchange_early` |
 | `xcv_http_exchange_end` | `proven_http_exchange_end` |
+| `xcv_http_exchange_end_trailers` | `proven_http_exchange_end_trailers` |
 | `xcv_http_exchange_flush` | `proven_http_exchange_flush` |
 | `xcv_http_exchange_peer` | `proven_http_exchange_peer` |
 | `xcv_http_exchange_read` | `proven_http_exchange_read` |
 | `xcv_http_exchange_request` | `proven_http_exchange_request` |
 | `xcv_http_exchange_respond` | `proven_http_exchange_respond` |
 | `xcv_http_exchange_t` | `proven_http_exchange_t` |
+| `xcv_http_exchange_trailers` | `proven_http_exchange_trailers` |
 | `xcv_http_exchange_upgrade` | `proven_http_exchange_upgrade` |
 | `xcv_http_exchange_write` | `proven_http_exchange_write` |
 | `xcv_http_framing_t` | `proven_http_framing_t` |
@@ -805,6 +810,7 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_http_stream_user` | `proven_http_stream_user` |
 | `xcv_http_stream_write` | `proven_http_stream_write` |
 | `xcv_http_tls_wrap_fn` | `proven_http_tls_wrap_fn` |
+| `xcv_http_trailer_allowed` | `proven_http_trailer_allowed` |
 | `xcv_http_write_chunk_begin` | `proven_http_write_chunk_begin` |
 | `xcv_http_write_chunk_end` | `proven_http_write_chunk_end` |
 | `xcv_http_write_content_range` | `proven_http_write_content_range` |
@@ -815,6 +821,7 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_http_write_range` | `proven_http_write_range` |
 | `xcv_http_write_request_line` | `proven_http_write_request_line` |
 | `xcv_http_write_status_line` | `proven_http_write_status_line` |
+| `xcv_http_write_trailers` | `proven_http_write_trailers` |
 | `xcv_i16` | `proven_i16` |
 | `xcv_i32` | `proven_i32` |
 | `xcv_i64` | `proven_i64` |

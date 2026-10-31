@@ -393,6 +393,18 @@ proven_http_body_feed(&body, in, &consumed, &payload, &done);
 **오류 뒤에는 연결이 끝난다.** 프레이밍이 틀리면 다음 메시지가 어디서 시작하는지 알 수 없다. 할 수
 있으면 답하고, 닫는다.
 
+**트레일러**(v0.106.0부터)는 마지막 청크 뒤에 보내는 필드다 - 보내는 쪽이 끝에 가서야 아는 체크섬이나
+상태. 디코더는 이를 검사하고 건너뛴다, 요청하지 않으면:
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_http_body_keep_trailers(&body, buf)` | `init` 뒤에: 트레일러 구역을 도착하는 대로 `buf`에 복사한다. | `proven_err_t`: 버퍼가 없으면 `INVALID_ARG`. `buf`(또는 `PROVEN_HTTP_MAX_TRAILER_BYTES`)보다 큰 구역이면 `feed`가 `OUT_OF_BOUNDS`로 실패한다. |
+| `proven_http_body_trailers(&body, fields, cap, &count)` | `done` 뒤에: 필드들, `buf`를 가리키는 뷰로. 청크 본문이 아니면 없다. | `proven_err_t`: 끝 전이거나 보관한 구역이 없으면 `INVALID_STATE`; `cap`보다 많으면 `OUT_OF_BOUNDS`. |
+| `proven_http_trailer_allowed(name)` | 이 필드가 트레일러일 수 있는가(RFC 9110 6.5.1절)? | `bool`: 메시지의 프레이밍·경로, 요청 제어, 인증, 내용 설명에 쓰는 필드(`Content-Length`, `Host`, `Authorization`, `Set-Cookie`, `Content-Type`...)와 의사 필드는 false. |
+
+받은 필드 중 트레일러일 수 없는 것은 `proven_http_body_trailers`가 돌려주는 것에서 빠진다: 본문 뒤의
+`Content-Length`를 헤드가 보냈어야 할 것으로 받아들여서는 안 된다.
+
 테스트 스위트가 컴파일하고 실행한다 - 어색하게 잘린 네 조각으로 도착하는 요청:
 
 <!-- example: manual/examples/ko/ex_10_http_request.c -->
@@ -520,6 +532,7 @@ int main(void) {
 | `proven_http_write_chunk_begin(out, &len, size)` | `size`바이트(0이 아님) 청크를 시작하는 줄 |
 | `proven_http_write_chunk_end(out, &len)` | 청크 데이터 뒤의 CRLF |
 | `proven_http_write_last_chunk(out, &len)` | 청크 본문을 끝내는 0 청크와 빈 트레일러 |
+| `proven_http_write_trailers(out, &len, fields, count)` | 0 청크와 트레일러 구역; `proven_http_trailer_allowed`가 거절하는 필드는 `INVALID_ARG`(v0.106.0부터) |
 
 모두 `proven_err_t`를 돌려준다. 들어가지 않으면 `PROVEN_ERR_OUT_OF_BOUNDS`, 쓰라고 한 것이 그 이름의
 물건이 되지 못하면 `PROVEN_ERR_INVALID_ARG`다.
@@ -1201,6 +1214,5 @@ int main(void) {
 - **코덱 안의 콘텐츠 코딩.** 파서와 본문 디코더는 본문을 보낸 그대로 건넨다. 관련 헤더를 읽는 헬퍼가
   둘 있고(`proven_http_accepts_coding`, `proven_http_content_coding`), 이 코덱 위에 지은 서버와
   클라이언트는 `gzip`을 압축하고 풀 수 있다: [16장](manual-16-compression-ko.md) 6절.
-- **트레일러.** 청크 본문 뒤의 트레일러는 검사하고 건너뛸 뿐, 돌려주지 않는다.
 - **공개 접미사 목록**, 따라서 하위 도메인 사이에 공유되는 쿠키 - §12를 보라.
 - **`Negotiate`, `NTLM`, bearer 토큰 흐름.** bearer 토큰은 여러분이 직접 쓰는 헤더다.

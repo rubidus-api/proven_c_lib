@@ -26,6 +26,21 @@ written; their tags still exist.
   after `expect_timeout_ms` (new, 1 s) of silence; a final answer first is the response, the body is
   never sent, what is written of it is dropped, and the connection is not kept. An `Expect` field of
   the caller's with the flag is `PROVEN_ERR_INVALID_ARG`. Ignored over HTTP/2 and HTTP/3.
+- **Trailers in the codec and the blocking drivers** (RFC-0041 H-5, first part): the fields sent
+  after a chunked body (RFC 9110 section 6.5), which were checked and dropped, are handed over and can
+  be sent. In `http.h`, `proven_http_body_keep_trailers` keeps the section as it arrives (bounded by
+  `PROVEN_HTTP_MAX_TRAILER_BYTES`) and `proven_http_body_trailers` reads its fields;
+  `proven_http_trailer_allowed` says which fields may be trailers (not those that frame, route,
+  control, authenticate or describe the content); `proven_http_write_trailers` writes the last chunk
+  and a section. A received field that may not be a trailer is left out. The blocking server reads a
+  request's with `proven_http_exchange_trailers` and ends a chunked response with
+  `proven_http_exchange_end_trailers`; the blocking client sends `request.trailers` after a
+  `body_stream` and reads a response's with `proven_http_client_trailers` (HTTP/1.1; HTTP/3 is
+  `PROVEN_ERR_UNSUPPORTED`). Checked against Node's `http` both ways. Manual chapters 10 and 11.
+
+### Changed
+
+- `proven_http_body_t` is 8 bytes larger (the trailer buffer and its size).
 
 ## [0.105.0] - 2026-11-01
 

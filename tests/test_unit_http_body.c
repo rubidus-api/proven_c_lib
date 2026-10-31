@@ -293,6 +293,97 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("trailers kept, read and written (v0.106.0)",
+        "proven_http_body_keep_trailers: the section of a chunked body kept as it arrives in every piece size, read back to its fields; none for a body that is not chunked; a buffer too small refused; the fields a trailer may not be refused when written; what is written reads back.",
+        "Check the trailer copy at the top of proven_http_body_feed's loop, proven_http_body_trailers and proven_http_write_trailers in src/proven/http.c.");
+    // ---------------------------------------------------------------
+    {
+        const char *wire = "3\r\nabc\r\n0\r\nX-Checksum: sha256=47DEQpj8\r\ngrpc-status:\t0\r\nGrpc-Message: \r\n\r\nNEXT";
+        const proven_size_t n = strlen(wire) - 4;
+        int bad = 0;
+        for (proven_size_t step = 1; step <= n; ++step) {
+            proven_http_body_t b;
+            static proven_byte_t keep[256];
+            proven_http_header_t f[4];
+            proven_size_t count = 9, at = 0;
+            bool done = false;
+            if (proven_http_body_init(&b, (proven_http_framing_t){ .kind = PROVEN_HTTP_BODY_CHUNKED }, 1000) != PROVEN_OK ||
+                proven_http_body_keep_trailers(&b, (proven_mem_mut_t){ keep, sizeof keep }) != PROVEN_OK) { bad++; continue; }
+            if (proven_http_body_trailers(&b, f, 4, &count) != PROVEN_ERR_INVALID_STATE) bad++;
+            while (!done && at < n) {
+                proven_size_t give = n - at < step ? n - at : step, used = 0;
+                proven_mem_view_t payload;
+                if (proven_http_body_feed(&b, (proven_mem_view_t){ (const proven_byte_t *)wire + at, give }, &used, &payload, &done) != PROVEN_OK) { bad++; break; }
+                at += used;
+            }
+            if (!done || at != n || proven_http_body_trailers(&b, f, 4, &count) != PROVEN_OK || count != 3 ||
+                !proven_u8str_view_eq(f[0].name, sv("X-Checksum")) || !proven_u8str_view_eq(f[0].value, sv("sha256=47DEQpj8")) ||
+                !proven_u8str_view_eq(f[1].name, sv("grpc-status")) || !proven_u8str_view_eq(f[1].value, sv("0")) ||
+                !proven_u8str_view_eq(f[2].name, sv("Grpc-Message")) || f[2].value.size != 0) bad++;
+            if (proven_http_body_trailers(&b, f, 2, &count) != PROVEN_ERR_OUT_OF_BOUNDS) bad++;
+        }
+        PROVEN_TEST_ASSERT(bad == 0, "the trailer section, fed in every piece size, reads back to its three fields; before the end PROVEN_ERR_INVALID_STATE, with room for two PROVEN_ERR_OUT_OF_BOUNDS", "");
+        /* A buffer too small for the section: the body fails. */
+        proven_http_body_t b;
+        proven_byte_t small[10];
+        proven_size_t used = 0;
+        proven_mem_view_t payload;
+        bool done = false;
+        PROVEN_TEST_ASSERT(proven_http_body_init(&b, (proven_http_framing_t){ .kind = PROVEN_HTTP_BODY_CHUNKED }, 1000) == PROVEN_OK &&
+                           proven_http_body_keep_trailers(&b, (proven_mem_mut_t){ small, sizeof small }) == PROVEN_OK &&
+                           proven_http_body_feed(&b, (proven_mem_view_t){ (const proven_byte_t *)wire, n }, &used, &payload, &done) == PROVEN_OK &&
+                           proven_http_body_feed(&b, (proven_mem_view_t){ (const proven_byte_t *)wire + used, n - used }, &used, &payload, &done) == PROVEN_ERR_OUT_OF_BOUNDS,
+                           "a section larger than the buffer kept for it is PROVEN_ERR_OUT_OF_BOUNDS", "");
+        /* No trailers: an empty section; a body of known length has none. */
+        proven_http_header_t f[2];
+        proven_size_t count = 7;
+        static proven_byte_t keep[64];
+        PROVEN_TEST_ASSERT(proven_http_body_init(&b, (proven_http_framing_t){ .kind = PROVEN_HTTP_BODY_CHUNKED }, 1000) == PROVEN_OK &&
+                           proven_http_body_keep_trailers(&b, (proven_mem_mut_t){ keep, sizeof keep }) == PROVEN_OK &&
+                           proven_http_body_feed(&b, mv("0\r\n\r\n"), &used, &payload, &done) == PROVEN_OK && done &&
+                           proven_http_body_trailers(&b, f, 2, &count) == PROVEN_OK && count == 0, "a chunked body with no trailers has none", "");
+        PROVEN_TEST_ASSERT(proven_http_body_init(&b, (proven_http_framing_t){ .kind = PROVEN_HTTP_BODY_LENGTH, .length = 2 }, 1000) == PROVEN_OK &&
+                           proven_http_body_feed(&b, mv("ab"), &used, &payload, &done) == PROVEN_OK && done &&
+                           proven_http_body_trailers(&b, f, 2, &count) == PROVEN_OK && count == 0 &&
+                           proven_http_body_keep_trailers(&b, (proven_mem_mut_t){ NULL, 0 }) == PROVEN_ERR_INVALID_ARG,
+                           "a body with a length has none; no buffer is PROVEN_ERR_INVALID_ARG", "");
+        /* What may be a trailer. */
+        static const char *const NOT[] = { "Content-Length", "transfer-encoding", "Trailer", "Host", "Connection", "TE", "Authorization", "Set-Cookie",
+                                           "Content-Type", "Content-Encoding", "Cache-Control", "Range", "Location", ":status" };
+        int allowed = 0;
+        for (proven_size_t i = 0; i < sizeof NOT / sizeof NOT[0]; ++i) allowed += proven_http_trailer_allowed(sv(NOT[i]));
+        PROVEN_TEST_ASSERT(allowed == 0 && proven_http_trailer_allowed(sv("X-Checksum")) && proven_http_trailer_allowed(sv("grpc-status")) && proven_http_trailer_allowed(sv("Server-Timing")),
+                           "framing, routing, request controls, authentication, content and pseudo-fields may not be trailers; others may", "");
+        proven_byte_t out[200];
+        proven_size_t len = 0;
+        const proven_http_header_t t[2] = { { sv("X-Checksum"), sv("abc") }, { sv("Server-Timing"), sv("db;dur=53") } };
+        PROVEN_TEST_ASSERT(proven_http_write_trailers((proven_mem_mut_t){ out, sizeof out }, &len, t, 2) == PROVEN_OK &&
+                           len == strlen("0\r\nX-Checksum: abc\r\nServer-Timing: db;dur=53\r\n\r\n") && memcmp(out, "0\r\nX-Checksum: abc\r\nServer-Timing: db;dur=53\r\n\r\n", len) == 0,
+                           "two trailers written after the last chunk", "");
+        PROVEN_TEST_ASSERT(proven_http_body_init(&b, (proven_http_framing_t){ .kind = PROVEN_HTTP_BODY_CHUNKED }, 1000) == PROVEN_OK &&
+                           proven_http_body_keep_trailers(&b, (proven_mem_mut_t){ keep, sizeof keep }) == PROVEN_OK &&
+                           proven_http_body_feed(&b, (proven_mem_view_t){ out, len }, &used, &payload, &done) == PROVEN_OK && done && used == len &&
+                           proven_http_body_trailers(&b, f, 2, &count) == PROVEN_OK && count == 2 && proven_u8str_view_eq(f[1].value, sv("db;dur=53")),
+                           "and read back", "");
+        const proven_http_header_t badt[1] = { { sv("Content-Length"), sv("5") } };
+        const proven_http_header_t badv[1] = { { sv("X-A"), sv("a\rb") } };
+        len = 0;
+        PROVEN_TEST_ASSERT(proven_http_write_trailers((proven_mem_mut_t){ out, sizeof out }, &len, badt, 1) == PROVEN_ERR_INVALID_ARG &&
+                           proven_http_write_trailers((proven_mem_mut_t){ out, sizeof out }, &len, badv, 1) == PROVEN_ERR_INVALID_ARG && len == 0 &&
+                           proven_http_write_trailers((proven_mem_mut_t){ out, 8 }, &len, t, 2) == PROVEN_ERR_OUT_OF_BOUNDS && len == 0,
+                           "a field that may not be a trailer, a CR in a value: PROVEN_ERR_INVALID_ARG; no room: PROVEN_ERR_OUT_OF_BOUNDS, and nothing written", "");
+        /* Received, a field that may not be a trailer is dropped, and takes no room. */
+        static proven_byte_t room[128];
+        static const char refused[] = "0\r\nContent-Length: 99\r\nX-A: 1\r\nset-cookie: s=1\r\nTrailer: X-A\r\nX-B: 2\r\n\r\n";
+        PROVEN_TEST_ASSERT(proven_http_body_init(&b, (proven_http_framing_t){ .kind = PROVEN_HTTP_BODY_CHUNKED }, 1000) == PROVEN_OK &&
+                           proven_http_body_keep_trailers(&b, (proven_mem_mut_t){ room, sizeof room }) == PROVEN_OK &&
+                           proven_http_body_feed(&b, (proven_mem_view_t){ (const proven_byte_t *)refused, sizeof refused - 1 }, &used, &payload, &done) == PROVEN_OK && done &&
+                           proven_http_body_trailers(&b, f, 2, &count) == PROVEN_OK && count == 2 && proven_u8str_view_eq(f[0].name, sv("X-A")) &&
+                           proven_u8str_view_eq(f[1].name, sv("X-B")),
+                           "received, Content-Length, Set-Cookie and Trailer are dropped from the trailers and take no room", "");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chunk framing that is refused",
         "Each is a spelling one chunk parser accepts and another does not.",
         "After any of these the decoder answers PROVEN_ERR_INVALID_STATE: the position of the next message is unknown, and the connection is finished.");
