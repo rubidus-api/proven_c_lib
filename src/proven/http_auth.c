@@ -439,7 +439,7 @@ static proven_err_t auth_digest(const proven_http_digest_challenge_t *challenge,
     auth_put(&w, uri);
     auth_put_cstr(&w, "\", algorithm=");
     static const char *const NAMES[6] = { "MD5", "MD5-sess", "SHA-256", "SHA-256-sess", "SHA-512-256", "SHA-512-256-sess" };
-    auth_put_cstr(&w, NAMES[(int)alg >= 0 && (int)alg < 6 ? (int)alg : 0]);
+    auth_put_cstr(&w, NAMES[(unsigned)alg < 6u ? (unsigned)alg : 0u]);
     auth_put_cstr(&w, ", response=\"");
     auth_put(&w, (proven_u8str_view_t){ .ptr = (const proven_byte_t *)response, .size = hl });
     auth_put_cstr(&w, "\"");
