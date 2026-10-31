@@ -65,6 +65,27 @@ static bool digest_ok(const char *challenge, proven_u8str_view_t got, const char
     return got.size == n && memcmp(got.ptr, want, n) == 0;
 }
 
+/* auth-int (v0.105.0): the answer must cover the body that came. */
+static const char DIGEST_CHALLENGE_INT[] = "Digest realm=\"proven\", qop=\"auth-int\", algorithm=SHA-512-256, nonce=\"n-int\"";
+static bool digest_int_ok(proven_u8str_view_t got, const char *uri, proven_mem_view_t body) {
+    proven_http_digest_challenge_t dc;
+    if (proven_http_digest_challenge_parse(sv(DIGEST_CHALLENGE_INT), &dc) != PROVEN_OK) return false;
+    static const char key[] = "cnonce=\"";
+    proven_u8str_view_t cnonce = {0};
+    for (proven_size_t i = 0; i + 8 <= got.size; ++i) {
+        if (memcmp(got.ptr + i, key, 8) != 0) continue;
+        proven_size_t end = i + 8;
+        while (end < got.size && got.ptr[end] != '"') end++;
+        cnonce = (proven_u8str_view_t){ .ptr = got.ptr + i + 8, .size = end - i - 8 };
+        break;
+    }
+    proven_byte_t want[1024];
+    proven_size_t n = 0;
+    return cnonce.size > 0 && proven_http_digest_auth_body(&dc, sv("user"), sv("pass"), sv("POST"), sv(uri), 1, cnonce, body,
+                                                           (proven_mem_mut_t){ .ptr = want, .size = sizeof want }, &n) == PROVEN_OK &&
+           got.size == n && memcmp(got.ptr, want, n) == 0;
+}
+
 static void origin(void *ctx, proven_http_exchange_t *x) {
     origin_t *o = ctx;
     const proven_http_request_t *r = proven_http_exchange_request(x);
@@ -149,6 +170,20 @@ static void origin(void *ctx, proven_http_exchange_t *x) {
             /* Basic is offered too; a client that can do Digest must prefer it. */
             proven_http_header_t h[2] = { { sv("WWW-Authenticate"), sv("Basic realm=\"proven\"") }, { sv("WWW-Authenticate"), sv(DIGEST_CHALLENGE_1) } };
             (void)proven_http_exchange_respond(x, 401, h, 2, mv("who?"));
+        }
+    } else if (proven_u8str_view_eq(t, sv("/authint"))) {
+        proven_size_t n = 0;
+        for (;;) {
+            proven_result_size_t got = proven_http_exchange_read(x, (proven_mem_mut_t){ .ptr = body + n, .size = sizeof body - n });
+            if (got.err != PROVEN_OK) break;
+            n += got.value;
+        }
+        proven_u8str_view_t a;
+        if (proven_http_header_find(r->headers, r->header_count, sv("Authorization"), &a) && digest_int_ok(a, "/authint", (proven_mem_view_t){ .ptr = body, .size = n })) {
+            (void)proven_http_exchange_respond(x, 200, NULL, 0, mv("authint ok"));
+        } else {
+            proven_http_header_t h = { sv("WWW-Authenticate"), sv(DIGEST_CHALLENGE_INT) };
+            (void)proven_http_exchange_respond(x, 401, &h, 1, mv("who?"));
         }
     } else if (proven_u8str_view_eq(t, sv("/stale"))) {
         /* The first good answer is told its nonce has expired; the second, with the new
@@ -966,6 +1001,17 @@ int main(void) {
         PROVEN_TEST_ASSERT(atomic_load(&o.requests) == before + 2, "in two requests: the challenge and the answer", "");
         PROVEN_TEST_ASSERT(fetch(c2, url_at(o.port, "/digest?x=1"), &e) == 200 && body_is("digest ok"),
             "offered Basic and Digest, the client answers Digest, and the server's own computation agrees", "Inspect proven_http_digest_auth; the uri must be the target as sent, query included.");
+        {
+            /* A body, and a challenge that wants auth-int: the answer covers the body (v0.105.0). */
+            proven_http_client_request_t pr = { .method = sv("POST"), .url = url_at(o.port, "/authint"), .body = mv("the form, signed") };
+            proven_http_client_response_t pres;
+            char got[32] = { 0 };
+            e = proven_http_client_send(c2, &pr, &pres);
+            if (e == PROVEN_OK) { (void)proven_http_client_read(&pres, (proven_mem_mut_t){ .ptr = (proven_byte_t *)got, .size = sizeof got - 1 }); }
+            PROVEN_TEST_ASSERT(e == PROVEN_OK && pres.status == 200 && strcmp(got, "authint ok") == 0,
+                               "a POST asked for auth-int is answered over its body, and the server's own computation agrees", "Inspect the 401 branch of the client's send loop: proven_http_digest_auth_body with the request's body.");
+            if (e == PROVEN_OK) proven_http_client_finish(&pres);
+        }
         atomic_store(&o.digest_step, 0);
         before = atomic_load(&o.requests);
         PROVEN_TEST_ASSERT(fetch(c2, url_at(o.port, "/stale"), &e) == 200 && body_is("fresh") && atomic_load(&o.digest_step) == 3, "a stale nonce is answered again with the new one", "");
