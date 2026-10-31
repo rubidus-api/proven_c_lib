@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.103.0] - 2026-10-31
+
 ### Added
 
 - **Zstandard long-distance matching** (RFC-0039 L-2): `long_distance` in
