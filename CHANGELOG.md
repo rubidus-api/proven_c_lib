@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.106.0] - 2026-11-01
+
 ### Added
 
 - **`expect_continue` in the event-driven client** (RFC-0041 H-4), as the blocking client's: for an
