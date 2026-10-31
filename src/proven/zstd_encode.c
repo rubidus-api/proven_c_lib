@@ -1018,12 +1018,23 @@ ZSTD_HOT proven_size_t bt_put(proven_zstd_encoder_t *z, const proven_byte_t *bas
     return best >= 4 ? best : 0;
 }
 
+/* Put the positions since the last search into the trees. One that finds a match longer than 384
+ * bytes lets the next ones, up to 192, go without: they would find the same match a byte shorter, at
+ * the cost of a walk each - in a run of one byte, a walk the length of the block, and the block's
+ * square in all (libzstd's rule too). */
+ZSTD_HOT void bt_update(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_u32 cur, const proven_byte_t *iend, proven_size_t low, const unsigned mls) {
+    proven_u32 skip = 0;
+    for (proven_u32 i = z->next_update; i < cur;) {
+        const proven_size_t got = bt_put(z, base, i, iend, low, &skip, mls);
+        i += got > 384 ? (proven_u32)(got - 384 < 192 ? got - 384 : 192) : 1u;
+    }
+}
+
 /* The longest match for `ip` by the trees: the positions since the last search put in first. */
 ZSTD_HOT proven_size_t bt_find(proven_zstd_encoder_t *z, const proven_byte_t *base, const proven_byte_t *ip, const proven_byte_t *iend,
                                proven_size_t low, proven_u32 *off, const unsigned mls) {
     const proven_u32 cur = (proven_u32)(ip - base);
-    proven_u32 skip = 0;
-    for (proven_u32 i = z->next_update; i < cur; ++i) (void)bt_put(z, base, i, iend, low, &skip, mls);
+    bt_update(z, base, cur, iend, low, mls);
     z->next_update = cur + 1;
     return bt_put(z, base, cur, iend, low, off, mls);
 }
@@ -1130,8 +1141,7 @@ ZSTD_HOT unsigned opt_find(proven_zstd_encoder_t *z, const proven_byte_t *base, 
     /* The trees: positions skipped since the last search go in first. A position already in them
      * (a stretch ended before the last one searched) is not put in again: its repeats only. */
     if (cur < z->next_update) return n;
-    proven_u32 skip = 0;
-    for (proven_u32 i = z->next_update; i < cur; ++i) (void)bt_put(z, base, i, iend, low, &skip, z->p.mls);
+    bt_update(z, base, cur, iend, low, z->p.mls);
     z->next_update = cur + 1;
     proven_u32 *const ht = z->hash, *const bt = z->hash2;
     const proven_u32 nmask = (proven_u32)(z->hash2_size / 2) - 1;
@@ -1187,10 +1197,10 @@ ZSTD_HOT proven_size_t match_opt(proven_zstd_encoder_t *z, const proven_byte_t *
     opt_begin(o, base + start, end - start);
     proven_opt_node_t *const nd = o->node;
     while (ip < ilimit && k.seq_end - k.seq >= 3) {
-        /* A stretch writes at most one sequence for every four bytes, and one more: no longer than
-         * the sequences left allow. */
-        const proven_size_t room = (proven_size_t)(k.seq_end - k.seq) - 2;
-        const proven_u32 span = room * 4 < o->span_max ? (proven_u32)(room * 4) : o->span_max;
+        /* A stretch writes at most one sequence for every match's shortest length (three or four
+         * bytes), and one more: no longer than the sequences left allow. */
+        const proven_size_t room = (proven_size_t)(k.seq_end - k.seq) - 2, shortest = z->p.depth >= 1 ? 3 : 4;
+        const proven_u32 span = room * shortest < o->span_max ? (proven_u32)(room * shortest) : o->span_max;
         const proven_u32 cur0 = (proven_u32)(ip - base);
         const proven_u32 ll0 = (proven_u32)(ip - anchor);
         unsigned nm = opt_find(z, base, cur0, iend, low, k.rep, ll0 == 0, o->m);
@@ -1259,7 +1269,7 @@ ZSTD_HOT proven_size_t match_opt(proven_zstd_encoder_t *z, const proven_byte_t *
         /* Back from the end of the path's last match: its matches, in order. */
         proven_u32 end_at = last;
         while (end_at > 0 && nd[end_at].mlen == 0) end_at--;
-        proven_u32 stack[OPT_NUM / 4 + 2], ns = 0;
+        proven_u32 stack[OPT_NUM / 3 + 2], ns = 0;          /* a match is three bytes or more */
         for (proven_u32 pos = end_at; pos > 0;) {
             if (nd[pos].mlen > 0) { stack[ns++] = pos; pos -= nd[pos].mlen; }
             else pos--;

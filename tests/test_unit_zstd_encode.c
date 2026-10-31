@@ -188,7 +188,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(failed == 0 && frames > 600, "every frame decodes to its input, with every offset inside the window it states", "");
     }
 
-    PROVEN_TEST_SECTION("blocks full of sequences", "Short matches a few bytes apart, more sequences than a block holds, at the optimal levels: each block ends where its sequences run out, whole and streamed, and every frame decodes.", "Check the stretch's limit (`span`, the sequences left) in match_opt in src/proven/zstd_encode.c.");
+    PROVEN_TEST_SECTION("blocks full of sequences", "Short matches a few bytes apart, more sequences than a block holds, at the optimal levels: each block ends where its sequences run out, whole and streamed, and every frame decodes; and a long run of one byte through the trees.", "Check the stretch's limit (`span`, the sequences left) in match_opt in src/proven/zstd_encode.c.");
     {
         /* Four-byte tokens from a set of 64, a random byte after each: a match of four (or a little
          * more) every five bytes - about 26,000 sequences in a block of 128 KiB, which holds 16,384. */
@@ -209,6 +209,32 @@ int main(void) {
             proven_zstd_encoder_destroy(z);
         }
         PROVEN_TEST_ASSERT(bad == 0, "at levels 16 and 19, whole and streamed: every frame decodes to its input", "");
+        /* Three-byte tokens from a set of 64, one after another: a three-byte match every three
+         * bytes at 18 and 19, which take them - more matches in a stretch than four-byte ones fit. */
+        static proven_byte_t tok3[64][3];
+        g_x = 78;
+        for (int t = 0; t < 64; ++t) for (int b = 0; b < 3; ++b) tok3[t][b] = (proven_byte_t)xs();
+        n = 0;
+        while (n + 3 <= 300000) { memcpy(g_in + n, tok3[xs() % 64], 3); n += 3; }
+        bad = 0;
+        for (int level = 18; level <= 19; ++level) {
+            proven_size_t made = 0;
+            proven_zstd_encoder_options_t o = { .alloc = g_heap, .level = level };
+            if (proven_zstd_encode_all(&o, (proven_mem_view_t){ g_in, n }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made) != PROVEN_OK || !decodes_to(g_enc, made, g_in, n, 0)) bad++;
+        }
+        PROVEN_TEST_ASSERT(bad == 0, "three-byte matches every three bytes, at 18 and 19: every frame decodes to its input", "");
+        /* A million bytes of one value, at the largest window: every position a match to the end of
+         * its block. Putting each into the trees would walk the block each time - minutes for this;
+         * a position whose match is over 384 bytes lets the next 192 go without (bt_update). */
+        memset(g_in, 'z', 1000000);
+        bad = 0;
+        for (int level = 13; level <= 19; level += 3) {
+            proven_size_t made = 0;
+            proven_zstd_encoder_options_t o = { .alloc = g_heap, .level = level, .window_log = 23 };
+            if (proven_zstd_encode_all(&o, (proven_mem_view_t){ g_in, 1000000 }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made) != PROVEN_OK || made > 200 ||
+                !decodes_to(g_enc, made, g_in, 1000000, 0)) bad++;
+        }
+        PROVEN_TEST_ASSERT(bad == 0, "a million bytes of one value at 13, 16 and 19: under 200 bytes, and quickly", "Check bt_update: without its skip this takes minutes.");
     }
 
     PROVEN_TEST_SECTION("what the frame states", "A whole buffer states its size, and its window is that size; a stream states its window.", "Check frame_header in src/proven/zstd_encode.c.");
