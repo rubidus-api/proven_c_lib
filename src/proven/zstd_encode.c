@@ -24,7 +24,7 @@
 #define WINDOW_LOG_MIN 10
 #define WINDOW_LOG_MAX 23
 #define WINDOW_LOG_DEFAULT 19
-#define LEVEL_MAX 12
+#define LEVEL_MAX 19
 #define LEVEL_DEFAULT 3
 #define SEQ_MAX 16384u                  /* sequences in one block; a block ends early when they run out */
 #define HUF_MAX_BITS 11
@@ -465,10 +465,32 @@ typedef struct {
 enum { K_LL, K_OF, K_ML };
 
 typedef struct {
-    unsigned strategy;                 /* 0: one hash table; 1: two; 2: a hash table and a chain */
+    unsigned strategy;                 /* 0: one hash table; 1: two; 2: a hash table and a chain; 3: and binary trees, lazy2; 4: the trees, optimal parsing */
     unsigned hlog, clog, mls;          /* clog: the second table's, or the chain's, size */
-    unsigned tries, depth;             /* chain: candidates looked at; 0 greedy, 1 lazy, 2 lazy2 */
+    unsigned tries, depth;             /* chain: candidates looked at; 0 greedy, 1 lazy, 2 lazy2. Optimal parsing: 1 also finds three-byte matches */
+    unsigned target;                   /* optimal parsing: a match this long is taken at once */
 } proven_params_t;
+
+/* Optimal parsing (levels 16 to 19). Prices are in 1/256 of a bit. */
+#define OPT_NUM 4096                   /* positions one stretch of the path may cover */
+#define OPT_MATCHES 72                 /* matches found at one position: three repeats, a three-byte one, and the trees' */
+#define OPT_H3_LOG 16                  /* the table of three-byte matches (levels whose `depth` is 1) */
+#define OPT_H3_REACH ((proven_u32)1 << 18)   /* nearer than this: a three-byte match costs less than its literals */
+typedef struct { proven_u32 price, dist, mlen, litlen, rep[3]; } proven_opt_node_t;
+typedef struct { proven_u32 offv, dist, len; } proven_opt_match_t;
+struct proven_opt {
+    bool ready;                        /* statistics carried over from an earlier block of the frame */
+    proven_u32 lit[256], ll[36], ml[53], of[32];
+    proven_u32 lit_sum, ll_sum, ml_sum, of_sum;
+    proven_u32 lit_w, ll_w, ml_w, of_w;   /* the sums' weights */
+    proven_u32 lit_p[256], ll_p[36], ml_p[53], of_p[32];   /* each symbol's price */
+    proven_opt_match_t m[OPT_MATCHES];
+    proven_u32 h3_next;                /* the first position not yet in `h3` */
+    unsigned h3_log;                   /* OPT_H3_LOG, or less for a short input */
+    proven_u32 span_max;               /* OPT_NUM, or less for a short input */
+    proven_opt_node_t *node;           /* span_max + 2 of them, after this struct */
+    proven_u32 *h3;                    /* 2^h3_log: the last position of each hash of three bytes */
+};
 
 struct proven_zstd_encoder {
     proven_allocator_t alloc;
@@ -490,6 +512,7 @@ struct proven_zstd_encoder {
     proven_size_t hash_size, hash2_size;
     bool fresh;                        /* the hash tables hold nothing of the current frame */
     proven_u32 next_update;            /* chain: the first position not yet in the tables */
+    struct proven_opt *optp;           /* optimal parsing (levels 16 to 19): its statistics and its path */
     proven_seq_t *seqs;
     proven_byte_t *codes;              /* each sequence's literal-length, offset and match-length codes */
     proven_size_t nseq;
@@ -504,22 +527,34 @@ struct proven_zstd_encoder {
 };
 
 static const proven_params_t LEVELS[LEVEL_MAX + 1] = {
-    { 0, 0, 0, 0, 0, 0 },
-    { 0, 14, 0, 6, 0, 0 },
-    { 1, 14, 13, 6, 0, 0 },
-    { 1, 17, 16, 5, 0, 0 },
-    { 2, 17, 16, 5, 4, 0 },            /* greedy */
-    { 2, 17, 17, 5, 8, 0 },
-    { 2, 17, 17, 5, 12, 1 },           /* lazy: 12 candidates, where libzstd's level 6 has 8, to stay at or below gzip 6 */
-    { 2, 17, 17, 5, 12, 2 },           /* lazy2 */
-    { 2, 17, 17, 5, 24, 2 },
-    { 2, 17, 17, 4, 32, 2 },
+    { 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 14, 0, 6, 0, 0, 0 },
+    { 1, 14, 13, 6, 0, 0, 0 },
+    { 1, 17, 16, 5, 0, 0, 0 },
+    { 2, 17, 16, 5, 4, 0, 0 },            /* greedy */
+    { 2, 17, 17, 5, 8, 0, 0 },
+    { 2, 17, 17, 5, 12, 1, 0 },           /* lazy: 12 candidates, where libzstd's level 6 has 8, to stay at or below gzip 6 */
+    { 2, 17, 17, 5, 12, 2, 0 },           /* lazy2 */
+    { 2, 17, 17, 5, 24, 2, 0 },
+    { 2, 17, 17, 4, 32, 2, 0 },
     /* 10 to 12 (RFC-0038 Z-1): libzstd's larger tables for them, each cut to the window and a known
      * input as every level's; four-byte hashes (libzstd's are five: four is smaller on binaries and
      * JSON here, within a point on C) and more candidates. */
-    { 2, 22, 21, 4, 48, 2 },
-    { 2, 22, 21, 4, 96, 2 },
-    { 2, 23, 22, 4, 128, 2 },
+    { 2, 22, 21, 4, 48, 2, 0 },
+    { 2, 22, 21, 4, 96, 2, 0 },
+    { 2, 23, 22, 4, 128, 2, 0 },
+    /* 13 to 15 (RFC-0038 Z-2): the same lazy2 parse over binary trees, with libzstd's sizes for these
+     * levels; `tries` is how many nodes a walk compares. */
+    { 3, 22, 22, 4, 32, 2, 0 },
+    { 3, 23, 22, 4, 64, 2, 0 },
+    { 3, 23, 23, 4, 128, 2, 0 },
+    /* 16 to 19 (RFC-0038 Z-3): the trees, every match they find weighed by what it would cost to
+     * write, and the cheapest path through each stretch of input taken; 18 and 19 also take
+     * three-byte matches. Below 256 KiB of known input 13 to 19 all parse so (make). */
+    { 4, 22, 22, 4, 32, 0, 48 },
+    { 4, 22, 23, 4, 32, 0, 64 },
+    { 4, 22, 23, 4, 64, 1, 64 },
+    { 4, 22, 24, 4, 128, 1, 256 },
 };
 
 static proven_err_t grow(proven_zstd_encoder_t *z, void **buf, proven_size_t *cap, proven_size_t want, proven_size_t unit) {
@@ -533,6 +568,7 @@ static proven_err_t grow(proven_zstd_encoder_t *z, void **buf, proven_size_t *ca
 }
 
 static void frame_start(proven_zstd_encoder_t *z) {
+    if (z->optp) z->optp->ready = false;      /* a new frame starts its statistics again */
     z->header_done = false;
     z->finished = false;
     z->failed = false;
@@ -549,6 +585,10 @@ static void frame_start(proven_zstd_encoder_t *z) {
         z->fresh = true;
     }
     z->next_update = 0;
+    if (z->optp) {
+        for (proven_size_t i = 0; i < ((proven_size_t)1 << z->optp->h3_log); ++i) z->optp->h3[i] = 0;
+        z->optp->h3_next = 0;
+    }
 }
 
 static proven_err_t make(const proven_zstd_encoder_options_t *o, proven_u64 size_hint, proven_zstd_encoder_t **out) {
@@ -569,6 +609,14 @@ static proven_err_t make(const proven_zstd_encoder_options_t *o, proven_u64 size
         need = WINDOW_LOG_MIN;
         while (need < z->wlog && ((proven_u64)1 << need) < size_hint) need++;
     }
+    /* A known input of 256 KiB or less: from level 13 on, the optimal parse with three-byte matches,
+     * as libzstd's table for such inputs has it (its trees and lazy parse only pay on more). */
+    if (size_hint <= ((proven_u64)256 << 10) && z->p.strategy >= 3) {
+        if (z->p.strategy == 3) z->p.target = 48;
+        else { z->p.tries *= 4; z->p.target *= 2; }   /* 16 to 19 look further than 13 to 15 */
+        z->p.strategy = 4;
+        z->p.depth = 1;
+    }
     if (z->p.hlog > need + 1) z->p.hlog = need + 1;
     if (z->p.clog > need + 1) z->p.clog = need + 1;
     z->window = (proven_size_t)1 << z->wlog;
@@ -581,6 +629,22 @@ static proven_err_t make(const proven_zstd_encoder_options_t *o, proven_u64 size
     if (e != PROVEN_OK) { o->alloc.free_fn(o->alloc.ctx, z); return e; }
     z->hash2 = z->hash2_size ? z->hash + z->hash_size : NULL;
     for (proven_size_t i = 0; i < z->hash_size + z->hash2_size; ++i) z->hash[i] = 0;
+    if (z->p.strategy == 4) {
+        /* The path's nodes and the three-byte table, no larger than a known input needs. */
+        const proven_u32 span = size_hint < OPT_NUM ? (proven_u32)size_hint + 1 : OPT_NUM;
+        const unsigned h3_log = need + 1 < OPT_H3_LOG ? need + 1 : OPT_H3_LOG;
+        const proven_size_t nodes = ((proven_size_t)span + 2) * sizeof(proven_opt_node_t), h3n = (proven_size_t)1 << h3_log;
+        proven_result_mem_mut_t om = o->alloc.alloc_fn(o->alloc.ctx, sizeof(struct proven_opt) + nodes + h3n * sizeof(proven_u32), 16);
+        if (om.err != PROVEN_OK) { o->alloc.free_fn(o->alloc.ctx, z->hash); o->alloc.free_fn(o->alloc.ctx, z); return PROVEN_ERR_NOMEM; }
+        z->optp = (struct proven_opt *)(void *)om.value.ptr;
+        z->optp->ready = false;
+        z->optp->span_max = span;
+        z->optp->h3_log = h3_log;
+        z->optp->node = (proven_opt_node_t *)(void *)(om.value.ptr + sizeof(struct proven_opt));
+        z->optp->h3 = (proven_u32 *)(void *)(om.value.ptr + sizeof(struct proven_opt) + nodes);
+        for (proven_size_t i = 0; i < h3n; ++i) z->optp->h3[i] = 0;
+        z->optp->h3_next = 0;
+    }
     z->fresh = true;
     /* A block of n bytes has at most n / 4 sequences: every match is at least 4 long. */
     z->lit_max = size_hint < z->block_size ? (proven_size_t)size_hint : z->block_size;
@@ -598,6 +662,7 @@ void proven_zstd_encoder_destroy(proven_zstd_encoder_t *z) {
     if (!z) return;
     const proven_allocator_t a = z->alloc;
     if (z->hash) a.free_fn(a.ctx, z->hash);
+    if (z->optp) a.free_fn(a.ctx, z->optp);
     if (z->seqs) a.free_fn(a.ctx, z->seqs);
     if (z->codes) a.free_fn(a.ctx, z->codes);
     if (z->lits) a.free_fn(a.ctx, z->lits);
@@ -909,6 +974,317 @@ ZSTD_HOT proven_size_t hc_find(proven_zstd_encoder_t *z, const proven_byte_t *ba
     return best >= 4 ? best : 0;
 }
 
+/* Binary trees (levels 13 to 15): each position is a node of the tree its hash heads, ordered by the
+ * bytes that follow it; its two links - to the nodes before it that sort below it and above it - are
+ * hash2[2 (p mod n)] and hash2[2 (p mod n) + 1], n = hash2_size / 2, 0 for none. A node older than
+ * cur - n shares its slots with a newer one: a walk links it and goes no further. Putting `cur` in
+ * walks down from the head as a search does, linking `cur` in on the way, and finds the longest match
+ * among the nodes compared (at most `tries`); at least 4 long, or 0. */
+ZSTD_HOT proven_size_t bt_put(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_u32 cur, const proven_byte_t *iend,
+                              proven_size_t low, proven_u32 *off, const unsigned mls) {
+    proven_u32 *const ht = z->hash, *const bt = z->hash2;
+    const proven_u32 nmask = (proven_u32)(z->hash2_size / 2) - 1;
+    const proven_byte_t *const ip = base + cur;
+    const proven_u32 h = hash_at(ip, z->p.hlog, mls);
+    proven_u32 idx = ht[h];
+    ht[h] = cur;
+    proven_u32 dummy = 0;
+    proven_u32 *smaller = bt + 2 * (cur & nmask), *larger = smaller + 1;
+    proven_size_t lsmall = 0, llarge = 0, best = 0;
+    const proven_u32 old = cur > nmask ? cur - nmask : 0;
+    for (unsigned n = z->p.tries; n > 0 && idx > 0 && idx >= low; --n) {
+        proven_u32 *const next = bt + 2 * (idx & nmask);
+        const proven_byte_t *const m = base + idx;
+        proven_size_t len = lsmall < llarge ? lsmall : llarge;
+        len += count_same(ip + len, m + len, iend);
+        if (len > best) { best = len; *off = cur - idx; }
+        if (ip + len == iend) break;                  /* the input ends: which side is not known */
+        if (m[len] < ip[len]) {
+            *smaller = idx;
+            lsmall = len;
+            if (idx <= old) { smaller = &dummy; break; }
+            smaller = next + 1;
+            idx = next[1];
+        } else {
+            *larger = idx;
+            llarge = len;
+            if (idx <= old) { larger = &dummy; break; }
+            larger = next;
+            idx = next[0];
+        }
+    }
+    *smaller = 0;
+    *larger = 0;
+    return best >= 4 ? best : 0;
+}
+
+/* The longest match for `ip` by the trees: the positions since the last search put in first. */
+ZSTD_HOT proven_size_t bt_find(proven_zstd_encoder_t *z, const proven_byte_t *base, const proven_byte_t *ip, const proven_byte_t *iend,
+                               proven_size_t low, proven_u32 *off, const unsigned mls) {
+    const proven_u32 cur = (proven_u32)(ip - base);
+    proven_u32 skip = 0;
+    for (proven_u32 i = z->next_update; i < cur; ++i) (void)bt_put(z, base, i, iend, low, &skip, mls);
+    z->next_update = cur + 1;
+    return bt_put(z, base, cur, iend, low, off, mls);
+}
+
+/* ---- Optimal parsing (levels 16 to 19, RFC-0038 Z-3) ----
+ *
+ * Every match the trees find at a position, and the three repeat offsets, each weighed by what it
+ * would cost to write - its offset code and extra bits, its length's, the literal length's of its
+ * sequence - and every literal by its byte; the cheapest path through a stretch of input (up to
+ * OPT_NUM positions, or a match of `target` bytes) is taken. The prices come from what the frame has
+ * written so far (each block starts from the last's, scaled down; the first from its own bytes and
+ * the format's predefined distributions), as libzstd's btopt does - written here from the idea, not
+ * from its code. */
+
+ZSTD_HOT unsigned ll_code(proven_u32 ll);
+ZSTD_HOT unsigned ml_code(proven_u32 ml);
+
+/* About 256 log2(stat + 1): the whole bits from the highest set bit, the fraction from the next. */
+static inline proven_u32 opt_weight(proven_u32 stat) {
+    const proven_u32 s = stat + 1, hb = highbit32(s);
+    return hb * 256 + ((s << 8) >> hb);
+}
+
+/* Each symbol's price from the counts. */
+static void opt_prices(struct proven_opt *o) {
+    o->lit_w = opt_weight(o->lit_sum); o->ll_w = opt_weight(o->ll_sum); o->ml_w = opt_weight(o->ml_sum); o->of_w = opt_weight(o->of_sum);
+    for (unsigned i = 0; i < 256; ++i) { const proven_u32 w = opt_weight(o->lit[i]); o->lit_p[i] = o->lit_w > w ? o->lit_w - w : 0; }
+    for (unsigned i = 0; i < 36; ++i) { const proven_u32 w = opt_weight(o->ll[i]); o->ll_p[i] = LL_BITS[i] * 256u + (o->ll_w > w ? o->ll_w - w : 0); }
+    for (unsigned i = 0; i < 53; ++i) { const proven_u32 w = opt_weight(o->ml[i]); o->ml_p[i] = ML_BITS[i] * 256u + (o->ml_w > w ? o->ml_w - w : 0); }
+    for (unsigned i = 0; i < 32; ++i) { const proven_u32 w = opt_weight(o->of[i]); o->of_p[i] = i * 256u + (o->of_w > w ? o->of_w - w : 0); }
+}
+
+static proven_u32 opt_sum(const proven_u32 *t, unsigned n) { proven_u32 s = 0; for (unsigned i = 0; i < n; ++i) s += t[i]; return s; }
+
+/* A block begins: its counts are the last block's scaled down, or - first in the frame - its own
+ * bytes' and the predefined distributions'. */
+static void opt_begin(struct proven_opt *o, const proven_byte_t *src, proven_size_t n) {
+    if (!o->ready) {
+        for (unsigned i = 0; i < 256; ++i) o->lit[i] = 0;
+        for (proven_size_t i = 0; i < n; ++i) o->lit[src[i]]++;
+        for (unsigned i = 0; i < 256; ++i) o->lit[i] = 1 + (o->lit[i] >> 4);
+        for (unsigned i = 0; i < 36; ++i) o->ll[i] = LL_DEFAULT[i] > 0 ? (proven_u32)LL_DEFAULT[i] : 1;
+        for (unsigned i = 0; i < 53; ++i) o->ml[i] = ML_DEFAULT[i] > 0 ? (proven_u32)ML_DEFAULT[i] : 1;
+        for (unsigned i = 0; i < 32; ++i) o->of[i] = i < 29 && OF_DEFAULT[i] > 0 ? (proven_u32)OF_DEFAULT[i] : 1;
+        o->ready = true;
+    } else {
+        for (unsigned i = 0; i < 256; ++i) o->lit[i] = 1 + (o->lit[i] >> 4);
+        for (unsigned i = 0; i < 36; ++i) o->ll[i] = 1 + (o->ll[i] >> 4);
+        for (unsigned i = 0; i < 53; ++i) o->ml[i] = 1 + (o->ml[i] >> 4);
+        for (unsigned i = 0; i < 32; ++i) o->of[i] = 1 + (o->of[i] >> 4);
+    }
+    o->lit_sum = opt_sum(o->lit, 256); o->ll_sum = opt_sum(o->ll, 36); o->ml_sum = opt_sum(o->ml, 53); o->of_sum = opt_sum(o->of, 32);
+    opt_prices(o);
+}
+
+static inline proven_u32 opt_ll_price(const struct proven_opt *o, proven_u32 ll) { return o->ll_p[ll_code(ll)]; }
+static inline proven_u32 opt_match_price(const struct proven_opt *o, proven_u32 offv, proven_u32 ml) { return o->of_p[highbit32(offv)] + o->ml_p[ml_code(ml)]; }
+
+/* The repeat offsets after a sequence with `ll` literals and a match `dist` back, and the offset
+ * value written for it - as store() makes them. */
+static inline proven_u32 opt_new_rep(proven_u32 r[3], proven_u32 dist, bool ll0) {
+    proven_u32 v;
+    if (!ll0) {
+        if (dist == r[0]) return 1;
+        if (dist == r[1]) { v = 2; r[1] = r[0]; r[0] = dist; return v; }
+        if (dist == r[2]) { v = 3; r[2] = r[1]; r[1] = r[0]; r[0] = dist; return v; }
+    } else {
+        if (dist == r[1]) { v = 1; r[1] = r[0]; r[0] = dist; return v; }
+        if (dist == r[2]) { v = 2; r[2] = r[1]; r[1] = r[0]; r[0] = dist; return v; }
+        if (dist == r[0] - 1) { v = 3; r[2] = r[1]; r[1] = r[0]; r[0] = dist; return v; }
+    }
+    r[2] = r[1]; r[1] = r[0]; r[0] = dist;
+    return dist + 3;
+}
+
+/* Every match at `cur` longer than the last found, shortest first: the repeat offsets (as the
+ * sequence's literal count would name them), then the trees' - which put `cur` in on the way. */
+ZSTD_HOT unsigned opt_find(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_u32 cur, const proven_byte_t *iend, proven_size_t low,
+                           const proven_u32 rep[3], bool ll0, proven_opt_match_t *m) {
+    const proven_byte_t *const ip = base + cur;
+    unsigned n = 0;
+    const bool three = z->p.depth >= 1;
+    proven_size_t best = three ? 2 : 3;
+    for (unsigned i = 0; i < 3; ++i) {
+        const proven_u32 d = ll0 ? (i == 0 ? rep[1] : i == 1 ? rep[2] : rep[0] - 1) : rep[i];
+        if (d == 0 || d > cur - low) continue;
+        const proven_byte_t *const mp = ip - d;
+        if (ip[0] != mp[0] || ip[1] != mp[1] || ip[2] != mp[2]) continue;
+        const proven_size_t len = count_same(ip + 3, mp + 3, iend) + 3;
+        if (len > best) { m[n++] = (proven_opt_match_t){ i + 1, d, (proven_u32)len }; best = len; }
+    }
+    if (three) {
+        /* The nearest earlier position that begins with the same three bytes, if near enough. */
+        struct proven_opt *const o = z->optp;
+        for (proven_u32 i = o->h3_next; i < cur; ++i) o->h3[(((proven_u32)base[i] | (proven_u32)base[i + 1] << 8 | (proven_u32)base[i + 2] << 16) * 506832829u) >> (32 - o->h3_log)] = i;
+        const proven_u32 h3 = (((proven_u32)ip[0] | (proven_u32)ip[1] << 8 | (proven_u32)ip[2] << 16) * 506832829u) >> (32 - o->h3_log);
+        const proven_u32 c3 = o->h3[h3];
+        if (cur >= o->h3_next) { o->h3[h3] = cur; o->h3_next = cur + 1; }
+        if (c3 > 0 && c3 >= low && c3 < cur && cur - c3 < OPT_H3_REACH) {
+            const proven_size_t len = count_same(ip, base + c3, iend);
+            if (len > best) { m[n++] = (proven_opt_match_t){ cur - c3 + 3, cur - c3, (proven_u32)len }; best = len; }
+        }
+    }
+    /* The trees: positions skipped since the last search go in first. A position already in them
+     * (a stretch ended before the last one searched) is not put in again: its repeats only. */
+    if (cur < z->next_update) return n;
+    proven_u32 skip = 0;
+    for (proven_u32 i = z->next_update; i < cur; ++i) (void)bt_put(z, base, i, iend, low, &skip, z->p.mls);
+    z->next_update = cur + 1;
+    proven_u32 *const ht = z->hash, *const bt = z->hash2;
+    const proven_u32 nmask = (proven_u32)(z->hash2_size / 2) - 1;
+    const proven_u32 h = hash_at(ip, z->p.hlog, z->p.mls);
+    proven_u32 idx = ht[h];
+    ht[h] = cur;
+    proven_u32 dummy = 0;
+    proven_u32 *smaller = bt + 2 * (cur & nmask), *larger = smaller + 1;
+    proven_size_t lsmall = 0, llarge = 0;
+    const proven_u32 old = cur > nmask ? cur - nmask : 0;
+    for (unsigned k = z->p.tries; k > 0 && idx > 0 && idx >= low; --k) {
+        proven_u32 *const next = bt + 2 * (idx & nmask);
+        const proven_byte_t *const mp = base + idx;
+        proven_size_t len = lsmall < llarge ? lsmall : llarge;
+        len += count_same(ip + len, mp + len, iend);
+        if (len > best && n < OPT_MATCHES) { m[n++] = (proven_opt_match_t){ cur - idx + 3, cur - idx, (proven_u32)len }; best = len; }
+        if (ip + len == iend) break;
+        if (mp[len] < ip[len]) {
+            *smaller = idx; lsmall = len;
+            if (idx <= old) { smaller = &dummy; break; }
+            smaller = next + 1; idx = next[1];
+        } else {
+            *larger = idx; llarge = len;
+            if (idx <= old) { larger = &dummy; break; }
+            larger = next; idx = next[0];
+        }
+    }
+    *smaller = 0;
+    *larger = 0;
+    return n;
+}
+
+/* A sequence written, and counted. */
+static void opt_store(struct proven_opt *o, proven_sink_t *k, const proven_byte_t *lit, const proven_byte_t *iend, proven_size_t ll, proven_u32 dist, proven_size_t ml) {
+    proven_u32 r[3] = { k->rep[0], k->rep[1], k->rep[2] };
+    const proven_u32 offv = opt_new_rep(r, dist, ll == 0);
+    for (proven_size_t i = 0; i < ll; ++i) o->lit[lit[i]] += 2;
+    o->lit_sum += 2 * (proven_u32)ll;
+    o->ll[ll_code((proven_u32)ll)]++; o->ll_sum++;
+    o->ml[ml_code((proven_u32)ml)]++; o->ml_sum++;
+    o->of[highbit32(offv)]++; o->of_sum++;
+    store(k, lit, iend, ll, dist, ml);
+}
+
+ZSTD_HOT proven_size_t match_opt(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end,
+                                 proven_size_t low, proven_size_t *last_from) {
+    struct proven_opt *const o = z->optp;
+    const proven_byte_t *const iend = base + end;
+    const proven_byte_t *const ilimit = end - start > 8 ? iend - 8 : base + start;
+    proven_sink_t k = sink_open(z);
+    const proven_byte_t *ip = base + start, *anchor = ip;
+    if (ip == base) ip++;
+    opt_begin(o, base + start, end - start);
+    proven_opt_node_t *const nd = o->node;
+    while (ip < ilimit && k.seq_end - k.seq >= 3) {
+        /* A stretch writes at most one sequence for every four bytes, and one more: no longer than
+         * the sequences left allow. */
+        const proven_size_t room = (proven_size_t)(k.seq_end - k.seq) - 2;
+        const proven_u32 span = room * 4 < o->span_max ? (proven_u32)(room * 4) : o->span_max;
+        const proven_u32 cur0 = (proven_u32)(ip - base);
+        const proven_u32 ll0 = (proven_u32)(ip - anchor);
+        unsigned nm = opt_find(z, base, cur0, iend, low, k.rep, ll0 == 0, o->m);
+        if (nm == 0) { ip++; continue; }
+        if (o->m[nm - 1].len >= z->p.target) {
+            /* Long enough to take at once. */
+            const proven_opt_match_t mm = o->m[nm - 1];
+            opt_store(o, &k, anchor, iend, ll0, mm.dist, mm.len);
+            ip = anchor = ip + mm.len;
+            opt_prices(o);
+            continue;
+        }
+        /* The first node: the literals already waiting. Its price holds their length's price; a
+         * node at a match's end holds the whole sequence and not the next one's length. */
+        nd[0] = (proven_opt_node_t){ .price = ll0 ? opt_ll_price(o, ll0) : 0, .litlen = ll0, .rep = { k.rep[0], k.rep[1], k.rep[2] } };
+        proven_u32 last = 0;
+        proven_u32 far_dist = 0, far_len = 0, far_at = 0;   /* a match past the stretch, taken whole at its end */
+        for (proven_u32 cur = 0;; ++cur) {
+            if (cur > 0) {
+                /* A literal into `cur`, if cheaper. */
+                const proven_opt_node_t *pv = &nd[cur - 1];
+                const proven_u32 lp = pv->litlen;
+                const proven_u32 price = pv->price + o->lit_p[ip[cur - 1]] + opt_ll_price(o, lp + 1) - (lp ? opt_ll_price(o, lp) : 0);
+                if (cur > last || price <= nd[cur].price) {
+                    nd[cur] = (proven_opt_node_t){ .price = price, .litlen = lp + 1, .rep = { pv->rep[0], pv->rep[1], pv->rep[2] } };
+                    if (cur > last) last = cur;
+                } else if (nd[cur].mlen > 0) {
+                    /* A match ends here: the repeat offsets after it. */
+                    const proven_opt_node_t *st = &nd[cur - nd[cur].mlen];
+                    proven_u32 r[3] = { st->rep[0], st->rep[1], st->rep[2] };
+                    (void)opt_new_rep(r, nd[cur].dist, st->litlen == 0);
+                    nd[cur].rep[0] = r[0]; nd[cur].rep[1] = r[1]; nd[cur].rep[2] = r[2];
+                }
+                if (cur == last) break;
+                if (ip + cur >= ilimit) continue;
+                nm = opt_find(z, base, cur0 + cur, iend, low, nd[cur].rep, nd[cur].litlen == 0, o->m);
+                if (nm == 0) continue;
+            }
+            const proven_opt_node_t *at = &nd[cur];
+            const proven_u32 longest = o->m[nm - 1].len;
+            if (longest >= z->p.target || cur + longest > span) {
+                /* Long enough, or past the stretch: the path ends here and the match follows it. */
+                far_dist = o->m[nm - 1].dist; far_len = longest; far_at = cur;
+                last = cur;
+                break;
+            }
+            const proven_u32 base_price = at->price + (at->litlen ? 0 : opt_ll_price(o, 0));
+            proven_u32 len = z->p.depth >= 1 ? 3 : 4;
+            for (unsigned i = 0; i < nm; ++i) {
+                const proven_opt_match_t mm = o->m[i];
+                for (; len <= mm.len; ++len) {
+                    const proven_u32 pos = cur + len;
+                    const proven_u32 price = base_price + opt_match_price(o, mm.offv, len);
+                    if (pos > last) { for (proven_u32 q = last + 1; q < pos; ++q) nd[q].price = 0xffffffffu, nd[q].mlen = 0, nd[q].litlen = 0; last = pos; nd[pos].price = 0xffffffffu; }
+                    if (price < nd[pos].price) {
+                        nd[pos] = (proven_opt_node_t){ .price = price, .dist = mm.dist, .mlen = len, .litlen = 0 };
+                        /* rep set when the walk reaches pos */
+                        const proven_opt_node_t *st = at;
+                        proven_u32 r[3] = { st->rep[0], st->rep[1], st->rep[2] };
+                        (void)opt_new_rep(r, mm.dist, st->litlen == 0);
+                        nd[pos].rep[0] = r[0]; nd[pos].rep[1] = r[1]; nd[pos].rep[2] = r[2];
+                    }
+                }
+            }
+        }
+        /* Back from the end of the path's last match: its matches, in order. */
+        proven_u32 end_at = last;
+        while (end_at > 0 && nd[end_at].mlen == 0) end_at--;
+        proven_u32 stack[OPT_NUM / 4 + 2], ns = 0;
+        for (proven_u32 pos = end_at; pos > 0;) {
+            if (nd[pos].mlen > 0) { stack[ns++] = pos; pos -= nd[pos].mlen; }
+            else pos--;
+        }
+        while (ns > 0) {
+            const proven_u32 pos = stack[--ns];
+            const proven_byte_t *const ms = ip + pos - nd[pos].mlen;
+            opt_store(o, &k, anchor, iend, (proven_size_t)(ms - anchor), nd[pos].dist, nd[pos].mlen);
+            anchor = ms + nd[pos].mlen;
+        }
+        if (far_len > 0) {
+            /* The match the path stopped at, after the path's matches (it starts at or after their end). */
+            const proven_byte_t *const ms = ip + far_at;
+            opt_store(o, &k, anchor, iend, (proven_size_t)(ms - anchor), far_dist, far_len);
+            anchor = ms + far_len;
+        }
+        ip = anchor > ip ? anchor : ip + 1;
+        opt_prices(o);
+    }
+    *last_from = (proven_size_t)(anchor - base);
+    const bool full = k.seq_end - k.seq < 3;
+    sink_close(z, &k);
+    return full ? (proven_size_t)(anchor - base) : end;
+}
+
 /* The cost of an offset in the reference encoder's comparisons: the bits of its offset value. */
 static inline int off_bits(proven_u32 off, bool rep) { return rep ? 0 : (int)highbit32(off + 3); }
 
@@ -916,7 +1292,7 @@ static inline int off_bits(proven_u32 off, bool rep) { return rep ? 0 : (int)hig
  * found; lazy (1) and lazy2 (2) look one and two bytes on for a better one, weighing length
  * against the offset's bits (the reference encoder's lazy loop). */
 ZSTD_HOT proven_size_t match_lazy_mls(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end,
-                                      proven_size_t low, proven_size_t *last_from, const unsigned mls, const unsigned depth) {
+                                      proven_size_t low, proven_size_t *last_from, const unsigned mls, const unsigned depth, const bool tree) {
     const proven_byte_t *const iend = base + end, *const lowp = base + low;
     const proven_byte_t *const ilimit = end - start > 8 ? iend - 8 : base + start;
     proven_sink_t k = sink_open(z);
@@ -936,7 +1312,7 @@ ZSTD_HOT proven_size_t match_lazy_mls(proven_zstd_encoder_t *z, const proven_byt
         }
         {
             proven_u32 o2 = 0;
-            const proven_size_t m2 = hc_find(z, base, ip, iend, low, &o2, mls);
+            const proven_size_t m2 = tree ? bt_find(z, base, ip, iend, low, &o2, mls) : hc_find(z, base, ip, iend, low, &o2, mls);
             if (m2 > ml) { ml = m2; off = o2; rep = false; st = ip; }
         }
         if (ml < 4) {
@@ -952,7 +1328,7 @@ ZSTD_HOT proven_size_t match_lazy_mls(proven_zstd_encoder_t *z, const proven_byt
                 if (g2 > g1) { ml = mr; off = r0; rep = true; st = ip; }
             }
             proven_u32 o2 = 0;
-            const proven_size_t m2 = hc_find(z, base, ip, iend, low, &o2, mls);
+            const proven_size_t m2 = tree ? bt_find(z, base, ip, iend, low, &o2, mls) : hc_find(z, base, ip, iend, low, &o2, mls);
             if (m2 >= 4) {
                 const int g2 = (int)m2 * 4 - off_bits(o2, false), g1 = (int)ml * 4 - off_bits(off, rep) + extra;
                 if (g2 > g1) { ml = m2; off = o2; rep = false; st = ip; d = 0; continue; }   /* a better match: look on from it */
@@ -985,10 +1361,14 @@ ZSTD_HOT proven_size_t match_block(proven_zstd_encoder_t *z, const proven_byte_t
     if (z->p.strategy == 2) {
         const unsigned m4 = z->p.mls == 4;
         switch (z->p.depth) {
-            case 0: return m4 ? match_lazy_mls(z, base, start, end, low, last_from, 4, 0) : match_lazy_mls(z, base, start, end, low, last_from, 5, 0);
-            case 1: return m4 ? match_lazy_mls(z, base, start, end, low, last_from, 4, 1) : match_lazy_mls(z, base, start, end, low, last_from, 5, 1);
-            default: return m4 ? match_lazy_mls(z, base, start, end, low, last_from, 4, 2) : match_lazy_mls(z, base, start, end, low, last_from, 5, 2);
+            case 0: return m4 ? match_lazy_mls(z, base, start, end, low, last_from, 4, 0, false) : match_lazy_mls(z, base, start, end, low, last_from, 5, 0, false);
+            case 1: return m4 ? match_lazy_mls(z, base, start, end, low, last_from, 4, 1, false) : match_lazy_mls(z, base, start, end, low, last_from, 5, 1, false);
+            default: return m4 ? match_lazy_mls(z, base, start, end, low, last_from, 4, 2, false) : match_lazy_mls(z, base, start, end, low, last_from, 5, 2, false);
         }
+    }
+    if (z->p.strategy == 4) return match_opt(z, base, start, end, low, last_from);
+    if (z->p.strategy == 3) {
+        return z->p.mls == 4 ? match_lazy_mls(z, base, start, end, low, last_from, 4, 2, true) : match_lazy_mls(z, base, start, end, low, last_from, 5, 2, true);
     }
     return z->p.mls == 5 ? match_double_mls(z, base, start, end, low, last_from, 5) : match_double_mls(z, base, start, end, low, last_from, 6);
 }
@@ -1365,11 +1745,12 @@ static void slide(proven_zstd_encoder_t *z) {
     z->pos -= shift;
     z->fill -= shift;
     const proven_u32 s = (proven_u32)shift;
-    if (z->p.strategy == 2) {
-        /* The chain is indexed by position modulo its size: what was at p is now at p - s. Rotate
-         * it left by s, in place (three reversals). */
+    if (z->p.strategy >= 2) {
+        /* The chain is indexed by position modulo its size, the trees by twice that: what was at p
+         * is now at p - s. Rotate left by s (two links a position for the trees), in place (three
+         * reversals). */
         proven_u32 *c = z->hash2;
-        const proven_size_t n = z->hash2_size, r = shift & (n - 1);
+        const proven_size_t n = z->hash2_size, r = (z->p.strategy >= 3 ? 2 * shift : shift) & (n - 1);
         for (int part = 0; part < 3; ++part) {
             proven_size_t a = part == 1 ? r : 0, b = part == 0 ? r : n;
             while (a + 1 < b) { const proven_u32 t = c[a]; c[a] = c[b - 1]; c[b - 1] = t; a++; b--; }
@@ -1377,6 +1758,10 @@ static void slide(proven_zstd_encoder_t *z) {
         z->next_update = z->next_update > s ? z->next_update - s : 0;
     }
     for (proven_size_t i = 0; i < z->hash_size + z->hash2_size; ++i) z->hash[i] = z->hash[i] > s ? z->hash[i] - s : 0;
+    if (z->optp) {
+        for (proven_size_t i = 0; i < ((proven_size_t)1 << z->optp->h3_log); ++i) z->optp->h3[i] = z->optp->h3[i] > s ? z->optp->h3[i] - s : 0;
+        z->optp->h3_next = z->optp->h3_next > s ? z->optp->h3_next - s : 0;
+    }
 }
 
 /* Compress from `pos` as far as `upto`, the last block marked if asked, into `pend`. */

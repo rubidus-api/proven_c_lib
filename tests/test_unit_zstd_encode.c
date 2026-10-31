@@ -150,14 +150,17 @@ int main(void) {
         "Inspect src/proven/zstd_encode.c. A failing input is printed by its corpus number, level and window.");
     g_heap = proven_heap_allocator();
 
-    PROVEN_TEST_SECTION("round trips", "Eleven inputs at levels 1 to 12 and windows of 1 KiB, 64 KiB and the default, with and without the checksum, in one call, and in steps at levels 1 to 4, 6 and 8 (each matcher).", "Check compress_block and write_block; a frame the decoder refuses is printed with what made it.");
+    PROVEN_TEST_SECTION("round trips", "Eleven inputs at levels 1 to 19 (13 to 19 on the large ones with the 1 KiB window only) and windows of 1 KiB, 64 KiB and the default, with and without the checksum, in one call, and in steps at levels 1 to 4, 6, 8 and 13 (each matcher).", "Check compress_block and write_block; a frame the decoder refuses is printed with what made it.");
     {
         static const int WL[3] = { 0, 10, 16 };
         int failed = 0, frames = 0;
         for (int i = 0; i <= 10; ++i) {
             const proven_size_t n = corpus(i, g_in);
-            for (int level = 1; level <= 12; ++level) {
+            for (int level = 1; level <= 19; ++level) {
                 for (int w = 0; w < 3; ++w) {
+                    /* The binary trees (13 to 19) are slow under the sanitizers: their large inputs
+                     * with the 1 KiB window only - still many blocks and slides. */
+                    if (level >= 13 && n > 100000 && WL[w] != 10) continue;
                     proven_zstd_encoder_options_t o = { .alloc = g_heap, .level = level, .window_log = WL[w], .checksum = (i + level) % 2 == 0 };
                     proven_size_t made = 0;
                     proven_err_t e = proven_zstd_encode_all(&o, (proven_mem_view_t){ g_in, n }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made);
@@ -165,7 +168,7 @@ int main(void) {
                     frames++;
                     if (e != PROVEN_OK || made > proven_zstd_encode_bound(n) || !decodes_to(g_enc, made, g_in, n, wmax)) { failed++; printf("  whole: input %d level %d window %d: %d\n", i, level, WL[w], (int)e); }
                     if (n > 400000 && WL[w] == 0) continue;
-                    if (level > 4 && level != 6 && level != 8) continue;     /* steps: one level for each matcher and depth */
+                    if (level > 4 && level != 6 && level != 8 && level != 13) continue;     /* steps: one level for each matcher and depth */
                     proven_zstd_encoder_t *z = NULL;
                     if (proven_zstd_encoder_create(&o, &z) != PROVEN_OK) { failed++; continue; }
                     static const proven_size_t PIECE[3] = { 7, 1000, 100000 }, ROOM[3] = { 64, 1, (proven_size_t)-1 };
@@ -183,6 +186,29 @@ int main(void) {
         }
         printf("  %d frames\n", frames);
         PROVEN_TEST_ASSERT(failed == 0 && frames > 600, "every frame decodes to its input, with every offset inside the window it states", "");
+    }
+
+    PROVEN_TEST_SECTION("blocks full of sequences", "Short matches a few bytes apart, more sequences than a block holds, at the optimal levels: each block ends where its sequences run out, whole and streamed, and every frame decodes.", "Check the stretch's limit (`span`, the sequences left) in match_opt in src/proven/zstd_encode.c.");
+    {
+        /* Four-byte tokens from a set of 64, a random byte after each: a match of four (or a little
+         * more) every five bytes - about 26,000 sequences in a block of 128 KiB, which holds 16,384. */
+        static proven_byte_t tok[64][4];
+        g_x = 77;
+        for (int t = 0; t < 64; ++t) for (int b = 0; b < 4; ++b) tok[t][b] = (proven_byte_t)xs();
+        proven_size_t n = 0;
+        while (n + 5 <= 300000) { memcpy(g_in + n, tok[xs() % 64], 4); n += 4; g_in[n++] = (proven_byte_t)xs(); }
+        int bad = 0;
+        for (int level = 16; level <= 19; level += 3) {
+            proven_size_t made = 0;
+            proven_zstd_encoder_options_t o = { .alloc = g_heap, .level = level };
+            if (proven_zstd_encode_all(&o, (proven_mem_view_t){ g_in, n }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made) != PROVEN_OK || !decodes_to(g_enc, made, g_in, n, 0)) bad++;
+            o.window_log = 16;
+            proven_zstd_encoder_t *z = NULL;
+            if (proven_zstd_encoder_create(&o, &z) != PROVEN_OK || encode_steps(z, g_in, n, 100000, (proven_size_t)-1, false, g_enc, sizeof g_enc, &made) != PROVEN_OK ||
+                !decodes_to(g_enc, made, g_in, n, (proven_u64)1 << 16)) bad++;
+            proven_zstd_encoder_destroy(z);
+        }
+        PROVEN_TEST_ASSERT(bad == 0, "at levels 16 and 19, whole and streamed: every frame decodes to its input", "");
     }
 
     PROVEN_TEST_SECTION("what the frame states", "A whole buffer states its size, and its window is that size; a stream states its window.", "Check frame_header in src/proven/zstd_encode.c.");
@@ -287,13 +313,13 @@ int main(void) {
     }
 
     PROVEN_TEST_SECTION("a stream is the whole buffer", "300,000 bytes at every level, with windows of 1 KiB and 64 KiB: streamed in pieces of 100,000, the input buffer sliding many times, the blocks are byte for byte those of the same bytes compressed whole - only the frame headers differ.",
-        "Check slide in src/proven/zstd_encode.c: the hash tables, and the chain of levels 4 to 12 (indexed by position modulo its size, so rotated), must move with the buffer.");
+        "Check slide in src/proven/zstd_encode.c: the hash tables, and the chain of levels 4 to 12 and the trees of 13 to 19 (indexed by position modulo their size, so rotated), and the three-byte table of the optimal parse, must move with the buffer.");
     {
         corpus(4, g_in);
         const proven_size_t n = 300000;
         int differ = 0;
         static proven_byte_t whole[400000];
-        for (int level = 1; level <= 12; ++level) {
+        for (int level = 1; level <= 19; ++level) {
             for (int wl = 10; wl <= 16; wl += 6) {
                 proven_zstd_encoder_options_t o = { .alloc = g_heap, .level = level, .window_log = wl };
                 proven_size_t w = 0, made = 0;
@@ -312,9 +338,11 @@ int main(void) {
     PROVEN_TEST_SECTION("memory", "What an encoder holds, for a stream and for a whole buffer; and allocations that fail.", "Check make, block_room, emit and the input buffer's growth in src/proven/zstd_encode.c.");
     {
         const proven_size_t n = corpus(4, g_in);
-        for (int level = 1; level <= 12; ++level) {
-            static const proven_size_t HASH[13] = { 0, 64 * 1024, 96 * 1024, 768 * 1024, 768 * 1024, 1024 * 1024, 1024 * 1024, 1024 * 1024, 1024 * 1024, 1024 * 1024,
-                                                    8 << 20, 8 << 20, 8 << 20 };
+        for (int level = 1; level <= 19; ++level) {
+            /* At 16 to 19 the tables, and the parse's state: its path and its three-byte table. */
+            static const proven_size_t HASH[20] = { 0, 64 * 1024, 96 * 1024, 768 * 1024, 768 * 1024, 1024 * 1024, 1024 * 1024, 1024 * 1024, 1024 * 1024, 1024 * 1024,
+                                                    8 << 20, 8 << 20, 8 << 20, 8 << 20, 8 << 20, 8 << 20, (8 << 20) + 400 * 1024, (8 << 20) + 400 * 1024,
+                                                    (8 << 20) + 400 * 1024, (8 << 20) + 400 * 1024 };
             proven_zstd_encoder_options_t o = { .alloc = counting(0), .level = level };
             proven_zstd_encoder_t *z = NULL;
             proven_size_t made = 0;
@@ -326,7 +354,8 @@ int main(void) {
                                "at most its hash tables, the 768 KiB input buffer of the default window, about 500 KiB for a block, and the encoder itself; nothing after", "");
             (void)proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = counting(0), .level = level }, (proven_mem_view_t){ g_in, 2000 }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made);
             printf("  level %d: 2,000 bytes in one call held at most %zu bytes\n", level, g_count.peak);
-            PROVEN_TEST_ASSERT(g_count.peak <= 64 * 1024 && g_count.live == 0, "a whole buffer of 2,000 bytes needs less than 64 KiB", "");
+            /* From 13 on a short input is parsed optimally (as libzstd does below 256 KiB): its path and three-byte table too. */
+            PROVEN_TEST_ASSERT(g_count.peak <= (level >= 13 ? 160u : 64u) * 1024 && g_count.live == 0, "a whole buffer of 2,000 bytes needs less than 64 KiB (160 KiB from level 13)", "");
         }
         int nomem = 0, other = 0;
         for (proven_size_t k = 1; k <= 9; ++k) {
@@ -358,13 +387,16 @@ int main(void) {
         PROVEN_TEST_ASSERT(nomem >= 5 && other == 0, "each allocation that fails is PROVEN_ERR_NOMEM", "");
     }
 
-    PROVEN_TEST_SECTION("pinned output", "The size and CRC-32 of sixteen frames - eleven whole (levels 1 to 3, 6, and 9 to 12), five streamed after a reset with a sliding buffer, at levels 3, 4, 6 and 8 - which libzstd decoded when they were pinned, from the processor's build of the block coder and from the plain one: a change here is a change of output, to be looked at and re-pinned.", "If the change was meant, run the private check again and update the numbers.");
+    PROVEN_TEST_SECTION("pinned output", "The size and CRC-32 of twenty-six frames - nineteen whole (levels 1 to 3, 6, 9 to 19, and 13 on a short input, which it parses optimally), seven streamed after a reset with a sliding buffer, at levels 3, 4, 6, 8, 13 and 16 - which libzstd decoded when they were pinned, from the processor's build of the block coder and from the plain one: a change here is a change of output, to be looked at and re-pinned.", "If the change was meant, run the private check again and update the numbers.");
     {
         static const struct { int input, level; proven_size_t size; proven_u32 crc; } PIN[] = {
             { 3, 1, 91849, 0xd24793b3u }, { 3, 2, 97612, 0x7367ffaeu }, { 3, 3, 97699, 0xb8b0492eu },
             { 4, 1, 107904, 0x77238193u }, { 4, 3, 99452, 0xd3c79d20u }, { 6, 1, 40820, 0x86ab3620u },
             { 3, 6, 88115, 0x7fbcdd68u }, { 3, 9, 83927, 0xfdcda819u },
             { 3, 10, 83394, 0x1e7e8206u }, { 3, 11, 82273, 0x5c6b3433u }, { 3, 12, 82196, 0xce1ef842u },
+            { 3, 13, 82203, 0x75d59277u }, { 3, 14, 82200, 0xcccab3e5u }, { 3, 15, 82208, 0x492a6348u },
+            { 3, 16, 64346, 0x2c10a426u }, { 3, 17, 64346, 0x2c10a426u }, { 3, 18, 64528, 0x4688e29au }, { 3, 19, 64528, 0x4688e29au },
+            { 6, 13, 42025, 0xce9fe149u },
         };
         int differ = 0;
         /* Twice: on the build the processor gets (with BMI2 where it has it) and on the plain one -
@@ -386,6 +418,8 @@ int main(void) {
          * - the hash chain of levels 4 to 9 among them - are in the bytes. */
         static const struct { int input, level; proven_size_t size; proven_u32 crc; } SPIN[] = {
             { 4, 3, 144686, 0x39bbe145u }, { 3, 3, 94238, 0x14701dceu }, { 3, 4, 91302, 0x9ee82c05u }, { 3, 6, 87870, 0x4f3e8d3fu }, { 3, 8, 83613, 0x688406a3u },
+            { 3, 13, 82106, 0x552de691u },
+            { 3, 16, 63363, 0x4fbebaa1u },
         };
         for (proven_size_t i = 0; i < sizeof SPIN / sizeof SPIN[0]; ++i) {
             proven_zstd_encoder_t *z = NULL;
@@ -414,11 +448,11 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap }, NULL) == PROVEN_ERR_INVALID_ARG &&
                            proven_zstd_encoder_create(NULL, &z) == PROVEN_ERR_INVALID_ARG && z == NULL &&
                            proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ 0 }, &z) == PROVEN_ERR_INVALID_ARG &&
-                           proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 13 }, &z) == PROVEN_ERR_INVALID_ARG &&
+                           proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 20 }, &z) == PROVEN_ERR_INVALID_ARG &&
                            proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = -1 }, &z) == PROVEN_ERR_INVALID_ARG &&
                            proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .window_log = 9 }, &z) == PROVEN_ERR_INVALID_ARG &&
                            proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .window_log = 24 }, &z) == PROVEN_ERR_INVALID_ARG && z == NULL,
-                           "no out pointer, no options, no allocator, a level outside 0 to 12 and a window outside 10 to 23 are PROVEN_ERR_INVALID_ARG", "");
+                           "no out pointer, no options, no allocator, a level outside 0 to 19 and a window outside 10 to 23 are PROVEN_ERR_INVALID_ARG", "");
         PROVEN_TEST_ASSERT(proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .window_log = 23 }, &z) == PROVEN_OK, "8 MiB is a window", "");
         PROVEN_TEST_ASSERT(proven_zstd_encode(z, (proven_mem_view_t){ NULL, 5 }, &c, (proven_mem_mut_t){ g_enc, 10 }, &p, PROVEN_ZSTD_FLUSH_NONE, &done) == PROVEN_ERR_INVALID_ARG &&
                            proven_zstd_encode(z, (proven_mem_view_t){ g_in, 5 }, NULL, (proven_mem_mut_t){ g_enc, 10 }, &p, PROVEN_ZSTD_FLUSH_NONE, &done) == PROVEN_ERR_INVALID_ARG &&

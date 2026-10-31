@@ -18,6 +18,20 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **Zstandard encoder levels 13 to 19** (RFC-0038 Z-2 and Z-3), for files compressed once and sent
+  many times. 13 to 15: the lazy2 parse over binary trees - each position kept in a tree of the earlier
+  positions with its hash, ordered by the bytes that follow (trees of 2^21 to 2^22 positions; 32, 64
+  and 128 nodes compared). 16 to 19: optimal parsing over the same trees - every match found at a
+  position and the three repeat offsets priced at what they would cost to write, from what the frame
+  has written so far, and the cheapest path through each stretch of up to 4,096 bytes taken; 18 and 19
+  also take three-byte matches. A whole buffer of 256 KiB or less is parsed optimally from level 13, as
+  libzstd does. Against libzstd's same levels at `window_log` 23 on four inputs: 0.959 to 1.010 of its
+  size; level 19 is 7 to 13 % smaller than level 9. Tables 8 MiB at the default window, up to 80 MiB at
+  level 19 with the largest; about 380 KiB more for the optimal parse. (libzstd's level 19 also makes a
+  first pass over the first block to learn its statistics; this one does not.)
+
 ## [0.101.0] - 2026-10-31
 
 ### Added
