@@ -1119,6 +1119,24 @@ differs from libzstd's in one known way: libzstd's level 19 makes a first pass o
 learn its statistics; this one starts from the block's own bytes and the format's predefined
 distributions.
 
+**Long-distance matching** (`long_distance`, since v0.103.0), as libzstd's `--long`: a rolling hash of
+the last 64 bytes picks about one position in 128; those positions are kept in buckets for the whole
+window (8 bytes for each 128 bytes of window: 512 KiB at `window_log` 23), and a match of 64 bytes or
+more found through them is taken, the level's own matching filling what lies between. It is for large
+inputs that repeat from further back than a fast level's tables reach - archives, logs, several
+versions of one file. It acts at levels 1 to 5: from 6 the level's own matching finds about as much,
+and from 9 a long match forced into the parse costs more than it saves (3 % at level 19), so there it
+does nothing. With the largest window, the size with it / without it, and its speed:
+
+| level | C sources, the executable and the C sources again, 9.3 MB | an executable, 3.9 MB | C sources, 2.7 MB | JSON, 3.7 MB |
+|---|---|---|---|---|
+| 1 | 0.710, 1.26 times as fast | 0.901, 0.96 | 0.992, 0.84 | 1.000, 0.83 |
+| 3 | 0.754, 1.16 | 0.979, 0.89 | 0.994, 0.88 | 1.000, 0.84 |
+| 5 | 0.894, 1.02 | 0.988, 0.92 | 0.996, 0.91 | 1.000, 0.83 |
+
+On the first input, level 3 with it is within 1.5 % of libzstd's level 3 with `--long` at the same window.
+Without such repeats it costs 4 to 22 % of the speed: the rolling hash reads every byte.
+
 The table was measured before v0.89.0. Since then, on an x86 processor with BMI2 (shifts by a
 register without the flags), the encoder runs a second build of its block coder compiled for
 it - the same C, the same output, chosen when the processor is first asked: on four other

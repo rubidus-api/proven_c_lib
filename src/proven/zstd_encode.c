@@ -471,6 +471,15 @@ typedef struct {
     unsigned target;                   /* optimal parsing: a match this long is taken at once */
 } proven_params_t;
 
+/* Long-distance matching, as libzstd's: a gear hash of the last 64 bytes picks one position in about
+ * 2^LDM_RATE_LOG; those are kept in buckets of 2^LDM_BUCKET_LOG, and a match of LDM_MIN bytes or more
+ * found there is taken - the level's own matcher fills what lies between such matches. */
+#define LDM_MIN 64
+#define LDM_RATE_LOG 7
+#define LDM_BUCKET_LOG 3
+#define LDM_LEVEL_MAX 5                 /* the levels it is used at */
+struct proven_ldm_match { proven_u32 at, off, len; };
+
 /* Optimal parsing (levels 16 to 19). Prices are in 1/256 of a bit. */
 #define OPT_NUM 4096                   /* positions one stretch of the path may cover */
 #define OPT_MATCHES 72                 /* matches found at one position: three repeats, a three-byte one, and the trees' */
@@ -524,6 +533,14 @@ struct proven_zstd_encoder {
     /* output waiting to be handed over */
     proven_byte_t *pend;
     proven_size_t pend_cap, pend_len, pend_at;
+    /* long-distance matching (`long_distance`): buckets of LDM_BUCKET entries, each a position (low
+     * 32 bits) and a check of the 64 bytes there (high 32), and the next slot of each bucket; the
+     * matches found in the block being matched */
+    proven_u64 *ldm;
+    proven_u8 *ldm_next;
+    unsigned ldm_log;                  /* entries: 2^ldm_log */
+    struct proven_ldm_match *ldm_m;
+    proven_size_t ldm_cap;
 };
 
 static const proven_params_t LEVELS[LEVEL_MAX + 1] = {
@@ -590,6 +607,10 @@ static void frame_start(proven_zstd_encoder_t *z) {
         z->fresh = true;
     }
     z->next_update = 0;
+    if (z->ldm) {
+        for (proven_size_t i = 0; i < ((proven_size_t)1 << z->ldm_log); ++i) z->ldm[i] = 0;
+        for (proven_size_t i = 0; i < ((proven_size_t)1 << (z->ldm_log - LDM_BUCKET_LOG)); ++i) z->ldm_next[i] = 0;
+    }
     if (z->optp) {
         for (proven_size_t i = 0; i < ((proven_size_t)1 << z->optp->h3_log); ++i) z->optp->h3[i] = 0;
         z->optp->h3_next = 0;
@@ -654,6 +675,20 @@ static proven_err_t make(const proven_zstd_encoder_options_t *o, proven_u64 size
         for (proven_size_t i = 0; i < h3n; ++i) z->optp->h3[i] = 0;
         z->optp->h3_next = 0;
     }
+    /* From level 6 the level's own matching finds about as much (a fifth of a percent at most), and
+     * from 9 a long match forced into the parse costs more than it saves - 3 % at 19 (RFC-0039
+     * section 7): the option is for levels 1 to 5. */
+    if (o->long_distance && z->opt.level <= LDM_LEVEL_MAX && size_hint > LDM_MIN) {
+        /* One entry for every 2^LDM_RATE_LOG positions of the window: 2^(window_log - 7) of them. */
+        z->ldm_log = need > LDM_RATE_LOG + LDM_BUCKET_LOG + 3 ? need - LDM_RATE_LOG : LDM_BUCKET_LOG + 3;
+        z->ldm_cap = (size_hint < ZSTD_BLOCK_MAX ? (proven_size_t)size_hint : ZSTD_BLOCK_MAX) / LDM_MIN + 1;
+        const proven_size_t ne = (proven_size_t)1 << z->ldm_log, nb = ne >> LDM_BUCKET_LOG;
+        proven_result_mem_mut_t lm = o->alloc.alloc_fn(o->alloc.ctx, ne * sizeof(proven_u64) + z->ldm_cap * sizeof(struct proven_ldm_match) + nb, 16);
+        if (lm.err != PROVEN_OK) { proven_zstd_encoder_destroy(z); return PROVEN_ERR_NOMEM; }
+        z->ldm = (proven_u64 *)(void *)lm.value.ptr;
+        z->ldm_m = (struct proven_ldm_match *)(void *)(lm.value.ptr + ne * sizeof(proven_u64));
+        z->ldm_next = lm.value.ptr + ne * sizeof(proven_u64) + z->ldm_cap * sizeof(struct proven_ldm_match);
+    }
     z->fresh = true;
     /* A block of n bytes has at most n / 4 sequences: every match is at least 4 long. */
     z->lit_max = size_hint < z->block_size ? (proven_size_t)size_hint : z->block_size;
@@ -672,6 +707,7 @@ void proven_zstd_encoder_destroy(proven_zstd_encoder_t *z) {
     const proven_allocator_t a = z->alloc;
     if (z->hash) a.free_fn(a.ctx, z->hash);
     if (z->optp) a.free_fn(a.ctx, z->optp);
+    if (z->ldm) a.free_fn(a.ctx, z->ldm);
     if (z->seqs) a.free_fn(a.ctx, z->seqs);
     if (z->codes) a.free_fn(a.ctx, z->codes);
     if (z->lits) a.free_fn(a.ctx, z->lits);
@@ -1669,6 +1705,148 @@ ZSTD_HOT proven_size_t write_block(proven_zstd_encoder_t *z, const proven_byte_t
     return 3 + size;
 }
 
+// -----------------------------------------------------------------------------
+// Long-distance matching
+// -----------------------------------------------------------------------------
+
+static const proven_u64 GEAR[256] = {
+    0x69e93ff3099f06a9ull, 0x7135deef681aae6bull, 0x024fcc549baff8f0ull, 0x7e197af8c1c31b79ull,
+    0x67fd8c9155a4e5a7ull, 0x2a97c97200da2bf8ull, 0xc4acf195d5416dbaull, 0x7b59f778d68f10bdull,
+    0x2e65d2fdab7f42eeull, 0x71f122c93a01cea5ull, 0x3581224d446db9b9ull, 0x0f067813bb1676a3ull,
+    0x8fabd4fe0e084741ull, 0x034f40a0951e52dcull, 0xda7590b6f4ac392full, 0xccc082d669f2d597ull,
+    0x1e9fb9d18859dcafull, 0x33887e852b040612ull, 0xa218fdf69c1f0fd3ull, 0x9208fc395f239381ull,
+    0x5d0b992bac64e3b8ull, 0x8b71a1722235c897ull, 0xb0f27c036a8f514eull, 0x5f357802b3328dffull,
+    0x090478ae2544520eull, 0x0a630c620116e36eull, 0x1382374393b86a4dull, 0xd790913b6befed1eull,
+    0xe7a52cdaaa35e5d3ull, 0x04c5197c49526ec2ull, 0x2bf35d30dfb575a2ull, 0x41ca1ab954b43192ull,
+    0xfac7f3de011e6cfbull, 0xc15439f07d88d515ull, 0x6fac23a5909c2506ull, 0x72ba894ad7124f83ull,
+    0x175560263aeab97eull, 0x9059553d1d28564bull, 0xc87a36fa9121e333ull, 0x2e581549d86c7468ull,
+    0x5f2ff2d6844160c5ull, 0x7ee3fb8c5f965a94ull, 0xcfe1bf713e4fcbccull, 0xb6800fb2aef03584ull,
+    0x394ac0d40db4aaecull, 0x5cdeb464117d3e1full, 0x82842ebb737fad96ull, 0xea07725e5acbd2a8ull,
+    0x362c120a18921390ull, 0xc8fc04cfaa6c790dull, 0xd9dc7b9f6e045a99ull, 0x806d127f8385943full,
+    0x084e5e44717d8818ull, 0x9834f06459cecbc9ull, 0x72e51357f9bb6dedull, 0x8ab34a8d4aa3d051ull,
+    0x923af89babee9e53ull, 0x0acf7827462459c0ull, 0x8fb1e8f136457400ull, 0x7d5d101a9a234606ull,
+    0x4f0b2cdfaca19e8full, 0x4e6e4cd6a1be53c1ull, 0x7f8c960c12895171ull, 0xc4044b5b6b57c1dcull,
+    0x07b8a97a422ac271ull, 0x9b96d3b5ecfe416bull, 0x68e85a40328b4b99ull, 0xbc9cda8ab0285872ull,
+    0x654bab60b014fb46ull, 0x416d3f5eba9b051dull, 0xd1e07c020873c306ull, 0xf0d130423c2ebfb9ull,
+    0xf02cc7e75b4799a7ull, 0xb82bfd134a931c30ull, 0x9125b574ed4a9cacull, 0x2c119225d0878770ull,
+    0xbcb0a8ae07568c92ull, 0x844b135a7e6de06bull, 0x4db84013539e6ca1ull, 0x98f0c138ae7fd461ull,
+    0x151dc8d8801ab15bull, 0xc358b52a9cdb2ee3ull, 0xdee4218c16d5f8c1ull, 0x514bf84d07b973f9ull,
+    0x2d48724dbc28f66eull, 0x1ef5d1ac4ea7010dull, 0x4a9440a4a8c3f878ull, 0x78724d15d2a317abull,
+    0x0b72638e658e3c0cull, 0xafa697800294296cull, 0x6a2fccec34bbc21bull, 0x320a000f4572a667ull,
+    0x7c339e479dde83c1ull, 0x3414e3b599271ff5ull, 0xe686ba7fa1c8cddcull, 0xde4a12f0716a0d82ull,
+    0x02f02544190f0562ull, 0x3677360007d80e13ull, 0x4c9f6da8378ad0f8ull, 0x9fbe3e79777ff75dull,
+    0xc839f93576d76e84ull, 0x8bed4e2387122d22ull, 0x4909baba143c8395ull, 0x13fb5a787bf9dc61ull,
+    0x4dba24b81d6597aeull, 0x2843ea32d7ef93d2ull, 0x386655a91e4a152bull, 0x3ae67326aa0ae56aull,
+    0x8f3f9955fb1e4043ull, 0x9844273c3b7594bcull, 0x038f040f89dc5a95ull, 0xb931c9f4cff320ddull,
+    0x4ca4458cfeb1fd9eull, 0xa603d61c6d351412ull, 0xd63d6a167acf52d2ull, 0x642de13468e8917cull,
+    0x2e9f041ac836348cull, 0x7c958e15136551c6ull, 0x0fe0deb2fe037aaeull, 0x02f34512a9cfddbbull,
+    0x7691b3c67be4dffbull, 0x0a282e2c0a526718ull, 0xbb6124b8f6d4dda8ull, 0x27b0e123773c6aacull,
+    0x51615c1b8fb17357ull, 0xfc4920038ceacb4full, 0x24269ef5f9dc7018ull, 0x28cc0d5969fd52faull,
+    0xb736ad44fff002e9ull, 0x27f898269e0eacb5ull, 0xfe5fd561db788e9aull, 0x105f6e207e6607b2ull,
+    0x67f191ce0e5d0322ull, 0x6896ed95e6ba4762ull, 0x5c3734888fd7b78dull, 0x6f2e64304dd52df2ull,
+    0x9083e17a08530372ull, 0x7164591467313099ull, 0x6c44d24fb4ae0225ull, 0x6cd641e1fa5abdaaull,
+    0xb651218018a96d03ull, 0x933e00ed2631e23aull, 0x72f7e5db0f90a4a7ull, 0x31f0452cc111969bull,
+    0x130874c50cb08385ull, 0x777e3b2d3dacde91ull, 0x68334110a5a3b54eull, 0x55c54c8a51541478ull,
+    0xa2204f185f28432aull, 0x2dab374dc42c8a4full, 0x56042e3147e504a5ull, 0x963333434c7be766ull,
+    0x1776aa709efc2d27ull, 0x3dd3c43fdd36e09full, 0xbddd46dde7bd2243ull, 0x3d817245355a58d1ull,
+    0x11ee3ab30c4b04bdull, 0x7446b4c27759cc24ull, 0x192f8aa6c5612b3aull, 0x562cfc7d7322366bull,
+    0x83b1ba5f1d50feedull, 0xa88ee947be3c8580ull, 0x5664e7b52088827full, 0xe90532fa19a1e3f5ull,
+    0x7f5ec021d189ab85ull, 0x2aacc7eb5f3fb601ull, 0xd19f840e71fe5f71ull, 0x5785bbd25ad33a03ull,
+    0x8e18d45e4da03f16ull, 0xe89488af3f32d3a9ull, 0x95ec6791532be198ull, 0x069cb88a6eac9d98ull,
+    0x4772dacbecbb700dull, 0x80440f3af1cb4456ull, 0x034033033b61b938ull, 0x8199ed963c838953ull,
+    0xe117055ad1791be8ull, 0x86e6f818ababc821ull, 0x762e228cf90cec69ull, 0x1f8434ce969f7984ull,
+    0x3512f299ad2e3bb8ull, 0xa9ba16a0d2e3ef17ull, 0xc04d3db4effa4caaull, 0x2b9941f9d601efa4ull,
+    0xe5a6257a1eaf7435ull, 0x479185e5c183352full, 0xb8f061d85af3d02full, 0x2af760fce7878725ull,
+    0xecfa80bddacdd8f9ull, 0xf1817d32600f3affull, 0xf25f2125b4898adfull, 0xf7c30d03981c7b2cull,
+    0x728184818d9731d3ull, 0x5d929ab59a7c1f13ull, 0x1284c34c463b801dull, 0x67417938e8b41b7dull,
+    0xd184e048a459799eull, 0xd7145a3cf6cde387ull, 0x0140a5f3a9847451ull, 0x279dc811cce2d204ull,
+    0x711d6261a78cf3cbull, 0xc9978d4087fd5173ull, 0x70e68586d3976951ull, 0x0f5d25af274681bdull,
+    0x92455831377cf3a0ull, 0xbd2f7f86a0f63293ull, 0x2abc2ba6afcc1dabull, 0x31654d81514992f0ull,
+    0x289b1238990c4353ull, 0xed6a0058ef388531ull, 0x5a2f8ab39245fe0aull, 0xbe99be6b5f8511f4ull,
+    0x1c812880cfb40bc4ull, 0xb1bb1bcecd4b6e23ull, 0xa1fe5cda5a229acaull, 0x1a6ab96436807575ull,
+    0x55a16a678bf42e7full, 0x18f2cc3054e1a4e0ull, 0xce5364add5a46058ull, 0x1d21034f6bee3800ull,
+    0xd20143a4be8c6c20ull, 0x33e3f386dd609e20ull, 0xb9efd1b51abe325full, 0x8bdd0839dbbb3f0full,
+    0x879ac2c020391313ull, 0x27109fb160f77b88ull, 0x172bd70543541628ull, 0xd52c8098694d6dd9ull,
+    0x7ec6b8bf76b31ac0ull, 0x8bc4bc034f7f622bull, 0x57d23cfb17a8d973ull, 0x6490b4321ff618cfull,
+    0x1cc06ff2f4364f5full, 0xeb552732a8fe6917ull, 0x5dcca698f32acfcaull, 0x5598fcb0e9298719ull,
+    0x3381138fbfed67c6ull, 0x3a8854aaefece6fdull, 0x57d635b45219e809ull, 0xf733a7aa57a4b991ull,
+    0x6f3c5fa9b497d80eull, 0x82100103afcab03aull, 0xbf3cbf5f01d0117full, 0x80c487f63ad6f232ull,
+    0x47320c7a33d2d768ull, 0xd8775ca17d0007e2ull, 0xb01d99b6c8b2dc99ull, 0xdbfb9d4aeb37c056ull,
+    0xc46402cce3f802bbull, 0x8e090d6a8cc5f6fcull, 0x6a36c6be8478f9aaull, 0x07b44db8319af415ull,
+    0xcf6545b853f21725ull, 0x11bc1b1b8d15fd13ull, 0xca28fa0eca6110e4ull, 0x5d19a2deb9129aaeull,
+};
+
+/* The long matches of `base` + [start, end), in order and apart, each LDM_MIN bytes or more, from no
+ * further back than `low`; every position the hash picks is put in its bucket. Returns how many. */
+static proven_size_t ldm_find(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end, proven_size_t low) {
+    if (end - start < LDM_MIN) return 0;
+    const proven_u64 stop = (((proven_u64)1 << LDM_RATE_LOG) - 1) << (64 - LDM_RATE_LOG);
+    const unsigned bucket_bits = z->ldm_log - LDM_BUCKET_LOG;
+    const proven_byte_t *const iend = base + end;
+    proven_size_t n = 0, anchor = start, p = start;
+    proven_u64 h = 0;
+    for (proven_size_t q = start; q < start + LDM_MIN - 1; ++q) h = (h << 1) + GEAR[base[q]];
+    p = start + LDM_MIN - 1;
+    while (p < end) {
+        h = (h << 1) + GEAR[base[p]];
+        p++;
+        if (h & stop) continue;
+        /* The 64 bytes before p: a position to remember, and to look up. */
+        const proven_size_t c = p - LDM_MIN;
+        const proven_u64 mix = h * 0x9E3779B97F4A7C15ull;
+        const proven_u32 b = (proven_u32)(mix >> (64 - bucket_bits)), check = (proven_u32)(mix >> 8);
+        proven_u64 *const bk = z->ldm + ((proven_size_t)b << LDM_BUCKET_LOG);
+        proven_size_t best = 0, best_back = 0, best_from = 0;
+        if (c >= anchor) {
+            for (unsigned i = 0; i < (1u << LDM_BUCKET_LOG); ++i) {
+                const proven_u32 at = (proven_u32)bk[i];
+                if ((proven_u32)(bk[i] >> 32) != check || at < low || at >= c) continue;
+                const proven_size_t fwd = count_same(base + c, base + at, iend);
+                if (fwd < LDM_MIN) continue;
+                proven_size_t back = 0;
+                while (c - back > anchor && at - back > low && base[c - back - 1] == base[at - back - 1]) back++;
+                if (fwd + back > best) { best = fwd + back; best_back = back; best_from = at; }
+            }
+        }
+        bk[z->ldm_next[b]] = ((proven_u64)check << 32) | (proven_u32)c;
+        z->ldm_next[b] = (proven_u8)((z->ldm_next[b] + 1) & ((1u << LDM_BUCKET_LOG) - 1));
+        if (best == 0) continue;
+        if (n == z->ldm_cap) break;
+        z->ldm_m[n++] = (struct proven_ldm_match){ (proven_u32)(c - best_back), (proven_u32)(c - best_from), (proven_u32)best };
+        anchor = c - best_back + best;
+        if (anchor + LDM_MIN > end) break;
+        /* Hash again from the match's end: a run inside it would pick the same bytes over and over. */
+        h = 0;
+        for (proven_size_t q = anchor; q < anchor + LDM_MIN - 1; ++q) h = (h << 1) + GEAR[base[q]];
+        p = anchor + LDM_MIN - 1;
+    }
+    return n;
+}
+
+/* The block's long matches as sequences, and the level's matcher between them. Returns where the
+ * block ends, as match_block. */
+static proven_size_t match_ldm(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end, proven_size_t low, proven_size_t *last_from) {
+    const proven_size_t n = ldm_find(z, base, start, end, low);
+    proven_size_t cur = start;
+    *last_from = start;
+    for (proven_size_t i = 0; i < n; ++i) {
+        const struct proven_ldm_match m = z->ldm_m[i];
+        proven_size_t lf = cur;
+        if (m.at - cur >= 16) {
+            const proven_size_t stop = match_block(z, base, cur, m.at, low, &lf);
+            if (stop < m.at) { *last_from = lf; return stop; }
+        }
+        if (z->seq_max - z->nseq < 3) { *last_from = lf; return m.at; }
+        proven_sink_t k = sink_open(z);
+        store(&k, base + lf, base + end, m.at - lf, m.off, m.len);
+        sink_close(z, &k);
+        cur = m.at + m.len;
+        *last_from = cur;
+    }
+    if (end - cur >= 16) return match_block(z, base, cur, end, low, last_from);
+    return end;
+}
+
 /* Match and write one block: `base` + [start, end). Returns the bytes written into `d` (0:
  * `cap` too small) and where the block ended. */
 ZSTD_HOT proven_size_t compress_block(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end, bool last,
@@ -1678,7 +1856,8 @@ ZSTD_HOT proven_size_t compress_block(proven_zstd_encoder_t *z, const proven_byt
     z->nlit = 0;
     const proven_size_t low = end > z->window ? end - z->window : 0;
     proven_size_t last_from = start, stop = end;
-    if (end - start >= 16) stop = match_block(z, base, start, end, low, &last_from);
+    if (z->ldm) stop = match_ldm(z, base, start, end, low, &last_from);
+    else if (end - start >= 16) stop = match_block(z, base, start, end, low, &last_from);
     else last_from = start;
     const proven_size_t tail = stop - last_from;
     if (tail) (void)proven_mem_copy(z->lits + z->nlit, tail, (proven_mem_view_t){ .ptr = base + last_from, .size = tail });
@@ -1777,6 +1956,12 @@ static void slide(proven_zstd_encoder_t *z) {
         z->next_update = z->next_update > s ? z->next_update - s : 0;
     }
     for (proven_size_t i = 0; i < z->hash_size + z->hash2_size; ++i) z->hash[i] = z->hash[i] > s ? z->hash[i] - s : 0;
+    if (z->ldm) {
+        for (proven_size_t i = 0; i < ((proven_size_t)1 << z->ldm_log); ++i) {
+            const proven_u32 at = (proven_u32)z->ldm[i];
+            z->ldm[i] = at > s ? (z->ldm[i] & 0xFFFFFFFF00000000ull) | (at - s) : 0;
+        }
+    }
     if (z->optp) {
         for (proven_size_t i = 0; i < ((proven_size_t)1 << z->optp->h3_log); ++i) z->optp->h3[i] = z->optp->h3[i] > s ? z->optp->h3[i] - s : 0;
         z->optp->h3_next = z->optp->h3_next > s ? z->optp->h3_next - s : 0;

@@ -151,7 +151,7 @@ proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t 
  * and at 9 8 MiB with the default window and 12 MiB with the largest; at 10 to 19 8 MiB with the default window, and with the largest 24 MiB at 10
  * and 11, 32 MiB at 13 and 16, 48 MiB at 12, 14, 17 and 18, 64 MiB at 15, 80 MiB at 19 - and
  * zeroed when an encoder is made or reset), at 16 to 19 about 380 KiB more for the parse (less for
- * a short whole buffer), about
+ * a short whole buffer), with `long_distance` 8 bytes for each 128 bytes of window, about
  * 500 KiB for one block (its sequences, literals and output), and, for a stream, an input
  * buffer of the window and half a window (or of the window and 128 KiB, if that is more):
  * 768 KiB at the default window. Buffers grow with the input. proven_zstd_encode_all needs no
@@ -172,6 +172,7 @@ typedef struct {
     int level;                     /**< 1 (fastest) to 19 (smallest); 0: 3, as libzstd's default. (The HTTP servers' `compress_zstd_level` stays 1 to 9: they compress as they send.) */
     int window_log;                /**< how far back a match may reach, as a power of two: 10 to 23 (8 MiB, the most RFC 9659 lets an HTTP client be asked for); 0: 19 (512 KiB) */
     bool checksum;                 /**< end each frame with the low 32 bits of its XXH64 */
+    bool long_distance;            /**< long-distance matching, as libzstd's `--long`: matches of 64 bytes or more found anywhere in the window by a hash kept for one position in about 128, the level's own matching between them. Levels 1 to 5 only: from 6 the level's own matching finds about as much, and from 9 a long match forced into the parse costs more than it saves - there the option does nothing. For large inputs that repeat from far back (archives, logs, several versions of a file): the fast levels' tables reach a few hundred kilobytes, this the whole window. Costs 8 bytes for each 128 bytes of window (512 KiB at `window_log` 23, 32 KiB at 19) and some speed. false: none */
 } proven_zstd_encoder_options_t;
 
 /** @brief A compressor. Opaque. */

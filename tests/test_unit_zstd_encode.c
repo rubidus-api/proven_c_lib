@@ -361,6 +361,104 @@ int main(void) {
         PROVEN_TEST_ASSERT(differ == 0, "at every level and both windows, the streamed frame's blocks are the whole frame's", "");
     }
 
+    PROVEN_TEST_SECTION("long-distance matching", "`long_distance`: pieces of 1,024 bytes repeated from more than 550,000 bytes back, which level 1's table cannot reach, are found - whole and streamed through a sliding buffer; from level 6 the option changes nothing.", "Check ldm_find and match_ldm in src/proven/zstd_encode.c, and slide's move of the long-distance table.");
+    {
+        /* 245,760 random bytes, 554,240 more, then the first part's 240 pieces of 1,024 bytes again in
+         * another order (each once, so that nothing in the last part is near). */
+        g_x = 99;
+        const proven_size_t n = 1045760;
+        for (proven_size_t i = 0; i < 800000; ++i) g_in[i] = (proven_byte_t)xs();
+        proven_u32 order[240];
+        for (proven_u32 i = 0; i < 240; ++i) order[i] = i;
+        for (proven_u32 i = 239; i > 0; --i) { const proven_u32 j = xs() % (i + 1), t = order[i]; order[i] = order[j]; order[j] = t; }
+        for (proven_size_t k = 0; k < 240; ++k)
+            for (proven_size_t i = 0; i < 1024; ++i) g_in[800000 + k * 1024 + i] = g_in[(proven_size_t)order[k] * 1024 + i];
+        proven_size_t plain = 0, ldm = 0;
+        proven_err_t e1 = proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 1, .window_log = 20 }, (proven_mem_view_t){ g_in, n }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &plain);
+        proven_err_t e2 = proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 1, .window_log = 20, .long_distance = true }, (proven_mem_view_t){ g_in, n }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &ldm);
+        printf("  level 1, window 1 MiB: %zu bytes without, %zu with\n", plain, ldm);
+        PROVEN_TEST_ASSERT(e1 == PROVEN_OK && e2 == PROVEN_OK && decodes_to(g_enc, ldm, g_in, n, 0), "a whole buffer with long-distance matching decodes", "");
+        PROVEN_TEST_ASSERT(plain > 980000 && ldm < 820000, "the pieces are found only with it", "");
+        for (int level = 2; level <= 5; ++level) {
+            proven_size_t a = 0, b = 0;
+            (void)proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = level, .window_log = 20 }, (proven_mem_view_t){ g_in, n }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &a);
+            const proven_err_t e = proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = level, .window_log = 20, .long_distance = true }, (proven_mem_view_t){ g_in, n }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &b);
+            printf("  level %d: %zu bytes without, %zu with\n", level, a, b);
+            PROVEN_TEST_ASSERT(e == PROVEN_OK && decodes_to(g_enc, b, g_in, n, 0) && b < a && b < 820000, "and at levels 2 to 5", "");
+        }
+        /* Streamed in pieces of 100,000 with a window of 1 MiB: the buffer slides, and the table with it. */
+        proven_zstd_encoder_t *z = NULL;
+        proven_size_t made = 0;
+        PROVEN_TEST_ASSERT(proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 1, .window_log = 20, .long_distance = true }, &z) == PROVEN_OK &&
+                           encode_steps(z, g_in, n, 100000, (proven_size_t)-1, false, g_enc, sizeof g_enc, &made) == PROVEN_OK, "a stream", "");
+        printf("  level 1 streamed: %zu bytes\n", made);
+        PROVEN_TEST_ASSERT(decodes_to(g_enc, made, g_in, n, 1u << 20) && made < 820000, "a stream finds them too, and decodes", "");
+        proven_zstd_encoder_t *used = z;      /* reset below, and given other bytes */
+        /* A buffer that slides: window 512 KiB (a buffer of 768 KiB), 600,000 random bytes, then 300,000
+         * made of 1,024-byte pieces of them from 100,000 to 480,000 bytes back - those after the slide
+         * found only if the table moved with the buffer. */
+        {
+            const proven_size_t m = 900000;
+            for (proven_size_t i = 0; i < 600000; ++i) g_in[i] = (proven_byte_t)xs();
+            for (proven_size_t p = 600000; p < m; p += 1024) {
+                const proven_size_t lo = p - 480000, hi = (p - 100000 < 600000 ? p - 100000 : 600000) - 1024;
+                const proven_size_t from = lo + xs() % (hi - lo), len = m - p < 1024 ? m - p : 1024;
+                for (proven_size_t i = 0; i < len; ++i) g_in[p + i] = g_in[from + i];
+            }
+            proven_size_t a = 0, b = 0;
+            (void)proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 1, .window_log = 19 }, (proven_mem_view_t){ g_in, m }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &a);
+            PROVEN_TEST_ASSERT(proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 1, .window_log = 19, .long_distance = true }, &z) == PROVEN_OK &&
+                               encode_steps(z, g_in, m, 100000, (proven_size_t)-1, false, g_enc, sizeof g_enc, &b) == PROVEN_OK, "a stream through a sliding buffer", "");
+            proven_zstd_encoder_destroy(z);
+            printf("  level 1, window 512 KiB, streamed: %zu bytes with, %zu without\n", b, a);
+            PROVEN_TEST_ASSERT(decodes_to(g_enc, b, g_in, m, 1u << 19) && b < 640000 && a > 740000, "the pieces after the slide are found too", "");
+            /* After a reset the table starts again: these bytes from the encoder that made the frame
+             * above give the frame a new encoder gives. */
+            proven_size_t fresh = 0, again = 0;
+            PROVEN_TEST_ASSERT(proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 1, .window_log = 20, .long_distance = true }, &z) == PROVEN_OK &&
+                               encode_steps(z, g_in, m, 100000, (proven_size_t)-1, false, g_enc, sizeof g_enc, &fresh) == PROVEN_OK, "a new encoder", "");
+            proven_zstd_encoder_destroy(z);
+            const proven_u32 cf = proven_crc32((proven_mem_view_t){ g_enc, fresh });
+            proven_zstd_encoder_reset(used);
+            PROVEN_TEST_ASSERT(encode_steps(used, g_in, m, 100000, (proven_size_t)-1, false, g_enc, sizeof g_enc, &again) == PROVEN_OK && again == fresh &&
+                               proven_crc32((proven_mem_view_t){ g_enc, again }) == cf, "after a reset, the frame a new encoder makes", "");
+            proven_zstd_encoder_destroy(used);
+        }
+        /* From level 6 the option does nothing: 600,000 random bytes and 100,000 of far pieces of them. */
+        for (int level = 6; level <= 19; level += 13) {
+            proven_size_t a = 0, b = 0;
+            (void)proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = level, .window_log = 20 }, (proven_mem_view_t){ g_in, 700000 }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &a);
+            const proven_u32 ca = proven_crc32((proven_mem_view_t){ g_enc, a });
+            (void)proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = level, .window_log = 20, .long_distance = true }, (proven_mem_view_t){ g_in, 700000 }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &b);
+            PROVEN_TEST_ASSERT(a == b && ca == proven_crc32((proven_mem_view_t){ g_enc, b }), "at levels 6 and 19 the option changes no byte", "");
+        }
+        /* Sequences that fill blocks between long matches: 300,000 bytes of four-byte tokens from a set
+         * of 64 with a random byte after each, then 1,024-byte pieces of them from far back, each
+         * followed by 2,000 new such bytes - a block's sequences run out between long matches. */
+        {
+            static const proven_size_t m = 900000;
+            proven_byte_t tok[64][4];
+            for (int t = 0; t < 64; ++t) for (int i = 0; i < 4; ++i) tok[t][i] = (proven_byte_t)xs();
+            proven_size_t p = 0;
+            while (p < m) {
+                if (p >= 300000 && (p - 300000) % 3029 == 0 && p + 1024 <= m) {
+                    const proven_size_t from = xs() % (200000 - 1024);
+                    for (proven_size_t i = 0; i < 1024; ++i) g_in[p + i] = g_in[from + i];
+                    p += 1024;
+                    continue;
+                }
+                const proven_byte_t *t = tok[xs() % 64];
+                for (int i = 0; i < 4 && p < m; ++i) g_in[p++] = t[i];
+                if (p < m) g_in[p++] = (proven_byte_t)xs();
+            }
+            for (int level = 1; level <= 5; level += 2) {
+                proven_size_t b = 0;
+                const proven_err_t e = proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = level, .window_log = 20, .long_distance = true }, (proven_mem_view_t){ g_in, m }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &b);
+                PROVEN_TEST_ASSERT(e == PROVEN_OK && decodes_to(g_enc, b, g_in, m, 0), "blocks full of sequences between long matches decode", "");
+            }
+        }
+    }
+
     PROVEN_TEST_SECTION("memory", "What an encoder holds, for a stream and for a whole buffer; and allocations that fail.", "Check make, block_room, emit and the input buffer's growth in src/proven/zstd_encode.c.");
     {
         const proven_size_t n = corpus(4, g_in);

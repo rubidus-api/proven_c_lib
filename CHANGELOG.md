@@ -18,6 +18,18 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **Zstandard long-distance matching** (RFC-0039 L-2): `long_distance` in
+  `proven_zstd_encoder_options_t`, as libzstd's `--long` - a rolling hash of the last 64 bytes keeps
+  about one position in 128 for the whole window, and matches of 64 bytes or more found through it are
+  taken, the level's own matching between them. Levels 1 to 5 (from 6 the option does nothing: the
+  level's matching finds about as much, and from 9 forced long matches cost more than they save).
+  With the largest window: 25 to 29 % smaller at levels 1 to 3 on 9.3 MB that repeats 6.6 MB back
+  (within 1.5 % of libzstd's level 3 with `--long`), 1 to 10 % on an executable, under 1 % on C
+  sources, nothing on JSON; 4 to 22 % slower where nothing far repeats. 8 bytes of memory for each
+  128 bytes of window. Off by default.
+
 ### Changed
 
 - **Zstandard levels 6 to 9 on a whole buffer of more than 256 KiB** (RFC-0039 L-1):
