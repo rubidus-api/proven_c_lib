@@ -29,6 +29,7 @@
 #define CL_T_RESPONSE 3
 #define CL_T_BODY 4
 #define CL_T_DELAY 5        /* not a limit: the wait before a try of retry_unsent, the request with no connection */
+#define CL_T_EXPECT 6       /* not a limit: expect_continue's wait for the server's word, after which the body goes anyway */
 
 typedef struct { proven_byte_t *ptr; proven_size_t len, cap, off; bool borrowed; } proven_cl_buf_t;
 
@@ -96,6 +97,7 @@ struct proven_http_event_request {
     proven_loop_timer_t timer;
     proven_net_addr_t to;              /* the origin, as in proven_cl_conn_t; the host's bytes lie behind this struct */
     proven_cl_buf_t out;                      /* request bytes the transport has not taken yet */
+    proven_cl_buf_t hold;                     /* expect_continue: the body, held until the server says to go on */
     proven_cl_buf_t stash;                    /* response bytes not used yet */
     proven_http_body_t body;
     proven_http_event_client_callbacks_t on;
@@ -117,6 +119,10 @@ struct proven_http_event_request {
     bool keep_out;                     /* ... and so `out` is kept after it is sent, for it may have to be sent again */
     bool sent;                         /* some of the request has been given to its connection */
     bool no_resend;                    /* ended by its caller or its client: not to be sent again */
+    /* expect_continue (v0.106.0): the head went with `Expect: 100-continue` and the body waits in
+     * `hold` (`expecting`); a final answer came first, so the body is not sent and what is written
+     * of it is dropped, and the connection is not kept (`body_refused`). */
+    bool expecting, body_refused;
     /* 0-RTT over TCP (RFC-0027): the request may go as early data - GET, HEAD or OPTIONS with no
      * body and no Upgrade; not again (it was answered 425); how much of `out` went early, and
      * what came of it (proven_http_event_client_early_). */

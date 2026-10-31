@@ -1642,6 +1642,7 @@ copied or used before `proven_http_event_client_start` returns:
 | `on.on_writable(ctx, request)` | Request-body bytes that were held back have gone. Optional. |
 | `on.on_done(ctx, request, why)` | The end. **Required**, and called exactly once for every request that was started. |
 | `ctx` | Passed to every callback. |
+| `expect_continue` | HTTP/1.1, a request with a body (since v0.106.0): the head goes with `Expect: 100-continue`, and the body - held, or written meanwhile - only on the server's `100 Continue`, or after the client's `expect_timeout_ms` (1 s) of silence. A final answer first (401, 413) is the response: the body is never sent, what is written of it is dropped, and the connection is not kept. Over HTTP/2 and HTTP/3 the body goes at once. |
 
 **Connections are kept, and counted.** Since v0.36.0 an HTTP/1.1 request does not make a
 connection of its own and close it. The client keeps the connections of each **origin** - the

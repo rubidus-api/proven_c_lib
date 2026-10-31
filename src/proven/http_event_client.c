@@ -88,6 +88,7 @@ static void cl_leave(proven_http_event_request_t *c) {
     proven_http_event_client_t *cl = c->h.client;
     buf_release(cl, &c->stash);
     buf_release(cl, &c->out);
+    buf_release(cl, &c->hold);
     if (c->dec) {
         proven_http_decoder_free_(&c->dec->d);
         cl->alloc.free_fn(cl->alloc.ctx, c->dec);
@@ -98,7 +99,7 @@ static void cl_leave(proven_http_event_request_t *c) {
 static bool cl_secured(const proven_http_event_request_t *c) { return c->k && (!c->k->tls || proven_tls_is_established(c->k->tls)); }
 
 static proven_size_t cl_buffered(const proven_http_event_request_t *c) {
-    proven_size_t n = buf_pending(&c->out);
+    proven_size_t n = buf_pending(&c->out) + buf_pending(&c->hold);
     if (c->k && c->k->tls) n += proven_tls_pending_output(c->k->tls).size;
     if (c->k) n += proven_loop_send_queued(&c->k->ls);
     return n;
@@ -614,6 +615,7 @@ static void cl_arm(proven_http_event_request_t *c) {
     /* A request that waits for a connection is on the same clock as one whose connection is
      * being made: it started when the request did, and is not started again. */
     if (!c->k || c->state == CL_CONNECTING || !cl_secured(c)) { kind = CL_T_CONNECT; ms = cl->cfg.connect_timeout_ms; }
+    else if (c->expecting) { kind = CL_T_EXPECT; ms = cl->cfg.expect_timeout_ms; }    /* (its head may still be on its way: the wait is short) */
     else if (cl_buffered(c) > 0) { kind = CL_T_WRITE; ms = cl->cfg.write_timeout_ms; }
     else if (c->state == CL_HEAD && c->request_ended) { kind = CL_T_RESPONSE; ms = cl->cfg.response_timeout_ms; }
     else if (c->state == CL_BODY && !c->paused) { kind = CL_T_BODY; ms = cl->cfg.body_timeout_ms; }
@@ -696,6 +698,18 @@ static bool cl_flush(proven_http_event_request_t *c) {
     /* (Kept, when it may have to be sent again: see cl_conn_give.) */
     if (buf_pending(&c->out) == 0 && !c->keep_out) buf_release(c->h.client, &c->out);
     return true;
+}
+
+static void cl_progress(proven_http_event_request_t *c);
+
+/* expect_continue: the server said to go on, or said nothing in time - the body follows the head. */
+static void cl_expect_go(proven_http_event_request_t *c) {
+    if (!c->expecting || c->dead) return;
+    c->expecting = false;
+    const bool ok = buf_append(c->h.client, &c->out, c->hold.ptr + c->hold.off, buf_pending(&c->hold));
+    buf_release(c->h.client, &c->hold);
+    if (!ok) { cl_kill(c, PROVEN_ERR_NOMEM); return; }
+    if (cl_flush(c)) cl_progress(c);
 }
 
 /* Something was sent, or the state moved: see what that allows. */
@@ -790,6 +804,12 @@ static void cl_process(proven_http_event_request_t *c) {
                  * without end is not answering; and this client did not ask to change protocol. */
                 if (res.status == 101) { cl_kill(c, PROVEN_ERR_UNSUPPORTED); break; }
                 if (++c->interim > CL_MAX_INTERIM) { cl_kill(c, PROVEN_ERR_INVALID_FORMAT); break; }
+                if (res.status == 100 && c->expecting) {
+                    /* The word to go on: the held body is sent. */
+                    proven_loop_timer_cancel(cl->loop, &c->timer);
+                    c->timer_kind = CL_T_NONE;
+                    cl_expect_go(c);
+                }
                 continue;
             }
             if (res.status == 425 && c->early_result == 1 && !c->no_early) {
@@ -801,6 +821,13 @@ static void cl_process(proven_http_event_request_t *c) {
                 proven_err_t again = cl_send_again(c);
                 if (again != PROVEN_OK) cl_kill(c, again);
                 break;
+            }
+            if (c->expecting) {
+                /* A final answer before the word to go on: the body is never sent, and the two sides
+                 * no longer agree where the request ends - the connection goes with the response. */
+                c->expecting = false;
+                c->body_refused = true;
+                buf_release(cl, &c->hold);
             }
             proven_http_framing_t framing = { 0 };
             if (proven_http_response_framing(&res, c->method, &framing) != PROVEN_OK) { cl_kill(c, PROVEN_ERR_INVALID_FORMAT); break; }
@@ -816,7 +843,7 @@ static void cl_process(proven_http_event_request_t *c) {
                 proven_http_decoder_begin_(&c->dec->d, cl->alloc, coding);
             }
             c->state = CL_BODY;
-            c->keep = !cl->cfg.no_connection_reuse && framing.kind != PROVEN_HTTP_BODY_UNTIL_CLOSE && proven_http_response_keep_alive(&res);
+            c->keep = !cl->cfg.no_connection_reuse && !c->body_refused && framing.kind != PROVEN_HTTP_BODY_UNTIL_CLOSE && proven_http_response_keep_alive(&res);
             if (c->on.on_response) c->on.on_response(c->ctx, c->face, &res);
             if (c->dead) break;
             if (no_body) { cl_kill(c, PROVEN_OK); break; }
@@ -1005,6 +1032,13 @@ static void cl_sock_closed(void *ctx) {
 static void cl_on_timer(void *ctx) {
     proven_http_event_request_t *c = ctx;
     cl_enter(c);
+    if (c->timer_kind == CL_T_EXPECT) {
+        /* The server said nothing: one that never learned the rule gets the body anyway. */
+        c->timer_kind = CL_T_NONE;
+        cl_expect_go(c);
+        cl_leave(c);
+        return;
+    }
     c->no_resend = true;
     cl_kill(c, PROVEN_ERR_TIMEOUT);
     cl_leave(c);
@@ -1028,6 +1062,7 @@ proven_err_t proven_http_event_client_create(proven_loop_t *loop, const proven_h
     if (cfg.response_timeout_ms == 0) cfg.response_timeout_ms = 30000;
     if (cfg.body_timeout_ms == 0) cfg.body_timeout_ms = 30000;
     if (cfg.write_timeout_ms == 0) cfg.write_timeout_ms = 30000;
+    if (cfg.expect_timeout_ms == 0) cfg.expect_timeout_ms = 1000;
     if (cfg.idle_timeout_ms == 0) cfg.idle_timeout_ms = 60000;
     if (cfg.max_waiting_requests == 0) cfg.max_waiting_requests = 1000;
     if (cfg.max_connections_per_origin == 0) cfg.max_connections_per_origin = 6;
@@ -1125,7 +1160,7 @@ static bool cl_is_reserved_header(proven_u8str_view_t name) {
 
 /* Write the request head into the client's head buffer. */
 static proven_err_t cl_build_head(proven_http_event_client_t *cl, const proven_http_event_request_options_t *o, const proven_url_t *u,
-                                  proven_u8str_view_t method, proven_size_t *len) {
+                                  proven_u8str_view_t method, bool expect, proven_size_t *len) {
     proven_mem_mut_t out = { .ptr = cl->hbuf, .size = cl->cfg.max_head_bytes };
     /* The target is the path and the query, exactly as written. */
     proven_u8str_view_t target = cl_lit("/");
@@ -1155,8 +1190,10 @@ static proven_err_t cl_build_head(proven_http_event_client_t *cl, const proven_h
     if (e == PROVEN_OK) e = proven_http_write_header(out, len, cl_lit("Host"), (proven_u8str_view_t){ .ptr = host, .size = hl });
     for (proven_size_t i = 0; i < o->header_count && e == PROVEN_OK; ++i) {
         if (cl_is_reserved_header(o->headers[i].name)) return PROVEN_ERR_INVALID_ARG;
+        if (expect && proven_u8str_view_eq_ascii_ci(o->headers[i].name, cl_lit("Expect"))) return PROVEN_ERR_INVALID_ARG;     /* this writes it */
         e = proven_http_write_header(out, len, o->headers[i].name, o->headers[i].value);
     }
+    if (e == PROVEN_OK && expect) e = proven_http_write_header(out, len, cl_lit("Expect"), cl_lit("100-continue"));
     if (e == PROVEN_OK && cl->cfg.decompress &&
         !proven_http_header_find(o->headers, o->header_count, cl_lit("Accept-Encoding"), &(proven_u8str_view_t){0}) &&
         !proven_http_header_find(o->headers, o->header_count, cl_lit("Range"), &(proven_u8str_view_t){0})) {
@@ -1213,8 +1250,10 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
         if (h2e != PROVEN_ERR_UNSUPPORTED) return h2e;
     }
 
+    /* expect_continue: a body there is to hold back - whole, or to be written. */
+    const bool expect = o->expect_continue && (o->body.size > 0 || o->body_length != 0);
     proven_size_t head_len = 0;
-    proven_err_t e = cl_build_head(cl, o, &u, method, &head_len);
+    proven_err_t e = cl_build_head(cl, o, &u, method, expect, &head_len);
     if (e != PROVEN_OK) return e;
 
     if (u.host.size > 255) return PROVEN_ERR_INVALID_ARG;
@@ -1233,12 +1272,14 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
     } else {
         c->request_ended = true;
     }
-    if (!buf_append(cl, &c->out, cl->hbuf, head_len) || !buf_append(cl, &c->out, o->body.ptr, o->body.size)) e = PROVEN_ERR_NOMEM;
-    c->early_ok = proven_http_event_client_may_go_early_(method, o);
+    c->expecting = expect;
+    if (!buf_append(cl, &c->out, cl->hbuf, head_len) || !buf_append(cl, expect ? &c->hold : &c->out, o->body.ptr, o->body.size)) e = PROVEN_ERR_NOMEM;
+    c->early_ok = !expect && proven_http_event_client_may_go_early_(method, o);
     c->face = face ? face : c;
     if (e == PROVEN_OK) e = cl_place(c);
     if (e != PROVEN_OK) {
         buf_release(cl, &c->out);
+        buf_release(cl, &c->hold);
         cl->alloc.free_fn(cl->alloc.ctx, c);
         return e;
     }
@@ -1282,6 +1323,11 @@ proven_result_size_t proven_http_event_request_write(proven_http_event_request_t
 #endif
     if (c->dead || !c->streamed || c->request_ended) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
     if (!c->chunked && data.size > c->send_left) return (proven_result_size_t){ .err = PROVEN_ERR_OUT_OF_BOUNDS, .value = 0 };
+    if (c->body_refused) {
+        /* The server answered before the body: it is not sent, and what is written of it is let go. */
+        if (!c->chunked) c->send_left -= data.size;
+        return (proven_result_size_t){ .err = PROVEN_OK, .value = data.size };
+    }
     proven_http_event_client_t *cl = c->h.client;
     cl_enter(c);
     proven_size_t done = 0;
@@ -1292,7 +1338,7 @@ proven_result_size_t proven_http_event_request_write(proven_http_event_request_t
         proven_size_t held = cl_buffered(c);
         proven_size_t room = held < cl->cfg.max_buffered_output ? cl->cfg.max_buffered_output - held : 0;
         if (room == 0) {
-            if (tried || !c->k || c->state == CL_CONNECTING || !cl_secured(c)) break;
+            if (tried || c->expecting || !c->k || c->state == CL_CONNECTING || !cl_secured(c)) break;
             tried = true;
             alive = cl_flush(c);
             continue;
@@ -1303,9 +1349,10 @@ proven_result_size_t proven_http_event_request_write(proven_http_event_request_t
             proven_size_t fl = 0;
             (void)proven_http_write_chunk_begin((proven_mem_mut_t){ .ptr = frame, .size = sizeof frame }, &fl, n);
             /* Queued together so that a chunk is never left half-framed. */
-            alive = buf_append(cl, &c->out, frame, fl) && buf_append(cl, &c->out, data.ptr + done, n) && buf_append(cl, &c->out, (const proven_byte_t *)"\r\n", 2);
+            proven_cl_buf_t *to = c->expecting ? &c->hold : &c->out;
+            alive = buf_append(cl, to, frame, fl) && buf_append(cl, to, data.ptr + done, n) && buf_append(cl, to, (const proven_byte_t *)"\r\n", 2);
         } else {
-            alive = buf_append(cl, &c->out, data.ptr + done, n);
+            alive = buf_append(cl, c->expecting ? &c->hold : &c->out, data.ptr + done, n);
             if (alive) c->send_left -= n;
         }
         if (!alive) cl_kill(c, PROVEN_ERR_NOMEM);
@@ -1338,8 +1385,8 @@ proven_err_t proven_http_event_request_end(proven_http_event_request_t *c) {
     } else {
         c->request_ended = true;
         bool alive = true;
-        if (c->chunked) {
-            alive = buf_append(c->h.client, &c->out, (const proven_byte_t *)"0\r\n\r\n", 5);
+        if (c->chunked && !c->body_refused) {
+            alive = buf_append(c->h.client, c->expecting ? &c->hold : &c->out, (const proven_byte_t *)"0\r\n\r\n", 5);
             if (!alive) cl_kill(c, PROVEN_ERR_NOMEM);
         }
         if (alive) alive = cl_flush(c);

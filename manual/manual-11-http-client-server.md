@@ -675,7 +675,11 @@ a stream body, which cannot be sent twice.
   what `socks5h` means elsewhere. The machine running the client does not look the name up.
 - Credentials in the proxy URL are sent to the proxy - `Proxy-Authorization: Basic` for an HTTP
   proxy, the user/password method of RFC 1929 for SOCKS5 - and to nobody else: they do not
-  travel inside a tunnel to the origin. Both forms cross the network to the proxy readable.
+  travel inside a tunnel to the origin. Both forms cross the network to the proxy readable. They
+  are percent-decoded first (`p%40ss` is `p@ss`; since v0.105.0). An HTTP proxy that answers with a
+  `407` and a Digest challenge is answered once with Digest - for a plain request through it, and
+  on the same connection for its `CONNECT` when the `407` has a length and keeps the connection
+  (since v0.105.0).
 - A proxy that refuses (`407`, `403`, a SOCKS5 "not allowed") is `PROVEN_ERR_PERMISSION`.
 - An HTTP proxy sees, and can change, everything in a plain `http` exchange. That is what a
   proxy is.
@@ -1100,6 +1104,6 @@ int main(void) {
 - **A router, static files, sessions, middleware** on the server; **retries, caching, a
   connection limit per host** on the client.
 - **Trailers**, in either direction.
-- **`Expect: 100-continue` in the event-driven client.** `expect_continue` is the blocking
-  client's; the client of [Chapter 15](manual-15-event-loop.md) sends a body without asking.
-- **Proxy auto-configuration, address ranges in `no_proxy`, and Digest authentication to a proxy.**
+- **Proxy auto-configuration, and address ranges in `no_proxy`.** (Digest to a proxy: since
+  v0.105.0, section 9. `expect_continue` in the event-driven client: since v0.106.0, [Chapter
+  15](manual-15-event-loop.md).)

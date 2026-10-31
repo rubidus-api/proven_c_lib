@@ -411,6 +411,115 @@ static bool get_ok(proven_http_event_client_t *client, call_t *c, bool tls, prov
            c->why == PROVEN_OK && c->dones == 1 && c->got == size;
 }
 
+/* expect_continue (v0.106.0): the head with Expect: 100-continue, the body held until the server's
+ * word - this library's server sends 100 Continue - or a time without one; a server that answers at
+ * once is not sent the body, and its connection is not kept. */
+static proven_err_t start_expect(proven_http_event_client_t *client, call_t *c, proven_u8str_view_t u, proven_mem_view_t body, proven_u64 length) {
+    *c = (call_t){ .intact = true };
+    proven_http_event_request_options_t o = {
+        .method = sv("POST"), .url = u, .body = body, .body_length = length, .expect_continue = true,
+        .on = { on_response, on_body, on_writable, on_done }, .ctx = c,
+    };
+    proven_err_t e = proven_http_event_client_start(client, &o, &c->request);
+    if (e == PROVEN_OK) proven_http_event_request_set_user(c->request, c);
+    return e;
+}
+
+/* A server the test plays: reads the head, then `ms` of whatever else comes, into `got`. */
+static proven_size_t read_for(proven_net_conn_t *conn, char *got, proven_size_t cap, int ms) {
+    proven_size_t have = strlen(got);
+    for (int i = 0; i < ms / 5; ++i) {
+        spin(5);
+        proven_result_size_t r = proven_net_read(conn, (proven_mem_mut_t){ .ptr = (proven_byte_t *)got + have, .size = cap - 1 - have }, PROVEN_NET_DONT_WAIT);
+        if (r.err == PROVEN_OK) have += r.value;
+    }
+    got[have] = 0;
+    return have;
+}
+
+static void expect_cases(void) {
+    proven_net_addr_t at;
+    proven_http_event_server_t *server = a_server(false, &at);
+    proven_http_event_client_t *client = a_client((proven_http_event_client_config_t){ .expect_timeout_ms = 5000 }, false);
+    call_t c = { 0 };
+    static proven_byte_t body[100000];
+    for (proven_size_t i = 0; i < sizeof body; ++i) body[i] = pattern(i);
+    unsigned sum = 0;
+    for (proven_size_t i = 0; i < sizeof body; ++i) sum = sum * 31 + body[i];
+    char want[64];
+    snprintf(want, sizeof want, "%u %u", (unsigned)sizeof body, sum);
+    /* This library's server says 100 Continue: the body goes then, long before the 5 s wait. */
+    proven_time_t t0 = proven_time_monotonic_now();
+    PROVEN_TEST_ASSERT(start_expect(client, &c, url(false, at.port, "/echo"), (proven_mem_view_t){ body, sizeof body }, 0) == PROVEN_OK &&
+                       spin_until(&c.done, 5000) && c.why == PROVEN_OK && c.status == 200 && strcmp(c.text, want) == 0 &&
+                       proven_time_monotonic_now() - t0 < 2000000000, "a body held for the server's 100 Continue goes when it comes, whole", "");
+    /* A body written afterwards: held, and sent after the word. */
+    PROVEN_TEST_ASSERT(start_expect(client, &c, url(false, at.port, "/echo"), (proven_mem_view_t){ 0 }, sizeof body) == PROVEN_OK, "a body to be written", "");
+    proven_result_size_t w = proven_http_event_request_write(c.request, (proven_mem_view_t){ body, 1000 });
+    PROVEN_TEST_ASSERT(w.err == PROVEN_OK && w.value == 1000, "a write while the client waits for the word is taken (held)", "");
+    proven_size_t sent = 1000;
+    for (int i = 0; i < 2000 && sent < sizeof body && !c.done; ++i) {
+        spin(2);
+        w = proven_http_event_request_write(c.request, (proven_mem_view_t){ body + sent, sizeof body - sent });
+        if (w.err == PROVEN_OK) sent += w.value;
+    }
+    PROVEN_TEST_ASSERT(sent == sizeof body && proven_http_event_request_end(c.request) == PROVEN_OK && spin_until(&c.done, 5000) && c.why == PROVEN_OK &&
+                       strcmp(c.text, want) == 0, "and the whole of it arrives after the 100 Continue", "");
+    PROVEN_TEST_ASSERT(start_expect(client, &c, url(false, at.port, "/echo"), (proven_mem_view_t){ 0 }, PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) == PROVEN_OK &&
+                       proven_http_event_request_write(c.request, (proven_mem_view_t){ body, 5000 }).value == 5000 &&
+                       proven_http_event_request_end(c.request) == PROVEN_OK && spin_until(&c.done, 5000) && c.why == PROVEN_OK &&
+                       strncmp(c.text, "5000 ", 5) == 0, "a chunked body too", "");
+    /* An Expect of the caller's own, with the flag: refused. */
+    {
+        proven_http_header_t h = { sv("Expect"), sv("100-continue") };
+        proven_http_event_request_options_t o = { .method = sv("POST"), .url = url(false, at.port, "/echo"), .body = mv("x"), .headers = &h, .header_count = 1,
+                                                  .expect_continue = true, .on = { .on_done = on_done }, .ctx = &c };
+        PROVEN_TEST_ASSERT(proven_http_event_client_start(client, &o, NULL) == PROVEN_ERR_INVALID_ARG, "an Expect field of the caller's with expect_continue is PROVEN_ERR_INVALID_ARG", "");
+    }
+    proven_http_event_client_destroy(client);
+    spin(30);
+    proven_http_event_server_destroy(server);
+
+    /* Servers the test plays. */
+    client = a_client((proven_http_event_client_config_t){ .expect_timeout_ms = 1000 }, false);
+    for (int kind = 0; kind < 2; ++kind) {
+        /* kind 0: answers 413 at once, no 100; kind 1: says nothing, then reads the body when it comes. */
+        proven_net_listener_t listener;
+        PROVEN_TEST_ASSERT(proven_net_listen(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), 4, &listener, &at) == PROVEN_OK, "a listener the test answers on", "");
+        t0 = proven_time_monotonic_now();
+        PROVEN_TEST_ASSERT(start_expect(client, &c, url(false, at.port, "/up"), mv("0123456789"), 0) == PROVEN_OK, "a POST of ten bytes, with expect_continue", "");
+        proven_net_conn_t conn;
+        bool accepted = false;
+        for (int i = 0; i < 500 && !accepted; ++i) { spin(5); accepted = proven_net_accept(&listener, PROVEN_NET_DONT_WAIT, &conn, NULL) == PROVEN_OK; }
+        PROVEN_TEST_ASSERT(accepted, "the client connected", "");
+        static char got[2048];
+        got[0] = 0;
+        (void)read_for(&conn, got, sizeof got, 150);
+        PROVEN_TEST_ASSERT(strstr(got, "\r\nExpect: 100-continue\r\n") != NULL && strstr(got, "\r\nContent-Length: 10\r\n") != NULL && strstr(got, "\r\n\r\n") != NULL &&
+                           strstr(got, "0123456789") == NULL, "the head asks to go on, and in 150 ms no body came after it", "");
+        if (kind == 0) {
+            static const char refuse[] = "HTTP/1.1 413 Content Too Large\r\nContent-Length: 3\r\n\r\nbig";
+            PROVEN_TEST_ASSERT(proven_net_write_all(&conn, (proven_mem_view_t){ (const proven_byte_t *)refuse, sizeof refuse - 1 }, proven_net_deadline_in(5000)).err == PROVEN_OK, "413 at once", "");
+            PROVEN_TEST_ASSERT(spin_until(&c.done, 5000) && c.why == PROVEN_OK && c.status == 413 && c.got == 3, "the 413 is the response", "");
+            (void)read_for(&conn, got, sizeof got, 1200);
+            PROVEN_TEST_ASSERT(strstr(got, "0123456789") == NULL, "and the body was never sent, not even after the expect time", "");
+            /* The connection was not kept: the client closed it. */
+            proven_result_size_t r = proven_net_read(&conn, (proven_mem_mut_t){ .ptr = (proven_byte_t *)got, .size = 1 }, proven_net_deadline_in(2000));
+            PROVEN_TEST_ASSERT(r.err == PROVEN_ERR_EOF || r.err == PROVEN_ERR_RESET, "and the client closed the connection", "");
+        } else {
+            (void)read_for(&conn, got, sizeof got, 1200);
+            const proven_i64 waited = (proven_time_monotonic_now() - t0) / 1000000;
+            PROVEN_TEST_ASSERT(strstr(got, "\r\n\r\n0123456789") != NULL && waited >= 1000, "a server that says nothing gets the body after expect_timeout_ms", "");
+            static const char ok[] = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+            PROVEN_TEST_ASSERT(proven_net_write_all(&conn, (proven_mem_view_t){ (const proven_byte_t *)ok, sizeof ok - 1 }, proven_net_deadline_in(5000)).err == PROVEN_OK &&
+                               spin_until(&c.done, 5000) && c.why == PROVEN_OK && c.status == 200, "and its answer is the response", "");
+        }
+        (void)proven_net_close(&conn);
+        (void)proven_net_listener_close(&listener);
+    }
+    proven_http_event_client_destroy(client);
+}
+
 static void connections(bool tls) {
     const char *how = tls ? "over TLS" : "plain";
     proven_net_addr_t at;
@@ -1195,6 +1304,8 @@ int main(void) {
     kept_or_not();
     PROVEN_TEST_SECTION("a kept connection, and a TLS server's goodbye", "Over TLS a server that closes a connection says so first. The test is that server, and says it at each moment that matters.", "Check cl_readable: only what the server said counts as an answer (cl_alive), not the bytes of its goodbye; and cl_idle_io for a goodbye to a connection nobody uses.");
     kept_over_tls();
+    PROVEN_TEST_SECTION("expect_continue", "The head with Expect: 100-continue and the body held: sent on this library's server's 100 Continue (whole, written afterwards, chunked), never to a server that answers 413 at once - whose connection is then closed - and after expect_timeout_ms to one that says nothing; an Expect of the caller's with the flag refused.", "Check cl_expect_go, the 100 and final-answer branches of cl_process, CL_T_EXPECT in cl_arm and cl_on_timer, and the hold in proven_http_event_request_write in http_event_client.c.");
+    expect_cases();
     PROVEN_TEST_SECTION("time, for a body and for output", "A response body that stops coming, and a server that stops reading.", "Check cl_arm in http_event_client.c: CL_T_BODY while a body is awaited, CL_T_WRITE while output is held; and cl_on_timer.");
     time_limits();
 

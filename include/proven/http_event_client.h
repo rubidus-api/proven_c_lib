@@ -86,6 +86,7 @@ typedef struct {
     proven_u32 response_timeout_ms;        /**< from the request being sent to the end of the response head. 0: 30 s */
     proven_u32 body_timeout_ms;            /**< between pieces of the response body. 0: 30 s */
     proven_u32 write_timeout_ms;           /**< output held with none of it accepted by the server. 0: 30 s */
+    proven_u32 expect_timeout_ms;          /**< for a request with `expect_continue`: how long to wait for the server's word before sending the body anyway. 0: 1 s */
     bool decompress;                       /**< ask for compressed responses (`Accept-Encoding: gzip`, unless the request has its own or a `Range`) and decode a body sent with `Content-Encoding: gzip` or `deflate`: `on_body` gets decoded pieces of at most 16 KiB, the head stays as the server sent it, and a damaged or unfinished stream ends the request with PROVEN_ERR_INVALID_FORMAT. A 206 and other codings are delivered as sent. Costs about 52 KiB while such a response is arriving (for `zstd` and `br`, see `decompress_zstd` and `decompress_brotli`). false: bodies arrive as sent */
     bool http2;                            /**< true: an `https` origin that agrees to it (ALPN `h2`) is spoken to in HTTP/2, on one connection the client keeps for that origin and shares between its requests. The TLS configuration must offer `h2` - and must not when this is false */
     bool http2_cleartext;                  /**< true: every `http` request of this client is HTTP/2 by prior knowledge - there is no way to ask a server in the clear, so say this only of servers known to speak it. A connection that was made and is then lost before the server's SETTINGS ends its requests with PROVEN_ERR_UNSUPPORTED */
@@ -122,6 +123,7 @@ typedef struct {
     proven_http_event_client_callbacks_t on;
     void *ctx;                             /**< passed to every callback */
     bool http3;                            /**< send this request over HTTP/3: an `https` URL, on a client with `http3` (otherwise PROVEN_ERR_INVALID_ARG). See `http3` in the client's configuration: no fallback unless it has `http3_fallback` */
+    bool expect_continue;                  /**< for a request with a body, over HTTP/1.1 (since v0.106.0): send `Expect: 100-continue` and the head first, and the body - held, or written with proven_http_event_request_write meanwhile - only when the server says `100 Continue`, or says nothing for `expect_timeout_ms`. A server that answers at once instead - 401, 413, 417 - is not sent the body at all: that answer is the response, what is written of the body after it is dropped, and the connection is not kept. Do not set an `Expect` header of your own with it. Over HTTP/2 and HTTP/3 the flag is ignored and the body goes at once (a stream can be reset instead) */
 } proven_http_event_request_options_t;
 
 /** @return PROVEN_ERR_INVALID_ARG (no loop; a TLS configuration whose `h2` or `h3` does not

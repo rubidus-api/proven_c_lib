@@ -1596,6 +1596,7 @@ void *proven_http_event_request_user(const proven_http_event_request_t *request)
 | `on.on_writable(ctx, request)` | 보류되었던 요청 본문 바이트가 나갔다. 선택. |
 | `on.on_done(ctx, request, why)` | 끝. **필수**이고, 시작된 요청마다 정확히 한 번 불린다. |
 | `ctx` | 모든 콜백에 전달된다. |
+| `expect_continue` | HTTP/1.1, 본문이 있는 요청(v0.106.0부터): 헤드는 `Expect: 100-continue`와 함께 가고, 본문 - 쥐고 있던 것, 또는 그동안 쓴 것 - 은 서버의 `100 Continue`에, 또는 클라이언트의 `expect_timeout_ms`(1초) 동안 말이 없으면 그 뒤에 간다. 최종 답이 먼저 오면(401, 413) 그것이 응답이다: 본문은 보내지 않고, 그 뒤에 쓴 것은 버리며, 연결은 남기지 않는다. HTTP/2와 HTTP/3에서는 본문이 곧바로 간다. |
 
 **연결은 보관되고, 세어진다.** v0.36.0부터 HTTP/1.1 요청은 제 연결을 만들었다가 닫지 않는다.
 클라이언트는 **오리진** - URL의 스킴·호스트·포트, 그리고 연결한 주소 - 마다 연결을 갖고 있고, 요청은

@@ -18,6 +18,15 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **`expect_continue` in the event-driven client** (RFC-0041 H-4), as the blocking client's: for an
+  HTTP/1.1 request with a body, the head goes with `Expect: 100-continue` and the body - held, or
+  written with `proven_http_event_request_write` meanwhile - only on the server's `100 Continue`, or
+  after `expect_timeout_ms` (new, 1 s) of silence; a final answer first is the response, the body is
+  never sent, what is written of it is dropped, and the connection is not kept. An `Expect` field of
+  the caller's with the flag is `PROVEN_ERR_INVALID_ARG`. Ignored over HTTP/2 and HTTP/3.
+
 ## [0.105.0] - 2026-11-01
 
 ### Added
