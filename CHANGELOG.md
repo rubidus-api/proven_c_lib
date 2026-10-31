@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.105.0] - 2026-11-01
+
 ### Added
 
 - **Reading multipart bodies** (RFC-0041 H-1): a reader that takes a `multipart/*` body (RFC 2046
