@@ -18,6 +18,40 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **Reading multipart bodies** (RFC-0041 H-1): a reader that takes a `multipart/*` body (RFC 2046
+  section 5.1: `form-data`, `byteranges`, `mixed`) in pieces of any size and reports, one event a call,
+  each part's head (its fields), its bytes, its end and the end of all - as views into what it was
+  given, holding only one part's head (in the caller's buffer) and as many bytes as a boundary line
+  has: `proven_http_multipart_boundary_parse`, `proven_http_multipart_init`, `_feed`, `_end`; and
+  `proven_http_content_disposition_parse` (`name`, `filename`, `filename*` undecoded). Strict as RFC 2046
+  is: a line that begins with the boundary and goes on with other text is refused. Checked against 300
+  bodies Python's email parser agreed with, in eight piece sizes (2,400 readings).
+- **Several ranges** (RFC-0041 H-2): `proven_http_range_parse_list` resolves a `Range` of up to a
+  caller's number of ranges, drops the unsatisfiable, sorts and merges overlapping or touching ones, and
+  refuses (as `PROVEN_ERR_UNSUPPORTED`: send it all) more than the caller's number or ranges that together
+  ask for more than the resource, as RFC 9110 section 14.2 lets a server; `proven_http_byteranges_write_content_type`
+  and `proven_http_byteranges_write_part` write a `multipart/byteranges` body.
+- **Digest's other half** (RFC-0041 H-3): `SHA-512-256` and `SHA-512-256-sess` - SHA-512/256 as FIPS 180-4
+  defines it, as curl and Python compute it (RFC 7616 section 3.9.2's printed example was worked out with
+  SHA-512 cut to 256 bits and matches none of them) - `qop=auth-int` (`proven_http_digest_auth_body`, the
+  answer covering the request's body), `userhash=true` (the user name sent hashed) and `charset=UTF-8`
+  (a name that cannot be quoted sent as `username*`, RFC 8187); the challenge struct reports
+  `qop_auth_int`, `userhash` and `charset_utf8`, and a challenge offering several algorithms is answered
+  with the strongest. The blocking client answers a server's `auth-int` with the body it sends, and an
+  HTTP proxy's Digest challenge (407, `Proxy-Authenticate`) with the proxy URL's user and password, once,
+  for a plain request through it and for its `CONNECT`. Checked against a Python server that verifies
+  every answer itself (every algorithm, `-sess`, `auth-int` with and without a body, `userhash`,
+  `username*`, through a Digest proxy); curl 8.14 against the same server agrees but for `auth-int`
+  with a body, where curl covers an empty one.
+
+### Fixed
+
+- The user and password in the blocking client's `proxy` URL are percent-decoded, as RFC 3986 has
+  them; they were used as written (`p%40ss` was sent as those five characters, for Basic, SOCKS5 and now
+  Digest).
+
 ## [0.104.0] - 2026-10-31
 
 ### Added

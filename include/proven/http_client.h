@@ -73,7 +73,7 @@ typedef struct {
     proven_size_t max_head_bytes;           /**< largest response head accepted; 0: 16 KiB */
     proven_u32 max_redirects;               /**< redirects followed per request; 0: none are followed */
     proven_size_t max_idle_connections;     /**< connections kept for reuse; 0: every connection is closed */
-    proven_u8str_view_t proxy;              /**< `http://[user:pw@]host:port` or `socks5://[user:pw@]host:port`; empty: none */
+    proven_u8str_view_t proxy;              /**< `http://[user:pw@]host:port` or `socks5://[user:pw@]host:port`; empty: none. The user and password are percent-decoded (`p%40ss` is `p@ss`; since v0.105.0, before which they were used as written). An HTTP proxy is sent them as Basic; one that answers 407 with a Digest challenge is answered with Digest, once, for a plain request through it and for its `CONNECT` (since v0.105.0) */
     proven_u8str_view_t no_proxy;           /**< hosts that are reached directly although `proxy` is set, separated by commas: a name matches itself and every name under it (`example.org` and `.example.org` both match `example.org` and `www.example.org`), an address matches itself as written, `*` matches everything. Letters compare without case; ports are not looked at. Empty: every request goes through the proxy */
     proven_u8str_view_t username;           /**< credentials offered when a server answers 401; empty: none */
     proven_u8str_view_t password;

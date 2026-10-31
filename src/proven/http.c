@@ -1073,6 +1073,392 @@ proven_err_t proven_http_multipart_write_end(proven_mem_mut_t out, proven_size_t
 }
 
 // -----------------------------------------------------------------------------
+// Reading multipart bodies
+// -----------------------------------------------------------------------------
+
+/* RFC 2046's bchars: what a boundary may hold (a space too, but not last). */
+static bool http_bchar(proven_byte_t c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           c == '\'' || c == '(' || c == ')' || c == '+' || c == '_' || c == ',' || c == '-' || c == '.' ||
+           c == '/' || c == ':' || c == '=' || c == '?' || c == ' ';
+}
+
+static bool http_boundary_valid(proven_u8str_view_t b) {
+    if (b.size == 0 || b.size > PROVEN_HTTP_BOUNDARY_MAX || b.ptr[b.size - 1] == ' ') return false;
+    for (proven_size_t i = 0; i < b.size; ++i) if (!http_bchar(b.ptr[i])) return false;
+    return true;
+}
+
+/* One `; name=value` parameter from `*at` in `v`: the name, and the value - a token, or a quoted
+ * string without its quotes. Returns false at the end; `*bad` for a malformed one, `*escaped` for a
+ * quoted value with a backslash. */
+static bool http_param_next(proven_u8str_view_t v, proven_size_t *at, proven_u8str_view_t *name, proven_u8str_view_t *value,
+                            bool *bad, bool *escaped) {
+    proven_size_t i = *at;
+    while (i < v.size && http_is_ows(v.ptr[i])) i++;
+    if (i == v.size) { *at = i; return false; }
+    if (v.ptr[i] != ';') { *bad = true; return false; }
+    i++;
+    while (i < v.size && http_is_ows(v.ptr[i])) i++;
+    const proven_size_t n0 = i;
+    while (i < v.size && http_is_tchar(v.ptr[i])) i++;
+    if (i == n0 || i == v.size || v.ptr[i] != '=') { *bad = true; return false; }
+    *name = (proven_u8str_view_t){ .ptr = v.ptr + n0, .size = i - n0 };
+    i++;
+    if (i < v.size && v.ptr[i] == '"') {
+        const proven_size_t v0 = ++i;
+        while (i < v.size && v.ptr[i] != '"') {
+            if (v.ptr[i] == '\\') *escaped = true;
+            if (v.ptr[i] < 0x20 && v.ptr[i] != '\t') { *bad = true; return false; }
+            i++;
+        }
+        if (i == v.size) { *bad = true; return false; }
+        *value = (proven_u8str_view_t){ .ptr = v.ptr + v0, .size = i - v0 };
+        i++;
+    } else {
+        const proven_size_t v0 = i;
+        while (i < v.size && http_is_tchar(v.ptr[i])) i++;
+        if (i == v0) { *bad = true; return false; }
+        *value = (proven_u8str_view_t){ .ptr = v.ptr + v0, .size = i - v0 };
+    }
+    *at = i;
+    return true;
+}
+
+static bool http_eq_ci_lit(proven_u8str_view_t a, const char *lit) {
+    return proven_u8str_view_eq_ascii_ci(a, http_cstr(lit));
+}
+
+proven_err_t proven_http_multipart_boundary_parse(proven_u8str_view_t content_type, proven_u8str_view_t *boundary) {
+    if (boundary) *boundary = (proven_u8str_view_t){0};
+    if (!boundary || (content_type.size > 0 && !content_type.ptr)) return PROVEN_ERR_INVALID_ARG;
+    const proven_u8str_view_t v = content_type;
+    proven_size_t i = 0;
+    while (i < v.size && http_is_ows(v.ptr[i])) i++;
+    static const char multi[] = "multipart/";
+    if (v.size - i < sizeof multi - 1 || !http_eq_ci_lit((proven_u8str_view_t){ .ptr = v.ptr + i, .size = sizeof multi - 1 }, multi)) return PROVEN_ERR_NOT_FOUND;
+    i += sizeof multi - 1;
+    const proven_size_t sub = i;
+    while (i < v.size && http_is_tchar(v.ptr[i])) i++;
+    if (i == sub) return PROVEN_ERR_NOT_FOUND;
+    proven_u8str_view_t name, value;
+    bool bad = false, escaped = false, found = false;
+    while (http_param_next(v, &i, &name, &value, &bad, &escaped)) {
+        if (http_eq_ci_lit(name, "boundary")) {
+            if (found) return PROVEN_ERR_INVALID_FORMAT;
+            found = true;
+            *boundary = value;
+            if (escaped) return PROVEN_ERR_INVALID_FORMAT;
+        }
+        escaped = false;
+    }
+    if (bad) { *boundary = (proven_u8str_view_t){0}; return PROVEN_ERR_INVALID_FORMAT; }
+    if (!found) return PROVEN_ERR_NOT_FOUND;
+    if (!http_boundary_valid(*boundary)) { *boundary = (proven_u8str_view_t){0}; return PROVEN_ERR_INVALID_FORMAT; }
+    return PROVEN_OK;
+}
+
+enum { MP_PREAMBLE, MP_AFTER, MP_AFTER_DASH, MP_AFTER_CR, MP_HEAD, MP_BODY, MP_EPILOGUE, MP_FAILED };
+
+proven_err_t proven_http_multipart_init(proven_http_multipart_t *r, proven_u8str_view_t boundary, proven_mem_mut_t head,
+                                        proven_http_header_t *fields, proven_size_t field_cap) {
+    if (!r) return PROVEN_ERR_INVALID_ARG;
+    *r = (proven_http_multipart_t){ .state = MP_FAILED };
+    if ((boundary.size > 0 && !boundary.ptr) || !http_boundary_valid(boundary) || !head.ptr || head.size < 2 || !fields || field_cap == 0) return PROVEN_ERR_INVALID_ARG;
+    r->delim[0] = '\r'; r->delim[1] = '\n'; r->delim[2] = '-'; r->delim[3] = '-';
+    for (proven_size_t i = 0; i < boundary.size; ++i) r->delim[4 + i] = boundary.ptr[i];
+    r->delim_len = (proven_u8)(4 + boundary.size);
+    /* The first boundary line may begin the body: read as if a line ended just before it. */
+    r->hold[0] = '\r'; r->hold[1] = '\n';
+    r->held = 2;
+    r->head = head;
+    r->fields = fields;
+    r->field_cap = field_cap;
+    r->state = MP_PREAMBLE;
+    return PROVEN_OK;
+}
+
+static proven_err_t mp_fail(proven_http_multipart_t *r, proven_err_t e) {
+    r->state = MP_FAILED;
+    return e;
+}
+
+proven_err_t proven_http_multipart_feed(proven_http_multipart_t *r, proven_mem_view_t in, proven_size_t *used, proven_http_multipart_event_t *ev) {
+    if (used) *used = 0;
+    if (ev) *ev = (proven_http_multipart_event_t){0};
+    if (!r || !used || !ev || (in.size > 0 && !in.ptr)) return PROVEN_ERR_INVALID_ARG;
+    if (r->state == MP_FAILED) return PROVEN_ERR_INVALID_FORMAT;
+    const proven_byte_t *const d = r->delim;
+    const proven_size_t dn = r->delim_len;
+    proven_size_t at = 0;
+    for (;;) {
+        switch (r->state) {
+            case MP_PREAMBLE:
+            case MP_BODY: {
+                const bool body = r->state == MP_BODY;
+                if (r->held > 0) {
+                    /* Held bytes are the start of the boundary line: does the input go on with it? */
+                    const proven_size_t need = dn - r->held, avail = in.size - at, k = need < avail ? need : avail;
+                    proven_size_t m = 0;
+                    while (m < k && in.ptr[at + m] == d[r->held + m]) m++;
+                    if (m == k && k == need) {
+                        at += k;
+                        r->held = 0;
+                        r->state = MP_AFTER;
+                        if (body) { *used = at; ev->kind = PROVEN_HTTP_MULTIPART_PART_END; return PROVEN_OK; }
+                        continue;
+                    }
+                    if (m == k) {
+                        for (proven_size_t i = 0; i < k; ++i) r->hold[r->held + i] = in.ptr[at + i];
+                        r->held = (proven_u8)(r->held + k);
+                        at += k;
+                        *used = at;
+                        return PROVEN_OK;
+                    }
+                    /* Not a boundary line: the held bytes are data, all of them - they are the start of
+                     * CR LF - - boundary, and a boundary has no CR, so no later one of them can begin
+                     * another boundary line. */
+                    const proven_size_t out = r->held;
+                    for (proven_size_t i = 0; i < out; ++i) r->spill[i] = r->hold[i];
+                    r->held = 0;
+                    if (body) {
+                        *used = at;
+                        ev->kind = PROVEN_HTTP_MULTIPART_DATA;
+                        ev->data = (proven_mem_view_t){ .ptr = r->spill, .size = out };
+                        return PROVEN_OK;
+                    }
+                    continue;
+                }
+                if (at == in.size) { *used = at; return PROVEN_OK; }
+                /* The first place a boundary line could begin, whole or cut off by the end of the input. */
+                const proven_byte_t *p = in.ptr + at, *const end = in.ptr + in.size;
+                proven_size_t found = (proven_size_t)(end - p);
+                bool whole = false;
+                for (const proven_byte_t *q = p; q < end; ++q) {
+                    if (*q != '\r') continue;
+                    proven_size_t m = 0;
+                    while (m < dn && q + m < end && q[m] == d[m]) m++;
+                    if (m == dn) { found = (proven_size_t)(q - p); whole = true; break; }
+                    if (q + m == end) { found = (proven_size_t)(q - p); break; }
+                }
+                if (found > 0) {
+                    at += found;
+                    if (body) {
+                        *used = at;
+                        ev->kind = PROVEN_HTTP_MULTIPART_DATA;
+                        ev->data = (proven_mem_view_t){ .ptr = p, .size = found };
+                        return PROVEN_OK;
+                    }
+                    continue;
+                }
+                if (whole) {
+                    at += dn;
+                    r->state = MP_AFTER;
+                    if (body) { *used = at; ev->kind = PROVEN_HTTP_MULTIPART_PART_END; return PROVEN_OK; }
+                    continue;
+                }
+                /* The input ends inside what may be a boundary line: hold it. */
+                const proven_size_t k = (proven_size_t)(end - p);
+                for (proven_size_t i = 0; i < k; ++i) r->hold[i] = p[i];
+                r->held = (proven_u8)k;
+                at = in.size;
+                *used = at;
+                return PROVEN_OK;
+            }
+            case MP_AFTER:
+            case MP_AFTER_DASH:
+            case MP_AFTER_CR: {
+                if (at == in.size) { *used = at; return PROVEN_OK; }
+                const proven_byte_t c = in.ptr[at++];
+                if (r->state == MP_AFTER_DASH) {
+                    if (c != '-') { *used = at; return mp_fail(r, PROVEN_ERR_INVALID_FORMAT); }
+                    r->state = MP_EPILOGUE;
+                    *used = at;
+                    ev->kind = PROVEN_HTTP_MULTIPART_END;
+                    return PROVEN_OK;
+                }
+                if (r->state == MP_AFTER_CR) {
+                    if (c != '\n') { *used = at; return mp_fail(r, PROVEN_ERR_INVALID_FORMAT); }
+                    r->state = MP_HEAD;
+                    r->head_len = 0;
+                    continue;
+                }
+                if (c == '-') r->state = MP_AFTER_DASH;
+                else if (c == '\r') r->state = MP_AFTER_CR;
+                else if (c != ' ' && c != '\t') { *used = at; return mp_fail(r, PROVEN_ERR_INVALID_FORMAT); }
+                continue;
+            }
+            case MP_HEAD: {
+                /* Into the head buffer until the empty line. */
+                while (at < in.size) {
+                    if (r->head_len == r->head.size) { *used = at; return mp_fail(r, PROVEN_ERR_OUT_OF_BOUNDS); }
+                    r->head.ptr[r->head_len++] = in.ptr[at++];
+                    const proven_byte_t *h = r->head.ptr;
+                    const proven_size_t n = r->head_len;
+                    /* A bare LF can never end the head: refused now, not after the rest of the body. */
+                    if (h[n - 1] == '\n' && (n < 2 || h[n - 2] != '\r')) { *used = at; return mp_fail(r, PROVEN_ERR_INVALID_FORMAT); }
+                    if ((n == 2 && h[0] == '\r' && h[1] == '\n') || (n >= 4 && h[n - 4] == '\r' && h[n - 3] == '\n' && h[n - 2] == '\r' && h[n - 1] == '\n')) {
+                        proven_http_cur_t c = { .p = h, .n = n, .capped = true, .pos = 0 };
+                        proven_size_t count = 0;
+                        const proven_err_t e = http_fields(&c, r->fields, r->field_cap, &count);
+                        if (e != PROVEN_OK || c.pos != n) { *used = at; return mp_fail(r, e == PROVEN_ERR_OUT_OF_BOUNDS ? e : PROVEN_ERR_INVALID_FORMAT); }
+                        r->state = MP_BODY;
+                        *used = at;
+                        ev->kind = PROVEN_HTTP_MULTIPART_PART;
+                        ev->fields = r->fields;
+                        ev->field_count = count;
+                        return PROVEN_OK;
+                    }
+                }
+                *used = at;
+                return PROVEN_OK;
+            }
+            case MP_EPILOGUE:
+                *used = in.size;
+                return PROVEN_OK;
+            default:
+                return PROVEN_ERR_INVALID_FORMAT;
+        }
+    }
+}
+
+proven_err_t proven_http_multipart_end(const proven_http_multipart_t *r) {
+    if (!r) return PROVEN_ERR_INVALID_ARG;
+    return r->state == MP_EPILOGUE ? PROVEN_OK : PROVEN_ERR_INVALID_FORMAT;
+}
+
+proven_err_t proven_http_content_disposition_parse(proven_u8str_view_t value, proven_http_disposition_t *out) {
+    if (out) *out = (proven_http_disposition_t){0};
+    if (!out || (value.size > 0 && !value.ptr)) return PROVEN_ERR_INVALID_ARG;
+    proven_size_t i = 0;
+    while (i < value.size && http_is_ows(value.ptr[i])) i++;
+    const proven_size_t t0 = i;
+    while (i < value.size && http_is_tchar(value.ptr[i])) i++;
+    if (i == t0) return PROVEN_ERR_INVALID_FORMAT;
+    out->type = (proven_u8str_view_t){ .ptr = value.ptr + t0, .size = i - t0 };
+    proven_u8str_view_t name, v;
+    bool bad = false, escaped = false;
+    while (http_param_next(value, &i, &name, &v, &bad, &escaped)) {
+        bool *has = (void *)0;
+        proven_u8str_view_t *slot = (void *)0;
+        if (http_eq_ci_lit(name, "name")) { has = &out->has_name; slot = &out->name; }
+        else if (http_eq_ci_lit(name, "filename")) { has = &out->has_filename; slot = &out->filename; }
+        else if (http_eq_ci_lit(name, "filename*")) { has = &out->has_filename_ext; slot = &out->filename_ext; }
+        if (slot) {
+            if (*has) { *out = (proven_http_disposition_t){0}; return PROVEN_ERR_INVALID_FORMAT; }
+            if (escaped) { *out = (proven_http_disposition_t){0}; return PROVEN_ERR_UNSUPPORTED; }
+            *has = true;
+            *slot = v;
+        }
+        escaped = false;
+    }
+    if (bad) { *out = (proven_http_disposition_t){0}; return PROVEN_ERR_INVALID_FORMAT; }
+    return PROVEN_OK;
+}
+
+// -----------------------------------------------------------------------------
+// Several ranges
+// -----------------------------------------------------------------------------
+
+proven_err_t proven_http_range_parse_list(proven_u8str_view_t value, proven_u64 size, proven_http_range_t *ranges,
+                                          proven_size_t cap, proven_size_t *count) {
+    if (count) *count = 0;
+    if (!count || !ranges || cap == 0 || (value.size > 0 && !value.ptr)) return PROVEN_ERR_INVALID_ARG;
+    proven_size_t i = 0;
+    while (i < value.size && http_is_ows(value.ptr[i])) i++;
+    const proven_size_t u0 = i;
+    while (i < value.size && http_is_tchar(value.ptr[i])) i++;
+    if (i == u0 || i == value.size || value.ptr[i] != '=') return PROVEN_ERR_INVALID_FORMAT;
+    if (!http_eq_ci_lit((proven_u8str_view_t){ .ptr = value.ptr + u0, .size = i - u0 }, "bytes")) return PROVEN_ERR_UNSUPPORTED;
+    i++;
+    proven_size_t n = 0, specs = 0;
+    proven_u64 asked = 0;
+    bool more = true;
+    while (more) {
+        while (i < value.size && http_is_ows(value.ptr[i])) i++;
+        /* An empty element between commas is allowed by the list rule. */
+        if (i < value.size && value.ptr[i] == ',') { i++; continue; }
+        if (i == value.size) break;
+        proven_u64 a = 0, b = 0;
+        bool has_a = false, has_b = false;
+        if (value.ptr[i] != '-') { if (!http_take_u64(value, &i, &a)) return PROVEN_ERR_INVALID_FORMAT; has_a = true; }
+        if (i == value.size || value.ptr[i] != '-') return PROVEN_ERR_INVALID_FORMAT;
+        i++;
+        if (i < value.size && value.ptr[i] >= '0' && value.ptr[i] <= '9') { if (!http_take_u64(value, &i, &b)) return PROVEN_ERR_INVALID_FORMAT; has_b = true; }
+        if (!has_a && !has_b) return PROVEN_ERR_INVALID_FORMAT;
+        if (has_a && has_b && b < a) return PROVEN_ERR_INVALID_FORMAT;
+        while (i < value.size && http_is_ows(value.ptr[i])) i++;
+        if (i < value.size) { if (value.ptr[i] != ',') return PROVEN_ERR_INVALID_FORMAT; i++; }
+        else more = false;
+        if (++specs > cap) return PROVEN_ERR_UNSUPPORTED;
+        /* Resolved against the size: a suffix of b bytes, or a..b cut to the end. */
+        proven_u64 first, last;
+        if (!has_a) {
+            if (b == 0 || size == 0) continue;
+            first = b >= size ? 0 : size - b;
+            last = size - 1;
+        } else {
+            if (a >= size) continue;
+            first = a;
+            last = has_b && b < size ? b : size - 1;
+        }
+        asked += last - first + 1;
+        if (asked > size && specs > 1) return PROVEN_ERR_UNSUPPORTED;
+        ranges[n++] = (proven_http_range_t){ first, last };
+    }
+    if (specs == 0) return PROVEN_ERR_INVALID_FORMAT;
+    if (n == 0) return PROVEN_ERR_OUT_OF_BOUNDS;
+    /* In order of where they start, then those that overlap or touch made one. */
+    for (proven_size_t k = 1; k < n; ++k) {
+        const proven_http_range_t x = ranges[k];
+        proven_size_t j = k;
+        while (j > 0 && ranges[j - 1].first > x.first) { ranges[j] = ranges[j - 1]; j--; }
+        ranges[j] = x;
+    }
+    proven_size_t m = 0;
+    for (proven_size_t k = 1; k < n; ++k) {
+        if (ranges[k].first <= ranges[m].last + 1) { if (ranges[k].last > ranges[m].last) ranges[m].last = ranges[k].last; }
+        else ranges[++m] = ranges[k];
+    }
+    *count = m + 1;
+    return PROVEN_OK;
+}
+
+proven_err_t proven_http_byteranges_write_content_type(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary) {
+    proven_http_w_t w;
+    if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
+    if (!http_boundary_ok(boundary)) return PROVEN_ERR_INVALID_ARG;
+    http_put_cstr(&w, "Content-Type: multipart/byteranges; boundary=");
+    http_put(&w, boundary);
+    http_put_cstr(&w, "\r\n");
+    return http_w_end(&w, len);
+}
+
+proven_err_t proven_http_byteranges_write_part(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary,
+                                               proven_u8str_view_t content_type, proven_u64 first, proven_u64 last, proven_u64 size) {
+    proven_http_w_t w;
+    if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;
+    if (!http_boundary_ok(boundary) || first > last || last >= size) return PROVEN_ERR_INVALID_ARG;
+    for (proven_size_t i = 0; i < content_type.size; ++i) if (!http_is_field_byte(content_type.ptr[i])) return PROVEN_ERR_INVALID_ARG;
+    http_put_cstr(&w, "--");
+    http_put(&w, boundary);
+    http_put_cstr(&w, "\r\n");
+    if (content_type.size > 0) {
+        http_put_cstr(&w, "Content-Type: ");
+        http_put(&w, content_type);
+        http_put_cstr(&w, "\r\n");
+    }
+    http_put_cstr(&w, "Content-Range: bytes ");
+    http_put_u64(&w, first, 10);
+    http_put_cstr(&w, "-");
+    http_put_u64(&w, last, 10);
+    http_put_cstr(&w, "/");
+    http_put_u64(&w, size, 10);
+    http_put_cstr(&w, "\r\n\r\n");
+    return http_w_end(&w, len);
+}
+
+// -----------------------------------------------------------------------------
 // Dates
 // -----------------------------------------------------------------------------
 

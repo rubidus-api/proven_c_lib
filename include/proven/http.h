@@ -31,7 +31,7 @@
  *
  * Each of these is something real software accepts and real attacks use.
  *
- * What is NOT here: HTTP/2 and HTTP/3; content codings (gzip); multipart bodies; cookies;
+ * What is NOT here: HTTP/2 and HTTP/3; content codings (gzip); cookies;
  * authentication. Trailers after a chunked body are checked and skipped, not handed back.
  *
  * Not part of the socket layer: `PROVEN_NO_NET` does not remove this header.
@@ -489,6 +489,168 @@ proven_err_t proven_http_multipart_write_part_end(proven_mem_mut_t out, proven_s
 /** @brief Append the closing boundary that ends the whole body. */
 [[nodiscard]]
 proven_err_t proven_http_multipart_write_end(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary);
+
+// -----------------------------------------------------------------------------
+// Reading multipart bodies (since v0.105.0)
+// -----------------------------------------------------------------------------
+
+/*
+ * A multipart body (RFC 2046 section 5.1) is parts, each a small head of fields and then bytes,
+ * between lines that hold the boundary: what a browser sends for a form with a file
+ * (`multipart/form-data`, RFC 7578), and what a server answers to several ranges at once
+ * (`multipart/byteranges`, RFC 9110 section 14.6). The reader below takes such a body in pieces of
+ * any size - as it arrives - and tells what it found, one event a call, with views into what it was
+ * given: it holds no part, only a part's head (in a buffer of yours) and as many bytes as a boundary
+ * line has. It allocates nothing; part of the freestanding profile, as the rest of http.h.
+ */
+
+/** @brief The longest boundary RFC 2046 allows. */
+#define PROVEN_HTTP_BOUNDARY_MAX ((proven_size_t)70)
+
+/**
+ * @brief Find the boundary in a `Content-Type` value of any `multipart/` type:
+ *        `multipart/form-data; boundary=----x` (or `boundary="..."`).
+ * @param boundary Out: a view into `content_type`, without quotes.
+ * @return PROVEN_ERR_NOT_FOUND when the type is not `multipart/...` or has no boundary;
+ *         PROVEN_ERR_INVALID_FORMAT for an empty boundary, one over 70 characters, one with a
+ *         character RFC 2046 does not allow, or a quoted one with a backslash.
+ */
+[[nodiscard]]
+proven_err_t proven_http_multipart_boundary_parse(proven_u8str_view_t content_type, proven_u8str_view_t *boundary);
+
+/** @brief What one call of proven_http_multipart_feed found. */
+typedef enum {
+    PROVEN_HTTP_MULTIPART_NONE = 0,     /**< nothing yet: everything given was taken; give more */
+    PROVEN_HTTP_MULTIPART_PART,         /**< a part begins: `fields` are its head */
+    PROVEN_HTTP_MULTIPART_DATA,         /**< some of the part's bytes, in order: `data` */
+    PROVEN_HTTP_MULTIPART_PART_END,     /**< the part is over */
+    PROVEN_HTTP_MULTIPART_END           /**< the closing boundary: the body is over; what follows is ignored */
+} proven_http_multipart_event_kind_t;
+
+/** @brief An event. The views are good until the next call with the same reader. */
+typedef struct {
+    proven_http_multipart_event_kind_t kind;
+    const proven_http_header_t *fields; /**< PART: the part's fields, in the order sent - views into the head buffer */
+    proven_size_t field_count;
+    proven_mem_view_t data;             /**< DATA: bytes of the part - a view into the input given, or into the reader */
+} proven_http_multipart_event_t;
+
+/**
+ * @brief A multipart reader. Caller-owned; start it with proven_http_multipart_init. Its fields
+ *        are exposed only so it can live on the stack: do not read or write them.
+ */
+typedef struct {
+    proven_byte_t delim[4 + 70];        /* CR LF - - boundary */
+    proven_byte_t hold[4 + 70];         /* the start of what may be a boundary line, held back */
+    proven_byte_t spill[4 + 70];        /* held bytes that turned out to be data, handed out from here */
+    proven_u8 delim_len, held;
+    proven_u8 state;
+    proven_mem_mut_t head;
+    proven_size_t head_len;
+    proven_http_header_t *fields;
+    proven_size_t field_cap;
+} proven_http_multipart_t;
+
+/**
+ * @brief Start reading a body whose boundary is `boundary` (from
+ *        proven_http_multipart_boundary_parse).
+ * @param head Where a part's head is kept while it is read and while its fields are in use: the
+ *             largest head taken. 1 KiB is plenty for a browser's.
+ * @param fields Room for a part's fields, and how many: the most taken in one part.
+ * @return PROVEN_ERR_INVALID_ARG for a bad boundary, no head buffer or no room for a field.
+ */
+[[nodiscard]]
+proven_err_t proven_http_multipart_init(proven_http_multipart_t *r, proven_u8str_view_t boundary, proven_mem_mut_t head,
+                                        proven_http_header_t *fields, proven_size_t field_cap);
+
+/**
+ * @brief Read some of the body: take some of `in`, report what was found.
+ *
+ * Call it again with the rest of `in` (`*used` was taken) until it is all taken, then with the
+ * next piece. One event a call: a part's head (PART), its bytes (DATA, perhaps in several
+ * pieces - bytes held back from an earlier piece among them), its end (PART_END), and once, the end (END). Bytes before
+ * the first boundary (the preamble) and after the last (the epilogue) are passed over. A piece that
+ * ends in what may be the start of a boundary line keeps those bytes until the next piece decides:
+ * they come out as DATA then, if they are data.
+ *
+ * @return PROVEN_OK; PROVEN_ERR_INVALID_FORMAT for a boundary line followed by something other than
+ *         `--`, white space and CRLF, or a head that is not fields; PROVEN_ERR_OUT_OF_BOUNDS for a
+ *         head larger than the buffer, or with more fields than there is room for;
+ *         PROVEN_ERR_INVALID_ARG. A preamble is passed over however long it is: bound the body.
+ *         After an error the reader is stuck: start again.
+ */
+[[nodiscard]]
+proven_err_t proven_http_multipart_feed(proven_http_multipart_t *r, proven_mem_view_t in, proven_size_t *used, proven_http_multipart_event_t *ev);
+
+/** @brief Whether the body was whole: PROVEN_OK after END, PROVEN_ERR_INVALID_FORMAT when it ended
+ *         before its closing boundary (call it when the body's bytes are over). */
+[[nodiscard]]
+proven_err_t proven_http_multipart_end(const proven_http_multipart_t *r);
+
+/** @brief A `Content-Disposition` value (RFC 6266, RFC 7578 section 4.2): the type and the parameters a
+ *         form part has. Views into the value; a parameter not there is empty with its flag false. */
+typedef struct {
+    proven_u8str_view_t type;           /**< `form-data`, `attachment`, `inline` */
+    proven_u8str_view_t name;           /**< the form field's name */
+    proven_u8str_view_t filename;       /**< the file's name as sent: browsers percent-encode `"`, CR and LF in it (proven_http_multipart_write_part does too) and send the rest as is */
+    proven_u8str_view_t filename_ext;   /**< `filename*` (RFC 8187), undecoded: `UTF-8''%e2%82%ac%20rates.txt` */
+    bool has_name, has_filename, has_filename_ext;
+} proven_http_disposition_t;
+
+/**
+ * @brief Read a `Content-Disposition` value. Parameter names compare without case; a parameter
+ *        given twice is refused.
+ * @return PROVEN_ERR_INVALID_FORMAT for a value that is not a type and parameters;
+ *         PROVEN_ERR_UNSUPPORTED for a quoted value with a backslash escape (RFC 7578 says senders
+ *         percent-encode instead; this reader returns views and cannot remove them).
+ */
+[[nodiscard]]
+proven_err_t proven_http_content_disposition_parse(proven_u8str_view_t value, proven_http_disposition_t *out);
+
+// -----------------------------------------------------------------------------
+// Several ranges (since v0.105.0)
+// -----------------------------------------------------------------------------
+
+/** @brief One byte range, `first` to `last` inclusive. */
+typedef struct {
+    proven_u64 first, last;
+} proven_http_range_t;
+
+/**
+ * @brief Read a request's `Range` against a resource of `size` bytes, with up to `cap` ranges, as
+ *        RFC 9110 section 14.2 suggests a server answer it.
+ *
+ * Every spelling of proven_http_range_parse, separated by commas. Ranges that start at or past the
+ * end are dropped, the rest cut to the end, sorted by where they start, and those that overlap or
+ * touch are merged into one. One range left is a `206` with `Content-Range`; several, a `206`
+ * whose body is `multipart/byteranges` (proven_http_byteranges_write_part).
+ *
+ * @return PROVEN_ERR_OUT_OF_BOUNDS when no range is satisfiable (answer 416 with
+ *         `Content-Range: bytes STAR/size`); PROVEN_ERR_UNSUPPORTED for a unit other than `bytes`,
+ *         more than `cap` ranges as asked, or ranges that together ask for more than the resource
+ *         (the pattern of a request meant to make a server work, RFC 9110 section 14.2) - a server
+ *         may send the whole resource with `200`; PROVEN_ERR_INVALID_FORMAT for anything else.
+ */
+[[nodiscard]]
+proven_err_t proven_http_range_parse_list(proven_u8str_view_t value, proven_u64 size, proven_http_range_t *ranges,
+                                          proven_size_t cap, proven_size_t *count);
+
+/** @brief Append `Content-Type: multipart/byteranges; boundary=...`. PROVEN_ERR_INVALID_ARG as
+ *         proven_http_multipart_write_content_type. */
+[[nodiscard]]
+proven_err_t proven_http_byteranges_write_content_type(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary);
+
+/**
+ * @brief Append the opening of one part of a `multipart/byteranges` body: the boundary line, the
+ *        resource's `Content-Type` (omitted when empty) and `Content-Range: bytes first-last/size`,
+ *        and the empty line. The range's bytes follow, then proven_http_multipart_write_part_end;
+ *        after the last part, proven_http_multipart_write_end.
+ * @return PROVEN_ERR_INVALID_ARG for a bad boundary, a control character in `content_type`, or a
+ *         range that is not inside `size`.
+ */
+[[nodiscard]]
+proven_err_t proven_http_byteranges_write_part(proven_mem_mut_t out, proven_size_t *len, proven_u8str_view_t boundary,
+                                               proven_u8str_view_t content_type, proven_u64 first, proven_u64 last, proven_u64 size);
 
 // -----------------------------------------------------------------------------
 // Dates

@@ -88,6 +88,12 @@ int main(void) {
     buf[n] = '\0';
     /* RFC 7616 3.9.1절이 바로 이 입력으로 계산해 보인 response 값. */
     EXAMPLE_REQUIRE(strstr((const char *)buf, "response=\"753927fa0e85d155564e2e272a28d1802ca10daf4496794697cf8db5856cb6c1\"") != NULL, "is the one in the RFC");
+    /* 본문이 있는 요청: 여기서도 내놓은 auth-int로 답이 본문까지 덮어서, 오는 길에 바뀐 본문은 거부된다. */
+    EXAMPLE_REQUIRE(proven_http_digest_auth_body(&challenge, PROVEN_LIT("Mufasa"), PROVEN_LIT("Circle of Life"), PROVEN_LIT("POST"), PROVEN_LIT("/dir/index.html"),
+                                                 1, PROVEN_LIT("f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ"),
+                                                 (proven_mem_view_t){ (const proven_byte_t *)"name=value", 10 }, out, &n) == PROVEN_OK, "an answer for a body");
+    buf[n] = '\0';
+    EXAMPLE_REQUIRE(strstr((const char *)buf, "qop=auth-int") != NULL, "with qop=auth-int");
 
     return EXAMPLE_OK();
 }

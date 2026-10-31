@@ -415,12 +415,13 @@ int main(void) {
         PROVEN_TEST_ASSERT(strstr((const char *)b, "filename=\"a%22.png\"") != NULL, "with the quote percent-encoded", "");
 
         /* CLAIM (ch10 s11): "INVALID_ARG for a colon in user"; "a challenge that offers both is
-         * answered with SHA-256"; "SHA-512-256 ... are not" implemented. */
+         * answered with SHA-256"; since v0.105.0 "answered with the strongest", SHA-512-256 among them. */
         PROVEN_TEST_ASSERT(proven_http_basic_auth(PROVEN_LIT("a:b"), PROVEN_LIT("c"), out, &n) == PROVEN_ERR_INVALID_ARG, "Basic cannot express a colon in the user name", "");
         proven_http_digest_challenge_t dc;
         PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(PROVEN_LIT("Digest realm=\"r\", nonce=\"n\", qop=\"auth\", algorithm=MD5, Digest realm=\"r\", nonce=\"n\", qop=\"auth\", algorithm=SHA-256"), &dc) == PROVEN_OK &&
                            dc.algorithm == PROVEN_HTTP_DIGEST_SHA256, "offered MD5 and SHA-256, SHA-256 is chosen", "");
-        PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(PROVEN_LIT("Digest realm=\"r\", nonce=\"n\", qop=\"auth\", algorithm=SHA-512-256"), &dc) == PROVEN_ERR_UNSUPPORTED, "SHA-512-256 alone is unsupported", "");
+        PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(PROVEN_LIT("Digest realm=\"r\", nonce=\"n\", qop=\"auth\", algorithm=SHA-256, Digest realm=\"r\", nonce=\"n\", qop=\"auth-int\", algorithm=SHA-512-256"), &dc) == PROVEN_OK &&
+                           dc.algorithm == PROVEN_HTTP_DIGEST_SHA512_256 && dc.qop_auth_int, "offered SHA-256 and SHA-512-256 (since v0.105.0), the strongest is chosen; auth-int is read", "");
         PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(PROVEN_LIT("Basic realm=\"r\""), &dc) == PROVEN_ERR_NOT_FOUND, "no Digest challenge: NOT_FOUND", "");
 
         /* CLAIM (ch10 s12): "every cookie goes back to the exact host that set it and to no other";

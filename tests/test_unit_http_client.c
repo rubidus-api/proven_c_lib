@@ -234,6 +234,7 @@ typedef struct {
     proven_u16 port;
     char first[2048];       /* the first request head it read */
     char second[2048];      /* the second, when the script reads two */
+    char third[2048];       /* and a third */
     proven_byte_t socks[600];
     proven_size_t socks_len;
     int accepted;
@@ -302,6 +303,38 @@ static void script_tunnel(void *arg) {
     if (peer_read_head(&c, p->first, sizeof p->first)) {
         peer_say(&c, "HTTP/1.1 200 Connection established\r\n\r\n");
         if (peer_read_head(&c, p->second, sizeof p->second)) peer_say(&c, "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\ntunneled");
+    }
+    (void)proven_net_close(&c);
+}
+
+/* An HTTP proxy that asks for Digest (v0.105.0): a 407 with a challenge to the first request, which
+ * closes; the request again on a new connection, answered. */
+static void script_proxy_digest(void *arg) {
+    peer_t *p = arg;
+    proven_net_conn_t c;
+    if (!peer_accept(p, &c)) return;
+    if (peer_read_head(&c, p->first, sizeof p->first))
+        peer_say(&c, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Digest realm=\"proxy\", qop=\"auth\", algorithm=SHA-256, nonce=\"n1\"\r\n"
+                     "Content-Length: 0\r\nConnection: close\r\n\r\n");
+    (void)proven_net_close(&c);
+    if (!peer_accept(p, &c)) return;
+    if (peer_read_head(&c, p->second, sizeof p->second)) peer_say(&c, "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\nvia digested");
+    (void)proven_net_close(&c);
+}
+
+/* The same for a tunnel: the 407 keeps the connection, with a body to read away; the second CONNECT
+ * on it is let through. */
+static void script_tunnel_digest(void *arg) {
+    peer_t *p = arg;
+    proven_net_conn_t c;
+    if (!peer_accept(p, &c)) return;
+    if (peer_read_head(&c, p->first, sizeof p->first)) {
+        peer_say(&c, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"x\", Digest realm=\"proxy\", qop=\"auth\", algorithm=SHA-512-256, nonce=\"n2\"\r\n"
+                     "Content-Length: 5\r\n\r\nnope\n");
+        if (peer_read_head(&c, p->second, sizeof p->second)) {
+            peer_say(&c, "HTTP/1.1 200 Connection established\r\n\r\n");
+            if (peer_read_head(&c, p->third, sizeof p->third)) peer_say(&c, "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\ntunneled");
+        }
     }
     (void)proven_net_close(&c);
 }
@@ -1091,6 +1124,45 @@ int main(void) {
         PROVEN_TEST_ASSERT(strstr(p.second, "GET /s?t=1 HTTP/1.1\r\nHost: secure.invalid\r\n") == p.second, "inside the tunnel the request is an ordinary one", "");
         PROVEN_TEST_ASSERT(strstr(p.second, "Proxy-Authorization") == NULL, "and the proxy's credentials do not travel to the origin", "A credential leak otherwise.");
         PROVEN_TEST_ASSERT(g_wraps == 1 && strcmp(g_wrap_host, "secure.invalid") == 0, "TLS is begun inside the tunnel, for the origin's name", "");
+
+        /* A proxy that asks for Digest: a plain request, and a tunnel (v0.105.0). */
+        peer_start(&p, script_proxy_digest);
+        proven_http_client_destroy(c2);
+        /* The user and password percent-encoded in the URL, as RFC 3986 has them: "puser" and "ppass". */
+        snprintf(proxy, sizeof proxy, "http://p%%75ser:pp%%61ss@127.0.0.1:%u", (unsigned)p.port);
+        via.proxy = sv(proxy);
+        PROVEN_TEST_ASSERT(proven_http_client_create(&via, &c2) == PROVEN_OK, "a client for a proxy that asks for Digest", "");
+        PROVEN_TEST_ASSERT(fetch(c2, sv("http://origin.invalid:8080/x?y=1"), &e) == 200 && e == PROVEN_OK && body_is("via digested"), "the 407 is answered and the request goes through", "");
+        peer_finish(&p);
+        PROVEN_TEST_ASSERT(strstr(p.first, "\r\nProxy-Authorization: Basic cHVzZXI6cHBhc3M=\r\n") != NULL &&
+                           strstr(p.second, "GET http://origin.invalid:8080/x?y=1 HTTP/1.1\r\n") == p.second &&
+                           strstr(p.second, "\r\nProxy-Authorization: Digest username=\"puser\", realm=\"proxy\", nonce=\"n1\", uri=\"http://origin.invalid:8080/x?y=1\", algorithm=SHA-256, response=\"") != NULL &&
+                           strstr(p.second, "Basic") == NULL,
+                           "the second asks again with Digest - the uri as the request line has it - and not Basic; the first's Basic was of the decoded user and password", "");
+        {
+            /* The response the proxy would expect, computed by the same function from what was sent. */
+            const char *cn = strstr(p.second, "cnonce=\"");
+            proven_http_digest_challenge_t dc;
+            proven_byte_t want[512];
+            proven_size_t wn = 0;
+            PROVEN_TEST_ASSERT(cn && proven_http_digest_challenge_parse(sv("Digest realm=\"proxy\", qop=\"auth\", algorithm=SHA-256, nonce=\"n1\""), &dc) == PROVEN_OK &&
+                               proven_http_digest_auth(&dc, sv("puser"), sv("ppass"), sv("GET"), sv("http://origin.invalid:8080/x?y=1"), 1,
+                                                       (proven_u8str_view_t){ (const proven_byte_t *)cn + 8, 32 }, (proven_mem_mut_t){ want, sizeof want - 1 }, &wn) == PROVEN_OK &&
+                               (want[wn] = 0, strstr(p.second, (const char *)want) != NULL), "with the proxy URL's user and password", "");
+        }
+
+        peer_start(&p, script_tunnel_digest);
+        proven_http_client_destroy(c2);
+        snprintf(proxy, sizeof proxy, "http://puser:ppass@127.0.0.1:%u", (unsigned)p.port);
+        via.proxy = sv(proxy);
+        PROVEN_TEST_ASSERT(proven_http_client_create(&via, &c2) == PROVEN_OK, "a client for a tunnel behind Digest", "");
+        g_wraps = 0;
+        PROVEN_TEST_ASSERT(fetch(c2, sv("https://secure.invalid/s"), &e) == 200 && e == PROVEN_OK && body_is("tunneled") && g_wraps == 1, "the 407 to CONNECT is answered on the same connection, and the tunnel made", "");
+        peer_finish(&p);
+        PROVEN_TEST_ASSERT(strstr(p.second, "CONNECT secure.invalid:443 HTTP/1.1\r\n") == p.second &&
+                           strstr(p.second, "Proxy-Authorization: Digest username=\"puser\", realm=\"proxy\", nonce=\"n2\", uri=\"secure.invalid:443\", algorithm=SHA-512-256,") != NULL,
+                           "the second CONNECT carries Digest for the authority, with the strongest algorithm offered", "");
+        PROVEN_TEST_ASSERT(strstr(p.third, "GET /s HTTP/1.1\r\n") == p.third && strstr(p.third, "Proxy-Authorization") == NULL, "and the request inside the tunnel carries none", "");
 
         peer_start(&p, script_tunnel_denied);
         proven_http_client_destroy(c2);

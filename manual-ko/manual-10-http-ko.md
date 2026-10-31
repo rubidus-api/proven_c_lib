@@ -743,8 +743,150 @@ HTTP는 날짜 형식 하나를 쓰고, 셋을 읽어야 한다.
 `a".png`라는 파일이 자기가 적힌 따옴표 문자열을 닫을 수 없다.
 
 이 함수들은 틀만 만든다. 파트의 바이트는 `_write_part`와 `_write_part_end` 사이에 여러분이 쓰므로,
-큰 파일도 통째로 쥐지 않고 조각조각 보낼 수 있다. 그리고 남이 보낸 multipart 본문을 파싱하는 것은
-여기에 없다.
+큰 파일도 통째로 쥐지 않고 조각조각 보낼 수 있다.
+
+### multipart 본문 읽기, 그리고 여러 범위
+
+v0.105.0부터. 파일이 든 폼을 받는 서버는 본문을 도착하는 대로 읽는다. 본문은 통째로 쥘 것이 아니다:
+업로드는 클라이언트가 만드는 만큼 크다. 읽개는 본문을 아무 크기의 조각으로 받아, 호출마다 찾은 것 하나를
+알려 준다 - 파트의 머리(`PART`, 필드와 함께), 파트의 바이트(`DATA`, 온 만큼의 조각으로), 파트의 끝
+(`PART_END`), 전체의 끝(`END`) - 그리고 여러분이 준 것 안을 가리키는 뷰로 알려 준다. 쥐는 것은 파트 하나의
+머리(여러분의 버퍼에)와, 조각이 경계 줄일지 모르는 것으로 끝날 때의 경계 줄 길이만큼의 바이트뿐이다. 파트의
+`Content-Disposition`이 어느 필드인지, 파일이면 그 이름을 말해 준다.
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_http_multipart_boundary_parse(content_type, &boundary)` | 어떤 `multipart/` 형식이든 `Content-Type`에서 경계를, 따옴표가 있든 없든. | `proven_err_t`: `NOT_FOUND` - multipart가 아니거나 경계가 없다; `INVALID_FORMAT` - RFC 2046이 허락하지 않는 경계. |
+| `proven_http_multipart_init(&r, boundary, head, fields, field_cap)` | 읽개. `head`는 파트 하나의 머리를 읽는 동안과 그 필드를 쓰는 동안 담고, `fields`는 `field_cap`개의 자리. | `proven_err_t`: `INVALID_ARG`. |
+| `proven_http_multipart_feed(&r, in, &used, &event)` | `in`의 일부를 가져가고 사건 하나를 알린다. 다 가져갈 때까지 나머지로 다시 부른다(`NONE`은 다 가져갔다는 뜻). | `proven_err_t`: `INVALID_FORMAT` - 경계 줄 뒤에 `--`, 공백, CRLF 말고 다른 것, 필드가 아닌 머리; `OUT_OF_BOUNDS` - 버퍼를 넘는 머리, 자리보다 많은 필드. |
+| `proven_http_multipart_end(&r)` | 본문의 마지막 바이트 뒤에: 닫는 경계가 왔는지. | `proven_err_t`: 본문이 모자라게 끝났으면 `INVALID_FORMAT`. |
+| `proven_http_content_disposition_parse(value, &d)` | `Content-Disposition`의 형식, `name`, `filename`, `filename*`(풀지 않음). | `proven_err_t`: `INVALID_FORMAT`; 따옴표 값 안의 역슬래시 이스케이프는 `UNSUPPORTED`. |
+| `proven_http_range_parse_list(value, size, ranges, cap, &count)` | 최대 `cap`개 범위의 `Range`: 만족할 수 없는 것은 빼고, 나머지는 정렬하고, 겹치거나 맞닿은 것은 합친다. | `proven_err_t`: `OUT_OF_BOUNDS` - 416으로 답한다; `UNSUPPORTED` - `cap`보다 많거나, 합쳐서 자원보다 많이 묻거나, 다른 단위: 전체를 보낸다; `INVALID_FORMAT`. |
+| `proven_http_byteranges_write_content_type(out, &len, boundary)` | `Content-Type: multipart/byteranges; boundary=...`를 덧붙인다. | `proven_err_t`: `INVALID_ARG`. |
+| `proven_http_byteranges_write_part(out, &len, boundary, content_type, first, last, size)` | 범위 하나의 파트 머리를 덧붙인다: 경계 줄, 자원의 형식, `Content-Range`. 바이트가 뒤따르고, 그 다음 `_write_part_end`; 마지막 뒤에는 `_write_end`. | `proven_err_t`: `size` 안에 있지 않은 범위는 `INVALID_ARG`. |
+
+**머리만이 아니라 본문을 묶어라.** 읽개는 머리 하나보다 많이 쥐지 않지만, 아무리 긴 서문이라도 넘어가고
+모든 파트의 모든 바이트를 건넨다: 얼마를 받을지는 여러분이 정한 본문 한도(`max_body_bytes`)이고, 파일의
+바이트를 어디로 - 메모리, 디스크 - 보낼지는 파트마다 여러분이 고른다.
+
+**경계처럼 시작하는 줄은 파트를 끝낸다.** RFC 2046은 파트가 자기 경계 줄을 품는 것을 허락하지 않으므로,
+경계로 시작해 다른 글자로 이어지는 줄은 형식 오류로 거부한다. 어떤 읽개(예를 들어 Python의 `email`)는 그것을
+데이터로 읽는다. `proven_http_multipart_boundary`가 만든 경계와 브라우저의 경계는 충분히 무작위라, 일부러
+만들지 않은 데이터에서는 일어나지 않는다.
+
+**파일 이름은 클라이언트의 글이다.** `filename`은 브라우저가 보낸 것 - `"`, CR, LF는 퍼센트 인코딩되고 나머지는
+입력한 그대로 - 이고 `/`, `..`, 장치 이름을 담을 수 있다. 결코 경로로 쓰지 마라. 3절의 검사를 쓰거나 여러분이
+정한 이름을 써라.
+
+**여러 범위.** 자원을 메모리나 디스크에 가진 서버는 범위 하나에는 `Content-Range`와 함께 `206`으로, 여럿에는
+본문이 `multipart/byteranges`인 `206`으로 답한다 - 범위 하나가 파트 하나. RFC 9110은 서버가 범위를 합치고,
+일을 시키려고 만든 목록 - 작은 범위 여럿, 겹치는 범위 - 을 거절하도록 허락하고, `_parse_list`는 둘 다
+한다: `UNSUPPORTED`로 거절한 것에는 자원 전체로 답한다. 클라이언트는 그런 본문을 위의 읽개로 읽고, 각 파트의
+`Content-Range`를 `proven_http_content_range_parse`로 읽는다.
+
+### 예제: 도착하는 대로 읽는 폼, 그리고 두 범위에 대한 답
+
+<!-- example: manual/examples/ko/ex_10_multipart.c -->
+```c
+#include <string.h>
+
+/*
+ * 폼이 보내는 것 - multipart/form-data 본문 - 을 도착하는 대로 조각조각 읽기, 그리고 여러 범위를
+ * 묻는 요청에 multipart/byteranges 본문으로 답하기.
+ */
+
+static bool view_is(proven_u8str_view_t v, const char *s) { return v.size == strlen(s) && memcmp(v.ptr, s, v.size) == 0; }
+
+static bool holds(const proven_byte_t *p, proven_size_t n, const char *s) {
+    const proven_size_t k = strlen(s);
+    for (proven_size_t i = 0; i + k <= n; ++i) if (memcmp(p + i, s, k) == 0) return true;
+    return false;
+}
+
+int main(void) {
+    /* 제목과 파일 하나가 있는 폼에 브라우저가 보내는 것. */
+    static const char ctype[] = "multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxk";
+    static const char body[] =
+        "------WebKitFormBoundary7MA4YWxk\r\n"
+        "Content-Disposition: form-data; name=\"title\"\r\n\r\n"
+        "Holiday\r\n"
+        "------WebKitFormBoundary7MA4YWxk\r\n"
+        "Content-Disposition: form-data; name=\"photo\"; filename=\"beach.txt\"\r\n"
+        "Content-Type: text/plain\r\n\r\n"
+        "sand\r\n--and sea\r\n"
+        "------WebKitFormBoundary7MA4YWxk--\r\n";
+    proven_u8str_view_t boundary;
+    EXAMPLE_REQUIRE(proven_http_multipart_boundary_parse(proven_u8str_view_from_cstr(ctype), &boundary) == PROVEN_OK, "요청의 Content-Type에서 경계");
+
+    /* 읽개: 파트 하나의 머리를 담을 버퍼와 필드 자리; 그 밖에는 아무것도 쥐지 않는다. */
+    proven_http_multipart_t r;
+    static proven_byte_t head[1024];
+    proven_http_header_t fields[8];
+    EXAMPLE_REQUIRE(proven_http_multipart_init(&r, boundary, (proven_mem_mut_t){ head, sizeof head }, fields, 8) == PROVEN_OK, "읽개");
+
+    /* 느린 연결이 건네듯 일곱 바이트씩 먹인다. */
+    char title[32] = { 0 }, file[64] = { 0 }, filename[32] = { 0 };
+    char *into = NULL;
+    proven_size_t into_len = 0, into_cap = 0;
+    for (proven_size_t at = 0; at < sizeof body - 1; at += 7) {
+        proven_mem_view_t in = { (const proven_byte_t *)body + at, sizeof body - 1 - at < 7 ? sizeof body - 1 - at : 7 };
+        while (in.size > 0) {
+            proven_size_t used = 0;
+            proven_http_multipart_event_t ev;
+            EXAMPLE_REQUIRE(proven_http_multipart_feed(&r, in, &used, &ev) == PROVEN_OK, "조각을 읽는다");
+            in.ptr += used;
+            in.size -= used;
+            if (ev.kind == PROVEN_HTTP_MULTIPART_PART) {
+                /* 어느 필드인가? Content-Disposition이 말해 준다. */
+                proven_u8str_view_t cd = { 0 };
+                for (proven_size_t i = 0; i < ev.field_count; ++i)
+                    if (proven_u8str_view_eq_ascii_ci(ev.fields[i].name, PROVEN_LIT("Content-Disposition"))) cd = ev.fields[i].value;
+                proven_http_disposition_t d;
+                EXAMPLE_REQUIRE(proven_http_content_disposition_parse(cd, &d) == PROVEN_OK && d.has_name, "파트마다 필드 이름이 있다");
+                into = view_is(d.name, "title") ? title : file;
+                into_cap = view_is(d.name, "title") ? sizeof title - 1 : sizeof file - 1;
+                into_len = 0;
+                if (d.has_filename && d.filename.size < sizeof filename) memcpy(filename, d.filename.ptr, d.filename.size);
+            } else if (ev.kind == PROVEN_HTTP_MULTIPART_DATA) {
+                /* 파트의 바이트, 한 조각씩: 여기서는 모아 두고, 파일이라면 디스크로 보낸다. */
+                EXAMPLE_REQUIRE(into && into_len + ev.data.size <= into_cap, "파트가 마련해 둔 자리에 들어간다");
+                memcpy(into + into_len, ev.data.ptr, ev.data.size);
+                into_len += ev.data.size;
+            }
+        }
+    }
+    EXAMPLE_REQUIRE(proven_http_multipart_end(&r) == PROVEN_OK, "본문이 온전했다: 닫는 경계가 왔다");
+    EXAMPLE_REQUIRE(strcmp(title, "Holiday") == 0 && strcmp(filename, "beach.txt") == 0 && strcmp(file, "sand\r\n--and sea") == 0,
+                    "제목, 파일 이름, 파일 바이트 - 그 안의 CR LF와 대시 둘까지");
+
+    /* 여러 범위: 합치고 정렬한 뒤 multipart/byteranges 본문으로. */
+    static const char doc[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+    proven_http_range_t ranges[4];
+    proven_size_t n = 0;
+    EXAMPLE_REQUIRE(proven_http_range_parse_list(PROVEN_LIT("bytes=30-, 0-3, 2-5"), sizeof doc - 1, ranges, 4, &n) == PROVEN_OK &&
+                    n == 2 && ranges[0].first == 0 && ranges[0].last == 5 && ranges[1].first == 30 && ranges[1].last == 35,
+                    "0-3과 2-5는 겹쳐서 0-5가 되고, 30부터 끝까지는 30-35");
+    static proven_byte_t buf[512];
+    proven_mem_mut_t out = { buf, sizeof buf };
+    proven_size_t len = 0;
+    const proven_u8str_view_t b = PROVEN_LIT("ranges-1f0b");
+    static proven_byte_t ct[96];
+    proven_size_t ctl = 0;
+    EXAMPLE_REQUIRE(proven_http_byteranges_write_content_type((proven_mem_mut_t){ ct, sizeof ct }, &ctl, b) == PROVEN_OK, "206 자신의 Content-Type: 경계가 붙은 multipart/byteranges");
+    proven_err_t e = PROVEN_OK;
+    for (proven_size_t i = 0; i < n && e == PROVEN_OK; ++i) {
+        e = proven_http_byteranges_write_part(out, &len, b, PROVEN_LIT("text/plain"), ranges[i].first, ranges[i].last, sizeof doc - 1);
+        const proven_size_t k = (proven_size_t)(ranges[i].last - ranges[i].first + 1);
+        if (e == PROVEN_OK && len + k <= sizeof buf) { memcpy(buf + len, doc + ranges[i].first, k); len += k; }
+        if (e == PROVEN_OK) e = proven_http_multipart_write_part_end(out, &len);
+    }
+    if (e == PROVEN_OK) e = proven_http_multipart_write_end(out, &len, b);
+    EXAMPLE_REQUIRE(e == PROVEN_OK && len > 0, "206의 본문: 범위마다 Content-Range가 붙은 파트");
+    const char *second = "--ranges-1f0b\r\nContent-Type: text/plain\r\nContent-Range: bytes 30-35/36\r\n\r\nuvwxyz\r\n";
+    EXAMPLE_REQUIRE(holds(buf, len, second), "두 번째 파트, 쓰인 그대로");
+    return EXAMPLE_OK();
+}
+```
 
 ## 11. 인증
 
@@ -757,6 +899,7 @@ HTTP 자체의 인증은 요구와 응답이다. `401` 응답이 `WWW-Authentica
 | `proven_http_auth_offers(header_value, scheme)` | `WWW-Authenticate` 값이 `scheme`을 내놓는지(대소문자 무시). | `bool`. |
 | `proven_http_digest_challenge_parse(header_value, &challenge)` | `WWW-Authenticate` 값에서 Digest 요구를 찾는다. 여럿이면 이 라이브러리가 가진 가장 강한 알고리즘의 것을 고른다. | `proven_err_t`: `NOT_FOUND` - Digest 요구가 없다. `UNSUPPORTED` - 없는 알고리즘뿐이거나 `qop=auth`가 없다. `INVALID_FORMAT`. |
 | `proven_http_digest_auth(&challenge, user, password, method, uri, nonce_count, cnonce, out, &written)` | 그에 답하는 `Authorization` 값을 쓴다. `uri`는 보낸 그대로의 요청 타깃이고, `cnonce`는 여러분이 주는 무작위 텍스트이며, `nonce_count`는 새 nonce마다 1에서 시작한다. | `proven_err_t`: `INVALID_ARG`. `OUT_OF_BOUNDS`. |
+| `proven_http_digest_auth_body(&challenge, user, password, method, uri, nonce_count, cnonce, body, out, &written)` | 본문이 있는 요청에 대해 같은 일: 내놓았으면 `body`를 덮는 `qop=auth-int`. | 위와 같다. |
 
 **Basic은 비밀번호를 헤더에 실을 수 있게 인코딩한 것이지 숨긴 것이 아니다.** 요청을 읽을 수 있는
 사람은 누구나 비밀번호를 읽을 수 있다. 암호화되지 않은 연결에서는 경로 위의 모든 사람이 그렇다.
@@ -767,9 +910,15 @@ TLS 위에서 쓰거나 아예 쓰지 마라.
 읽을 수 있는 채로 네트워크를 건너고, 교환 한 번을 붙잡은 사람은 그것을 놓고 느긋하게 비밀번호를
 추측해 볼 수 있다. 평문 HTTP 위의 Basic보다는 낫다. TLS를 대신하지는 못한다.
 
-`MD5`, `MD5-sess`, `SHA-256`, `SHA-256-sess`가 `qop=auth`와 함께 구현되어 있다. MD5가 있는 까닭은
-현장의 서버들이 아직 그것을 요구하기 때문이다 - 레거시 다이제스트는 4장을 보라. 둘 다 내놓는 요구에는
-SHA-256으로 답한다. `qop=auth-int`, `SHA-512-256`, `userhash` 옵션은 없다.
+`MD5`, `SHA-256`, `SHA-512-256`이 각각 `-sess`와 함께, `qop=auth`와 `qop=auth-int`로 구현되어 있다. MD5가
+있는 까닭은 현장의 서버들이 아직 그것을 요구하기 때문이다 - 레거시 다이제스트는 4장을 보라. 여럿을 내놓는
+요구에는 가장 강한 것으로 답한다. v0.105.0부터: `SHA-512-256`은 FIPS 180-4가 정한 SHA-512/256 - 자기 초기값의
+SHA-512를 256비트로 자른 것 - 으로, curl과 Python이 계산하는 것과 같다(RFC 7616 3.9.2절에 인쇄된 예는 SHA-512를
+256비트로 잘라 계산한 것이라 그 어느 것과도 맞지 않는다). `qop=auth-int`는 답이 요청 본문까지 덮게 한다
+(proven_http_digest_auth_body; 본문이 없으면 빈 본문을 덮는다). `userhash=true`면 사용자 이름을 해시해서 보내고,
+`charset=UTF-8`이면 따옴표로 쓸 수 없는 이름을 `username*`로 보낸다. HTTP 클라이언트는 서버의 `auth-int`에 보내는
+본문으로 답하고, 프록시의 Digest 요구(`Proxy-Authenticate`가 붙은 `407`)에는 프록시 URL의 사용자와 비밀번호로
+답한다 - 프록시를 거치는 일반 요청과 `CONNECT` 모두.
 
 **예상하지 않은 요구에는 답하지 마라.** 요구하는 서버 아무에게나 자격 증명을 보내는 클라이언트는
 엉뚱한 서버에도 보낸다 - 이를테면 리다이렉트 뒤에. 그 자격 증명이 어느 호스트를 위한 것인지 정하고,
@@ -868,6 +1017,12 @@ int main(void) {
     buf[n] = '\0';
     /* RFC 7616 3.9.1절이 바로 이 입력으로 계산해 보인 response 값. */
     EXAMPLE_REQUIRE(strstr((const char *)buf, "response=\"753927fa0e85d155564e2e272a28d1802ca10daf4496794697cf8db5856cb6c1\"") != NULL, "is the one in the RFC");
+    /* 본문이 있는 요청: 여기서도 내놓은 auth-int로 답이 본문까지 덮어서, 오는 길에 바뀐 본문은 거부된다. */
+    EXAMPLE_REQUIRE(proven_http_digest_auth_body(&challenge, PROVEN_LIT("Mufasa"), PROVEN_LIT("Circle of Life"), PROVEN_LIT("POST"), PROVEN_LIT("/dir/index.html"),
+                                                 1, PROVEN_LIT("f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ"),
+                                                 (proven_mem_view_t){ (const proven_byte_t *)"name=value", 10 }, out, &n) == PROVEN_OK, "an answer for a body");
+    buf[n] = '\0';
+    EXAMPLE_REQUIRE(strstr((const char *)buf, "qop=auth-int") != NULL, "with qop=auth-int");
 
     return EXAMPLE_OK();
 }
@@ -1047,6 +1202,5 @@ int main(void) {
   둘 있고(`proven_http_accepts_coding`, `proven_http_content_coding`), 이 코덱 위에 지은 서버와
   클라이언트는 `gzip`을 압축하고 풀 수 있다: [16장](manual-16-compression-ko.md) 6절.
 - **트레일러.** 청크 본문 뒤의 트레일러는 검사하고 건너뛸 뿐, 돌려주지 않는다.
-- **multipart 본문 파싱, 그리고 다중 범위(`multipart/byteranges`) 응답.**
 - **공개 접미사 목록**, 따라서 하위 도메인 사이에 공유되는 쿠키 - §12를 보라.
 - **`Negotiate`, `NTLM`, bearer 토큰 흐름.** bearer 토큰은 여러분이 직접 쓰는 헤더다.

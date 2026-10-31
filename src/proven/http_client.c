@@ -268,6 +268,25 @@ static proven_err_t cl_read_exact(proven_transport_t t, proven_byte_t *dst, prov
     return PROVEN_OK;
 }
 
+/* The proxy URL's user and password, percent-decoded as RFC 3986 has them (`p%40ss` is `p@ss`),
+ * into `ub` and `pb` (each at least as long as the userinfo); left as written when they do not decode. */
+static void cl_proxy_creds(const proven_http_client_t *c, proven_byte_t *ub, proven_byte_t *pb, proven_size_t cap,
+                           proven_u8str_view_t *user, proven_u8str_view_t *pass) {
+    proven_u8str_view_t ui = c->proxy.userinfo;
+    *user = ui;
+    *pass = (proven_u8str_view_t){ .ptr = ui.ptr + ui.size, .size = 0 };
+    for (proven_size_t i = 0; i < ui.size; ++i) {
+        if (ui.ptr[i] == ':') {
+            *user = (proven_u8str_view_t){ .ptr = ui.ptr, .size = i };
+            *pass = (proven_u8str_view_t){ .ptr = ui.ptr + i + 1, .size = ui.size - i - 1 };
+            break;
+        }
+    }
+    proven_size_t n = 0;
+    if (proven_url_percent_decode(*user, (proven_mem_mut_t){ .ptr = ub, .size = cap }, &n) == PROVEN_OK) *user = (proven_u8str_view_t){ .ptr = ub, .size = n };
+    if (proven_url_percent_decode(*pass, (proven_mem_mut_t){ .ptr = pb, .size = cap }, &n) == PROVEN_OK) *pass = (proven_u8str_view_t){ .ptr = pb, .size = n };
+}
+
 /* RFC 1928 and RFC 1929: ask a SOCKS5 proxy to connect to host:port. The name is sent as a
  * name, so it is the proxy that resolves it. */
 static proven_err_t cl_socks5(proven_http_client_t *c, proven_transport_t t, proven_u8str_view_t host, proven_u16 port, proven_net_deadline_t until) {
@@ -275,14 +294,9 @@ static proven_err_t cl_socks5(proven_http_client_t *c, proven_transport_t t, pro
     proven_byte_t m[600];
     proven_size_t n = 0;
     bool creds = c->proxy.has_userinfo;
-    proven_u8str_view_t user = c->proxy.userinfo, pass = { .ptr = c->proxy.userinfo.ptr + c->proxy.userinfo.size, .size = 0 };
-    for (proven_size_t i = 0; i < c->proxy.userinfo.size; ++i) {
-        if (c->proxy.userinfo.ptr[i] == ':') {
-            user = (proven_u8str_view_t){ .ptr = c->proxy.userinfo.ptr, .size = i };
-            pass = (proven_u8str_view_t){ .ptr = c->proxy.userinfo.ptr + i + 1, .size = c->proxy.userinfo.size - i - 1 };
-            break;
-        }
-    }
+    proven_byte_t ub[CL_URL_MAX], pb[CL_URL_MAX];
+    proven_u8str_view_t user, pass;
+    cl_proxy_creds(c, ub, pb, sizeof ub, &user, &pass);
     if (user.size > 255 || pass.size > 255) return PROVEN_ERR_INVALID_ARG;
 
     m[n++] = 5;
@@ -346,18 +360,35 @@ static proven_err_t cl_socks5(proven_http_client_t *c, proven_transport_t t, pro
     }
 }
 
+static void cl_random_hex(proven_byte_t out[32]);
+
+
+/* The answer to a proxy's Digest challenge among `headers` (Proxy-Authenticate), for `method` and
+ * `uri` as they are sent; false when there is none this library can answer. */
+static bool cl_proxy_digest(const proven_http_client_t *c, const proven_http_header_t *headers, proven_size_t count,
+                            proven_u8str_view_t method, proven_u8str_view_t uri, proven_byte_t *out, proven_size_t cap, proven_size_t *len) {
+    if (!c->proxy.has_userinfo) return false;
+    proven_byte_t ub[CL_URL_MAX], pb[CL_URL_MAX];
+    proven_u8str_view_t user, pass;
+    cl_proxy_creds(c, ub, pb, sizeof ub, &user, &pass);
+    for (proven_size_t i = 0; i < count; ++i) {
+        if (!proven_u8str_view_eq_ascii_ci(headers[i].name, cl_lit("Proxy-Authenticate"))) continue;
+        proven_http_digest_challenge_t dc;
+        if (proven_http_digest_challenge_parse(headers[i].value, &dc) != PROVEN_OK) continue;
+        proven_byte_t cnonce[32];
+        cl_random_hex(cnonce);
+        if (proven_http_digest_auth(&dc, user, pass, method, uri, 1, (proven_u8str_view_t){ .ptr = cnonce, .size = sizeof cnonce },
+                                    (proven_mem_mut_t){ .ptr = out, .size = cap }, len) == PROVEN_OK) return true;
+    }
+    return false;
+}
+
 /* "Proxy-Authorization: Basic ..." from the proxy URL's userinfo, appended to a head. */
 static proven_err_t cl_proxy_auth(proven_http_client_t *c, proven_mem_mut_t out, proven_size_t *len) {
     if (!c->proxy.has_userinfo) return PROVEN_OK;
-    proven_u8str_view_t ui = c->proxy.userinfo;
-    proven_u8str_view_t user = ui, pass = { .ptr = ui.ptr + ui.size, .size = 0 };
-    for (proven_size_t i = 0; i < ui.size; ++i) {
-        if (ui.ptr[i] == ':') {
-            user = (proven_u8str_view_t){ .ptr = ui.ptr, .size = i };
-            pass = (proven_u8str_view_t){ .ptr = ui.ptr + i + 1, .size = ui.size - i - 1 };
-            break;
-        }
-    }
+    proven_byte_t ub[CL_URL_MAX], pb[CL_URL_MAX];
+    proven_u8str_view_t user, pass;
+    cl_proxy_creds(c, ub, pb, sizeof ub, &user, &pass);
     proven_byte_t value[400];
     proven_size_t n = 0;
     proven_err_t e = proven_http_basic_auth(user, pass, (proven_mem_mut_t){ .ptr = value, .size = sizeof value }, &n);
@@ -368,33 +399,51 @@ static proven_err_t cl_proxy_auth(proven_http_client_t *c, proven_mem_mut_t out,
 /* Ask an HTTP proxy for a tunnel to host:port (RFC 9110 section 9.3.6). */
 static proven_err_t cl_http_tunnel(proven_http_client_t *c, proven_transport_t t, proven_u8str_view_t authority, proven_net_deadline_t until) {
     proven_byte_t m[1024];
-    proven_mem_mut_t out = { .ptr = m, .size = sizeof m };
-    proven_size_t len = 0;
-    proven_err_t e = proven_http_write_request_line(out, &len, cl_lit("CONNECT"), authority);
-    if (e == PROVEN_OK) e = proven_http_write_header(out, &len, cl_lit("Host"), authority);
-    if (e == PROVEN_OK) e = cl_proxy_auth(c, out, &len);
-    if (e == PROVEN_OK) e = proven_http_write_head_end(out, &len);
-    if (e != PROVEN_OK) return e;
-    proven_result_size_t w = proven_transport_write_all(t, (proven_mem_view_t){ .ptr = m, .size = len }, until);
-    if (w.err != PROVEN_OK) return w.err;
+    proven_byte_t digest[1024];
+    proven_size_t digest_len = 0;
+    /* Twice at most: with the userinfo as Basic, and once more answering a 407's Digest challenge
+     * (RFC 7616: the method CONNECT, the authority as the uri). */
+    for (int round = 0; round < 2; ++round) {
+        proven_mem_mut_t out = { .ptr = m, .size = sizeof m };
+        proven_size_t len = 0;
+        proven_err_t e = proven_http_write_request_line(out, &len, cl_lit("CONNECT"), authority);
+        if (e == PROVEN_OK) e = proven_http_write_header(out, &len, cl_lit("Host"), authority);
+        if (e == PROVEN_OK) e = round == 0 ? cl_proxy_auth(c, out, &len)
+                                           : proven_http_write_header(out, &len, cl_lit("Proxy-Authorization"), (proven_u8str_view_t){ .ptr = digest, .size = digest_len });
+        if (e == PROVEN_OK) e = proven_http_write_head_end(out, &len);
+        if (e != PROVEN_OK) return e;
+        proven_result_size_t w = proven_transport_write_all(t, (proven_mem_view_t){ .ptr = m, .size = len }, until);
+        if (w.err != PROVEN_OK) return w.err;
 
-    /* The reply is read a byte at a time: whatever follows its head already belongs to the
-     * tunnel, and must not be taken out of it here. A CONNECT reply is a few dozen bytes. */
-    proven_size_t have = 0;
-    for (;;) {
-        if (have == sizeof m) return PROVEN_ERR_OUT_OF_BOUNDS;
-        e = cl_read_exact(t, m + have, 1, until);
-        if (e != PROVEN_OK) return e;
-        have++;
-        proven_http_header_t h[16];
-        proven_http_response_t res;
-        proven_size_t head = 0;
-        e = proven_http_parse_response((proven_mem_view_t){ .ptr = m, .size = have }, h, 16, sizeof m, &res, &head);
-        if (e == PROVEN_ERR_NEED_MORE) continue;
-        if (e != PROVEN_OK) return e;
-        if (res.status >= 200 && res.status < 300) return PROVEN_OK;
-        return res.status == 407 || res.status == 403 ? PROVEN_ERR_PERMISSION : PROVEN_ERR_REFUSED;
+        /* The reply is read a byte at a time: whatever follows its head already belongs to the
+         * tunnel, and must not be taken out of it here. A CONNECT reply is a few dozen bytes. */
+        proven_size_t have = 0;
+        for (;;) {
+            if (have == sizeof m) return PROVEN_ERR_OUT_OF_BOUNDS;
+            e = cl_read_exact(t, m + have, 1, until);
+            if (e != PROVEN_OK) return e;
+            have++;
+            proven_http_header_t h[16];
+            proven_http_response_t res;
+            proven_size_t head = 0;
+            e = proven_http_parse_response((proven_mem_view_t){ .ptr = m, .size = have }, h, 16, sizeof m, &res, &head);
+            if (e == PROVEN_ERR_NEED_MORE) continue;
+            if (e != PROVEN_OK) return e;
+            if (res.status >= 200 && res.status < 300) return PROVEN_OK;
+            if (res.status != 407 || round == 1 ||
+                !cl_proxy_digest(c, h, res.header_count, cl_lit("CONNECT"), authority, digest, sizeof digest, &digest_len)) {
+                return res.status == 407 || res.status == 403 ? PROVEN_ERR_PERMISSION : PROVEN_ERR_REFUSED;
+            }
+            /* The 407's body is read away so that the connection can carry the next CONNECT: it
+             * must have a length, and be short; a proxy that closes is not asked again. */
+            proven_http_framing_t f;
+            if (proven_http_response_framing(&res, PROVEN_HTTP_CONNECT, &f) != PROVEN_OK || (f.kind != PROVEN_HTTP_BODY_LENGTH && f.kind != PROVEN_HTTP_BODY_NONE) ||
+                f.length > sizeof m || !proven_http_response_keep_alive(&res)) return PROVEN_ERR_PERMISSION;
+            if (f.kind == PROVEN_HTTP_BODY_LENGTH && f.length > 0 && cl_read_exact(t, m, (proven_size_t)f.length, until) != PROVEN_OK) return PROVEN_ERR_PERMISSION;
+            break;
+        }
     }
+    return PROVEN_ERR_PERMISSION;
 }
 
 /* Connect a socket to host:port, trying each address the name has until one answers. */
@@ -563,6 +612,7 @@ typedef struct {
     bool send_body;
     bool cross_origin;                 /* a redirect left the original host: drop the caller's credentials */
     proven_u8str_view_t authorization; /* the answer to a challenge, when there is one */
+    proven_u8str_view_t proxy_authorization; /* the answer to a proxy's Digest challenge, instead of the userinfo's Basic */
 } proven_cl_attempt_t;
 
 /* Write the request and read the response head into `call`. */
@@ -622,7 +672,10 @@ static proven_err_t cl_exchange(proven_cl_call_t *call, const proven_http_client
         e = proven_http_write_header(out, &len, name, req->headers[i].value);
     }
     if (e == PROVEN_OK && at->authorization.size > 0) e = proven_http_write_header(out, &len, cl_lit("Authorization"), at->authorization);
-    if (e == PROVEN_OK && conn->via_http_proxy) e = cl_proxy_auth(c, out, &len);
+    if (e == PROVEN_OK && conn->via_http_proxy) {
+        e = at->proxy_authorization.size > 0 ? proven_http_write_header(out, &len, cl_lit("Proxy-Authorization"), at->proxy_authorization)
+                                             : cl_proxy_auth(c, out, &len);
+    }
 
     if (e == PROVEN_OK && c->cfg.cookies && !caller_cookie) {
         /* The jar writes its value straight after "Cookie: "; nothing is written if it is empty. */
@@ -1191,11 +1244,12 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
 
     proven_cl_attempt_t at = { .method = request->method.size ? request->method : cl_lit("GET"), .send_body = true, .cross_origin = false };
     proven_byte_t auth_value[1024];
+    proven_byte_t proxy_value[1024];
     proven_byte_t origin_host[256];
     proven_size_t origin_host_len = 0;
     proven_u16 origin_port = 0;
     bool origin_https = false;
-    bool auth_tried = false, stale_retried = false, too_early_retried = false;
+    bool auth_tried = false, stale_retried = false, too_early_retried = false, proxy_tried = false;
     proven_u32 redirects = 0;
     proven_err_t e = PROVEN_OK;
 
@@ -1274,10 +1328,12 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
                     if (u.path.size == 0) uri[ul++] = '/';
                     for (proven_size_t k = 0; k < u.path.size; ++k) uri[ul++] = u.path.ptr[k];
                     if (u.has_query) { uri[ul++] = '?'; for (proven_size_t k = 0; k < u.query.size; ++k) uri[ul++] = u.query.ptr[k]; }
-                    if (proven_http_digest_auth(&dc, client->cfg.username, client->cfg.password, at.method,
-                                                (proven_u8str_view_t){ .ptr = uri, .size = ul }, 1,
-                                                (proven_u8str_view_t){ .ptr = cnonce, .size = sizeof cnonce },
-                                                (proven_mem_mut_t){ .ptr = auth_value, .size = sizeof auth_value }, &n) == PROVEN_OK) answered = true;
+                    /* With auth-int the answer covers the body, which is in memory: replayable. */
+                    const proven_mem_view_t body = at.send_body ? request->body : (proven_mem_view_t){0};
+                    if (proven_http_digest_auth_body(&dc, client->cfg.username, client->cfg.password, at.method,
+                                                     (proven_u8str_view_t){ .ptr = uri, .size = ul }, 1,
+                                                     (proven_u8str_view_t){ .ptr = cnonce, .size = sizeof cnonce }, body,
+                                                     (proven_mem_mut_t){ .ptr = auth_value, .size = sizeof auth_value }, &n) == PROVEN_OK) answered = true;
                 }
             }
             for (proven_size_t i = 0; i < call->res.header_count && !answered && !auth_tried; ++i) {
@@ -1289,6 +1345,26 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
             if (answered) {
                 auth_tried = true;
                 at.authorization = (proven_u8str_view_t){ .ptr = auth_value, .size = n };
+                cl_drain(call);
+                cl_release_conn(call);
+                continue;
+            }
+        }
+
+        /* A proxy's Digest challenge, answered once: the request goes again with the answer in
+         * Proxy-Authorization (the uri is the absolute form, as the request line has it). */
+        if (status == 407 && !proxy_tried && replayable && call->conn && call->conn->via_http_proxy) {
+            proven_size_t end = (proven_size_t)(u.path.ptr + u.path.size - call->url);
+            if (u.has_query) end = (proven_size_t)(u.query.ptr + u.query.size - call->url);
+            proven_byte_t target[CL_URL_MAX + 8];
+            proven_size_t tl = 0;
+            for (proven_size_t i = 0; i < end; ++i) target[tl++] = call->url[i];
+            if (u.path.size == 0 && !u.has_query) target[tl++] = '/';
+            proven_size_t n = 0;
+            if (cl_proxy_digest(client, call->headers, call->res.header_count, at.method, (proven_u8str_view_t){ .ptr = target, .size = tl },
+                                proxy_value, sizeof proxy_value, &n)) {
+                proxy_tried = true;
+                at.proxy_authorization = (proven_u8str_view_t){ .ptr = proxy_value, .size = n };
                 cl_drain(call);
                 cl_release_conn(call);
                 continue;

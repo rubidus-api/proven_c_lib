@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 130 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 131 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -348,7 +348,7 @@ Last run, 2026-10-31, Windows 11 test VM (v0.104.0): x86-64 375 PASS, 0 FAIL, 10
 ## Test catalog
 
 
-The hosted full run builds and executes 199 registered tests plus the 186 runnable manual examples - 385 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 212 test files: the 195 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 200 registered tests plus the 188 runnable manual examples - 388 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 213 test files: the 196 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -2001,8 +2001,24 @@ Sub-checks:
 - Multipart: the boundary from sixteen bytes is forty header-safe characters; a body of a field and a file is byte for byte as expected; a quote, CR or LF in a name or file name is percent-encoded; an empty name, a bad boundary and a control byte in the type are refused.
 - Basic: the RFC 7617 example; a colon in the user name and control bytes refused.
 - Digest: challenges parsed from one header value holding several schemes; the strongest algorithm chosen; the answers of RFC 7616 section 3.9.1 (SHA-256 and MD5) and RFC 2617 section 3.5 reproduced exactly; the session variants; a challenge without `qop=auth` or with only unknown algorithms is `PROVEN_ERR_UNSUPPORTED`.
+- Digest since v0.105.0: RFC 7616 section 3.9.2's inputs (SHA-512-256, `userhash`, `charset=UTF-8`) answered with SHA-512/256 as FIPS 180-4 defines it - the user name hash and the response as Python's `hashlib` computes them, and `-sess`; the RFC's printed values are of SHA-512 cut to 256 bits and are not used; `username*` for a name with a quote under `charset=UTF-8`, refused without it; `auth-int` with a body and without one (an empty one), and with `auth,auth-int` offered: `auth` without a body, `auth-int` with one.
 
 Failure tip: inspect `proven_url_resolve` and `proven_url_form_append` in `src/proven/url.c`, the range and multipart functions in `src/proven/http.c`, and `src/proven/http_auth.c`. A Digest mismatch means the answer disagrees with the RFC's own worked example.
+
+### `tests/test_unit_http_multipart` - http: reading multipart bodies, Content-Disposition, several ranges
+
+Intent: verify the multipart reader, `proven_http_content_disposition_parse` and `proven_http_range_parse_list` (v0.105.0) against RFC 2046, RFC 7578 and RFC 9110 sections 14.2 and 14.6.
+
+Sub-checks:
+
+- The boundary from a `Content-Type`: a token, a quoted one with a space and a colon, any `multipart/` subtype, names without case; not multipart or no boundary `PROVEN_ERR_NOT_FOUND`; 71 characters, empty, a trailing space, an escape, a character outside RFC 2046's set, twice, no value `PROVEN_ERR_INVALID_FORMAT`; 70 is the most.
+- Bodies written by this library's writers - a field and a file whose bytes hold CR LF and two dashes, and a `multipart/byteranges` body of two ranges - read back to their fields and bytes in every piece size from 1 to 20 and whole; the byteranges writers refuse a range backwards or past the size, a control character, a boundary that needs quoting.
+- What RFC 2046 allows: a preamble and an epilogue (a boundary line in it ignored), white space after a boundary, an empty part, a part with no fields, CR, LF and dashes that begin a boundary line and stop short (held across pieces and given back), a boundary after a bare CR.
+- Refused: a boundary line followed by other text (RFC 2046 forbids the boundary inside a part; Python's `email` reads such a line as data), a head line that is not a field, a folded one, a bare LF, a head over the buffer and more fields than room (`PROVEN_ERR_OUT_OF_BOUNDS`); a body without its closing boundary is not whole; every prefix of a body and every single-bit change of it is read or refused with a reason; bad arguments.
+- `Content-Disposition`: a browser's file part, `filename*` undecoded, an unknown parameter passed over, a type alone; a backslash escape `PROVEN_ERR_UNSUPPORTED`; nothing, no semicolon, an open quote, a name twice, no name `PROVEN_ERR_INVALID_FORMAT`.
+- Range lists: two ranges; sorted, touching ones merged, a suffix resolved; overlapping ranges that ask for more than the resource, more ranges than room, another unit `PROVEN_ERR_UNSUPPORTED`; empty list elements; none satisfiable `PROVEN_ERR_OUT_OF_BOUNDS`; malformed ones `PROVEN_ERR_INVALID_FORMAT`; a suffix of nothing and an empty resource unsatisfiable, a suffix longer than the resource all of it.
+
+Failure tip: inspect the multipart reader (`proven_http_multipart_feed`'s held bytes and its head), `proven_http_content_disposition_parse` and `proven_http_range_parse_list` in `src/proven/http.c`. Not covered here: bodies from other writers - the private check `docs/checks/http-multipart` reads 300 bodies that Python's email parser agreed with, in eight piece sizes.
 
 ### `tests/test_unit_http_cookie` - http: the cookie jar
 
@@ -2073,7 +2089,7 @@ Sub-checks:
 - Challenges: nothing volunteered; Basic answered in two requests; Digest preferred when both are offered and verified by the server's own computation, query included; a stale nonce answered in three; a challenge after a cross-origin redirect not answered; a wrong password costs two requests for either scheme.
 - A cookie jar filled from `Set-Cookie` with a foreign `Domain` dropped; the caller's own `Cookie` header replaces the jar's. A `206` with its `Content-Range`, and a `416`. An event stream read seven bytes at a time into three events.
 - The TLS seam: an `https` URL wrapped once for its host and reused without wrapping again; not shared with `http` to the same port; a redirect from `https` to `http` returned; a refusing wrap is `PROVEN_ERR_UNTRUSTED` with nothing sent.
-- Proxies: an HTTP proxy sent the absolute URL without its fragment, with `Proxy-Authorization`; a `CONNECT` tunnel to `host:443` with TLS begun inside it for the origin's name and the proxy's credentials not sent through it; a `407` as `PROVEN_ERR_PERMISSION`; SOCKS5 negotiated byte for byte per RFC 1928 and RFC 1929 with the host as a name; a SOCKS5 refusal as `PROVEN_ERR_REFUSED`.
+- Proxies: an HTTP proxy sent the absolute URL without its fragment, with `Proxy-Authorization`; a `CONNECT` tunnel to `host:443` with TLS begun inside it for the origin's name and the proxy's credentials not sent through it; a `407` as `PROVEN_ERR_PERMISSION`; SOCKS5 negotiated byte for byte per RFC 1928 and RFC 1929 with the host as a name; a SOCKS5 refusal as `PROVEN_ERR_REFUSED`. Since v0.105.0: a proxy that answers a plain request with a Digest `407` (and closes) is asked again on a new connection with `Proxy-Authorization: Digest` - the absolute URL as its `uri`, the response the same function computes from what was sent, no Basic; one that answers `CONNECT` with a `407` offering Basic and SHA-512-256 Digest, with a body, is asked again on the same connection with Digest for the authority and the tunnel is made, with nothing of it inside; the proxy URL's percent-encoded user and password decoded.
 - `no_proxy`: a name in the list, a name under it, an entry with a leading dot, an entry in another letter case and an IPv6 address in brackets are not sent to a proxy that answers, while a name that only ends in the same letters is - and is the first request that proxy sees; seven lists against a proxy that is not there, with the origin an address: the address itself and `*` reach the origin, the tail of the address, with a dot or without, and an empty list do not.
 - `Expect: 100-continue`: against a peer that notes what arrives before its `100`, nothing of the body does and all of it follows, with the field written once although the caller wrote it too; a peer that answers `417` receives no body byte, from memory or from a stream that is then unread, and sees the connection closed although its answer allowed keeping it; this library's server lets a body from memory and one from a stream through; a request without a body does not ask; a peer that says nothing gets the body after `expect_timeout_ms`.
 - An answer before the body is all sent: a peer that answers `413` and closes with 8 MiB still coming - on Linux the call returns that `413` and its body, elsewhere that or an error; a peer that closes the same way without a word is an error, and not a timeout.

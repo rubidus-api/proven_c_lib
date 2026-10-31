@@ -88,6 +88,13 @@ int main(void) {
     buf[n] = '\0';
     /* The response RFC 7616 section 3.9.1 works out for exactly these inputs. */
     EXAMPLE_REQUIRE(strstr((const char *)buf, "response=\"753927fa0e85d155564e2e272a28d1802ca10daf4496794697cf8db5856cb6c1\"") != NULL, "is the one in the RFC");
+    /* A request with a body: auth-int, offered here too, makes the answer cover the body, so that a
+     * body changed on the way is refused. */
+    EXAMPLE_REQUIRE(proven_http_digest_auth_body(&challenge, PROVEN_LIT("Mufasa"), PROVEN_LIT("Circle of Life"), PROVEN_LIT("POST"), PROVEN_LIT("/dir/index.html"),
+                                                 1, PROVEN_LIT("f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ"),
+                                                 (proven_mem_view_t){ (const proven_byte_t *)"name=value", 10 }, out, &n) == PROVEN_OK, "an answer for a body");
+    buf[n] = '\0';
+    EXAMPLE_REQUIRE(strstr((const char *)buf, "qop=auth-int") != NULL, "with qop=auth-int");
 
     return EXAMPLE_OK();
 }

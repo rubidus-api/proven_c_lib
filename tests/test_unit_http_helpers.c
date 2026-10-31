@@ -285,6 +285,69 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("Digest: SHA-512-256, userhash, username*, auth-int (v0.105.0)",
+        "RFC 7616 section 3.9.2's inputs - SHA-512-256 with userhash - answered with SHA-512/256 as FIPS 180-4 defines it; the RFC's printed values are of SHA-512 cut to 256 bits (their own initial values), not of SHA-512/256, and are not what this library, curl or Python's hashlib compute. The values here are Python's hashlib.",
+        "Check auth_hash_init's SHA-512/256 initial values and auth_digest in src/proven/http_auth.c.");
+    // ---------------------------------------------------------------
+    {
+        proven_http_digest_challenge_t ch;
+        const char *www = "Digest realm=\"api@example.org\", qop=\"auth\", algorithm=SHA-512-256, nonce=\"5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK\", "
+                          "opaque=\"HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS\", charset=UTF-8, userhash=true";
+        PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(sv(www), &ch) == PROVEN_OK && ch.algorithm == PROVEN_HTTP_DIGEST_SHA512_256 && ch.userhash && ch.charset_utf8 &&
+                           ch.qop_auth && !ch.qop_auth_int, "the challenge of RFC 7616 section 3.9.2", "");
+        PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(sv("Digest realm=\"r\", nonce=\"n\", algorithm=SHA-256, Digest realm=\"r\", nonce=\"n\", algorithm=SHA-512-256-sess"), &ch) == PROVEN_OK &&
+                           ch.algorithm == PROVEN_HTTP_DIGEST_SHA512_256_SESS, "SHA-512-256 is preferred to SHA-256", "");
+        (void)proven_http_digest_challenge_parse(sv(www), &ch);
+        proven_byte_t buf[600];
+        proven_size_t n = 0;
+        const proven_u8str_view_t cn = PROVEN_LIT("NTg6RKcb9boFIAS3KrFK9BGeh+iDa/sm6jUMp2wds69v");
+        PROVEN_TEST_ASSERT(proven_http_digest_auth(&ch, sv("J\xc3\xa4s\xc3\xb8n Doe"), PROVEN_LIT("Secret, or not?"), PROVEN_LIT("GET"), PROVEN_LIT("/doe.json"), 1, cn,
+                                                   (proven_mem_mut_t){ buf, sizeof buf }, &n) == PROVEN_OK &&
+                           buf_is(buf, n, "Digest username=\"793263caabb707a56211940d90411ea4a575adeccb7e360aeb624ed06ece9b0b\", realm=\"api@example.org\", "
+                                          "nonce=\"5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK\", uri=\"/doe.json\", algorithm=SHA-512-256, "
+                                          "response=\"3798d4131c277846293534c3edc11bd8a5e4cdcbff78b05db9d95eeb1cec68a5\", qop=auth, nc=00000001, "
+                                          "cnonce=\"NTg6RKcb9boFIAS3KrFK9BGeh+iDa/sm6jUMp2wds69v\", opaque=\"HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS\", userhash=true"),
+                           "the user name hashed, the response of SHA-512/256", "");
+        ch.algorithm = PROVEN_HTTP_DIGEST_SHA512_256_SESS;
+        PROVEN_TEST_ASSERT(proven_http_digest_auth(&ch, sv("J\xc3\xa4s\xc3\xb8n Doe"), PROVEN_LIT("Secret, or not?"), PROVEN_LIT("GET"), PROVEN_LIT("/doe.json"), 1, cn,
+                                                   (proven_mem_mut_t){ buf, sizeof buf }, &n) == PROVEN_OK &&
+                           strstr((memcpy(buf + n, "", 1), (const char *)buf), "response=\"5df408eedb9260fa5576d1e23d63a441d1c1c3740df0bbfba5ded9233f6de306\"") != NULL &&
+                           strstr((const char *)buf, "algorithm=SHA-512-256-sess") != NULL, "and -sess", "");
+        /* Without userhash: a name with a quote goes as username*, which charset=UTF-8 allows. */
+        ch.algorithm = PROVEN_HTTP_DIGEST_SHA512_256;
+        ch.userhash = false;
+        PROVEN_TEST_ASSERT(proven_http_digest_auth(&ch, sv("J\xc3\xa4s\xc3\xb8n \"Doe\""), PROVEN_LIT("Secret, or not?"), PROVEN_LIT("GET"), PROVEN_LIT("/doe.json"), 1, cn,
+                                                   (proven_mem_mut_t){ buf, sizeof buf }, &n) == PROVEN_OK &&
+                           strstr((memcpy(buf + n, "", 1), (const char *)buf), "Digest username*=UTF-8''J%C3%A4s%C3%B8n%20%22Doe%22, realm=") == (const char *)buf,
+                           "username*, percent-encoded (RFC 8187)", "");
+        ch.charset_utf8 = false;
+        PROVEN_TEST_ASSERT(proven_http_digest_auth(&ch, sv("J\xc3\xa4s\xc3\xb8n \"Doe\""), PROVEN_LIT("Secret, or not?"), PROVEN_LIT("GET"), PROVEN_LIT("/doe.json"), 1, cn,
+                                                   (proven_mem_mut_t){ buf, sizeof buf }, &n) == PROVEN_ERR_INVALID_ARG &&
+                           proven_http_digest_auth(&ch, sv("J\xc3\xa4s\xc3\xb8n Doe"), PROVEN_LIT("Secret, or not?"), PROVEN_LIT("GET"), PROVEN_LIT("/doe.json"), 1, cn,
+                                                   (proven_mem_mut_t){ buf, sizeof buf }, &n) == PROVEN_OK &&
+                           strstr((memcpy(buf + n, "", 1), (const char *)buf), "Digest username=\"J\xc3\xa4s\xc3\xb8n Doe\", realm=") == (const char *)buf,
+                           "without charset=UTF-8 a name that cannot be quoted is refused; one that can goes quoted, as before", "");
+        /* auth-int: the body's hash in A2. */
+        PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(sv("Digest realm=\"api@example.org\", qop=\"auth-int\", algorithm=SHA-256, nonce=\"5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK\""), &ch) == PROVEN_OK &&
+                           ch.qop_auth_int && !ch.qop_auth, "a challenge that offers only auth-int is read", "");
+        PROVEN_TEST_ASSERT(proven_http_digest_auth_body(&ch, PROVEN_LIT("Mufasa"), PROVEN_LIT("Secret, or not?"), PROVEN_LIT("POST"), PROVEN_LIT("/doe.json"), 1, cn,
+                                                        (proven_mem_view_t){ (const proven_byte_t *)"hello body", 10 }, (proven_mem_mut_t){ buf, sizeof buf }, &n) == PROVEN_OK &&
+                           strstr((memcpy(buf + n, "", 1), (const char *)buf), "response=\"2268f06ce51efafbaa6a6d49bfb9a0cbf434f0478b27783594061f0a03f4f8a5\", qop=auth-int,") != NULL,
+                           "with a body: qop=auth-int, the response covering it", "");
+        PROVEN_TEST_ASSERT(proven_http_digest_auth(&ch, PROVEN_LIT("Mufasa"), PROVEN_LIT("Secret, or not?"), PROVEN_LIT("GET"), PROVEN_LIT("/doe.json"), 1, cn,
+                                                   (proven_mem_mut_t){ buf, sizeof buf }, &n) == PROVEN_OK &&
+                           strstr((memcpy(buf + n, "", 1), (const char *)buf), "response=\"287f3ebce1241eb5bbc7c6d9cd1ffc73c78a719c19a96df71f12b9000b1f9571\", qop=auth-int,") != NULL,
+                           "without one, auth-int over an empty body", "");
+        PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(sv("Digest realm=\"r\", qop=\"auth,auth-int\", nonce=\"n\""), &ch) == PROVEN_OK && ch.qop_auth && ch.qop_auth_int &&
+                           proven_http_digest_auth(&ch, PROVEN_LIT("u"), PROVEN_LIT("p"), PROVEN_LIT("GET"), PROVEN_LIT("/"), 1, PROVEN_LIT("c"), (proven_mem_mut_t){ buf, sizeof buf }, &n) == PROVEN_OK &&
+                           strstr((memcpy(buf + n, "", 1), (const char *)buf), "qop=auth,") != NULL &&
+                           proven_http_digest_auth_body(&ch, PROVEN_LIT("u"), PROVEN_LIT("p"), PROVEN_LIT("POST"), PROVEN_LIT("/"), 1, PROVEN_LIT("c"), (proven_mem_view_t){ (const proven_byte_t *)"b", 1 },
+                                                        (proven_mem_mut_t){ buf, sizeof buf }, &n) == PROVEN_OK &&
+                           strstr((memcpy(buf + n, "", 1), (const char *)buf), "qop=auth-int,") != NULL,
+                           "both offered: auth without a body, auth-int with one", "");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("Digest authentication: reading challenges, and refusing",
         "Mixed schemes, unknown algorithms, missing fields, and a user name that would break the quoting.",
         "");
@@ -301,11 +364,11 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(sv("Basic realm=\"x\""), &ch) == PROVEN_ERR_NOT_FOUND &&
                            proven_http_digest_challenge_parse(sv(""), &ch) == PROVEN_ERR_NOT_FOUND,
             "no Digest challenge is PROVEN_ERR_NOT_FOUND", "");
-        PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(sv("Digest realm=\"r\", nonce=\"n\", algorithm=SHA-512-256"), &ch) == PROVEN_ERR_UNSUPPORTED &&
-                           proven_http_digest_challenge_parse(sv("Digest realm=\"r\", nonce=\"n\", qop=\"auth-int\""), &ch) == PROVEN_ERR_UNSUPPORTED &&
+        PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(sv("Digest realm=\"r\", nonce=\"n\", algorithm=SHA-512"), &ch) == PROVEN_ERR_UNSUPPORTED &&
+                           proven_http_digest_challenge_parse(sv("Digest realm=\"r\", nonce=\"n\", qop=\"auth-conf\""), &ch) == PROVEN_ERR_UNSUPPORTED &&
                            proven_http_digest_challenge_parse(sv("Digest realm=\"r\\\"x\", nonce=\"n\""), &ch) == PROVEN_ERR_UNSUPPORTED,
             "an algorithm or qop this library does not implement, and an escaped quote in the realm, are PROVEN_ERR_UNSUPPORTED", "");
-        PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(sv("Digest realm=\"r\", nonce=\"n\", algorithm=SHA-512-256, Digest realm=\"r\", nonce=\"n\", algorithm=MD5"), &ch) == PROVEN_OK &&
+        PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(sv("Digest realm=\"r\", nonce=\"n\", algorithm=SHA-512, Digest realm=\"r\", nonce=\"n\", algorithm=MD5"), &ch) == PROVEN_OK &&
                            ch.algorithm == PROVEN_HTTP_DIGEST_MD5,
             "an unsupported challenge beside a supported one: the supported one is used", "");
         PROVEN_TEST_ASSERT(proven_http_digest_challenge_parse(sv("Digest nonce=\"n\""), &ch) == PROVEN_ERR_INVALID_FORMAT &&

@@ -662,6 +662,8 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_body_kind_t` | `proven_http_body_kind_t` |
 | `xcv_http_body_received` | `proven_http_body_received` |
 | `xcv_http_body_t` | `proven_http_body_t` |
+| `xcv_http_byteranges_write_content_type` | `proven_http_byteranges_write_content_type` |
+| `xcv_http_byteranges_write_part` | `proven_http_byteranges_write_part` |
 | `xcv_http_client_config_t` | `proven_http_client_config_t` |
 | `xcv_http_client_create` | `proven_http_client_create` |
 | `xcv_http_client_destroy` | `proven_http_client_destroy` |
@@ -676,6 +678,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_client_upgrade` | `proven_http_client_upgrade` |
 | `xcv_http_coding_t` | `proven_http_coding_t` |
 | `xcv_http_content_coding` | `proven_http_content_coding` |
+| `xcv_http_content_disposition_parse` | `proven_http_content_disposition_parse` |
 | `xcv_http_content_range_parse` | `proven_http_content_range_parse` |
 | `xcv_http_cookie_jar_clear` | `proven_http_cookie_jar_clear` |
 | `xcv_http_cookie_jar_count` | `proven_http_cookie_jar_count` |
@@ -688,8 +691,10 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_date_parse` | `proven_http_date_parse` |
 | `xcv_http_digest_algorithm_t` | `proven_http_digest_algorithm_t` |
 | `xcv_http_digest_auth` | `proven_http_digest_auth` |
+| `xcv_http_digest_auth_body` | `proven_http_digest_auth_body` |
 | `xcv_http_digest_challenge_parse` | `proven_http_digest_challenge_parse` |
 | `xcv_http_digest_challenge_t` | `proven_http_digest_challenge_t` |
+| `xcv_http_disposition_t` | `proven_http_disposition_t` |
 | `xcv_http_event_callbacks_t` | `proven_http_event_callbacks_t` |
 | `xcv_http_event_client_callbacks_t` | `proven_http_event_client_callbacks_t` |
 | `xcv_http_event_client_config_t` | `proven_http_event_client_config_t` |
@@ -746,6 +751,13 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_method_t` | `proven_http_method_t` |
 | `xcv_http_method_text` | `proven_http_method_text` |
 | `xcv_http_multipart_boundary` | `proven_http_multipart_boundary` |
+| `xcv_http_multipart_boundary_parse` | `proven_http_multipart_boundary_parse` |
+| `xcv_http_multipart_end` | `proven_http_multipart_end` |
+| `xcv_http_multipart_event_kind_t` | `proven_http_multipart_event_kind_t` |
+| `xcv_http_multipart_event_t` | `proven_http_multipart_event_t` |
+| `xcv_http_multipart_feed` | `proven_http_multipart_feed` |
+| `xcv_http_multipart_init` | `proven_http_multipart_init` |
+| `xcv_http_multipart_t` | `proven_http_multipart_t` |
 | `xcv_http_multipart_write_content_type` | `proven_http_multipart_write_content_type` |
 | `xcv_http_multipart_write_end` | `proven_http_multipart_write_end` |
 | `xcv_http_multipart_write_part` | `proven_http_multipart_write_part` |
@@ -753,6 +765,8 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_http_parse_request` | `proven_http_parse_request` |
 | `xcv_http_parse_response` | `proven_http_parse_response` |
 | `xcv_http_range_parse` | `proven_http_range_parse` |
+| `xcv_http_range_parse_list` | `proven_http_range_parse_list` |
+| `xcv_http_range_t` | `proven_http_range_t` |
 | `xcv_http_reason_phrase` | `proven_http_reason_phrase` |
 | `xcv_http_request_framing` | `proven_http_request_framing` |
 | `xcv_http_request_keep_alive` | `proven_http_request_keep_alive` |
