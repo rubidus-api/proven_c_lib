@@ -534,7 +534,8 @@ int main(void) {
             proven_size_t made = 0;
             static proven_byte_t piece[200];
             (void)memcpy(piece, DICT + sizeof DICT - DICT_CONTENT + 10, 150);    /* the start of the content: the furthest back */
-            PROVEN_TEST_ASSERT(proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 1, .dictionary = { DICT, sizeof DICT } },
+            /* A window of 1 KiB: the content's beginning, 8,000 bytes back, is further than the window. */
+            PROVEN_TEST_ASSERT(proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 1, .window_log = 10, .dictionary = { DICT, sizeof DICT } },
                                                       (proven_mem_view_t){ piece, 150 }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made) == PROVEN_OK, "a piece of the content's beginning", "");
             proven_size_t c = 0, p = 0;
             bool done = false;
@@ -542,11 +543,15 @@ int main(void) {
                                proven_zstd_decode(d, (proven_mem_view_t){ g_enc, made }, &c, (proven_mem_mut_t){ g_dec, sizeof g_dec }, &p, &done) == PROVEN_OK && done && p == 150 && memcmp(g_dec, piece, 150) == 0,
                                "decodes", "");
             printf("  150 bytes from the content's beginning: a frame of %zu bytes\n", made);
-            PROVEN_TEST_ASSERT(made < 40, "a match or two, about 8,000 bytes back in a frame whose window is 150", "");
+            PROVEN_TEST_ASSERT(made < 40, "a match or two, about 8,000 bytes back - past the encoder's window of 1 KiB, in a frame whose window is 150", "");
         }
-        /* A stream through a sliding buffer: window 1 KiB, 400 records - enough for the decoder to write over
-         * every byte where it held the content. */
+        /* A stream through a sliding buffer: window 1 KiB, 400 records, decoded by a new decoder - whose
+         * buffer grows only to the content, the window and a block, and so moves its history to the
+         * front, over where it held the content, many times. */
         {
+            proven_zstd_decoder_t *d2 = NULL;
+            PROVEN_TEST_ASSERT(proven_zstd_decoder_create(g_heap, 0, &d2) == PROVEN_OK && proven_zstd_decoder_use_dictionary(d2, (proven_mem_view_t){ DICT, sizeof DICT }) == PROVEN_OK,
+                               "a new decoder with the dictionary", "");
             proven_zstd_encoder_t *z = NULL;
             proven_size_t made = 0, n = roff[2400] - roff[2000];
             PROVEN_TEST_ASSERT(proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 3, .window_log = 10, .dictionary = { DICT, sizeof DICT } }, &z) == PROVEN_OK &&
@@ -554,15 +559,15 @@ int main(void) {
             proven_zstd_encoder_destroy(z);
             proven_size_t c = 0, p = 0;
             bool done = false;
-            proven_zstd_decoder_reset(d);
-            PROVEN_TEST_ASSERT(proven_zstd_decode(d, (proven_mem_view_t){ g_enc, made }, &c, (proven_mem_mut_t){ g_dec, sizeof g_dec }, &p, &done) == PROVEN_OK && done && p == n && memcmp(g_dec, recs + roff[2000], n) == 0,
+            PROVEN_TEST_ASSERT(proven_zstd_decode(d2, (proven_mem_view_t){ g_enc, made }, &c, (proven_mem_mut_t){ g_dec, sizeof g_dec }, &p, &done) == PROVEN_OK && done && p == n && memcmp(g_dec, recs + roff[2000], n) == 0,
                                "with a window of 1 KiB, a dictionary of 8 KiB and 60 KB of records, the buffer slides and the frame decodes", "");
             /* That frame outgrew its window, so the decoder let the content go: the next frame needs it again. */
             (void)proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 3, .dictionary = { DICT, sizeof DICT } },
                                          (proven_mem_view_t){ recs + roff[2950], roff[2951] - roff[2950] }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made);
             n = roff[2951] - roff[2950];
-            PROVEN_TEST_ASSERT(proven_zstd_decode(d, (proven_mem_view_t){ g_enc, made }, &c, (proven_mem_mut_t){ g_dec, sizeof g_dec }, &p, &done) == PROVEN_OK && done && p == n && memcmp(g_dec, recs + roff[2950], n) == 0,
+            PROVEN_TEST_ASSERT(proven_zstd_decode(d2, (proven_mem_view_t){ g_enc, made }, &c, (proven_mem_mut_t){ g_dec, sizeof g_dec }, &p, &done) == PROVEN_OK && done && p == n && memcmp(g_dec, recs + roff[2950], n) == 0,
                                "and a short frame after it, from the same decoder, finds the content again", "");
+            proven_zstd_decoder_destroy(d2);
         }
         /* Refused. */
         proven_zstd_encoder_t *z = NULL;

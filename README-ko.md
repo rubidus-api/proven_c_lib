@@ -654,7 +654,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- 해싱과 인코딩: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC과 HKDF), `deflate` (DEFLATE 압축과 풀기, 그대로 또는 zlib·gzip으로, 스트리밍, 풀 때 나올 양은 호출자가 한정), `zstd` (Zstandard 압축과 풀기 - 쓰는 쪽은 레벨 아홉 개, 레벨 6은 gzip 6 크기에 세 배 속도 -, 출력과 윈도는 호출자가 한정), `brotli` (Brotli 풀기, 출력과 윈도는 호출자가 한정; `PROVEN_NO_BROTLI`는 이것과 122,784바이트 사전을 뺍니다), `cert` (X.509 인증서: 읽기, 이름, 신뢰 앵커, 체인 검증), `hash_legacy` (SHA-1과 MD5, 그것을 못 박은 형식용), `encode` (hex, Base64, Base64URL), `utf` (엄격한 UTF-8 <-> UTF-16).
+- 해싱과 인코딩: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC과 HKDF), `deflate` (DEFLATE 압축과 풀기, 그대로 또는 zlib·gzip으로, 스트리밍, 풀 때 나올 양은 호출자가 한정), `zstd` (Zstandard 압축과 풀기 - 쓰는 쪽은 레벨 열아홉 개, 레벨 6은 gzip 6 크기에 세 배 속도, 19는 libzstd 크기의 약 1 % 안; 장거리 일치; 원시·학습 사전을 양쪽에서 -, 출력과 윈도는 호출자가 한정), `brotli` (Brotli 풀기, 출력과 윈도는 호출자가 한정; `PROVEN_NO_BROTLI`는 이것과 122,784바이트 사전을 뺍니다), `cert` (X.509 인증서: 읽기, 이름, 신뢰 앵커, 체인 검증), `hash_legacy` (SHA-1과 MD5, 그것을 못 박은 형식용), `encode` (hex, Base64, Base64URL), `utf` (엄격한 UTF-8 <-> UTF-16).
 - 난수: `random` (xoshiro256** 재현 가능, ChaCha20 암호학적, 무편향 범위/셔플 헬퍼, 교체 가능한 엔트로피 소스 — 기본은 OS CSPRNG, 베어메탈은 보드의 하드웨어 TRNG).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - 네트워킹: `net` (기다리는 모든 호출에 기한이 있는 TCP·UDP·유닉스 도메인 소켓, 여러 소켓의 준비 상태, 전송 인터페이스). Hosted 전용이며 `PROVEN_NO_NET`으로 뺄 수 있습니다.

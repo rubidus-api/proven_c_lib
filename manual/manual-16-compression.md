@@ -888,8 +888,9 @@ allocated for it.
 **A stream is a sequence of frames.** `*done` becomes true where a frame ends, and that call
 stops there: what it consumed is that frame. Call again with the rest and the next frame
 begins - no reset is needed. Skippable frames (magic numbers `0x184D2A50` to `0x184D2A5F`)
-are read past, producing nothing. A frame that needs a dictionary is
-`PROVEN_ERR_UNSUPPORTED`; content sent over HTTP does not use one.
+are read past, producing nothing. A frame that names a dictionary is decoded only by a decoder
+that has it ("Dictionaries" below): without it, `PROVEN_ERR_UNSUPPORTED`; content sent over HTTP
+does not use one.
 
 ### Example: a buffer, two frames, and a window too large
 

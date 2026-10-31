@@ -28,7 +28,7 @@ written; their tags still exist.
   frame header; while a frame has produced no more than its window its matches may reach any byte of
   the content (RFC 8878, section 5). A decoder with a dictionary takes frames that name its ID or none,
   and refuses others. Checked against libzstd 1.5.7 both ways: 62,858 frames libzstd made with a
-  trained and a raw dictionary decoded here, 107,200 made here decoded by libzstd, at levels 1 to 19;
+  trained and a raw dictionary decoded here, 536,000 made here decoded by libzstd, at levels 1 to 19;
   on records of about 190 bytes, 0.89 to 1.01 of libzstd's size with the same dictionary. Nothing in
   the HTTP drivers uses dictionaries (RFC 8878, section 6).
 
