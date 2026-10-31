@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.104.0] - 2026-10-31
+
 ### Added
 
 - **Zstandard dictionaries** (RFC-0039 L-3), used, not trained: `proven_zstd_decoder_use_dictionary`,
