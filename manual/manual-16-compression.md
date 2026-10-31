@@ -1059,8 +1059,21 @@ libzstd, levels 1 to 3 and 5 to 8 run at 0.8 to 1.0 of the speed and level 9 at 
 within a third of a point of the size. Level 6 looks at 12 candidates where libzstd's looks at
 8, which keeps it at or below gzip 6 on all three files (libzstd 6 is slightly larger than gzip
 6 on the C source). Level 4 is not libzstd's method at that level: smaller by about a point, at
-about half the speed. On inputs of megabytes libzstd's higher levels also use a larger window
-and tables, and are 0.3 to 0.5 points smaller there.
+about half the speed.
+
+Since v0.103.0, proven_zstd_encode_all of more than 256 KiB gives levels 6 to 9 libzstd's larger tables
+for such inputs: a hash of 2^19 to 2^21 entries and a chain of 2^18 to 2^20, each cut to the window
+(3 MiB at level 6, 6 MiB at 7 and 8, 8 MiB at 9 with the default window, 12 MiB with the largest). A
+stream - the servers' - keeps the 1 MiB above. Against libzstd at the same level and the same window,
+on a 3.9 MB executable, 2.7 MB of C sources, 3.7 MB of JSON and 395 KB of text:
+
+| this library / libzstd | executable | C sources | JSON | text |
+|---|---|---|---|---|
+| level 6, default window, before / since v0.103.0 | 1.017 / 1.009 | 1.002 / 0.996 | 0.984 / 0.986 | 0.998 / 0.995 |
+| level 9, default window | 0.999 / 0.987 | 1.006 / 0.993 | 1.014 / 1.012 | 0.999 / 0.996 |
+| level 9, window 23 | 1.009 / 0.989 | 1.021 / 0.998 | 0.983 / 0.988 | 0.999 / 0.996 |
+
+The output is about 1 % smaller on megabyte inputs, 2 % with the largest window.
 
 **Levels 10 to 12** (since v0.101.0) are lazy2 again with libzstd's larger tables for them - a hash of
 2^22, 2^22 and 2^23 entries and a chain of 2^21, 2^21 and 2^22, each cut to the window - and 48, 96

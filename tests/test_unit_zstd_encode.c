@@ -383,6 +383,17 @@ int main(void) {
             /* From 13 on a short input is parsed optimally (as libzstd does below 256 KiB): its path and three-byte table too. */
             PROVEN_TEST_ASSERT(g_count.peak <= (level >= 13 ? 160u : 64u) * 1024 && g_count.live == 0, "a whole buffer of 2,000 bytes needs less than 64 KiB (160 KiB from level 13)", "");
         }
+        /* Levels 6 to 9 over a known input above 256 KiB: libzstd's larger tables (a stream keeps
+         * the 1 MiB of 5; so does level 5 here). */
+        for (int level = 5; level <= 9; ++level) {
+            static const proven_size_t BIG[10] = { 0, 0, 0, 0, 0, 1 << 20, 3 << 20, 6 << 20, 6 << 20, 8 << 20 };
+            proven_size_t made = 0;
+            const proven_err_t e = proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = counting(0), .level = level }, (proven_mem_view_t){ g_in, n },
+                                                          (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made);
+            printf("  level %d: 1,000,000 bytes in one call held at most %zu bytes\n", level, g_count.peak);
+            PROVEN_TEST_ASSERT(e == PROVEN_OK && decodes_to(g_enc, made, g_in, n, 0) && g_count.peak >= BIG[level] && g_count.peak <= BIG[level] + 600 * 1024 && g_count.live == 0,
+                               "its tables as stated, and about 600 KiB for blocks", "");
+        }
         int nomem = 0, other = 0;
         for (proven_size_t k = 1; k <= 9; ++k) {
             proven_zstd_encoder_options_t o = { .alloc = counting(k), .level = 3 };
@@ -418,7 +429,7 @@ int main(void) {
         static const struct { int input, level; proven_size_t size; proven_u32 crc; } PIN[] = {
             { 3, 1, 91849, 0xd24793b3u }, { 3, 2, 97612, 0x7367ffaeu }, { 3, 3, 97699, 0xb8b0492eu },
             { 4, 1, 107904, 0x77238193u }, { 4, 3, 99452, 0xd3c79d20u }, { 6, 1, 40820, 0x86ab3620u },
-            { 3, 6, 88115, 0x7fbcdd68u }, { 3, 9, 83927, 0xfdcda819u },
+            { 3, 6, 88222, 0x81458322u }, { 3, 9, 84218, 0x41e43c5du },
             { 3, 10, 83394, 0x1e7e8206u }, { 3, 11, 82273, 0x5c6b3433u }, { 3, 12, 82196, 0xce1ef842u },
             { 3, 13, 82203, 0x75d59277u }, { 3, 14, 82200, 0xcccab3e5u }, { 3, 15, 82208, 0x492a6348u },
             { 3, 16, 64346, 0x2c10a426u }, { 3, 17, 64346, 0x2c10a426u }, { 3, 18, 64528, 0x4688e29au }, { 3, 19, 64528, 0x4688e29au },

@@ -18,6 +18,16 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **Zstandard levels 6 to 9 on a whole buffer of more than 256 KiB** (RFC-0039 L-1):
+  proven_zstd_encode_all gives them libzstd's larger tables for such inputs - a hash of 2^19 to 2^21
+  entries and a chain of 2^18 to 2^20, each cut to the window - where they had a stream's 1 MiB:
+  about 1 % smaller on megabyte inputs, 2 % with the largest window, within about 1 % of libzstd at
+  the same level and window. Memory, for such a buffer: 3 MiB at level 6, 6 MiB at 7 and 8, 8 MiB at 9
+  with the default window and 12 MiB with the largest. Streams, and the servers, are as before. Two
+  pinned frames re-pinned (levels 6 and 9), decoded by libzstd.
+
 ## [0.102.0] - 2026-10-31
 
 ### Added

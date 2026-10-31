@@ -125,6 +125,9 @@ proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t 
  * chain of 2^16 or 2^17) and look at the first 4, 8, 12, 12, 24 and 32 of it: levels 4 and 5
  * take the best match found ("greedy"), 6 also looks one byte on for a better one ("lazy"),
  * 7 to 9 two bytes ("lazy2"). Level 6 is about gzip level 6's size at three times its speed.
+ * proven_zstd_encode_all of more than 256 KiB gives levels 6 to 9 libzstd's larger tables for such
+ * inputs (a hash of 2^19 to 2^21 entries and a chain of 2^18 to 2^20, each cut to the window): about
+ * 1 % smaller on megabyte inputs, 2 % with a window of 8 MiB.
  * Levels 10 to 12 are lazy2 with larger tables (a hash of 2^22, 2^22 and 2^23 entries and a chain
  * of 2^21, 2^21 and 2^22, each cut to the window) and 48, 96 and 128 candidates: for files
  * compressed once and sent many times - a few megabytes a second, about 2 % smaller than level 9.
@@ -144,7 +147,8 @@ proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t 
  * single symbol. A block that does not shrink is stored as it is.
  *
  * **Memory**, at most: the hash tables (64 KiB at level 1, 96 KiB at 2, 768 KiB at 3 and 4,
- * 1 MiB at 5 to 9; at 10 to 19 8 MiB with the default window, and with the largest 24 MiB at 10
+ * 1 MiB at 5 to 9 - and for proven_zstd_encode_all of more than 256 KiB 3 MiB at 6, 6 MiB at 7 and 8,
+ * and at 9 8 MiB with the default window and 12 MiB with the largest; at 10 to 19 8 MiB with the default window, and with the largest 24 MiB at 10
  * and 11, 32 MiB at 13 and 16, 48 MiB at 12, 14, 17 and 18, 64 MiB at 15, 80 MiB at 19 - and
  * zeroed when an encoder is made or reset), at 16 to 19 about 380 KiB more for the parse (less for
  * a short whole buffer), about

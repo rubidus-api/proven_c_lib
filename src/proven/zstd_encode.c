@@ -557,6 +557,11 @@ static const proven_params_t LEVELS[LEVEL_MAX + 1] = {
     { 4, 22, 24, 4, 128, 1, 256 },
 };
 
+/* Levels 6 to 9 for a known input above 256 KiB (proven_zstd_encode_all): libzstd's hash and chain
+ * sizes for such inputs (hash, chain), cut to the window as every level's. The servers, which stream
+ * at these levels, keep the tables above. */
+static const unsigned LEVELS_BIG[4][2] = { { 19, 18 }, { 20, 19 }, { 20, 19 }, { 21, 20 } };
+
 static proven_err_t grow(proven_zstd_encoder_t *z, void **buf, proven_size_t *cap, proven_size_t want, proven_size_t unit) {
     if (want <= *cap && *buf) return PROVEN_OK;
     proven_result_mem_mut_t m = *buf ? z->alloc.realloc_fn(z->alloc.ctx, *buf, *cap * unit, want * unit, 16)
@@ -616,6 +621,10 @@ static proven_err_t make(const proven_zstd_encoder_options_t *o, proven_u64 size
         else { z->p.tries *= 4; z->p.target *= 2; }   /* 16 to 19 look further than 13 to 15 */
         z->p.strategy = 4;
         z->p.depth = 1;
+    }
+    if (size_hint != ~(proven_u64)0 && size_hint > ((proven_u64)256 << 10) && z->opt.level >= 6 && z->opt.level <= 9) {
+        z->p.hlog = LEVELS_BIG[z->opt.level - 6][0];
+        z->p.clog = LEVELS_BIG[z->opt.level - 6][1];
     }
     if (z->p.hlog > need + 1) z->p.hlog = need + 1;
     if (z->p.clog > need + 1) z->p.clog = need + 1;
