@@ -97,6 +97,7 @@ typedef struct {
     proven_u32 write_timeout_ms;       /* 0: 30 s */
     proven_u32 idle_timeout_ms;        /* 0: 60 s */
     proven_u32 linger_ms;              /* 0: 1 s */
+    proven_size_t max_upgraded;        /* 0: 1,024 - upgraded connections open at once (section 11) */
     const proven_tls_config_t *tls;    /* NULL: plain HTTP */
 } proven_http_server_config_t;
 ```
@@ -945,12 +946,13 @@ that point.
 
 | API | Intent | Return |
 |---|---|---|
-| `proven_http_exchange_upgrade(x, protocol, headers, count, &transport, &early)` | In a handler: answer `101` with `Upgrade: protocol` and `Connection: Upgrade`, and take the connection out of the server. | `proven_err_t`: `INVALID_STATE` when a response was begun, the request has an unread body, or it is HTTP/1.0; `INVALID_ARG` for a header the server owns (`Upgrade` included); `NOMEM`; `OUT_OF_BOUNDS`; `TIMEOUT`, `RESET`. |
+| `proven_http_exchange_upgrade(x, protocol, headers, count, &transport, &early)` | In a handler: answer `101` with `Upgrade: protocol` and `Connection: Upgrade`, and take the connection out of the server. | `proven_err_t`: `INVALID_STATE` when a response was begun, the request has an unread body, or it is HTTP/1.0; `INVALID_ARG` for a header the server owns (`Upgrade` included); `NOMEM`; `OUT_OF_BOUNDS`; `BUSY` when `max_upgraded` are open; `TIMEOUT`, `RESET`. |
 | `request.upgrade` | In a client request: the protocol to ask for. The client writes `Connection: Upgrade` and `Upgrade` itself. | - |
 | `proven_http_client_upgrade(&response, &transport, &early)` | After a `101`: take the connection out of the client. | `proven_err_t`: `INVALID_STATE` when the response is not a `101` or was already taken. |
 
 Either way you receive a `proven_transport_t` that **owns** the connection. It is not the
-server's or the client's any more: it does not count against `max_connections`, none of their
+server's or the client's any more: it does not count against `max_connections` (a server counts
+it against `max_upgraded` until it is closed, and refuses an upgrade past that with `BUSY`), none of their
 timeouts apply to it, it will not be reused, and it stays open until you call
 `proven_transport_close`. A server handler may keep it after it returns.
 

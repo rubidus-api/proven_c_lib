@@ -31,7 +31,12 @@
  *   - **Closing is a handshake.** proven_ws_conn_close sends a close and waits, for a bounded
  *     time, for the peer's.
  *
- * What it does not do: reconnect or send pings on a timer (compression is asked for with
+ *   - **Silence is noticed** (since v0.104.0). After `ping_interval_ms` with nothing from the peer a
+ *     ping is sent, and after `pong_timeout_ms` more the connection is ended - a peer that went
+ *     away without a word (a laptop shut, a NAT that forgot it) does not hold a thread forever.
+ *     There is no timer: the ping goes out while proven_ws_conn_receive waits.
+ *
+ * What it does not do: reconnect (compression is asked for with
  * `compress`, see proven_ws_conn_compressed). And it carries no more
  * protection than the connection under it - a `ws://` connection is readable by anyone on the
  * path. `wss://` is the same over TLS: the HTTP client's `tls_wrap`, the HTTP server's `tls`.
@@ -55,6 +60,8 @@ typedef struct {
     proven_size_t max_message_bytes;    /**< largest message accepted, fragments together; 0: 1 MiB */
     proven_u32 io_timeout_ms;           /**< the limit for each write; 0: 30 s */
     proven_u32 close_timeout_ms;        /**< how long proven_ws_conn_close waits for the peer's close; 0: 5 s */
+    proven_u32 ping_interval_ms;        /**< silence from the peer after which a ping is sent, as ws_event's: there is no timer, so it goes out while proven_ws_conn_receive waits - a receive reads no longer than to it - or at the next receive. 0: 30 s */
+    proven_u32 pong_timeout_ms;         /**< further silence after which the connection is ended: proven_ws_conn_receive returns PROVEN_ERR_RESET, close code 1006, as when the peer drops it. Any byte from the peer counts as an answer. 0: 10 s */
     bool compress;                      /**< compressed messages (`permessage-deflate`): a client offers it, a server accepts it when offered. See proven_ws_conn_compressed. With it set, do not pass a `Sec-WebSocket-Extensions` header of your own to proven_ws_conn_connect: the connection writes one. false: neither */
     int compress_level;                 /**< 1 (fastest) to 9 (smallest); -1 stores without compressing. 0: 6 */
     int compress_window_bits;           /**< how far back the compressor looks, 9 to 15: about 11 KiB of memory at 9, 28 KiB at 11, 325 KiB at 15 (without takeover only during one send, and less for a message smaller than the window). 0: 11 with takeover, 15 without */
@@ -115,7 +122,8 @@ proven_err_t proven_ws_conn_connect(proven_http_client_t *client, proven_u8str_v
  *         sent, answer it as an ordinary request. PROVEN_ERR_UNSUPPORTED (a 426 was sent) for
  *         another protocol version; PROVEN_ERR_INVALID_FORMAT (a 400 was sent) for a malformed
  *         upgrade. PROVEN_ERR_INVALID_ARG for a `protocol` the request does not offer, and
- *         PROVEN_ERR_NOMEM: nothing was sent and you may still respond. Otherwise the errors of
+ *         PROVEN_ERR_NOMEM: nothing was sent and you may still respond. PROVEN_ERR_BUSY (a 503 with
+ *         `Retry-After: 1` was sent) when the server's `max_upgraded` connections are open. Otherwise the errors of
  *         proven_http_exchange_upgrade - and PROVEN_ERR_OUT_OF_BOUNDS when the client sent more
  *         than 16 KiB of frames along with its handshake: the 101 has gone by then, and the
  *         connection is closed.

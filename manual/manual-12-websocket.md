@@ -82,7 +82,7 @@ if (proven_ws_conn_connect(http_client, PROVEN_LIT("ws://example.com/feed"), NUL
 | API | Intent | Return |
 |---|---|---|
 | `proven_ws_conn_connect(client, url, headers, count, protocols, &config, &ws, &http_status)` | Connect as a client, through an HTTP client - so its proxy, timeouts and `tls_wrap` apply. `url` is `ws://` or `wss://`. `http_status` (optional) receives what the server answered. | `proven_err_t`: `REFUSED` when the answer was not `101` (see `http_status`); `INVALID_FORMAT` when the `101` did not answer this handshake; `UNSUPPORTED` for `wss` without `tls_wrap`; `IO` when no random bytes could be drawn; the errors of `proven_http_client_send`. |
-| `proven_ws_conn_accept(x, protocol, &config, &ws)` | Accept as a server, inside an HTTP handler: check the request, answer `101`, take the connection. `protocol` is the subprotocol to select, or empty. | `proven_err_t`: `NOT_FOUND` - not an upgrade, nothing sent, answer it as HTTP; `UNSUPPORTED` - another version, a `426` was sent; `INVALID_FORMAT` - a malformed upgrade, a `400` was sent; `INVALID_ARG` - a `protocol` the client did not offer, nothing sent. |
+| `proven_ws_conn_accept(x, protocol, &config, &ws)` | Accept as a server, inside an HTTP handler: check the request, answer `101`, take the connection. `protocol` is the subprotocol to select, or empty. | `proven_err_t`: `NOT_FOUND` - not an upgrade, nothing sent, answer it as HTTP; `UNSUPPORTED` - another version, a `426` was sent; `INVALID_FORMAT` - a malformed upgrade, a `400` was sent; `INVALID_ARG` - a `protocol` the client did not offer, nothing sent; `BUSY` - the server's `max_upgraded` are open, a `503` was sent. |
 | `proven_ws_conn_open(transport, is_server, early, &config, &ws)` | Make a connection over a transport already past its handshake. On success it owns the transport. | `proven_err_t`: `INVALID_ARG`; `NOMEM`; `OUT_OF_BOUNDS` when `early` exceeds 16 KiB; `IO`. |
 | `proven_ws_conn_destroy(ws)` | Close the transport and free the connection. | none. |
 | `proven_ws_conn_protocol(ws)` | The subprotocol agreed; empty when none. | `proven_u8str_view_t`. |
@@ -93,6 +93,8 @@ typedef struct {
     proven_size_t max_message_bytes;    /* 0: 1 MiB - the largest message accepted */
     proven_u32 io_timeout_ms;           /* 0: 30 s - for each write */
     proven_u32 close_timeout_ms;        /* 0: 5 s - how long close waits for the peer */
+    proven_u32 ping_interval_ms;        /* 0: 30 s - silence after which a ping is sent */
+    proven_u32 pong_timeout_ms;         /* 0: 10 s - further silence after which it ends */
 } proven_ws_conn_config_t;
 ```
 
@@ -191,10 +193,15 @@ A program that sends for a long time without calling `proven_ws_conn_receive` an
 and a peer that uses pings to detect dead connections will conclude this one is dead. If you
 send a great deal, receive now and then - with `PROVEN_NET_DONT_WAIT` if there may be nothing.
 
-**Nothing sends pings for you either.** To find a silent connection that has died - a laptop
-that closed, a NAT that forgot - send `proven_ws_conn_ping`, receive for as long as you are
-prepared to wait, and see whether `proven_ws_conn_pong_count` moved. A TCP connection whose
-other end vanished without a word can otherwise look open for hours.
+**Silence is noticed for you** (since v0.104.0). A TCP connection whose other end vanished
+without a word - a laptop that closed, a NAT that forgot - can look open for hours. After
+`ping_interval_ms` with nothing from the peer the connection sends a ping, and after
+`pong_timeout_ms` more it gives up: `proven_ws_conn_receive` returns `PROVEN_ERR_RESET` with close
+code 1006, as when the peer drops the connection. Any byte from the peer counts as an answer. There
+is no timer and no thread: the ping goes out while a receive waits - a receive reads no longer than
+to the next ping - so a program that does not receive for a minute sends nothing in that minute,
+and its next receive pings at once. `proven_ws_conn_ping` and `proven_ws_conn_pong_count` are
+still there for a check of your own.
 
 **`_send_part` does not check text.** `proven_ws_conn_send_text` refuses text that is not
 UTF-8, because the peer must drop the connection when it receives such text. Fragments cannot
@@ -263,9 +270,11 @@ blocked in receive. That is a workable design for tens or hundreds of connection
 one for tens of thousands - for which you would drive the codec of sections 6-8 from a
 readiness loop of your own (`proven_net_poll`, Chapter 9), one decoder per connection.
 
-**No limit is applied for you.** The HTTP server's `max_connections` stops counting a
-connection when it is upgraded. If clients can open WebSockets without bound, count them
-yourself and answer the handshake with a `503` when you have enough.
+**A limit is applied for you** (since v0.104.0). The HTTP server's `max_connections` stops
+counting a connection when it is upgraded; its `max_upgraded` (1,024 unless set) counts those,
+until each is closed - from any thread, even after the server is gone. At the limit
+`proven_ws_conn_accept` answers the handshake with `503` and `Retry-After: 1` and returns
+`PROVEN_ERR_BUSY`. Set it to the number of threads you are prepared to give WebSockets.
 
 Compiled and run by the test suite:
 

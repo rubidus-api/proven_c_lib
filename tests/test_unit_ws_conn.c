@@ -35,6 +35,8 @@ static atomic_int g_plain_requests;
 static atomic_int g_echo_started, g_echo_done;   /* echo conversations begun and ended */
 
 static proven_byte_t g_big[70000];
+static proven_ws_conn_t *g_held[4];             /* "/hold": connections the handler keeps and returns from */
+static atomic_int g_held_n;
 
 /* Echo until the peer closes; record how it ended. */
 static void echo_until_closed(proven_ws_conn_t *ws) {
@@ -98,6 +100,9 @@ static void handler(void *ctx, proven_http_exchange_t *x) {
     } else if (proven_u8str_view_eq(r->target, sv("/handoff"))) {
         /* Gives the connection to another thread and returns: the server is free again. */
         if (proven_job_group_submit(g_workers, &g_group, echo_job, ws) != PROVEN_OK) proven_ws_conn_destroy(ws);
+    } else if (proven_u8str_view_eq(r->target, sv("/hold"))) {
+        const int i = atomic_fetch_add(&g_held_n, 1);
+        if (i < 4) g_held[i] = ws; else proven_ws_conn_destroy(ws);
     } else if (proven_u8str_view_eq(r->target, sv("/push"))) {
         (void)proven_ws_conn_send_text(ws, sv("first"));
         (void)proven_ws_conn_send_binary(ws, (proven_mem_view_t){ .ptr = g_big, .size = sizeof g_big });
@@ -636,7 +641,91 @@ static void run_client_side(void) {
         proven_ws_conn_destroy(server_end);
         proven_ws_conn_destroy(NULL);
     }
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("pings on silence",
+        "ping_interval_ms and pong_timeout_ms (v0.104.0), over a socket pair whose other end is read and written by hand: a ping goes out after the interval of silence while a receive waits, a pong (any byte) holds the connection open and the next ping follows the next silence, and a peer that answers nothing ends the connection with PROVEN_ERR_RESET and 1006 after the interval and the timeout.",
+        "Inspect wc_pump in src/proven/ws_conn.c: the read's deadline is the earlier of the caller's and the ping's.");
+    // ---------------------------------------------------------------
+    {
+        proven_net_conn_t a, b;
+        PROVEN_TEST_ASSERT(proven_net_pair(&a, &b) == PROVEN_OK, "a socket pair", "");
+        proven_ws_conn_t *ws = NULL;
+        proven_ws_conn_config_t cfg = { .alloc = heap, .ping_interval_ms = 150, .pong_timeout_ms = 300 };
+        PROVEN_TEST_ASSERT(proven_ws_conn_open(proven_net_conn_transport(&a), false, (proven_mem_view_t){0}, &cfg, &ws) == PROVEN_OK, "a client end", "");
+        proven_byte_t raw[64];
+        /* A receive that waits 250 ms: the ping goes at about 150 and the wait ends at 250 with no pong yet. */
+        proven_time_t start = proven_time_monotonic_now();
+        PROVEN_TEST_ASSERT(proven_ws_conn_receive(ws, proven_net_deadline_in(250), &m) == PROVEN_ERR_TIMEOUT, "a quiet receive times out as asked", "");
+        proven_result_size_t r = proven_net_read(&b, (proven_mem_mut_t){ raw, sizeof raw }, proven_net_deadline_in(1000));
+        proven_i64 took = (proven_time_monotonic_now() - start) / 1000000;
+        PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.value == 6 && raw[0] == 0x89 && raw[1] == 0x80 && took >= 140, "a masked, empty ping arrived, sent during the wait", "");
+        /* The pong; the next receive takes it, and pings again after the next 150 ms of silence. */
+        const proven_byte_t pong[2] = { 0x8A, 0x00 };
+        PROVEN_TEST_ASSERT(proven_net_write_all(&b, (proven_mem_view_t){ pong, 2 }, proven_net_deadline_in(1000)).err == PROVEN_OK, "the peer answers", "");
+        PROVEN_TEST_ASSERT(proven_ws_conn_receive(ws, proven_net_deadline_in(250), &m) == PROVEN_ERR_TIMEOUT && proven_ws_conn_pong_count(ws) == 1,
+                           "the pong is counted and the connection lives: PROVEN_ERR_TIMEOUT, as asked", "");
+        r = proven_net_read(&b, (proven_mem_mut_t){ raw, sizeof raw }, proven_net_deadline_in(1000));
+        PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.value == 6 && raw[0] == 0x89, "a second ping after the second silence", "");
+        /* A message in between counts as hearing from the peer too. */
+        const proven_byte_t hi[4] = { 0x81, 0x02, 'h', 'i' };
+        PROVEN_TEST_ASSERT(proven_net_write_all(&b, (proven_mem_view_t){ hi, 4 }, proven_net_deadline_in(1000)).err == PROVEN_OK &&
+                           proven_ws_conn_receive(ws, proven_net_deadline_in(1000), &m) == PROVEN_OK && m.text && m.data.size == 2, "a message arrives between pings", "");
+        /* Now nothing at all: a ping after 150 ms, and 300 ms later the end. */
+        start = proven_time_monotonic_now();
+        proven_err_t e = proven_ws_conn_receive(ws, proven_net_deadline_in(5000), &m);
+        took = (proven_time_monotonic_now() - start) / 1000000;
+        printf("  a silent peer: %d after %lld ms\n", (int)e, (long long)took);
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_RESET && proven_ws_conn_close_code(ws) == 1006 && took >= 400 && took < 2000,
+                           "a peer that answers nothing is given up after the interval and the timeout: PROVEN_ERR_RESET, 1006, long before the caller's deadline", "");
+        proven_ws_conn_destroy(ws);
+        (void)proven_net_close(&b);
+    }
     proven_http_client_destroy(client);
+}
+
+/* A server with room for two upgraded connections. */
+static void run_cap(proven_job_sys_t *loop_thread) {
+    PROVEN_TEST_SECTION("a cap on upgraded connections",
+        "max_upgraded (v0.104.0): with 2, a third WebSocket is refused with 503 and Retry-After while two are open - the handler sees PROVEN_ERR_BUSY - and is taken once one of the two is closed; the two left are closed after the server is gone.",
+        "Inspect the place taken in proven_http_exchange_upgrade and given back in sv_owned_close, src/proven/http_server.c.");
+    proven_allocator_t heap = proven_heap_allocator();
+    proven_http_server_config_t scfg = { .alloc = heap, .handler = handler, .max_upgraded = 2 };
+    PROVEN_TEST_ASSERT(proven_http_server_create(&scfg, &g_server) == PROVEN_OK, "a server", "");
+    proven_net_addr_t at;
+    PROVEN_TEST_ASSERT(proven_http_server_listen(g_server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "it listens", "");
+    proven_job_group_t running;
+    proven_job_group_init(&running);
+    PROVEN_TEST_ASSERT(proven_job_group_submit(loop_thread, &running, serve, NULL) == PROVEN_OK, "its loop runs", "");
+    proven_http_client_config_t ccfg = { .alloc = heap };
+    proven_http_client_t *client = NULL;
+    PROVEN_TEST_ASSERT(proven_http_client_create(&ccfg, &client) == PROVEN_OK, "a client", "");
+    proven_ws_conn_config_t wcfg = { .alloc = heap };
+    proven_ws_conn_t *c[3] = { NULL, NULL, NULL };
+    proven_u16 status = 0;
+    atomic_store(&g_held_n, 0);
+    PROVEN_TEST_ASSERT(proven_ws_conn_connect(client, ws_url(at.port, "/hold"), NULL, 0, sv(""), &wcfg, &c[0], &status) == PROVEN_OK &&
+                       proven_ws_conn_connect(client, ws_url(at.port, "/hold"), NULL, 0, sv(""), &wcfg, &c[1], &status) == PROVEN_OK, "two WebSockets", "");
+    proven_ws_conn_t *x = NULL;
+    status = 0;
+    PROVEN_TEST_ASSERT(proven_ws_conn_connect(client, ws_url(at.port, "/hold"), NULL, 0, sv(""), &wcfg, &x, &status) == PROVEN_ERR_REFUSED && status == 503 && x == NULL &&
+                       atomic_load(&g_accept_error) == PROVEN_ERR_BUSY, "a third is refused with 503, and the handler was told PROVEN_ERR_BUSY", "");
+    /* One of the two closed, on the server's side: its place is free again. */
+    for (int i = 0; i < 200 && atomic_load(&g_held_n) < 2; ++i) proven_time_sleep(5);
+    proven_ws_conn_destroy(g_held[0]);
+    proven_ws_conn_destroy(c[0]);
+    PROVEN_TEST_ASSERT(proven_ws_conn_connect(client, ws_url(at.port, "/hold"), NULL, 0, sv(""), &wcfg, &c[2], &status) == PROVEN_OK && status == 101,
+                       "with one closed, the next is taken", "");
+    for (int i = 0; i < 200 && atomic_load(&g_held_n) < 3; ++i) proven_time_sleep(5);
+    /* The server goes first; the connections it handed out are closed after it. */
+    proven_http_server_stop(g_server);
+    proven_job_group_wait(loop_thread, &running);
+    proven_http_server_destroy(g_server);
+    proven_ws_conn_destroy(g_held[1]);
+    proven_ws_conn_destroy(g_held[2]);
+    proven_ws_conn_destroy(c[1]);
+    proven_ws_conn_destroy(c[2]);
+    proven_http_client_destroy(client);
+    PROVEN_TEST_ASSERT(atomic_load(&g_held_n) == 3, "the handler kept the three it was given", "");
 }
 
 int main(void) {
@@ -668,6 +757,7 @@ int main(void) {
     PROVEN_TEST_INFO("model: handlers on a job system");
     run_cases(handlers, loop_thread);
     run_client_side();
+    run_cap(loop_thread);
 
     proven_job_system_close(handlers);
     proven_job_system_destroy(handlers);

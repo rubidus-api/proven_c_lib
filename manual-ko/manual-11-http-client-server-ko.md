@@ -94,6 +94,7 @@ typedef struct {
     proven_u32 write_timeout_ms;       /* 0: 30 s */
     proven_u32 idle_timeout_ms;        /* 0: 60 s */
     proven_u32 linger_ms;              /* 0: 1 s */
+    proven_size_t max_upgraded;        /* 0: 1,024 - upgraded connections open at once (11절) */
     const proven_tls_config_t *tls;    /* NULL: plain HTTP */
 } proven_http_server_config_t;
 ```
@@ -913,12 +914,12 @@ TLS가 아니라 UDP 패킷 안의 TLS다 - 그래서 아래에는 이 클라이
 
 | API | 의도 | 반환 |
 |---|---|---|
-| `proven_http_exchange_upgrade(x, protocol, headers, count, &transport, &early)` | 핸들러 안에서: `Upgrade: protocol`과 `Connection: Upgrade`를 단 `101`로 답하고, 연결을 서버에서 꺼낸다. | `proven_err_t`: 응답을 이미 시작했거나, 요청에 읽지 않은 본문이 있거나, HTTP/1.0이면 `INVALID_STATE`. 서버가 맡은 헤더(`Upgrade` 포함)면 `INVALID_ARG`. `NOMEM`. `OUT_OF_BOUNDS`. `TIMEOUT`, `RESET`. |
+| `proven_http_exchange_upgrade(x, protocol, headers, count, &transport, &early)` | 핸들러 안에서: `Upgrade: protocol`과 `Connection: Upgrade`를 단 `101`로 답하고, 연결을 서버에서 꺼낸다. | `proven_err_t`: 응답을 이미 시작했거나, 요청에 읽지 않은 본문이 있거나, HTTP/1.0이면 `INVALID_STATE`. 서버가 맡은 헤더(`Upgrade` 포함)면 `INVALID_ARG`. `NOMEM`. `OUT_OF_BOUNDS`. `max_upgraded`개가 열려 있으면 `BUSY`. `TIMEOUT`, `RESET`. |
 | `request.upgrade` | 클라이언트 요청에서: 요청할 프로토콜. `Connection: Upgrade`와 `Upgrade`는 클라이언트가 직접 쓴다. | - |
 | `proven_http_client_upgrade(&response, &transport, &early)` | `101`을 받은 뒤: 연결을 클라이언트에서 꺼낸다. | `proven_err_t`: 응답이 `101`이 아니거나 이미 꺼냈으면 `INVALID_STATE`. |
 
 어느 쪽이든 연결을 **소유(owned)**하는 `proven_transport_t`를 받는다. 그것은 더 이상 서버나 클라이언트의
-것이 아니다. `max_connections`에 세어지지 않고, 그들의 타임아웃이 적용되지 않고, 재사용되지 않으며,
+것이 아니다. `max_connections`에 세어지지 않고(서버는 그것을 닫힐 때까지 `max_upgraded`에 세고, 그 이상의 업그레이드는 `BUSY`로 거절한다), 그들의 타임아웃이 적용되지 않고, 재사용되지 않으며,
 여러분이 `proven_transport_close`를 부를 때까지 열려 있다. 서버 핸들러는 돌아간 뒤에도 그것을 갖고
 있어도 된다.
 

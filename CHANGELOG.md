@@ -32,6 +32,18 @@ written; their tags still exist.
   on records of about 190 bytes, 0.89 to 1.01 of libzstd's size with the same dictionary. Nothing in
   the HTTP drivers uses dictionaries (RFC 8878, section 6).
 
+- **The blocking WebSocket notices silence** (RFC-0040 W-1): `ping_interval_ms` and `pong_timeout_ms`
+  in `proven_ws_conn_config_t`, as `ws_event`'s (30 s and 10 s): after the interval with nothing from
+  the peer a ping goes out while `proven_ws_conn_receive` waits (there is no timer: a receive reads no
+  longer than to the next ping), and after the timeout more `receive` returns `PROVEN_ERR_RESET`, close
+  code 1006. Any byte from the peer counts as an answer.
+- **A cap on upgraded connections in the blocking server** (RFC-0040 W-2): `max_upgraded` in
+  `proven_http_server_config_t` (0: 1,024) counts connections handed out by
+  `proven_http_exchange_upgrade` until each is closed - from any thread, even after the server is gone.
+  At the cap an upgrade is `PROVEN_ERR_BUSY`, and `proven_ws_conn_accept` answers `503` with
+  `Retry-After: 1`. Before, nothing limited them. The event-driven server is unchanged: its WebSockets
+  count against `max_connections`, and its pings were already sent.
+
 ### Changed
 
 - The bit readers and the FSE and Huffman table readers of the decoder moved to the internal header

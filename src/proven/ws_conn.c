@@ -17,6 +17,8 @@
 #define WC_SEND_SIZE 4096u
 #define WC_DEFAULT_MAX_MESSAGE (1024u * 1024u)
 #define WC_LINGER_MS 1000u             /* how long a refused peer's remaining bytes are read away */
+#define WC_DEFAULT_PING_MS 30000u      /* as ws_event's */
+#define WC_DEFAULT_PONG_MS 10000u
 
 struct proven_ws_conn {
     proven_ws_conn_config_t cfg;
@@ -29,6 +31,10 @@ struct proven_ws_conn {
     proven_size_t read_pos;
     proven_size_t read_len;
     proven_u64 pongs;
+    /* Pings on silence: when the peer was last heard from, and when this side's ping went (while
+     * `pinged`). There is no timer: a receive or a close reads no longer than to the next of these. */
+    proven_net_deadline_t heard, pinged_at;
+    bool pinged;
     proven_err_t failed;
     proven_u16 close_code;
     proven_u8 close_reason_len;
@@ -300,7 +306,24 @@ static proven_err_t wc_pump(proven_ws_conn_t *c, proven_net_deadline_t until, pr
         if (c->read_pos == c->read_len) {
             c->read_pos = 0;
             c->read_len = 0;
-            proven_result_size_t r = proven_transport_read(c->t, (proven_mem_mut_t){ .ptr = c->read_buf, .size = sizeof c->read_buf }, until);
+            /* Read no longer than to this side's next ping, or to the end of the wait for its pong. */
+            const proven_net_deadline_t due = c->pinged ? c->pinged_at + (proven_time_t)c->cfg.pong_timeout_ms * 1000000
+                                                        : c->heard + (proven_time_t)c->cfg.ping_interval_ms * 1000000;
+            const bool watch = !discard && until != PROVEN_NET_DONT_WAIT && due < until;
+            proven_result_size_t r = proven_transport_read(c->t, (proven_mem_mut_t){ .ptr = c->read_buf, .size = sizeof c->read_buf }, watch ? due : until);
+            if (r.err == PROVEN_ERR_TIMEOUT && watch && proven_net_deadline_in(0) >= due) {
+                if (c->pinged) {
+                    /* No byte at all for a ping's interval and the pong's: the peer is gone without a word. */
+                    c->close_code = PROVEN_WS_CLOSE_ABNORMAL;
+                    c->failed = PROVEN_ERR_RESET;
+                    return c->failed;
+                }
+                proven_err_t e = wc_send_frame(c, true, PROVEN_WS_PING, false, (proven_mem_view_t){0});
+                if (e != PROVEN_OK) return e;
+                c->pinged = true;
+                c->pinged_at = proven_net_deadline_in(0);
+                continue;
+            }
             if (r.err == PROVEN_ERR_TIMEOUT) return PROVEN_ERR_TIMEOUT;
             if (r.err != PROVEN_OK) {
                 /* The connection ended with no close frame: an abnormal closure. */
@@ -309,6 +332,9 @@ static proven_err_t wc_pump(proven_ws_conn_t *c, proven_net_deadline_t until, pr
                 return c->failed;
             }
             c->read_len = r.value;
+            /* Any byte from the peer answers a ping (as ws_event). */
+            c->heard = proven_net_deadline_in(0);
+            c->pinged = false;
         }
         proven_size_t used = 0;
         proven_ws_event_t ev;
@@ -421,6 +447,11 @@ static proven_err_t wc_open(proven_transport_t transport, bool is_server, proven
     if (c->cfg.max_message_bytes == 0) c->cfg.max_message_bytes = WC_DEFAULT_MAX_MESSAGE;
     if (c->cfg.io_timeout_ms == 0) c->cfg.io_timeout_ms = 30000;
     if (c->cfg.close_timeout_ms == 0) c->cfg.close_timeout_ms = 5000;
+    if (c->cfg.ping_interval_ms == 0) c->cfg.ping_interval_ms = WC_DEFAULT_PING_MS;
+    if (c->cfg.pong_timeout_ms == 0) c->cfg.pong_timeout_ms = WC_DEFAULT_PONG_MS;
+    c->heard = proven_net_deadline_in(0);
+    c->pinged_at = 0;
+    c->pinged = false;
     c->t = transport;
     c->message = (void *)0;
     c->message_len = 0;
@@ -556,6 +587,12 @@ proven_err_t proven_ws_conn_accept(proven_http_exchange_t *exchange, proven_u8st
     proven_transport_t t;
     proven_mem_view_t early;
     e = proven_http_exchange_upgrade(exchange, wc_lit("websocket"), headers, header_count, &t, &early);
+    if (e == PROVEN_ERR_BUSY) {
+        /* The server's `max_upgraded` are open: try again soon. */
+        const proven_http_header_t h = { wc_lit("Retry-After"), wc_lit("1") };
+        (void)proven_http_exchange_respond(exchange, 503, &h, 1, (proven_mem_view_t){0});
+        return e;
+    }
     if (e != PROVEN_OK) return e;
     e = wc_open(t, true, early, config, deflate ? &terms : (void *)0, out);
     if (e != PROVEN_OK) { (void)proven_transport_close(t); return e; }

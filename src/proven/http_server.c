@@ -81,8 +81,21 @@ struct sv_conn {
 
 struct proven_http_exchange { proven_sv_conn_t conn; };
 
+/* The server's upgraded connections that are open: shared by the server and each of them, so that a
+ * connection closed after the server is gone still has somewhere to say so. The last of them frees it. */
+typedef struct {
+    proven_allocator_t alloc;
+    atomic_size_t open;
+    atomic_size_t refs;
+} proven_sv_upcount_t;
+
+static void sv_up_release(proven_sv_upcount_t *u) {
+    if (atomic_fetch_sub_explicit(&u->refs, 1, memory_order_acq_rel) == 1) u->alloc.free_fn(u->alloc.ctx, u);
+}
+
 struct proven_http_server {
     proven_http_server_config_t cfg;
+    proven_sv_upcount_t *up;
     proven_net_listener_t listeners[SV_MAX_LISTENERS];
     proven_size_t listener_count;
     proven_net_waker_t waker;
@@ -387,6 +400,7 @@ typedef struct {
     proven_net_conn_t sock;
     bool tls;
     proven_transport_t over;               /* with TLS: the TLS transport, which reads and writes `sock` */
+    proven_sv_upcount_t *up;               /* the server's count of these, which this one is in */
 } proven_sv_owned_t;
 
 static proven_result_size_t sv_owned_read(void *ctx, proven_mem_mut_t dest, proven_net_deadline_t until) {
@@ -405,6 +419,8 @@ static proven_err_t sv_owned_close(void *ctx) {
     proven_sv_owned_t *o = ctx;
     /* Closing the TLS transport says goodbye and closes the socket under it. */
     proven_err_t e = o->tls ? proven_transport_close(o->over) : proven_net_close(&o->sock);
+    (void)atomic_fetch_sub_explicit(&o->up->open, 1, memory_order_acq_rel);
+    sv_up_release(o->up);
     sv_free(o->alloc, o);
     return e;
 }
@@ -419,6 +435,12 @@ proven_err_t proven_http_exchange_upgrade(proven_http_exchange_t *exchange, prov
     /* Only a request with no body left to read can change protocols: after the 101 the bytes
      * on the connection belong to the new one. */
     if (c->response_begun || c->detached || !c->body_done || c->req.version_minor < 1) return PROVEN_ERR_INVALID_STATE;
+    /* A place among the upgraded connections, taken now and given back if the 101 does not go. */
+    proven_sv_upcount_t *const up = c->server->up;
+    if (atomic_fetch_add_explicit(&up->open, 1, memory_order_acq_rel) >= c->server->cfg.max_upgraded) {
+        (void)atomic_fetch_sub_explicit(&up->open, 1, memory_order_acq_rel);
+        return PROVEN_ERR_BUSY;
+    }
 
     proven_mem_mut_t head = { .ptr = c->out, .size = c->out_cap };
     proven_size_t len = 0;
@@ -430,18 +452,20 @@ proven_err_t proven_http_exchange_upgrade(proven_http_exchange_t *exchange, prov
     if (e == PROVEN_OK) e = proven_http_write_header(head, &len, sv_lit("Upgrade"), protocol);
     if (e == PROVEN_OK) e = proven_http_write_header(head, &len, sv_lit("Connection"), sv_lit("Upgrade"));
     for (proven_size_t i = 0; i < header_count && e == PROVEN_OK; ++i) {
-        if (sv_is_driver_header(headers[i].name) || proven_u8str_view_eq_ascii_ci(headers[i].name, sv_lit("Upgrade"))) return PROVEN_ERR_INVALID_ARG;
+        if (sv_is_driver_header(headers[i].name) || proven_u8str_view_eq_ascii_ci(headers[i].name, sv_lit("Upgrade"))) { e = PROVEN_ERR_INVALID_ARG; break; }
         e = proven_http_write_header(head, &len, headers[i].name, headers[i].value);
     }
     if (e == PROVEN_OK) e = proven_http_write_head_end(head, &len);
-    if (e != PROVEN_OK) return e;
-
-    proven_sv_owned_t *owned = sv_alloc(c->server->cfg.alloc, sizeof *owned);
-    if (!owned) return PROVEN_ERR_NOMEM;
-    c->response_begun = true;
-    c->response_ended = true;
-    e = sv_send(c, (proven_mem_view_t){ .ptr = c->out, .size = len });
-    if (e != PROVEN_OK) { sv_free(c->server->cfg.alloc, owned); return e; }
+    proven_sv_owned_t *owned = e == PROVEN_OK ? sv_alloc(c->server->cfg.alloc, sizeof *owned) : (void *)0;
+    if (e == PROVEN_OK && !owned) e = PROVEN_ERR_NOMEM;
+    if (e == PROVEN_OK) {
+        c->response_begun = true;
+        c->response_ended = true;
+        e = sv_send(c, (proven_mem_view_t){ .ptr = c->out, .size = len });
+        if (e != PROVEN_OK) sv_free(c->server->cfg.alloc, owned);
+    }
+    if (e != PROVEN_OK) { (void)atomic_fetch_sub_explicit(&up->open, 1, memory_order_acq_rel); return e; }
+    (void)atomic_fetch_add_explicit(&up->refs, 1, memory_order_acq_rel);
 
     /* With handlers on the loop's thread the connection is still registered with the selector;
      * it must leave before the socket does. (On a worker it was taken out at dispatch.) */
@@ -450,6 +474,7 @@ proven_err_t proven_http_exchange_upgrade(proven_http_exchange_t *exchange, prov
     owned->sock = c->sock;
     owned->tls = c->tls;
     owned->over = c->t;
+    owned->up = up;
     /* The socket has a new home; the TLS transport must read and write it there. */
     if (c->tls) proven_tls_transport_set_plain_(owned->over, proven_net_conn_transport(&owned->sock));
     c->sock = (proven_net_conn_t){0};
@@ -1015,6 +1040,12 @@ proven_err_t proven_http_server_create(const proven_http_server_config_t *config
     if (s->cfg.write_timeout_ms == 0) s->cfg.write_timeout_ms = 30000;
     if (s->cfg.idle_timeout_ms == 0) s->cfg.idle_timeout_ms = 60000;
     if (s->cfg.linger_ms == 0) s->cfg.linger_ms = SV_LINGER_MS;
+    if (s->cfg.max_upgraded == 0) s->cfg.max_upgraded = 1024;
+    s->up = sv_alloc(config->alloc, sizeof *s->up);
+    if (!s->up) { sv_free(config->alloc, s); return PROVEN_ERR_NOMEM; }
+    s->up->alloc = config->alloc;
+    atomic_init(&s->up->open, 0);
+    atomic_init(&s->up->refs, 1);
     atomic_init(&s->done, (proven_sv_conn_t *)0);
     atomic_init(&s->stop, false);
     atomic_init(&s->in_flight, 0);
@@ -1022,6 +1053,7 @@ proven_err_t proven_http_server_create(const proven_http_server_config_t *config
     atomic_init(&s->shutdown_grace_ms, 0u);
 
     if (s->cfg.max_head_bytes > PROVEN_SIZE_MAX / 4 || s->cfg.max_headers > PROVEN_SIZE_MAX / (4 * sizeof(proven_http_header_t))) {
+        sv_up_release(s->up);
         sv_free(config->alloc, s);
         return PROVEN_ERR_OVERFLOW;
     }
@@ -1036,6 +1068,7 @@ proven_err_t proven_http_server_create(const proven_http_server_config_t *config
         }
     }
     if (e != PROVEN_OK) {
+        sv_up_release(s->up);
         sv_free(config->alloc, s);
         return e;
     }
@@ -1203,6 +1236,7 @@ void proven_http_server_destroy(proven_http_server_t *server) {
     (void)proven_net_selector_remove(s->selector, proven_net_waker_handle(&s->waker));
     proven_net_waker_close(&s->waker);
     proven_net_selector_destroy(s->selector);
+    sv_up_release(s->up);
     sv_free(s->cfg.alloc, s);
 }
 

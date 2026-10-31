@@ -544,10 +544,11 @@ int main(void) {
             printf("  150 bytes from the content's beginning: a frame of %zu bytes\n", made);
             PROVEN_TEST_ASSERT(made < 40, "a match or two, about 8,000 bytes back in a frame whose window is 150", "");
         }
-        /* A stream through a sliding buffer: window 1 KiB, 100 records. */
+        /* A stream through a sliding buffer: window 1 KiB, 400 records - enough for the decoder to write over
+         * every byte where it held the content. */
         {
             proven_zstd_encoder_t *z = NULL;
-            proven_size_t made = 0, n = roff[2100] - roff[2000];
+            proven_size_t made = 0, n = roff[2400] - roff[2000];
             PROVEN_TEST_ASSERT(proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 3, .window_log = 10, .dictionary = { DICT, sizeof DICT } }, &z) == PROVEN_OK &&
                                encode_steps(z, recs + roff[2000], n, 333, (proven_size_t)-1, false, g_enc, sizeof g_enc, &made) == PROVEN_OK, "a stream", "");
             proven_zstd_encoder_destroy(z);
@@ -555,7 +556,7 @@ int main(void) {
             bool done = false;
             proven_zstd_decoder_reset(d);
             PROVEN_TEST_ASSERT(proven_zstd_decode(d, (proven_mem_view_t){ g_enc, made }, &c, (proven_mem_mut_t){ g_dec, sizeof g_dec }, &p, &done) == PROVEN_OK && done && p == n && memcmp(g_dec, recs + roff[2000], n) == 0,
-                               "with a window of 1 KiB, a dictionary of 8 KiB and 15 KB of records, the buffer slides and the frame decodes", "");
+                               "with a window of 1 KiB, a dictionary of 8 KiB and 60 KB of records, the buffer slides and the frame decodes", "");
             /* That frame outgrew its window, so the decoder let the content go: the next frame needs it again. */
             (void)proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 3, .dictionary = { DICT, sizeof DICT } },
                                          (proven_mem_view_t){ recs + roff[2950], roff[2951] - roff[2950] }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made);

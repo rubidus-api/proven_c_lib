@@ -78,7 +78,7 @@ if (proven_ws_conn_connect(http_client, PROVEN_LIT("ws://example.com/feed"), NUL
 | API | 의도 | 반환 |
 |---|---|---|
 | `proven_ws_conn_connect(client, url, headers, count, protocols, &config, &ws, &http_status)` | HTTP 클라이언트를 거쳐 클라이언트로 연결한다 - 그래서 그 클라이언트의 프록시, 타임아웃, `tls_wrap`이 적용된다. `url`은 `ws://`나 `wss://`다. `http_status`(선택)는 서버가 답한 상태 코드를 받는다. | `proven_err_t`: 답이 `101`이 아니면 `REFUSED`(`http_status`를 보라). `101`이 이 핸드셰이크에 대한 답이 아니면 `INVALID_FORMAT`. `tls_wrap` 없는 `wss`는 `UNSUPPORTED`. 무작위 바이트를 얻지 못하면 `IO`. 그리고 `proven_http_client_send`의 오류들. |
-| `proven_ws_conn_accept(x, protocol, &config, &ws)` | HTTP 핸들러 안에서 서버로 받아들인다: 요청을 확인하고, `101`로 답하고, 연결을 가져온다. `protocol`은 고를 서브프로토콜이거나 비어 있다. | `proven_err_t`: `NOT_FOUND` - 업그레이드가 아니다, 아무것도 보내지 않았다, HTTP로 답하라. `UNSUPPORTED` - 다른 버전이다, `426`을 보냈다. `INVALID_FORMAT` - 형식이 어긋난 업그레이드다, `400`을 보냈다. `INVALID_ARG` - 클라이언트가 내놓지 않은 `protocol`이다, 아무것도 보내지 않았다. |
+| `proven_ws_conn_accept(x, protocol, &config, &ws)` | HTTP 핸들러 안에서 서버로 받아들인다: 요청을 확인하고, `101`로 답하고, 연결을 가져온다. `protocol`은 고를 서브프로토콜이거나 비어 있다. | `proven_err_t`: `NOT_FOUND` - 업그레이드가 아니다, 아무것도 보내지 않았다, HTTP로 답하라. `UNSUPPORTED` - 다른 버전이다, `426`을 보냈다. `INVALID_FORMAT` - 형식이 어긋난 업그레이드다, `400`을 보냈다. `INVALID_ARG` - 클라이언트가 내놓지 않은 `protocol`이다, 아무것도 보내지 않았다. `BUSY` - 서버의 `max_upgraded`개가 열려 있다, `503`을 보냈다. |
 | `proven_ws_conn_open(transport, is_server, early, &config, &ws)` | 핸드셰이크를 이미 마친 전송 위에 연결을 만든다. 성공하면 연결이 전송을 소유한다. | `proven_err_t`: `INVALID_ARG`. `NOMEM`. `early`가 16 KiB를 넘으면 `OUT_OF_BOUNDS`. `IO`. |
 | `proven_ws_conn_destroy(ws)` | 전송을 닫고 연결을 해제한다. | 없음. |
 | `proven_ws_conn_protocol(ws)` | 합의된 서브프로토콜. 없으면 비어 있다. | `proven_u8str_view_t`. |
@@ -89,6 +89,8 @@ typedef struct {
     proven_size_t max_message_bytes;    /* 0: 1 MiB - the largest message accepted */
     proven_u32 io_timeout_ms;           /* 0: 30 s - for each write */
     proven_u32 close_timeout_ms;        /* 0: 5 s - how long close waits for the peer */
+    proven_u32 ping_interval_ms;        /* 0: 30 s - silence after which a ping is sent */
+    proven_u32 pong_timeout_ms;         /* 0: 10 s - further silence after which it ends */
 } proven_ws_conn_config_t;
 ```
 
@@ -181,9 +183,14 @@ use(first.data);                     /* wrong: first.data now holds the second m
 오랫동안 보내기만 하는 프로그램은 ping에 답하지 않고, ping으로 죽은 연결을 찾는 상대는 이 연결이
 죽었다고 결론짓는다. 많이 보낸다면 이따금 받아라 - 아무것도 없을 수 있으면 `PROVEN_NET_DONT_WAIT`로.
 
-**ping을 대신 보내 주는 것도 없다.** 말없이 죽은 연결 - 덮인 노트북, 잊어버린 NAT - 을 찾으려면
-`proven_ws_conn_ping`을 보내고, 기다릴 만큼 받아 보고, `proven_ws_conn_pong_count`가 움직였는지 보라.
-반대쪽이 한마디 없이 사라진 TCP 연결은 그러지 않으면 몇 시간이고 열려 있는 것처럼 보인다.
+**침묵은 대신 알아챈다**(v0.104.0부터). 반대쪽이 한마디 없이 사라진 TCP 연결 - 덮인 노트북, 잊어버린
+NAT - 은 몇 시간이고 열려 있는 것처럼 보일 수 있다. 상대에게서 `ping_interval_ms` 동안 아무것도 오지
+않으면 연결이 ping을 보내고, `pong_timeout_ms`가 더 지나면 포기한다: `proven_ws_conn_receive`가 상대가
+연결을 끊었을 때처럼 닫기 코드 1006과 함께 `PROVEN_ERR_RESET`을 돌려준다. 상대에게서 오는 바이트는
+무엇이든 답으로 친다. 타이머도 스레드도 없다: ping은 받기가 기다리는 동안 나간다 - 받기는 다음 ping
+때까지보다 오래 읽지 않는다 - 그래서 1분 동안 받지 않는 프로그램은 그 1분 동안 아무것도 보내지 않고,
+다음 받기에서 곧바로 ping을 보낸다. 직접 확인하려면 `proven_ws_conn_ping`과 `proven_ws_conn_pong_count`를
+그대로 쓸 수 있다.
 
 **`_send_part`는 텍스트를 검사하지 않는다.** `proven_ws_conn_send_text`는 UTF-8이 아닌 텍스트를
 거절한다. 그런 텍스트를 받으면 상대는 연결을 끊어야 하기 때문이다. 프래그먼트는 하나씩 검사할 수
@@ -248,9 +255,10 @@ use(first.data);                     /* wrong: first.data now holds the second m
 개나 수백 개에는 쓸 만한 설계이고 수만 개에는 틀린 설계다 - 그런 경우에는 §6-§8의 코덱을 여러분의 준비
 상태 루프(9장의 `proven_net_poll`)에서, 연결마다 디코더 하나씩 두고 구동해야 한다.
 
-**대신 걸어 주는 한도가 없다.** HTTP 서버의 `max_connections`는 연결이 업그레이드되면 그것을 세지
-않는다. 클라이언트가 WebSocket을 끝없이 열 수 있다면, 여러분이 세어서 충분할 때 핸드셰이크에 `503`으로
-답하라.
+**한도를 대신 건다**(v0.104.0부터). HTTP 서버의 `max_connections`는 연결이 업그레이드되면 그것을 세지
+않는다; 대신 `max_upgraded`(정하지 않으면 1,024)가 그런 연결을 각각 닫힐 때까지 센다 - 어느 스레드에서
+닫든, 서버가 사라진 뒤에 닫든. 한도에 이르면 `proven_ws_conn_accept`가 핸드셰이크에 `503`과
+`Retry-After: 1`로 답하고 `PROVEN_ERR_BUSY`를 돌려준다. WebSocket에 내줄 수 있는 스레드 수로 정하라.
 
 테스트 스위트가 컴파일하고 실행한다:
 
