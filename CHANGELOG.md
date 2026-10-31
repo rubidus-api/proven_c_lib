@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.102.0] - 2026-10-31
+
 ### Added
 
 - **Zstandard encoder levels 13 to 19** (RFC-0038 Z-2 and Z-3), for files compressed once and sent
