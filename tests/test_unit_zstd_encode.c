@@ -1,5 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
+#include "test_unit_zstd_dict_vectors.h"
 #include "../src/proven/proven_internal_zstd.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -457,6 +458,121 @@ int main(void) {
                 PROVEN_TEST_ASSERT(e == PROVEN_OK && decodes_to(g_enc, b, g_in, m, 0), "blocks full of sequences between long matches decode", "");
             }
         }
+    }
+
+    PROVEN_TEST_SECTION("dictionaries", "`dictionary`: records like the dictionary's, one a frame and twenty a frame, at every level with the formatted dictionary and a raw one, whole and streamed through one encoder reset between frames: each decodes with the dictionary, names its ID, and is smaller than without; a first block repeats the dictionary's tables; a match into the content further back than a short frame's window; a stream through a sliding buffer; damaged dictionaries refused.", "Check dict_load, frame_start's tables and offsets, compress_block's reach and frame_header's ID in src/proven/zstd_encode.c.");
+    {
+        static char rec[3000 * 160];
+        static proven_size_t roff[3001];
+        g_x = 2026;
+        proven_size_t at = 0;
+        for (proven_u32 i = 0; i < 3000; ++i) { roff[i] = at; at += zd_record(xs, i, rec + at); }
+        roff[3000] = at;
+        const proven_byte_t *const recs = (const proven_byte_t *)rec;
+        proven_zstd_decoder_t *d = NULL;
+        PROVEN_TEST_ASSERT(proven_zstd_decoder_create(g_heap, 0, &d) == PROVEN_OK, "a decoder", "");
+        int bad = 0, larger = 0, frames = 0;
+        for (int raw = 0; raw < 2; ++raw) {
+            const proven_mem_view_t dv = raw ? (proven_mem_view_t){ DICT + sizeof DICT - 2048, 2048 } : (proven_mem_view_t){ DICT, sizeof DICT };
+            PROVEN_TEST_ASSERT(proven_zstd_decoder_use_dictionary(d, dv) == PROVEN_OK, "the decoder's", "");
+            for (int level = 1; level <= 19; ++level) {
+                proven_zstd_encoder_options_t o = { .alloc = g_heap, .level = level, .checksum = (level & 1) != 0, .dictionary = dv };
+                proven_zstd_encoder_t *z = NULL;
+                PROVEN_TEST_ASSERT(proven_zstd_encoder_create(&o, &z) == PROVEN_OK, "an encoder with the dictionary", "");
+                proven_size_t with = 0, without = 0;
+                for (proven_u32 r = 2000; r < 3000; r += level >= 13 ? 97 : 13) {
+                    const proven_u32 count = r % 2 ? 20 : 1;
+                    if (r + count > 3000) break;
+                    const proven_size_t n = roff[r + count] - roff[r];
+                    for (int way = 0; way < 2; ++way) {
+                        proven_size_t made = 0;
+                        proven_err_t e;
+                        if (way == 0) e = proven_zstd_encode_all(&o, (proven_mem_view_t){ recs + roff[r], n }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made);
+                        else { proven_zstd_encoder_reset(z); e = encode_steps(z, recs + roff[r], n, 7, (proven_size_t)-1, false, g_enc, sizeof g_enc, &made); }
+                        frames++;
+                        /* The ID: in the frame header after the descriptor (a whole buffer of this size is one segment). */
+                        const bool named = raw || (way == 1 ? true : (g_enc[4] & 3) == 3 && (proven_u32)(g_enc[5] | g_enc[6] << 8 | g_enc[7] << 16 | (proven_u32)g_enc[8] << 24) == DICT_ID);
+                        proven_size_t c = 0, p = 0;
+                        bool done = false;
+                        if (e == PROVEN_OK) e = proven_zstd_decode(d, (proven_mem_view_t){ g_enc, made }, &c, (proven_mem_mut_t){ g_dec, sizeof g_dec }, &p, &done);
+                        if (e != PROVEN_OK || !done || c != made || p != n || memcmp(g_dec, recs + roff[r], n) != 0 || !named) {
+                            if (bad < 5) printf("  %s, level %d, records from %u (%u), %s: %d\n", raw ? "raw" : "formatted", level, r, count, way ? "streamed" : "whole", (int)e);
+                            bad++;
+                            proven_zstd_decoder_reset(d);
+                            continue;
+                        }
+                        if (way == 0 && count == 1) {
+                            proven_size_t plain = 0;
+                            (void)proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = level, .checksum = (level & 1) != 0 }, (proven_mem_view_t){ recs + roff[r], n }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &plain);
+                            with += made; without += plain;
+                        }
+                    }
+                }
+                proven_zstd_encoder_destroy(z);
+                if (level == 1 || level == 3 || level == 9 || level == 19) printf("  %s dictionary, level %d: single records %zu bytes with it, %zu without\n", raw ? "a raw" : "the formatted", level, with, without);
+                if (with * 10 >= without * 6) larger++;
+            }
+        }
+        printf("  %d frames\n", frames);
+        PROVEN_TEST_ASSERT(bad == 0, "every frame decodes with the dictionary, and names it", "");
+        PROVEN_TEST_ASSERT(larger == 0, "single records come out at most 60 % of their size without it, at every level, with either dictionary", "");
+        /* A first block that repeats the dictionary's Huffman code: twenty records' literals, treeless (type 3). */
+        {
+            proven_size_t made = 0;
+            (void)proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 3, .dictionary = { DICT, sizeof DICT } },
+                                         (proven_mem_view_t){ recs + roff[2900], roff[2920] - roff[2900] }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made);
+            /* Header: magic, descriptor, four bytes of ID, two of size; then the block header (3), then the literals section. */
+            const proven_byte_t blk = g_enc[11];
+            const bool compressed = ((blk >> 1) & 3) == 2;
+            printf("  twenty records at level 3 with the formatted dictionary: %zu bytes, first block type %u, literals type %u\n", made, (unsigned)((blk >> 1) & 3), (unsigned)(g_enc[14] & 3));
+            PROVEN_TEST_ASSERT(compressed && (g_enc[14] & 3) == 3, "its literals repeat the dictionary's code, which the frame never wrote", "");
+        }
+        /* Reach: a record of 120 bytes is a frame of one segment - its window is its size - and its
+         * matches go into the dictionary's content up to 8,000 bytes back: allowed while the frame is
+         * within its window (RFC 8878, section 5). */
+        {
+            proven_size_t made = 0;
+            static proven_byte_t piece[200];
+            (void)memcpy(piece, DICT + sizeof DICT - DICT_CONTENT + 10, 150);    /* the start of the content: the furthest back */
+            PROVEN_TEST_ASSERT(proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 1, .dictionary = { DICT, sizeof DICT } },
+                                                      (proven_mem_view_t){ piece, 150 }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made) == PROVEN_OK, "a piece of the content's beginning", "");
+            proven_size_t c = 0, p = 0;
+            bool done = false;
+            PROVEN_TEST_ASSERT(proven_zstd_decoder_use_dictionary(d, (proven_mem_view_t){ DICT, sizeof DICT }) == PROVEN_OK &&
+                               proven_zstd_decode(d, (proven_mem_view_t){ g_enc, made }, &c, (proven_mem_mut_t){ g_dec, sizeof g_dec }, &p, &done) == PROVEN_OK && done && p == 150 && memcmp(g_dec, piece, 150) == 0,
+                               "decodes", "");
+            printf("  150 bytes from the content's beginning: a frame of %zu bytes\n", made);
+            PROVEN_TEST_ASSERT(made < 40, "a match or two, about 8,000 bytes back in a frame whose window is 150", "");
+        }
+        /* A stream through a sliding buffer: window 1 KiB, 100 records. */
+        {
+            proven_zstd_encoder_t *z = NULL;
+            proven_size_t made = 0, n = roff[2100] - roff[2000];
+            PROVEN_TEST_ASSERT(proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 3, .window_log = 10, .dictionary = { DICT, sizeof DICT } }, &z) == PROVEN_OK &&
+                               encode_steps(z, recs + roff[2000], n, 333, (proven_size_t)-1, false, g_enc, sizeof g_enc, &made) == PROVEN_OK, "a stream", "");
+            proven_zstd_encoder_destroy(z);
+            proven_size_t c = 0, p = 0;
+            bool done = false;
+            proven_zstd_decoder_reset(d);
+            PROVEN_TEST_ASSERT(proven_zstd_decode(d, (proven_mem_view_t){ g_enc, made }, &c, (proven_mem_mut_t){ g_dec, sizeof g_dec }, &p, &done) == PROVEN_OK && done && p == n && memcmp(g_dec, recs + roff[2000], n) == 0,
+                               "with a window of 1 KiB, a dictionary of 8 KiB and 15 KB of records, the buffer slides and the frame decodes", "");
+            /* That frame outgrew its window, so the decoder let the content go: the next frame needs it again. */
+            (void)proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 3, .dictionary = { DICT, sizeof DICT } },
+                                         (proven_mem_view_t){ recs + roff[2950], roff[2951] - roff[2950] }, (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made);
+            n = roff[2951] - roff[2950];
+            PROVEN_TEST_ASSERT(proven_zstd_decode(d, (proven_mem_view_t){ g_enc, made }, &c, (proven_mem_mut_t){ g_dec, sizeof g_dec }, &p, &done) == PROVEN_OK && done && p == n && memcmp(g_dec, recs + roff[2950], n) == 0,
+                               "and a short frame after it, from the same decoder, finds the content again", "");
+        }
+        /* Refused. */
+        proven_zstd_encoder_t *z = NULL;
+        static proven_byte_t dd[sizeof DICT];
+        (void)memcpy(dd, DICT, sizeof DICT);
+        dd[DICT_REPS_AT] = 0; dd[DICT_REPS_AT + 1] = 0; dd[DICT_REPS_AT + 2] = 0; dd[DICT_REPS_AT + 3] = 0;
+        PROVEN_TEST_ASSERT(proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 3, .dictionary = { DICT, 7 } }, &z) == PROVEN_ERR_INVALID_ARG && z == NULL &&
+                           proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 3, .dictionary = { dd, sizeof dd } }, &z) == PROVEN_ERR_INVALID_FORMAT && z == NULL &&
+                           proven_zstd_encoder_create(&(proven_zstd_encoder_options_t){ .alloc = g_heap, .level = 3, .dictionary = { DICT, 100 } }, &z) == PROVEN_ERR_INVALID_FORMAT && z == NULL,
+                           "a dictionary of fewer than 8 bytes is PROVEN_ERR_INVALID_ARG; a repeat offset of 0, or tables cut short, PROVEN_ERR_INVALID_FORMAT", "");
+        proven_zstd_decoder_destroy(d);
     }
 
     PROVEN_TEST_SECTION("memory", "What an encoder holds, for a stream and for a whole buffer; and allocations that fail.", "Check make, block_room, emit and the input buffer's growth in src/proven/zstd_encode.c.");

@@ -1369,6 +1369,8 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_zstd_decoder_destroy` | `proven_zstd_decoder_destroy` |
 | `xcv_zstd_decoder_reset` | `proven_zstd_decoder_reset` |
 | `xcv_zstd_decoder_t` | `proven_zstd_decoder_t` |
+| `xcv_zstd_decoder_use_dictionary` | `proven_zstd_decoder_use_dictionary` |
+| `xcv_zstd_dictionary_id` | `proven_zstd_dictionary_id` |
 | `xcv_zstd_encode` | `proven_zstd_encode` |
 | `xcv_zstd_encode_all` | `proven_zstd_encode_all` |
 | `xcv_zstd_encode_bound` | `proven_zstd_encode_bound` |

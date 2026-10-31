@@ -1,5 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
+#include "test_unit_zstd_dict_vectors.h"
 #include "test_unit_zstd_vectors.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -473,6 +474,82 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_zstd_decode(d, (proven_mem_view_t){ g_in + u1, zn - u1 }, &u2, (proven_mem_mut_t){ g_out2, 200000 }, &m2, &done) == PROVEN_OK &&
                            done && m1 + m2 == 200000 && memcmp(g_cat, g_plain, m1) == 0 && memcmp(g_out2, g_plain + m1, m2) == 0,
             "the rest, after the first call's buffer was overwritten: every byte right", "");
+        proven_zstd_decoder_destroy(d);
+    }
+
+    PROVEN_TEST_SECTION("dictionaries", "Four frames libzstd made with a dictionary it trained on the records of test_unit_zstd_dict_vectors.h - one record at level 3, twenty at 19, one with the dictionary's last 2,048 bytes as a raw one, one whose frame does not name the dictionary - decoded with it, in one call and a byte at a time, and two frames one after the other; a frame that names another dictionary, or any when none is set, refused; damaged dictionaries refused.", "Check proven_zstd_decoder_use_dictionary, dict_begin and the reach rule in sequences in src/proven/zstd.c.");
+    {
+        /* The records: as the private generator made them. */
+        static char rec[3000 * 160];
+        static proven_size_t roff[3001];
+        g_x = 2026;
+        proven_size_t at = 0;
+        for (proven_u32 i = 0; i < 3000; ++i) { roff[i] = at; at += zd_record(xs, i, rec + at); }
+        roff[3000] = at;
+        static const struct { const proven_byte_t *f; proven_size_t n; proven_u32 from, count; bool raw; const char *name; } F[4] = {
+            { FRAME_L3, sizeof FRAME_L3, 2500, 1, false, "one record, level 3" }, { FRAME_L19_20, sizeof FRAME_L19_20, 2600, 20, false, "twenty records, level 19" },
+            { FRAME_RAW, sizeof FRAME_RAW, 2700, 1, true, "one record, a raw dictionary" }, { FRAME_NOID, sizeof FRAME_NOID, 2800, 1, false, "a frame that names no dictionary" } };
+        PROVEN_TEST_ASSERT(proven_zstd_dictionary_id((proven_mem_view_t){ DICT, sizeof DICT }) == DICT_ID && proven_zstd_dictionary_id((proven_mem_view_t){ DICT + 100, 2048 }) == 0 &&
+                           proven_zstd_dictionary_id((proven_mem_view_t){ DICT, 7 }) == 0, "a formatted dictionary's ID; 0 for a raw one or for fewer than 8 bytes", "");
+        int bad = 0;
+        for (int k = 0; k < 4; ++k) {
+            const proven_byte_t *want = (const proven_byte_t *)rec + roff[F[k].from];
+            const proven_size_t wn = roff[F[k].from + F[k].count] - roff[F[k].from];
+            proven_zstd_decoder_t *d = NULL;
+            PROVEN_TEST_ASSERT(proven_zstd_decoder_create(g_heap, 0, &d) == PROVEN_OK, "a decoder", "");
+            const proven_mem_view_t dv = F[k].raw ? (proven_mem_view_t){ DICT + sizeof DICT - 2048, 2048 } : (proven_mem_view_t){ DICT, sizeof DICT };
+            PROVEN_TEST_ASSERT(proven_zstd_decoder_use_dictionary(d, dv) == PROVEN_OK, "the dictionary is taken", "");
+            /* Twice through, the second time in one byte and out one byte at a time. */
+            for (int pass = 0; pass < 2; ++pass) {
+                proven_size_t ia = 0, oa = 0;
+                bool done = false;
+                proven_err_t e = PROVEN_OK;
+                for (int guard = 0; !done && e == PROVEN_OK && guard < 100000; ++guard) {
+                    proven_size_t c = 0, p = 0;
+                    const proven_size_t give = pass ? (ia < F[k].n ? 1 : 0) : F[k].n - ia, room = pass ? 1 : sizeof g_out - oa;
+                    e = proven_zstd_decode(d, (proven_mem_view_t){ F[k].f + ia, give }, &c, (proven_mem_mut_t){ g_out + oa, room }, &p, &done);
+                    ia += c; oa += p;
+                }
+                printf("  %s, %s: %d, %zu bytes\n", F[k].name, pass ? "a byte at a time" : "in one call", (int)e, oa);
+                if (e != PROVEN_OK || !done || ia != F[k].n || oa != wn || memcmp(g_out, want, wn) != 0) bad++;
+            }
+            proven_zstd_decoder_destroy(d);
+        }
+        PROVEN_TEST_ASSERT(bad == 0, "every frame gives back its records, whole and in steps (the second frame of each through a decoder that kept the content)", "");
+        /* Refused: a frame that names this dictionary, without it or with a raw one (ID 0) set. */
+        proven_zstd_decoder_t *d = NULL;
+        PROVEN_TEST_ASSERT(proven_zstd_decoder_create(g_heap, 0, &d) == PROVEN_OK, "a decoder", "");
+        proven_size_t c = 0, p = 0;
+        bool done = false;
+        PROVEN_TEST_ASSERT(proven_zstd_decode(d, (proven_mem_view_t){ FRAME_L3, sizeof FRAME_L3 }, &c, (proven_mem_mut_t){ g_out, sizeof g_out }, &p, &done) == PROVEN_ERR_UNSUPPORTED,
+                           "without a dictionary, a frame that names one is PROVEN_ERR_UNSUPPORTED", "");
+        PROVEN_TEST_ASSERT(proven_zstd_decoder_use_dictionary(d, (proven_mem_view_t){ DICT + 100, 2048 }) == PROVEN_OK &&
+                           proven_zstd_decode(d, (proven_mem_view_t){ FRAME_L3, sizeof FRAME_L3 }, &c, (proven_mem_mut_t){ g_out, sizeof g_out }, &p, &done) == PROVEN_ERR_UNSUPPORTED,
+                           "and with another dictionary set, the same - setting one resets the decoder's error", "");
+        /* Removing it: a frame of no dictionary decodes as before. */
+        PROVEN_TEST_ASSERT(proven_zstd_decoder_use_dictionary(d, (proven_mem_view_t){ NULL, 0 }) == PROVEN_OK, "an empty dictionary removes it", "");
+        /* Damaged dictionaries. */
+        static proven_byte_t dd[sizeof DICT];
+        PROVEN_TEST_ASSERT(proven_zstd_decoder_use_dictionary(d, (proven_mem_view_t){ DICT, 7 }) == PROVEN_ERR_INVALID_ARG &&
+                           proven_zstd_decoder_use_dictionary(d, (proven_mem_view_t){ NULL, 8 }) == PROVEN_ERR_INVALID_ARG,
+                           "fewer than 8 bytes, or none with a size, is PROVEN_ERR_INVALID_ARG", "");
+        int damaged = 0;
+        for (proven_size_t cut = 8; cut < DICT_REPS_AT + 12; ++cut)
+            if (proven_zstd_decoder_use_dictionary(d, (proven_mem_view_t){ DICT, cut }) != PROVEN_ERR_INVALID_FORMAT) damaged++;
+        PROVEN_TEST_ASSERT(damaged == 0, "a formatted dictionary cut anywhere in its tables or offsets is PROVEN_ERR_INVALID_FORMAT", "");
+        (void)memcpy(dd, DICT, sizeof DICT);
+        dd[DICT_REPS_AT] = 0; dd[DICT_REPS_AT + 1] = 0; dd[DICT_REPS_AT + 2] = 0; dd[DICT_REPS_AT + 3] = 0;
+        const proven_err_t e0 = proven_zstd_decoder_use_dictionary(d, (proven_mem_view_t){ dd, sizeof dd });
+        (void)memcpy(dd, DICT, sizeof DICT);
+        const proven_u32 past = DICT_CONTENT + 1;
+        dd[DICT_REPS_AT + 4] = (proven_byte_t)past; dd[DICT_REPS_AT + 5] = (proven_byte_t)(past >> 8); dd[DICT_REPS_AT + 6] = 0; dd[DICT_REPS_AT + 7] = 0;
+        const proven_err_t e1 = proven_zstd_decoder_use_dictionary(d, (proven_mem_view_t){ dd, sizeof dd });
+        (void)memcpy(dd, DICT, sizeof DICT);
+        dd[DICT_REPS_AT + 8] = (proven_byte_t)DICT_CONTENT; dd[DICT_REPS_AT + 9] = (proven_byte_t)(DICT_CONTENT >> 8); dd[DICT_REPS_AT + 10] = 0; dd[DICT_REPS_AT + 11] = 0;
+        const proven_err_t e2 = proven_zstd_decoder_use_dictionary(d, (proven_mem_view_t){ dd, sizeof dd });
+        PROVEN_TEST_ASSERT(e0 == PROVEN_ERR_INVALID_FORMAT && e1 == PROVEN_ERR_INVALID_FORMAT && e2 == PROVEN_OK,
+                           "a repeat offset of 0, or past the content, is PROVEN_ERR_INVALID_FORMAT; one of the content's size is taken", "");
+        PROVEN_TEST_ASSERT(proven_zstd_decoder_use_dictionary(NULL, (proven_mem_view_t){ DICT, sizeof DICT }) == PROVEN_ERR_INVALID_ARG, "no decoder", "");
         proven_zstd_decoder_destroy(d);
     }
 

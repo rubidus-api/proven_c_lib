@@ -31,8 +31,16 @@
  * **The window limit is the caller's.** Each frame states how far back it refers, up to
  * terabytes; a frame that needs more than the decoder's limit is refused before anything is
  * allocated for it. RFC 9659 has HTTP's `zstd` coding limited to 8 MiB (8,388,608 bytes),
- * which is the default here. Frames that need a dictionary are refused: content that is sent
- * over HTTP does not use one (RFC 8878, section 7.2).
+ * which is the default here.
+ *
+ * **Dictionaries** (since v0.104.0) compress short messages that resemble each other - records,
+ * small API responses - far better than each alone: both sides start each frame from the same
+ * "past", given out of band (RFC 8878, section 5). A raw dictionary is any bytes, at least 8; a
+ * formatted one (as `zstd --train` makes) begins with the magic number 0xEC30A437, an ID, entropy
+ * tables and three repeat offsets that a frame's first block may use, then its content. This
+ * library uses dictionaries and does not make them. A decoder without one refuses a frame that names
+ * one (`PROVEN_ERR_UNSUPPORTED`). Content sent over HTTP with the `zstd` coding does not use one (RFC
+ * 8878, section 6), and nothing in the HTTP drivers does.
  *
  * A Zstandard stream is a sequence of frames. Skippable frames (magic numbers 0x184D2A50 to
  * 0x184D2A5F) are read past without producing anything. Malformed input is an error, never a
@@ -67,6 +75,30 @@ void proven_zstd_decoder_destroy(proven_zstd_decoder_t *z);
 void proven_zstd_decoder_reset(proven_zstd_decoder_t *z);
 
 /**
+ * @brief Decompress with a dictionary from now on, or with none again.
+ *
+ * Resets the decoder (call it before a stream's first frame). Every frame after that starts from
+ * the dictionary: one that names this dictionary's ID or none at all (as libzstd does), while one
+ * that names another is `PROVEN_ERR_UNSUPPORTED`. The bytes stay the caller's and must outlive the
+ * decoder's use of them; they are read now, and a formatted dictionary's tables built (about 20 KiB,
+ * allocated once). Each frame then holds the content ahead of its output - up to the content's size
+ * more than without - copied once, and again only after a frame outgrew its window. While a frame has
+ * produced no more than its window it may refer to any byte of the content, even further back than
+ * the window (RFC 8878, section 5).
+ *
+ * @param dict A dictionary, raw or formatted; empty for none.
+ * @return PROVEN_ERR_INVALID_ARG for fewer than 8 bytes (or a null pointer with a size);
+ *         PROVEN_ERR_INVALID_FORMAT for a formatted dictionary whose tables do not read or whose
+ *         repeat offsets are 0 or past its content - the decoder then has none; PROVEN_ERR_NOMEM.
+ */
+[[nodiscard]]
+proven_err_t proven_zstd_decoder_use_dictionary(proven_zstd_decoder_t *z, proven_mem_view_t dict);
+
+/** @brief A dictionary's ID: what a formatted one states (not 0), 0 for a raw one. */
+[[nodiscard]]
+proven_u32 proven_zstd_dictionary_id(proven_mem_view_t dict);
+
+/**
  * @brief Decompress: consume some of `in`, produce some of `out`.
  *
  * Call it again with the rest of the input, or with more output space, until `*done`.
@@ -86,7 +118,7 @@ void proven_zstd_decoder_reset(proven_zstd_decoder_t *z);
  * @return PROVEN_OK, also when no progress was possible; PROVEN_ERR_INVALID_FORMAT for data
  *         that is not Zstandard, is damaged, or whose checksum or stated size does not match;
  *         PROVEN_ERR_OUT_OF_BOUNDS for a frame whose window is above the limit;
- *         PROVEN_ERR_UNSUPPORTED for a frame that needs a dictionary; PROVEN_ERR_NOMEM;
+ *         PROVEN_ERR_UNSUPPORTED for a frame that names a dictionary the decoder does not have; PROVEN_ERR_NOMEM;
  *         PROVEN_ERR_INVALID_ARG. After an error every call returns that error until reset.
  */
 [[nodiscard]]
@@ -172,6 +204,7 @@ typedef struct {
     int level;                     /**< 1 (fastest) to 19 (smallest); 0: 3, as libzstd's default. (The HTTP servers' `compress_zstd_level` stays 1 to 9: they compress as they send.) */
     int window_log;                /**< how far back a match may reach, as a power of two: 10 to 23 (8 MiB, the most RFC 9659 lets an HTTP client be asked for); 0: 19 (512 KiB) */
     bool checksum;                 /**< end each frame with the low 32 bits of its XXH64 */
+    proven_mem_view_t dictionary; /**< a dictionary, raw or formatted (see proven_zstd_decoder_use_dictionary): every frame starts from its content as from earlier input, and a formatted one's repeat offsets and tables - which its first block may repeat without writing them - and states its ID (a raw one's is 0). The bytes stay the caller's, read while the encoder exists. A frame made with one needs it to be decoded. Costs the content's size more in the input buffer, a copy of the content into it for each frame, and for proven_zstd_encode_all a copy of the input after it. Empty: none */
     bool long_distance;            /**< long-distance matching, as libzstd's `--long`: matches of 64 bytes or more found anywhere in the window by a hash kept for one position in about 128, the level's own matching between them. Levels 1 to 5 only: from 6 the level's own matching finds about as much, and from 9 a long match forced into the parse costs more than it saves - there the option does nothing. For large inputs that repeat from far back (archives, logs, several versions of a file): the fast levels' tables reach a few hundred kilobytes, this the whole window. Costs 8 bytes for each 128 bytes of window (512 KiB at `window_log` 23, 32 KiB at 19) and some speed. false: none */
 } proven_zstd_encoder_options_t;
 
@@ -180,8 +213,9 @@ typedef struct proven_zstd_encoder proven_zstd_encoder_t;
 
 /**
  * @brief Make a compressor. Its hash tables are allocated here; its buffers as input comes.
- * @return PROVEN_ERR_INVALID_ARG for a bad allocator, level, window or out pointer;
- *         PROVEN_ERR_NOMEM.
+ * @return PROVEN_ERR_INVALID_ARG for a bad allocator, level, window or out pointer, or a dictionary
+ *         of fewer than 8 bytes; PROVEN_ERR_INVALID_FORMAT for a formatted dictionary that does not
+ *         read (as proven_zstd_decoder_use_dictionary); PROVEN_ERR_NOMEM.
  */
 [[nodiscard]]
 proven_err_t proven_zstd_encoder_create(const proven_zstd_encoder_options_t *options, proven_zstd_encoder_t **out);

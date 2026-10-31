@@ -18,6 +18,25 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **Zstandard dictionaries** (RFC-0039 L-3), used, not trained: `proven_zstd_decoder_use_dictionary`,
+  `proven_zstd_dictionary_id` and `dictionary` in `proven_zstd_encoder_options_t`. Raw dictionaries
+  (any 8 bytes or more) and formatted ones (`zstd --train`'s: an ID, entropy tables, repeat offsets,
+  content). Every frame starts from the dictionary's content, and a formatted one's tables and
+  offsets, which the first block may repeat without writing them; the encoder names the ID in the
+  frame header; while a frame has produced no more than its window its matches may reach any byte of
+  the content (RFC 8878, section 5). A decoder with a dictionary takes frames that name its ID or none,
+  and refuses others. Checked against libzstd 1.5.7 both ways: 62,858 frames libzstd made with a
+  trained and a raw dictionary decoded here, 107,200 made here decoded by libzstd, at levels 1 to 19;
+  on records of about 190 bytes, 0.89 to 1.01 of libzstd's size with the same dictionary. Nothing in
+  the HTTP drivers uses dictionaries (RFC 8878, section 6).
+
+### Changed
+
+- The bit readers and the FSE and Huffman table readers of the decoder moved to the internal header
+  shared with the encoder, which reads a dictionary's tables with them. No change of behaviour.
+
 ## [0.103.0] - 2026-10-31
 
 ### Added

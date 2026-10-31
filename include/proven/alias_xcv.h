@@ -1347,6 +1347,7 @@
 #define xcv_zstd_decoder_destroy proven_zstd_decoder_destroy
 #define xcv_zstd_decoder_reset proven_zstd_decoder_reset
 #define xcv_zstd_decoder_t proven_zstd_decoder_t
+#define xcv_zstd_decoder_use_dictionary proven_zstd_decoder_use_dictionary
 #define xcv_zstd_encode proven_zstd_encode
 #define xcv_zstd_encode_all proven_zstd_encode_all
 #define xcv_zstd_encode_bound proven_zstd_encode_bound
@@ -1354,6 +1355,7 @@
 #define xcv_zstd_encoder_destroy proven_zstd_encoder_destroy
 #define xcv_zstd_encoder_options_t proven_zstd_encoder_options_t
 #define xcv_zstd_encoder_reset proven_zstd_encoder_reset
+#define xcv_zstd_dictionary_id proven_zstd_dictionary_id
 #define xcv_zstd_encoder_t proven_zstd_encoder_t
 #define xcv_zstd_flush_t proven_zstd_flush_t
 

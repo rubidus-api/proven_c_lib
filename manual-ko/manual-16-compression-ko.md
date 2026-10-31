@@ -1180,6 +1180,84 @@ int main(void) {
 자리에서 flush하고, 쓸 때마다 하지는 말 것. 압축은 gzip보다 더 비밀스럽지 않다: 클라이언트가 고른 글자
 옆의 비밀에 대한 6절의 주의는 gzip에서와 같이 `zstd`에도 해당한다.
 
+### 사전
+
+v0.104.0부터. Zstandard는 짧은 메시지 하나를 따로 압축하면 잘 줄이지 못한다: 백 바이트짜리 레코드에는 앞에
+맞춰 볼 것이 없고 표 값도 치러야 한다. **사전**은 프레임을 보내기 전에 양쪽이 합의한 과거 - 전형적인 내용을
+따로 건넨 것 - 이고, 모든 프레임이 거기서 시작한다: 일치가 사전 안으로 닿고, 형식 사전의 엔트로피 표와 반복
+오프셋이 첫 블록에 적용되어 첫 블록은 그것을 쓰지 않고도 쓸 수 있다. 사전과 닮은 백 바이트 안팎의 레코드는
+사전 없을 때 크기의 3분의 1에서 5분의 2로 나온다.
+
+원시 사전은 8바이트 이상의 아무 바이트다 - 아래처럼 전형적인 메시지 몇 개. 형식 사전은 `zstd --train`이
+샘플에서 만드는 것으로, 매직 넘버 0xEC30A437과 ID로 시작하고 각 프레임이 그 ID를 밝힌다; 이 라이브러리는
+사전을 쓰기만 하고 학습하지는 않는다. 인코더는 `dictionary`로, 디코더는 proven_zstd_decoder_use_dictionary로
+받는다. 디코더는 이때 재설정되고 그 뒤 모든 프레임에 사전을 쓴다: 다른 ID를 밝힌 프레임은 거부하고, ID를
+밝히지 않은 프레임에는 걸어 둔 사전을 쓴다. proven_zstd_dictionary_id는 사전의 ID를 알려 준다(원시 사전은 0).
+
+바이트는 양쪽 모두 호출자의 것이고 쓰는 동안 살아 있어야 한다. 각 프레임은 출력 앞에 사전 내용을 둔다:
+디코더는 사전 없을 때보다 최대 내용 크기만큼 더, 인코더는 입력 버퍼에 그만큼 더, 그리고
+proven_zstd_encode_all에서는 내용 뒤에 입력의 사본을 둔다. RFC 8878은 `zstd` 코딩으로 보내는 내용에는 사전을
+쓰지 말라고 하고, HTTP 드라이버는 어디서도 쓰지 않는다: 프로그램 자신의 메시지와 파일을 위한 것이다.
+
+### 예제: 메시지 세 개를 사전으로, 네 번째를 사전과 함께 그리고 사전 없이
+
+<!-- example: manual/examples/ko/ex_16_zstd_dict.c -->
+```c
+#include <string.h>
+
+/*
+ * 사전을 쓴 Zstandard: 서로 닮은 짧은 메시지를 각각 한 프레임으로, 양쪽이 같은 과거에서 시작한다.
+ * 여기서는 사전이 원시 사전이다 - 전형적인 메시지 몇 개를 그대로 - 그래서 학습이 필요 없다;
+ * `zstd --train`이 만드는 형식 사전도 같은 방법으로 쓴다.
+ */
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    static const char dict[] =
+        "{\"event\": \"login\", \"user\": \"alice\", \"ok\": true, \"region\": \"eu-west\"}\n"
+        "{\"event\": \"logout\", \"user\": \"bob\", \"ok\": true, \"region\": \"us-east\"}\n"
+        "{\"event\": \"purchase\", \"user\": \"carol\", \"ok\": false, \"region\": \"ap-south\"}\n";
+    static const char msg[] = "{\"event\": \"login\", \"user\": \"dave\", \"ok\": false, \"region\": \"us-east\"}\n";
+    const proven_mem_view_t dv = { (const proven_byte_t *)dict, sizeof dict - 1 };
+    EXAMPLE_REQUIRE(proven_zstd_dictionary_id(dv) == 0, "원시 사전에는 ID가 없다");
+
+    /* 메시지 하나를 사전과 함께, 그리고 사전 없이. */
+    static proven_byte_t frame[256], plain[256], back[256];
+    proven_size_t n = 0, p = 0;
+    proven_zstd_encoder_options_t o = { .alloc = heap, .level = 3, .dictionary = dv };
+    EXAMPLE_REQUIRE(proven_zstd_encode_all(&o, (proven_mem_view_t){ (const proven_byte_t *)msg, sizeof msg - 1 }, (proven_mem_mut_t){ frame, sizeof frame }, &n) == PROVEN_OK,
+                    "사전으로 압축한 메시지");
+    o.dictionary = (proven_mem_view_t){ NULL, 0 };
+    EXAMPLE_REQUIRE(proven_zstd_encode_all(&o, (proven_mem_view_t){ (const proven_byte_t *)msg, sizeof msg - 1 }, (proven_mem_mut_t){ plain, sizeof plain }, &p) == PROVEN_OK,
+                    "사전 없이");
+    EXAMPLE_REQUIRE(n * 2 < p, "사전이 있으면 73바이트가 사전 없을 때의 절반도 안 된다");
+
+    /* 받는 쪽: 같은 사전을 디코더에 한 번 걸어 두면 그 뒤의 모든 프레임에 쓰인다. */
+    proven_zstd_decoder_t *z = NULL;
+    EXAMPLE_REQUIRE(proven_zstd_decoder_create(heap, 0, &z) == PROVEN_OK && proven_zstd_decoder_use_dictionary(z, dv) == PROVEN_OK, "사전을 건 디코더");
+    for (int round = 0; round < 2; ++round) {
+        proven_size_t used = 0, made = 0;
+        bool done = false;
+        EXAMPLE_REQUIRE(proven_zstd_decode(z, (proven_mem_view_t){ frame, n }, &used, (proven_mem_mut_t){ back, sizeof back }, &made, &done) == PROVEN_OK && done &&
+                        made == sizeof msg - 1 && memcmp(back, msg, made) == 0, "메시지가 돌아온다 - 같은 디코더에서 한 번 더");
+    }
+    /* 사전 없이는 되돌릴 수 없다: 프레임에는 같은 과거가 필요하다. */
+    EXAMPLE_REQUIRE(proven_zstd_decoder_use_dictionary(z, (proven_mem_view_t){ NULL, 0 }) == PROVEN_OK, "사전을 뗀다");
+    proven_size_t used = 0, made = 0;
+    bool done = false;
+    const proven_err_t e = proven_zstd_decode(z, (proven_mem_view_t){ frame, n }, &used, (proven_mem_mut_t){ back, sizeof back }, &made, &done);
+    EXAMPLE_REQUIRE(e != PROVEN_OK || made != sizeof msg - 1 || memcmp(back, msg, made) != 0, "원시 사전의 프레임은 사전을 밝히지 않으므로 다른 내용으로 풀리거나 실패한다");
+    proven_zstd_decoder_destroy(z);
+    return EXAMPLE_OK();
+}
+```
+
+| API | 의도 | 반환 |
+|---|---|---|
+| `proven_zstd_decoder_use_dictionary(z, dict)` | 이제부터 `dict`(원시 또는 형식)로, 또는 사전 없이(빈 값) 푼다. 디코더를 재설정한다. | 8바이트 미만이면 `INVALID_ARG`; 읽히지 않는 형식 사전이면 `INVALID_FORMAT`; `NOMEM`. |
+| `proven_zstd_dictionary_id(dict)` | 형식 사전의 ID; 원시 사전은 0. | ID. |
+| 인코더 옵션의 `dictionary` | 모든 프레임을 이 사전에서 시작해 압축한다. | `proven_zstd_encoder_create`와 같고, 위와 같은 `INVALID_ARG` / `INVALID_FORMAT`. |
+
 ## 8. Brotli
 
 ```c

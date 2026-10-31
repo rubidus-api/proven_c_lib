@@ -358,6 +358,22 @@ static void huf_build(proven_huf_tab_t *t, const proven_u32 *count, unsigned max
     t->maxsym = maxsym;
 }
 
+/* A dictionary's code: from its weights (the last included), as a decoder builds it. */
+static void huf_from_weights(proven_huf_tab_t *t, const proven_u8 *w, unsigned n, unsigned log) {
+    proven_u32 rank[HUF_LOG_MAX + 2] = { 0 }, next[HUF_LOG_MAX + 2];
+    for (unsigned s = 0; s < 256; ++s) t->bits[s] = s < n && w[s] ? (proven_u8)(log + 1 - w[s]) : 0;
+    for (unsigned s = 0; s < n; ++s) if (w[s]) rank[w[s]]++;
+    proven_u32 pos = 0;
+    for (unsigned k = 1; k <= log; ++k) { next[k] = pos; pos += rank[k] << (k - 1); }
+    for (unsigned s = 0; s < n; ++s) {
+        if (!w[s]) continue;
+        t->code[s] = (proven_u16)(next[w[s]] >> (w[s] - 1));
+        next[w[s]] += 1u << (w[s] - 1);
+    }
+    for (unsigned s = 0; s < 256; ++s) t->both[s] = t->bits[s] ? ((proven_u32)t->bits[s] << 16) | t->code[s] : 0;
+    t->maxsym = n - 1;
+}
+
 static unsigned huf_log(const proven_huf_tab_t *t) {
     unsigned log = 0;
     for (unsigned s = 0; s <= t->maxsym; ++s) if (t->bits[s] > log) log = t->bits[s];
@@ -541,6 +557,19 @@ struct proven_zstd_encoder {
     unsigned ldm_log;                  /* entries: 2^ldm_log */
     struct proven_ldm_match *ldm_m;
     proven_size_t ldm_cap;
+    /* a dictionary (`dictionary`): its content is the past every frame starts from - positions
+     * [0, dict_at) of the frame's buffer while matches may still reach it, 0 after a slide - and a
+     * formatted one's repeat offsets and tables are where the first block starts */
+    struct proven_zstd_cdict *cd;
+    proven_size_t dict_at;
+};
+
+/* A dictionary as the encoder keeps it: as read, and a formatted one's tables built as a decoder
+ * builds them, for the first block to repeat. */
+struct proven_zstd_cdict {
+    proven_zstd_dict_t_ d;
+    proven_huf_tab_t huf;
+    proven_fse_tab_t tab[3];
 };
 
 static const proven_params_t LEVELS[LEVEL_MAX + 1] = {
@@ -599,6 +628,15 @@ static void frame_start(proven_zstd_encoder_t *z) {
     z->rep[0] = 1; z->rep[1] = 4; z->rep[2] = 8;
     z->ent.huf_cur = -1;
     z->ent.cur[0] = z->ent.cur[1] = z->ent.cur[2] = -1;
+    z->dict_at = 0;
+    if (z->cd) {
+        z->rep[0] = z->cd->d.rep[0]; z->rep[1] = z->cd->d.rep[1]; z->rep[2] = z->cd->d.rep[2];
+        if (z->cd->d.formatted) {
+            z->ent.huf[0] = z->cd->huf;
+            z->ent.huf_cur = 0;
+            for (int k = 0; k < 3; ++k) { z->ent.tab[k][0] = z->cd->tab[k]; z->ent.cur[k] = 0; }
+        }
+    }
     z->pos = z->fill = 0;
     z->pend_len = z->pend_at = 0;
     if (!z->fresh) {
@@ -629,11 +667,19 @@ static proven_err_t make(const proven_zstd_encoder_options_t *o, proven_u64 size
     if (z->opt.level == 0) z->opt.level = LEVEL_DEFAULT;
     z->wlog = o->window_log ? (unsigned)o->window_log : WINDOW_LOG_DEFAULT;
     z->p = LEVELS[z->opt.level];
-    /* A known size smaller than the window needs no more window, nor larger tables. */
+    proven_zstd_dict_t_ dr;
+    proven_size_t dlen = 0;
+    if (o->dictionary.size > 0 || o->dictionary.ptr) {
+        const proven_err_t de = zstd_dict_read(o->dictionary, &dr);
+        if (de != PROVEN_OK) { o->alloc.free_fn(o->alloc.ctx, z); return de; }
+        dlen = dr.content_len;
+    }
+    /* A known size smaller than the window needs no more window, nor larger tables (the
+     * dictionary's content is matched against too). */
     unsigned need = z->wlog;
     if (size_hint != ~(proven_u64)0) {
         need = WINDOW_LOG_MIN;
-        while (need < z->wlog && ((proven_u64)1 << need) < size_hint) need++;
+        while (need < z->wlog && ((proven_u64)1 << need) < size_hint + dlen) need++;
     }
     /* A known input of 256 KiB or less: from level 13 on, the optimal parse with three-byte matches,
      * as libzstd's table for such inputs has it (its trees and lazy parse only pay on more). */
@@ -651,7 +697,7 @@ static proven_err_t make(const proven_zstd_encoder_options_t *o, proven_u64 size
     if (z->p.clog > need + 1) z->p.clog = need + 1;
     z->window = (proven_size_t)1 << z->wlog;
     z->block_size = z->window < ZSTD_BLOCK_MAX ? z->window : ZSTD_BLOCK_MAX;
-    z->buf_max = z->window + (z->window / 2 > z->block_size ? z->window / 2 : z->block_size);
+    z->buf_max = z->window + (z->window / 2 > z->block_size ? z->window / 2 : z->block_size) + dlen;
     z->hash_size = (proven_size_t)1 << z->p.hlog;
     z->hash2_size = z->p.strategy ? (proven_size_t)1 << z->p.clog : 0;     /* the second table, or the chain */
     proven_size_t got = 0;
@@ -689,6 +735,17 @@ static proven_err_t make(const proven_zstd_encoder_options_t *o, proven_u64 size
         z->ldm_m = (struct proven_ldm_match *)(void *)(lm.value.ptr + ne * sizeof(proven_u64));
         z->ldm_next = lm.value.ptr + ne * sizeof(proven_u64) + z->ldm_cap * sizeof(struct proven_ldm_match);
     }
+    if (dlen > 0) {
+        proven_result_mem_mut_t cm = o->alloc.alloc_fn(o->alloc.ctx, sizeof(struct proven_zstd_cdict), 16);
+        if (cm.err != PROVEN_OK) { proven_zstd_encoder_destroy(z); return PROVEN_ERR_NOMEM; }
+        struct proven_zstd_cdict *cd = (struct proven_zstd_cdict *)(void *)cm.value.ptr;
+        cd->d = dr;
+        if (dr.formatted) {
+            huf_from_weights(&cd->huf, dr.huf_w, dr.huf_n, dr.huf_log);
+            for (int k = 0; k < 3; ++k) fse_tab_build(&cd->tab[k], dr.norm[k], dr.nsym[k], dr.log[k]);
+        }
+        z->cd = cd;
+    }
     z->fresh = true;
     /* A block of n bytes has at most n / 4 sequences: every match is at least 4 long. */
     z->lit_max = size_hint < z->block_size ? (proven_size_t)size_hint : z->block_size;
@@ -708,6 +765,7 @@ void proven_zstd_encoder_destroy(proven_zstd_encoder_t *z) {
     if (z->hash) a.free_fn(a.ctx, z->hash);
     if (z->optp) a.free_fn(a.ctx, z->optp);
     if (z->ldm) a.free_fn(a.ctx, z->ldm);
+    if (z->cd) a.free_fn(a.ctx, z->cd);
     if (z->seqs) a.free_fn(a.ctx, z->seqs);
     if (z->codes) a.free_fn(a.ctx, z->codes);
     if (z->lits) a.free_fn(a.ctx, z->lits);
@@ -1854,7 +1912,9 @@ ZSTD_HOT proven_size_t compress_block(proven_zstd_encoder_t *z, const proven_byt
     const proven_u32 rep_before[3] = { z->rep[0], z->rep[1], z->rep[2] };
     z->nseq = 0;
     z->nlit = 0;
-    const proven_size_t low = end > z->window ? end - z->window : 0;
+    /* While the frame has produced no more than its window, a match may reach any byte of the
+     * dictionary's content before it (RFC 8878, section 5). */
+    const proven_size_t low = z->dict_at && end - z->dict_at <= z->window ? 0 : end > z->window ? end - z->window : 0;
     proven_size_t last_from = start, stop = end;
     if (z->ldm) stop = match_ldm(z, base, start, end, low, &last_from);
     else if (end - start >= 16) stop = match_block(z, base, start, end, low, &last_from);
@@ -1912,13 +1972,15 @@ static proven_size_t encode_block(proven_zstd_encoder_t *z, const proven_byte_t 
 // Frames
 // -----------------------------------------------------------------------------
 
-static proven_size_t frame_header(proven_byte_t *d, unsigned wlog, bool check, bool sized, proven_u64 size) {
+static proven_size_t frame_header(proven_byte_t *d, unsigned wlog, bool check, bool sized, proven_u64 size, proven_u32 did) {
     d[0] = 0x28; d[1] = 0xB5; d[2] = 0x2F; d[3] = 0xFD;
     const bool single = sized && size <= ((proven_u64)1 << wlog);
     const unsigned fcs = !sized ? 0u : (single && size < 256) ? 0u : size < 65536 + 256 ? 1u : size <= 0xFFFFFFFFu ? 2u : 3u;
-    d[4] = (proven_byte_t)((fcs << 6) | (single ? 0x20u : 0u) | (check ? 4u : 0u));
+    const unsigned dflag = did == 0 ? 0u : did < 256 ? 1u : did < 65536 ? 2u : 3u;
+    d[4] = (proven_byte_t)((fcs << 6) | (single ? 0x20u : 0u) | (check ? 4u : 0u) | dflag);
     proven_size_t o = 5;
     if (!single) d[o++] = (proven_byte_t)((wlog - 10) << 3);
+    for (unsigned i = 0; i < (dflag == 3 ? 4u : dflag); ++i) d[o++] = (proven_byte_t)(did >> (8 * i));
     if (sized) {
         const proven_u64 v = fcs == 1 ? size - 256 : size;
         const unsigned bytes = fcs == 0 ? 1u : fcs == 1 ? 2u : fcs == 2 ? 4u : 8u;
@@ -1942,6 +2004,7 @@ static void slide(proven_zstd_encoder_t *z) {
     (void)proven_mem_move(z->buf, z->fill - shift, (proven_mem_view_t){ .ptr = z->buf + shift, .size = z->fill - shift });
     z->pos -= shift;
     z->fill -= shift;
+    z->dict_at = 0;
     const proven_u32 s = (proven_u32)shift;
     if (z->p.strategy >= 2) {
         /* The chain is indexed by position modulo its size, the trees by twice that: what was at p
@@ -1969,6 +2032,19 @@ static void slide(proven_zstd_encoder_t *z) {
 }
 
 /* Compress from `pos` as far as `upto`, the last block marked if asked, into `pend`. */
+/* The dictionary's content in `base` + [0, n): its positions put in the hash tables of levels 1 to 3
+ * (the chains and trees of 4 and up take them as they go, from `next_update`). */
+static void dict_load(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t n) {
+    z->fresh = false;
+    z->dict_at = n;
+    if (n < 8 || z->p.strategy > 1) return;
+    const unsigned hlog = z->p.hlog, clog = z->p.clog, mls = z->p.mls;
+    for (proven_size_t p = 0; p + 8 <= n; ++p) {
+        if (z->p.strategy == 0) z->hash[hash_at(base + p, hlog, 6)] = (proven_u32)p;
+        else { z->hash[hash_at(base + p, hlog, 8)] = (proven_u32)p; z->hash2[hash_at(base + p, clog, mls)] = (proven_u32)p; }
+    }
+}
+
 static proven_err_t emit(proven_zstd_encoder_t *z, proven_size_t upto, bool last) {
     proven_size_t need = z->pend_len + block_out_max(z) + 4;
     proven_err_t e = grow(z, (void **)&z->pend, &z->pend_cap, need, 1);
@@ -2019,7 +2095,17 @@ proven_err_t proven_zstd_encode(proven_zstd_encoder_t *z, proven_mem_view_t in, 
         if (!z->header_done) {
             e = grow(z, (void **)&z->pend, &z->pend_cap, block_out_max(z) + 32, 1);
             if (e != PROVEN_OK) break;
-            z->pend_len = frame_header(z->pend, z->wlog, z->opt.checksum, false, 0);
+            if (z->cd) {
+                const proven_size_t n = z->cd->d.content_len;
+                if (z->buf_cap < n + 1) {
+                    e = grow(z, (void **)&z->buf, &z->buf_cap, n + 64 * 1024 < z->buf_max ? n + 64 * 1024 : z->buf_max, 1);
+                    if (e != PROVEN_OK) break;
+                }
+                (void)proven_mem_copy(z->buf, n, (proven_mem_view_t){ .ptr = z->cd->d.content, .size = n });
+                z->pos = z->fill = n;
+                dict_load(z, z->buf, n);
+            }
+            z->pend_len = frame_header(z->pend, z->wlog, z->opt.checksum, false, 0, z->cd ? z->cd->d.id : 0);
             z->header_done = true;
             continue;
         }
@@ -2091,7 +2177,7 @@ proven_err_t proven_zstd_encode(proven_zstd_encoder_t *z, proven_mem_view_t in, 
 
 proven_size_t proven_zstd_encode_bound(proven_size_t n) {
     /* Stored blocks are the worst case: three bytes for each of at least 1 KiB, the last one
-     * excepted; then the frame header (at most 14 bytes) and the checksum. */
+     * excepted; then the frame header (at most 18 bytes, with a dictionary's ID) and the checksum. */
     const proven_size_t extra = (n >> 8) + 32;
     return n > (proven_size_t)-1 - extra ? (proven_size_t)-1 : n + extra;
 }
@@ -2122,7 +2208,7 @@ proven_err_t proven_zstd_encode_all(const proven_zstd_encoder_options_t *options
     proven_size_t o = 0;
     const proven_size_t n = in.size;
     proven_byte_t hdr[18];
-    const proven_size_t hl = frame_header(hdr, z->wlog, z->opt.checksum, true, n);
+    const proven_size_t hl = frame_header(hdr, z->wlog, z->opt.checksum, true, n, z->cd ? z->cd->d.id : 0);
     if (out.size < hl) e = PROVEN_ERR_OUT_OF_BOUNDS;
     else { (void)proven_mem_copy(out.ptr, hl, (proven_mem_view_t){ .ptr = hdr, .size = hl }); o = hl; }
     if (e == PROVEN_OK && z->opt.checksum && n) xxh_update(&z->xxh, in.ptr, n);
@@ -2131,16 +2217,30 @@ proven_err_t proven_zstd_encode_all(const proven_zstd_encoder_options_t *options
         else { out.ptr[o] = 1; out.ptr[o + 1] = 0; out.ptr[o + 2] = 0; o += 3; }
     }
     if (e == PROVEN_OK && n > 0) e = block_room(z);
-    proven_size_t pos = 0;
-    while (e == PROVEN_OK && pos < n) {
-        const proven_size_t to = n - pos > z->block_size ? pos + z->block_size : n;
+    /* With a dictionary the input follows its content in one buffer: matches reach back into it. */
+    const proven_byte_t *base = in.ptr;
+    proven_size_t pos = 0, end = n;
+    if (e == PROVEN_OK && n > 0 && z->cd) {
+        const proven_size_t dn = z->cd->d.content_len;
+        e = grow(z, (void **)&z->buf, &z->buf_cap, dn + n, 1);
+        if (e == PROVEN_OK) {
+            (void)proven_mem_copy(z->buf, dn, (proven_mem_view_t){ .ptr = z->cd->d.content, .size = dn });
+            (void)proven_mem_copy(z->buf + dn, n, (proven_mem_view_t){ .ptr = in.ptr, .size = n });
+            base = z->buf;
+            pos = dn;
+            end = dn + n;
+            dict_load(z, base, dn);
+        }
+    }
+    while (e == PROVEN_OK && pos < end) {
+        const proven_size_t to = end - pos > z->block_size ? pos + z->block_size : end;
         proven_size_t ended = to, k;
         if (out.size - o >= block_out_max(z)) {
-            k = encode_block(z, in.ptr, pos, to, to == n, out.ptr + o, out.size - o, &ended);
+            k = encode_block(z, base, pos, to, to == end, out.ptr + o, out.size - o, &ended);
         } else {
             e = grow(z, (void **)&z->pend, &z->pend_cap, block_out_max(z), 1);
             if (e != PROVEN_OK) break;
-            k = encode_block(z, in.ptr, pos, to, to == n, z->pend, z->pend_cap, &ended);
+            k = encode_block(z, base, pos, to, to == end, z->pend, z->pend_cap, &ended);
             if (k > out.size - o) { e = PROVEN_ERR_OUT_OF_BOUNDS; break; }
             (void)proven_mem_copy(out.ptr + o, k, (proven_mem_view_t){ .ptr = z->pend, .size = k });
         }
