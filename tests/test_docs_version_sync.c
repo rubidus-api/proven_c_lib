@@ -5,7 +5,7 @@
 #include <string.h>
 
 /*
- * CHECKLIST.md requires the version string to be updated in six places at once - version.h,
+ * The maintainers' checklist required the version string to be updated in six places at once - version.h,
  * README (both language halves), TEST.md, the manual chapter headings, the version.h excerpt in
  * manual chapter 1, and CHANGELOG's newest entry. Nothing checked, so it drifted: version.h sat
  * at v26.07.12i while the CHANGELOG had already shipped v26.07.13f, and the README claimed a
@@ -48,7 +48,7 @@ static int count_in_file(const char *path, const char *needle) {
 int main(void) {
     PROVEN_TEST_SUITE("the version string agrees with itself everywhere",
         "PROVEN_VERSION_STRING is the source of truth; the README (README.md English + README-ko.md Korean), TEST.md, the manual headings and the CHANGELOG's newest entry must all carry the same version.",
-        "CHECKLIST.md says to update these together. Nothing checked, and version.h once sat five releases behind the CHANGELOG while the README claimed a third value.");
+        "They are updated together, and this test is what checks it: before it nothing did, and version.h once sat five releases behind the CHANGELOG while the README claimed a third value.");
 
     /* The string the library itself reports. Strip the "proven_c_lib-" prefix to get "v0.0.1",
      * which is the form the manual headings, TEST.md and the release tag use. */

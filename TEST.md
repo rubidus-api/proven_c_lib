@@ -1,4 +1,4 @@
-# proven Test Matrix (v0.107.1)
+# proven Test Matrix (v0.107.2)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -343,7 +343,7 @@ The whole hosted suite also runs natively on Windows, cross-built with mingw-w64
 
 `-no-run` builds and installs every test executable and runs none. The build driver asks the compiler for its target (`-dumpmachine`); for a Windows target the executables are `.exe`, linked `-static` with `-lbcrypt`, and never `-ldl`. A maintainers' script (`win11kd-full-suite.sh`, not in this repository) builds both word sizes, sends the tracked tree and the executables to a Windows machine, and runs them there with `win11kd-run-suite.ps1`, which records PASS, FAIL, SKIP (a POSIX-only test that skipped itself - counted apart, since it proves nothing on Windows) and TIMEOUT per test.
 
-Last run, 2026-11-01, Windows 11 test VM (v0.107.0): x86-64 383 PASS, 0 FAIL, 10 SKIP; i686 the same. The ten skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_portability_compile_nonet`, `test_portability_compile_nobrotli` and `test_portability_compile_nohttp3` (they drive the host compiler through one), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
+Last run, 2026-11-02, Windows 11 test VM (v0.107.2): x86-64 384 PASS, 0 FAIL, 10 SKIP; i686 the same. The ten skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_portability_compile_nonet`, `test_portability_compile_nobrotli` and `test_portability_compile_nohttp3` (they drive the host compiler through one), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
 
 ## Test catalog
 
@@ -3114,7 +3114,7 @@ Failure tip: a failure names the missing test, duplicate path, stale subset memb
 
 Intent: verify `PROVEN_VERSION_STRING` - the source of truth - is `proven_c_lib-v<MAJOR>.<MINOR>.<PATCH>` built from the three number macros, and matches the README (both language halves), TEST.md, the manual headings, chapter 1's `version.h` excerpt (string and all three numbers), and the CHANGELOG's newest `## [x.y.z]` entry. Versions are semantic from v0.0.1 (2026-09-04); the date-based numbers before it are history.
 
-`CHECKLIST.md` has always required these to be updated together, and nothing checked: `version.h` once sat five releases behind the CHANGELOG while the README claimed a third value that matched neither. That is not cosmetic - it is the number a downstream project pins, the number a bug report quotes, and the number that decides whether a fix is in the copy someone is holding.
+The maintainers' checklist (since retired) required these to be updated together, and nothing checked: `version.h` once sat five releases behind the CHANGELOG while the README claimed a third value that matched neither. That is not cosmetic - it is the number a downstream project pins, the number a bug report quotes, and the number that decides whether a fix is in the copy someone is holding.
 
 Failure tip: bump the version in every place the test names.
 

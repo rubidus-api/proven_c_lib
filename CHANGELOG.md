@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.107.2] - 2026-11-02
+
 ### Fixed
 
 - **A write that ended its stream said it had succeeded.** In the event-driven server and client,
