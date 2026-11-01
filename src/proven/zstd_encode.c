@@ -526,6 +526,7 @@ struct proven_zstd_encoder {
     /* the frame */
     bool header_done, finished, failed;
     proven_u64 total;
+    proven_u64 stated;                 /* the size the frame states (proven_zstd_encode_all through the buffer); 0: none */
     proven_xxh64_t xxh;
     proven_u32 rep[3];
     proven_entropy_t ent;
@@ -2105,7 +2106,7 @@ proven_err_t proven_zstd_encode(proven_zstd_encoder_t *z, proven_mem_view_t in, 
                 z->pos = z->fill = n;
                 dict_load(z, z->buf, n);
             }
-            z->pend_len = frame_header(z->pend, z->wlog, z->opt.checksum, false, 0, z->cd ? z->cd->d.id : 0);
+            z->pend_len = frame_header(z->pend, z->wlog, z->opt.checksum, z->stated != 0, z->stated, z->cd ? z->cd->d.id : 0);
             z->header_done = true;
             continue;
         }
@@ -2191,6 +2192,7 @@ proven_err_t proven_zstd_encode_all(const proven_zstd_encoder_options_t *options
     proven_err_t e = make(options, direct ? (proven_u64)in.size : ~(proven_u64)0, &z);
     if (e != PROVEN_OK) return e;
     if (!direct) {
+        z->stated = in.size;           /* the whole input is here: the frame states its size as below */
         proven_size_t used = 0, made = 0, in_at = 0, out_at = 0;
         bool done = false;
         while (e == PROVEN_OK && !done) {
