@@ -18,6 +18,19 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.107.1] - 2026-11-01
+
+### Fixed
+
+- **`proven_zstd_encode_all` of 2 GiB or more states the size in its frame**, as its documentation
+  says. From 2^31 bytes on it compresses through the streaming buffer, and that path wrote a frame
+  with no size (it decoded to the same bytes; a decoder that sizes its output from the frame could
+  not). Found by a new check, not a registered test (it needs up to 13 GiB of memory and minutes):
+  inputs of 2^31 - 1, 2^31 and 2^32 + 12,345 bytes - mixed and incompressible - at levels 1, 3, 9,
+  13 and 19, with long-distance matching and with a dictionary, each decoded byte for byte by
+  libzstd and by this library within exactly `proven_zstd_encode_bound`. That is the backlog's
+  "an input of 2 GiB through `encode_all` tested".
+
 ## [0.107.0] - 2026-11-01
 
 ### Added
