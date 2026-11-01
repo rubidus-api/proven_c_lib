@@ -46,7 +46,7 @@ TITLES = {
         'manual-14-tls': '14 · TLS',
         'manual-15-event-loop': '15 · The event loop and the event-driven server',
         'manual-16-compression': '16 · Compression',
-        'manual-17-http2': '17 · HTTP/2: frames and header compression',
+        'manual-17-http2': '17 · HTTP/2 and HTTP/3',
         'manual-freestanding': 'Freestanding',
     },
     'ko': {
@@ -69,7 +69,7 @@ TITLES = {
         'manual-14-tls': '14 · TLS',
         'manual-15-event-loop': '15 · 이벤트 루프와 이벤트 구동 서버',
         'manual-16-compression': '16 · 압축',
-        'manual-17-http2': '17 · HTTP/2: 프레임과 헤더 압축',
+        'manual-17-http2': '17 · HTTP/2와 HTTP/3',
         'manual-freestanding': '프리스탠딩',
     },
 }

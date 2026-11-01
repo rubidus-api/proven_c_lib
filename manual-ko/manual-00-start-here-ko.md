@@ -789,9 +789,9 @@ alias 인덱스는 찾아보는 부록이고, 8장은 3장이 주제를 소개�
 |---|---|---|---|
 | **I — 여기서부터** | [따라 하며 익히기](manual-t-tutorial-ko.md) → [0](manual-00-start-here-ko.md) | 입문용 C 책 한 권 | 라이브러리를 붙여 빌드하고, 아래 무엇이든 읽기 |
 | **II — 모든 프로그램이 쓰는 어휘** | [1](manual-01-foundation-ko.md) → [2](manual-02-allocation-ko.md) → [3](manual-03-strings-text-ko.md) | 0장 | 에러를 값으로 다루고, 메모리를 의도적으로 소유하고, 텍스트를 안전하게 담기 |
-| **III — 자료구조** | [4](manual-04-containers-algorithms-ko.md) | II부 | array, map, list, ring, 정렬, 검색, 해싱, 인코딩 |
+| **III — 자료구조** | [4](manual-04-containers-algorithms-ko.md) → [16](manual-16-compression-ko.md) | II부 | array, map, list, ring, 정렬, 검색, 해싱, 인코딩. 압축(gzip, Zstandard, Brotli) |
 | **IV — 텍스트 입출력** | [8](manual-08-fmt-scan-ko.md) | 3장 §3–§4 | 무엇이든 형식화하고 파싱하며, 포매터에 내 타입 가르치기 |
-| **V — 운영체제와 대화하기** | [5](manual-05-hosted-services-ko.md) → [9](manual-09-networking-ko.md) → [10](manual-10-http-ko.md) → [11](manual-11-http-client-server-ko.md) → [12](manual-12-websocket-ko.md) → [13](manual-13-certificates-ko.md) → [14](manual-14-tls-ko.md) → [15](manual-15-event-loop-ko.md) | II부 | 파일, 디렉터리, 스트림, 표준 I/O, 시간, 난수, 매핑. 기한이 있는 소켓. URL과 HTTP 메시지. HTTP 클라이언트와 서버. WebSocket. 인증서와 신뢰. TLS. 이벤트 루프와 그 위의 서버 |
+| **V — 운영체제와 대화하기** | [5](manual-05-hosted-services-ko.md) → [9](manual-09-networking-ko.md) → [10](manual-10-http-ko.md) → [11](manual-11-http-client-server-ko.md) → [12](manual-12-websocket-ko.md) → [13](manual-13-certificates-ko.md) → [14](manual-14-tls-ko.md) → [15](manual-15-event-loop-ko.md) → [17](manual-17-http2-ko.md) | II부 | 파일, 디렉터리, 스트림, 표준 I/O, 시간, 난수, 매핑. 기한이 있는 소켓. URL과 HTTP 메시지. HTTP 클라이언트와 서버. WebSocket. 인증서와 신뢰. TLS. 이벤트 루프와 그 위의 서버. HTTP/2와 HTTP/3 |
 | **VI — 더 나아가기** | [6](manual-06-execution-and-platform-ko.md) → [freestanding](manual-freestanding-ko.md) | II–V부 | 코루틴, job, 스레드 안전성, 베어메탈, 크로스 빌드 |
 | **부록** | [A](manual-07-alias-xcv-index-ko.md), [B](#13-부록-b-용어집), [C](#14-부록-c-공개-헤더-맵), [D](#15-부록-d-libc-대응표) | — | 찾아보기 |
 
@@ -814,6 +814,8 @@ alias 인덱스는 찾아보는 부록이고, 8장은 3장이 주제를 소개�
 13. [**인증서와 신뢰**: X.509 인증서 읽기, 인증서가 위하는 이름, 신뢰 앵커, 체인 검증, 피닝](manual-13-certificates-ko.md) — *V부; 4장 다음; 시스템 루트 읽기 외에는 프리스탠딩에서 사용 가능*
 14. [**TLS**: 두 줄로 하는 HTTPS와 wss, 전송 래퍼, 엔진, 재개, 클라이언트 인증서와 핀, 실패의 뜻](manual-14-tls-ko.md) — *V부; 11장과 13장 다음; 엔진은 프리스탠딩에서 사용 가능*
 15. [**이벤트 루프와 이벤트 구동 서버**: 타이머와 게시된 일을 가진 루프, 아무것도 기다리지 않는 HTTP 서버, 나중에 답하기, backpressure, 연결마다 스레드를 두지 않는 WebSocket, 여러 요청을 동시에 진행하는 클라이언트, 여러 루프, 한가한 연결이 붙드는 것과 측정한 것](manual-15-event-loop-ko.md) — *V부; 9장과 11장 다음; 호스티드 전용*
+16. [**압축**: DEFLATE, zlib, gzip 양방향, Zstandard 양방향(레벨 열아홉, 사전), Brotli 풀기. HTTP 드라이버의 콘텐츠 코딩](manual-16-compression-ko.md) — *III부; 2장과 4장 다음; 코덱은 프리스탠딩에서 사용 가능*
+17. [**HTTP/2와 HTTP/3**: HPACK, 프레임, 연결 엔진, 이벤트 구동 서버와 클라이언트의 HTTP/2와 HTTP/3, 시험한 것](manual-17-http2-ko.md) — *V부; 10장과 15장 다음*
 
 **3장과 8장은 둘 다 포매터와 스캐너를 다루며, 이 분담은 의도적입니다.** 3장은 문자열과 나란히 이들을
 소개하며, 일상적인 경우와 생산성을 내기에 충분한 만큼을 담습니다. 8장은 완전한 레퍼런스입니다. 전체
@@ -969,7 +971,7 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, 용도별, SHA-384, SHA-512 | 챕터 4 |
 | `hmac.h` | SHA-2 계열 위의 HMAC과 HKDF | 챕터 4 |
 | `deflate.h` | DEFLATE 압축과 풀기, 그대로 또는 zlib·gzip으로. 스트리밍이며 출력은 호출자가 한정한다 | 챕터 16 |
-| `zstd.h` | Zstandard 풀기와 압축(레벨 아홉). 스트리밍이며 출력과 창은 호출자가 한정한다 | 챕터 16 |
+| `zstd.h` | Zstandard 풀기와 압축(레벨 열아홉, 사전, 먼 거리 일치). 스트리밍이며 출력과 창은 호출자가 한정한다 | 챕터 16 |
 | `brotli.h` | Brotli 풀기. 스트리밍이며 출력과 창은 호출자가 한정한다. `PROVEN_NO_BROTLI`로 뺄 수 있다 | 챕터 16 |
 | `hash_legacy.h` | SHA-1과 MD5, 그것을 못 박은 형식용 | 챕터 4 |
 | `encode.h` | Hex와 Base64 (표준 + URL-safe), 바이트↔텍스트 | 챕터 4 |
@@ -983,16 +985,16 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `http_auth.h` | Basic과 Digest 인증 값 | 챕터 10 |
 | `http_cookie.h` | 호스트 전용 쿠키 보관함 | 챕터 10 |
 | `sse.h` | 서버 전송 이벤트 파서 | 챕터 10 |
-| `http_client.h` | HTTP/1.1 클라이언트: 리다이렉트, 인증 요구, 쿠키, 프록시, 연결 재사용, 요청하면 gzip 응답을 풀어 준다 (호스티드 전용) | 챕터 11, 16 |
+| `http_client.h` | HTTP/1.1 클라이언트: 리다이렉트, 인증 요구, 쿠키, 프록시, 연결 재사용, 요청하면 gzip·zstd·br 응답을 풀어 준다. 요청한 것은 HTTP/3로 (호스티드 전용) | 챕터 11, 16, 17 |
 | `http_server.h` | HTTP/1.1 서버: 핸들러와 한도가 있는 루프, 스레드 하나 또는 job system. 핸들러가 요청하면 응답을 압축한다 (호스티드 전용) | 챕터 11, 16 |
 | `ws.h` | WebSocket 코덱: 핸드셰이크 값과 확인, 프레임, 메시지 디코더, 압축 확장의 핸드셰이크와 프레임 비트 | 챕터 12 |
 | `ws_conn.h` | 전송 위의 WebSocket 연결, 클라이언트와 서버. 요청하면 메시지를 압축한다 (호스티드 전용) | 챕터 12 |
 | `cert.h` | X.509 인증서: 엄격한 읽기, 호스트 이름 대조, PEM, 신뢰 앵커 저장소, 체인 검증. 시스템 루트 읽기만 호스티드 전용. | 챕터 13 |
 | `tls.h` | TLS 1.3과 줄인 TLS 1.2, 클라이언트와 서버: 설정, I/O 없는 엔진, 그리고 (호스티드 전용) 전송 래퍼와 HTTP 랩 | 챕터 14 |
 | `loop.h` | 이벤트 루프: 소켓 준비 상태, 타이머, 다른 스레드가 게시한 일, 함께 쓰는 임시 작업용 버퍼 (호스티드 전용) | 챕터 15 |
-| `http_event.h` | 루프 위에서 이벤트로 구동되는 HTTP 서버 - HTTP/1.1, 그리고 요청하면 그 옆에 HTTP/2: 콜백, backpressure가 있는 조각 응답, 선택적 TLS, 요청하면 응답을 압축한다 (호스티드 전용) | 챕터 15, 16, 17 |
+| `http_event.h` | 루프 위에서 이벤트로 구동되는 HTTP 서버 - HTTP/1.1, 그리고 요청하면 그 옆에 HTTP/2와 HTTP/3: 콜백, backpressure가 있는 조각 응답, 선택적 TLS, 요청하면 응답을 압축한다 (호스티드 전용) | 챕터 15, 16, 17 |
 | `ws_event.h` | 이벤트 구동 서버 위의 WebSocket: 조각으로 오는 메시지, 거절되고 재개되는 보내기, 생존 확인과 close 처리, 요청하면 메시지 압축 (호스티드 전용) | 챕터 15, 12 |
-| `http_event_client.h` | 루프 위에서 이벤트로 구동되는 HTTP 클라이언트: 한 스레드에서 동시에 진행되는 여러 요청. 요청하면 HTTP/2 - 오리진마다 간직하는 연결 하나에서. 좁다 - 리다이렉트와 이름 해석 없음, HTTP/1.1의 재사용 없음. 요청하면 gzip 응답을 풀어 준다 (호스티드 전용) | 챕터 15, 16, 17 |
+| `http_event_client.h` | 루프 위에서 이벤트로 구동되는 HTTP 클라이언트: 한 스레드에서 동시에 진행되는 여러 요청. 요청하면 HTTP/2 - 오리진마다 간직하는 연결 하나에서 - 그리고 요청한 것은 HTTP/3. HTTP/1.1 연결은 다음 요청을 위해 간직한다. 좁다 - 리다이렉트와 이름 해석 없음. 요청하면 gzip·zstd·br 응답을 풀어 준다 (호스티드 전용) | 챕터 15, 16, 17 |
 | `sysio.h` | 표준 스트림을 writer/reader로, stdin 줄 입력, 버퍼드 출력, 출력, 파싱, 환경변수 접근 | 챕터 5 |
 | `random.h` | 용도별 난수: xoshiro256** (재현 가능), ChaCha20 (암호학적), OS CSPRNG, 무편향 range/shuffle 헬퍼. 생성기는 freestanding에서 동작하고 OS 소스만 hosted. | 챕터 5 |
 | `mmap.h` | 메모리 매핑 파일 영역 | 챕터 5 |
@@ -1037,9 +1039,9 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 |---|---|---|
 | **I** | 이 장 | 계약과 어휘 |
 | **II** | [1](manual-01-foundation-ko.md) → [2](manual-02-allocation-ko.md) → [3](manual-03-strings-text-ko.md) | 에러, 메모리, 텍스트: 모든 프로그램이 쓰는 것 |
-| **III** | [4](manual-04-containers-algorithms-ko.md) | 배열, 맵, 리스트, 링, 정렬, 해싱, 인코딩 |
+| **III** | [4](manual-04-containers-algorithms-ko.md) → [16](manual-16-compression-ko.md) | 배열, 맵, 리스트, 링, 정렬, 해싱, 인코딩. 그다음 압축 |
 | **IV** | [8](manual-08-fmt-scan-ko.md) | 챕터 3이 소개한 뒤의, 형식화와 파싱 전체 |
-| **V** | [5](manual-05-hosted-services-ko.md) → [9](manual-09-networking-ko.md) → [10](manual-10-http-ko.md) → [11](manual-11-http-client-server-ko.md) → [12](manual-12-websocket-ko.md) → [13](manual-13-certificates-ko.md) → [14](manual-14-tls-ko.md) → [15](manual-15-event-loop-ko.md) | 파일, 스트림, 표준 I/O, 시간, 난수, 매핑. 그다음 소켓. 그다음 URL과 HTTP. 그다음 클라이언트와 서버. 그다음 WebSocket. 그다음 인증서. 그다음 TLS. 그다음 이벤트 루프 |
+| **V** | [5](manual-05-hosted-services-ko.md) → [9](manual-09-networking-ko.md) → [10](manual-10-http-ko.md) → [11](manual-11-http-client-server-ko.md) → [12](manual-12-websocket-ko.md) → [13](manual-13-certificates-ko.md) → [14](manual-14-tls-ko.md) → [15](manual-15-event-loop-ko.md) → [17](manual-17-http2-ko.md) | 파일, 스트림, 표준 I/O, 시간, 난수, 매핑. 그다음 소켓. 그다음 URL과 HTTP. 그다음 클라이언트와 서버. 그다음 WebSocket. 그다음 인증서. 그다음 TLS. 그다음 이벤트 루프. 그다음 HTTP/2와 HTTP/3 |
 | **VI** | [6](manual-06-execution-and-platform-ko.md) → [freestanding](manual-freestanding-ko.md) | 코루틴, job, 스레드 안전성, 베어메탈, 크로스 빌드 |
 | **부록** | [A: alias 인덱스](manual-07-alias-xcv-index-ko.md), 위의 B와 D | 찾아보기 |
 

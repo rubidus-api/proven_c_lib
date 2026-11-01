@@ -810,9 +810,9 @@ reference you read after Chapter 3 has introduced the subject.
 |---|---|---|---|
 | **I - Start here** | [tutorial](manual-t-tutorial.md) -> [0](manual-00-start-here.md) | One introductory C book | Build against the library and read anything below |
 | **II - The vocabulary every program uses** | [1](manual-01-foundation.md) -> [2](manual-02-allocation.md) -> [3](manual-03-strings-text.md) | Chapter 0 | Handle errors as values, own memory deliberately, hold text safely |
-| **III - Data structures** | [4](manual-04-containers-algorithms.md) | Part II | Arrays, maps, lists, rings, sorting, searching, hashing, encoding |
+| **III - Data structures** | [4](manual-04-containers-algorithms.md) -> [16](manual-16-compression.md) | Part II | Arrays, maps, lists, rings, sorting, searching, hashing, encoding; compression (gzip, Zstandard, Brotli) |
 | **IV - Text in and out** | [8](manual-08-fmt-scan.md) | Chapter 3 section 3-section 4 | Format and parse anything, and teach the formatter your own types |
-| **V - Talking to the operating system** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) -> [10](manual-10-http.md) -> [11](manual-11-http-client-server.md) -> [12](manual-12-websocket.md) -> [13](manual-13-certificates.md) -> [14](manual-14-tls.md) -> [15](manual-15-event-loop.md) | Part II | Files, directories, streams, standard I/O, time, randomness, mapping; sockets with deadlines; URLs and HTTP messages; an HTTP client and server; WebSocket; certificates and trust; TLS; an event loop and a server on it |
+| **V - Talking to the operating system** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) -> [10](manual-10-http.md) -> [11](manual-11-http-client-server.md) -> [12](manual-12-websocket.md) -> [13](manual-13-certificates.md) -> [14](manual-14-tls.md) -> [15](manual-15-event-loop.md) -> [17](manual-17-http2.md) | Part II | Files, directories, streams, standard I/O, time, randomness, mapping; sockets with deadlines; URLs and HTTP messages; an HTTP client and server; WebSocket; certificates and trust; TLS; an event loop and a server on it; HTTP/2 and HTTP/3 |
 | **VI - Going further** | [6](manual-06-execution-and-platform.md) -> [freestanding](manual-freestanding.md) | Parts II-V | Coroutines, jobs, thread-safety, bare metal, cross builds |
 | **Appendices** | [A](manual-07-alias-xcv-index.md), [B](#13-appendix-b-glossary), [C](#14-appendix-c-public-header-map), [D](#15-appendix-d-the-libc-map) | - | Look things up |
 
@@ -835,6 +835,8 @@ reference you read after Chapter 3 has introduced the subject.
 13. [**Certificates and trust**: reading an X.509 certificate, the names it is for, trust anchors, verifying a chain, pinning](manual-13-certificates.md) - *Part V; after Chapter 4; freestanding-available except the system's roots*
 14. [**TLS**: HTTPS and wss in two lines, the transport wrapper, the engine, resumption, client certificates and pins, what failures mean](manual-14-tls.md) - *Part V; after Chapters 11 and 13; the engine is freestanding-available*
 15. [**The event loop and the event-driven server**: a loop with timers and posted work, an HTTP server in which nothing waits, answering later, backpressure, WebSocket without a thread each, a client with many requests in flight, several loops, what an idle connection holds and what was measured](manual-15-event-loop.md) - *Part V; after Chapters 9 and 11; hosted-only*
+16. [**Compression**: DEFLATE, zlib and gzip both ways, Zstandard both ways (nineteen levels, dictionaries), Brotli decompression; the HTTP drivers' content codings](manual-16-compression.md) - *Part III; after Chapters 2 and 4; the codecs are freestanding-available*
+17. [**HTTP/2 and HTTP/3**: HPACK, frames, the connection engine, HTTP/2 and HTTP/3 in the event-driven server and client, what was tested](manual-17-http2.md) - *Part V; after Chapters 10 and 15*
 
 **Chapters 3 and 8 both cover the formatter and the scanner, and the division is deliberate.**
 Chapter 3 introduces them alongside strings, with the everyday cases and enough to be productive.
@@ -995,7 +997,7 @@ Two things this table tells you that the file names do not:
 | `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512, by use case | Chapter 4 |
 | `hmac.h` | HMAC and HKDF over the SHA-2 family | Chapter 4 |
 | `deflate.h` | DEFLATE compression and decompression, bare or as zlib or gzip; streaming, with the output bounded by the caller | Chapter 16 |
-| `zstd.h` | Zstandard decompression and compression (nine levels), streaming, with the output and the window bounded by the caller | Chapter 16 |
+| `zstd.h` | Zstandard decompression and compression (nineteen levels, dictionaries, long-distance matching), streaming, with the output and the window bounded by the caller | Chapter 16 |
 | `brotli.h` | Brotli decompression, streaming, with the output and the window bounded by the caller; left out by `PROVEN_NO_BROTLI` | Chapter 16 |
 | `hash_legacy.h` | SHA-1 and MD5, for formats that fix them | Chapter 4 |
 | `encode.h` | Hex and Base64 (standard + URL-safe), bytes to text and back | Chapter 4 |
@@ -1009,16 +1011,16 @@ Two things this table tells you that the file names do not:
 | `http_auth.h` | Basic and Digest authentication values | Chapter 10 |
 | `http_cookie.h` | A host-only cookie jar | Chapter 10 |
 | `sse.h` | Server-sent events parser | Chapter 10 |
-| `http_client.h` | HTTP/1.1 client: redirects, challenges, cookies, proxies, connection reuse, gzip responses decoded on request (hosted-only) | Chapters 11, 16 |
+| `http_client.h` | HTTP/1.1 client: redirects, challenges, cookies, proxies, connection reuse, gzip, zstd and br responses decoded on request; HTTP/3 for the requests that ask (hosted-only) | Chapters 11, 16, 17 |
 | `http_server.h` | HTTP/1.1 server: a handler and a bounded loop, on one thread or a job system; a response compressed when its handler asks (hosted-only) | Chapters 11, 16 |
 | `ws.h` | WebSocket codec: handshake values and checks, frames, a message decoder, the compression extension's handshake and frame bit | Chapter 12 |
 | `ws_conn.h` | WebSocket connections over a transport, client and server; compressed messages when asked for (hosted-only) | Chapter 12 |
 | `cert.h` | X.509 certificates: a strict reader, host-name matching, PEM, a store of trust anchors, chain verification. Only reading the system's roots is hosted. | Chapter 13 |
 | `tls.h` | TLS 1.3 and a cut-down TLS 1.2, client and server: a config, an engine with no I/O, and (hosted-only) a transport wrapper and the HTTP wrap | Chapter 14 |
 | `loop.h` | An event loop: socket readiness, timers, work posted from other threads, a shared scratch buffer (hosted-only) | Chapter 15 |
-| `http_event.h` | HTTP server driven by events on a loop - HTTP/1.1, and HTTP/2 beside it when asked: callbacks, responses in pieces with backpressure, optional TLS, a response compressed when asked (hosted-only) | Chapters 15, 16, 17 |
+| `http_event.h` | HTTP server driven by events on a loop - HTTP/1.1, and HTTP/2 and HTTP/3 beside it when asked: callbacks, responses in pieces with backpressure, optional TLS, a response compressed when asked (hosted-only) | Chapters 15, 16, 17 |
 | `ws_event.h` | WebSocket on the event-driven server: messages in pieces, sends refused and resumed, liveness and close handled, compressed messages when asked for (hosted-only) | Chapters 15, 12 |
-| `http_event_client.h` | HTTP client driven by events on a loop: many requests in flight on one thread; HTTP/2 when asked, on one connection kept for each origin; narrow - no redirects or name resolution, no reuse for HTTP/1.1; gzip responses decoded on request (hosted-only) | Chapters 15, 16, 17 |
+| `http_event_client.h` | HTTP client driven by events on a loop: many requests in flight on one thread; HTTP/2 when asked, on one connection kept for each origin, and HTTP/3 for the requests that ask; HTTP/1.1 connections kept for the next request; narrow - no redirects or name resolution; gzip, zstd and br responses decoded on request (hosted-only) | Chapters 15, 16, 17 |
 | `sysio.h` | Standard streams as writers/readers, line input from stdin, buffered output, printing, scanning, environment access | Chapter 5 |
 | `random.h` | Randomness by use case: xoshiro256** (reproducible), ChaCha20 (cryptographic), the OS CSPRNG, and unbiased range/shuffle helpers. The generators work freestanding; only the OS source is hosted. | Chapter 5 |
 | `mmap.h` | Memory-mapped file regions | Chapter 5 |
@@ -1063,9 +1065,9 @@ The chapters are ordered so that each one only needs the ones before it.
 |---|---|---|
 | **I** | This chapter | The contracts and the vocabulary |
 | **II** | [1](manual-01-foundation.md) -> [2](manual-02-allocation.md) -> [3](manual-03-strings-text.md) | Errors, memory, and text: what every program uses |
-| **III** | [4](manual-04-containers-algorithms.md) | Arrays, maps, lists, rings, sorting, hashing, encoding |
+| **III** | [4](manual-04-containers-algorithms.md) -> [16](manual-16-compression.md) | Arrays, maps, lists, rings, sorting, hashing, encoding; then compression |
 | **IV** | [8](manual-08-fmt-scan.md) | Formatting and scanning in full, once Chapter 3 has introduced them |
-| **V** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) -> [10](manual-10-http.md) -> [11](manual-11-http-client-server.md) -> [12](manual-12-websocket.md) -> [13](manual-13-certificates.md) -> [14](manual-14-tls.md) -> [15](manual-15-event-loop.md) | Files, streams, standard I/O, time, randomness, mapping; then sockets; then URLs and HTTP; then a client and a server; then WebSocket; then certificates; then TLS; then the event loop |
+| **V** | [5](manual-05-hosted-services.md) -> [9](manual-09-networking.md) -> [10](manual-10-http.md) -> [11](manual-11-http-client-server.md) -> [12](manual-12-websocket.md) -> [13](manual-13-certificates.md) -> [14](manual-14-tls.md) -> [15](manual-15-event-loop.md) -> [17](manual-17-http2.md) | Files, streams, standard I/O, time, randomness, mapping; then sockets; then URLs and HTTP; then a client and a server; then WebSocket; then certificates; then TLS; then the event loop; then HTTP/2 and HTTP/3 |
 | **VI** | [6](manual-06-execution-and-platform.md) -> [freestanding](manual-freestanding.md) | Coroutines, jobs, thread-safety, bare metal, cross builds |
 | **Appendices** | [A: alias index](manual-07-alias-xcv-index.md), B and D above | Looking things up |
 

@@ -1,4 +1,4 @@
-# Chapter 17: HTTP/2 - frames and header compression
+# Chapter 17: HTTP/2 and HTTP/3 - frames, header compression, the event-driven drivers
 
 **Part V - Talking to the operating system. Prerequisites: [Chapter 10](manual-10-http.md) for
 what a request and a response are; [Chapter 2](manual-02-allocation.md) for the allocator the
