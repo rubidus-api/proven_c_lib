@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.107.0] - 2026-11-01
+
 ### Added
 
 - **Trailers in the event-driven server and client** (RFC-0041 H-5, second part), over HTTP/1.1,
