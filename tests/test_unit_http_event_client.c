@@ -325,6 +325,7 @@ static void cases(bool tls) {
     }
     PROVEN_TEST_ASSERT(start(client, &c, "GET", url(tls, at.port, "/never"), (proven_mem_view_t){ 0 }, 0) == PROVEN_OK, "a request that will be given up", how);
     spin(40);
+    PROVEN_TEST_ASSERT(!c.done, "still waiting for its answer when it is given up", how);     /* (abort after on_done is the caller's fault) */
     proven_http_event_request_abort(c.request);
     PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_RESET && c.dones == 1 && proven_http_event_client_requests(client) == 0, "abort calls on_done(PROVEN_ERR_RESET) inside the call", how);
 

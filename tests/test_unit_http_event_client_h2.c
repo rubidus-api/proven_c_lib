@@ -327,6 +327,7 @@ static void cases(bool tls) {
     /* Giving up, and a server that does not answer: one request ends; the connection does not. */
     PROVEN_TEST_ASSERT(start(client, &c, "GET", "/never", mv(""), 0) == PROVEN_OK, "a request that will be given up", how);
     spin(50);
+    PROVEN_TEST_ASSERT(!c.done, "still waiting for its answer when it is given up", how);     /* (abort after on_done is the caller's fault) */
     proven_http_event_request_abort(c.request);
     PROVEN_TEST_ASSERT(c.done && c.why == PROVEN_ERR_RESET && c.dones == 1, "an aborted request ends at once, with PROVEN_ERR_RESET", how);
     c.plain = true;
