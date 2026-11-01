@@ -1030,6 +1030,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(samples > 0 && ahead <= 50000 + 1024, "and past the promise it is never granted more than 50,000 beyond what the handler has (300,000 without the ceiling)", "");
         PROVEN_TEST_ASSERT(cl_connect(c2, port), "a connection made after", "");
         const int p = cl_request(c2, "POST", "/pause", 1000000, NULL, 0, true);
+        PROVEN_TEST_ASSERT(p >= 0, "a request on it", "");
         cl_run(c2, 60);                            /* the handler resumes at 150 ms */
         PROVEN_TEST_ASSERT(proven_quic_conn_test_tx_max_(c2->q, c2->r[p].id) == 50000 && proven_quic_conn_test_tx_max_(c2->q, ~(proven_u64)0) == 50000 && !c2->r[p].up_done,
             "is promised 50,000 a stream and on the connection, and a paused request is held there", "");
@@ -1037,6 +1038,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(atomic_load(&g_set_err) == PROVEN_OK, "raised again", "");
         PROVEN_TEST_ASSERT(cl_connect(c3, port), "a third connection", "");
         const int p3 = cl_request(c3, "POST", "/pause", 1000000, NULL, 0, true);
+        PROVEN_TEST_ASSERT(p3 >= 0, "a request on it", "");
         cl_run(c3, 60);
         PROVEN_TEST_ASSERT(proven_quic_conn_test_tx_max_(c3->q, c3->r[p3].id) == 300000, "is promised the configured 300,000 again", "");
         PROVEN_TEST_ASSERT(!c->closed && !c2->closed && !c3->closed, "no connection was ended by any of it", "");

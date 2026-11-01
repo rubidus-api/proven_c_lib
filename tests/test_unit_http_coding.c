@@ -233,13 +233,17 @@ static void event_request(void *ctx, proven_http_stream_t *s, const proven_http_
         /* The first half, handed over; the second when the test has seen the first arrive. */
         proven_result_size_t w = proven_http_stream_write(s, (proven_mem_view_t){ .ptr = p.body, .size = p.total });
         if (w.err != PROVEN_OK || w.value != p.total || proven_http_stream_flush(s) != PROVEN_OK) { atomic_fetch_add(&g_flush_bad, 1); return; }
-        if (proven_http_stream_flush(s) != PROVEN_OK) atomic_fetch_add(&g_flush_bad, 1);                /* a second with nothing new: nothing, successfully */
+        const proven_err_t again = proven_http_stream_flush(s);                                         /* a second with nothing new: nothing, successfully */
+        if (again == PROVEN_ERR_RESET) return;     /* the connection ended inside it: on_done has freed `a` */
+        if (again != PROVEN_OK) atomic_fetch_add(&g_flush_bad, 1);
         a->sent = p.total;
         a->total = 2 * p.total;
         proven_loop_timer_set(g_loop, &a->timer, 5, flushed_go, a);
         return;
     }
-    if (proven_http_stream_flush(s) != PROVEN_OK) atomic_fetch_add(&g_flush_bad, 1);                    /* begun, compressed or not: allowed */
+    const proven_err_t fe = proven_http_stream_flush(s);                                                /* begun, compressed or not: allowed */
+    if (fe == PROVEN_ERR_RESET) return;            /* the connection ended inside it: on_done has run and freed `a` */
+    if (fe != PROVEN_OK) atomic_fetch_add(&g_flush_bad, 1);
     served_pump(a);
 }
 static void event_writable(void *ctx, proven_http_stream_t *s) {

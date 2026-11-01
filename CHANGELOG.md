@@ -18,6 +18,33 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A write that ended its stream said it had succeeded.** In the event-driven server and client,
+  `proven_http_stream_write`, `proven_http_stream_flush` and `proven_http_event_request_write` decided
+  their answer before the last of their work - offering the output to the connection, or asking the
+  loop for what the connection waits for - and that work can end the connection (memory, a refused
+  request to the loop). Then `on_done` had been called, and the object freed, while the call said
+  `PROVEN_OK`, and a caller that went on to use it used freed memory. The answer is now taken after
+  that work, in all six drivers (HTTP/1.1, HTTP/2 and HTTP/3, server and client), and the same in
+  `proven_http_stream_begin` over HTTP/2 and HTTP/3: `PROVEN_ERR_RESET`, as over HTTP/1.1. A
+  WebSocket accepted inside `on_request` whose connection ended in that moment was handed to the
+  caller already freed; it is now `PROVEN_ERR_RESET`, as documented. `proven_http_stream_pause` and
+  `proven_http_event_request_pause` no longer leave behind a request or connection that the loop's
+  refusal ended inside them. Found by failing each allocation of the tests in turn under ASan;
+  `test_unit_http_event_alloc_fail` now fails every allocation of an exchange in turn, the client's and
+  then the server's, over the three protocols (it would have caught the HTTP/2 client's).
+- `proven_http_stream_write`'s documentation gave no `PROVEN_ERR_RESET`, and none of these calls said
+  that `on_done` has run by the time they return it: they now do, in the headers and in chapter 15.
+- The float parser's 256-bit shift indexed past a struct member (undefined behaviour that compilers
+  have so far compiled as intended); it now copies the four limbs into an array. Found by Clang's
+  static analyzer.
+- Documentation: chapter 0 of the manual now lists chapters 16 and 17 in its reading map and chapter
+  list, and its header map no longer says nine Zstandard levels or leaves HTTP/3 out of the HTTP
+  drivers; chapter 17 is titled for HTTP/3 too. The README no longer says the event-driven client
+  has no HTTP/3 fallback or uses one connection per request, that the blocking client speaks only
+  HTTP/1.1, or that 0-RTT is for QUIC only, and its status names the Windows runs.
+
 ## [0.107.1] - 2026-11-01
 
 ### Fixed

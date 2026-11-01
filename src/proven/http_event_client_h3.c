@@ -1348,9 +1348,13 @@ int proven_http_event_client_h3_protocol_(const proven_http_event_request_t *req
 }
 
 static void call_begin(proven_c3req_t *r) { r_enter(r); if (r->conn) { c_enter(r->conn); r->conn->calls++; } }
-static void call_end(proven_c3req_t *r, c3conn_t *c) {
+/* True when the request is still there after the call's sending, which can end it (on_done has
+ * then been called): read before the leave, which may free it. */
+static bool call_end(proven_c3req_t *r, c3conn_t *c) {
     if (c) { c->calls--; if (!c->dead) { c_send(c); c_call_back(c); } c_leave(c); }
+    const bool alive = !r->dead;
     r_leave(r);
+    return alive;
 }
 
 void proven_http_event_client_h3_test_retire_(proven_http_event_client_t *client) {
@@ -1395,7 +1399,7 @@ proven_result_size_t proven_http_event_client_h3_write_(proven_http_event_reques
         if (r->body_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) r->send_left -= taken;
         if (taken < data.size) { r->blocked = true; r->want_writable = true; }
     }
-    call_end(r, c);
+    if (!call_end(r, c)) alive = false;
     return alive ? (proven_result_size_t){ .err = PROVEN_OK, .value = taken } : (proven_result_size_t){ .err = PROVEN_ERR_RESET, .value = 0 };
 }
 

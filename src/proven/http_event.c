@@ -1361,6 +1361,7 @@ proven_result_size_t proven_http_stream_write(proven_http_stream_t *c, proven_me
         if (done < data.size) c->want_writable = true;
         ev_watch(c);
         ev_arm(c);
+        alive = !c->dead;                          /* the loop may refuse what ev_watch asks: that ends it here */
     }
     ev_leave(c);
     return alive ? (proven_result_size_t){ .err = PROVEN_OK, .value = done } : (proven_result_size_t){ .err = PROVEN_ERR_RESET, .value = 0 };
@@ -1375,10 +1376,11 @@ proven_err_t proven_http_stream_flush(proven_http_stream_t *c) {
     if (c->dead || !c->active || !c->response_begun || c->response_ended) return PROVEN_ERR_INVALID_STATE;
     if (!c->zip) return PROVEN_OK;                 /* nothing is held back: what was written is queued or gone */
     ev_enter(c);
-    const bool alive = ev_zip(c, (void *)0, 0, PROVEN_DEFLATE_FLUSH_SYNC);
+    bool alive = ev_zip(c, (void *)0, 0, PROVEN_DEFLATE_FLUSH_SYNC);
     if (alive) {
         ev_watch(c);
         ev_arm(c);
+        alive = !c->dead;
     }
     ev_leave(c);
     return alive ? PROVEN_OK : PROVEN_ERR_RESET;
@@ -1521,8 +1523,10 @@ void proven_http_stream_pause(proven_http_stream_t *c) {
 #endif
     if (c->dead || !c->active) return;
     c->paused = true;
+    ev_enter(c);                                   /* ev_watch may end it: freed on the way out if it is to be */
     ev_watch(c);
     ev_arm(c);
+    ev_leave(c);
 }
 
 void proven_http_stream_resume(proven_http_stream_t *c) {
@@ -1618,9 +1622,12 @@ proven_err_t proven_http_event_raw_begin_(proven_http_stream_t *c, void *raw, pr
     c->response_begun = false; c->response_ended = false; c->chunked = false; c->bodiless = false;
     c->want_writable = false; c->paused = false; c->expect_continue = false; c->keep = false;
     c->h.state = EV_RAW;
-    c->raw = raw;
     proven_loop_timer_cancel(s->loop, &c->timer);
     ev_watch(c);
+    /* The loop may refuse what ev_watch asks, which ends the connection here - before the new
+     * owner is set, so that it is not told of an end the caller learns from the return. */
+    if (c->dead) { ev_leave(c); return PROVEN_ERR_RESET; }
+    c->raw = raw;
     ev_leave(c);
     return PROVEN_OK;
 }
@@ -1633,7 +1640,7 @@ bool proven_http_event_raw_send_(proven_http_stream_t *c, proven_mem_view_t a, p
      * leave in one write. */
     const proven_mem_view_t parts[2] = { a, b };
     bool ok = ev_putv(c, parts, 2) && ev_flush(c);
-    if (ok) ev_watch(c);
+    if (ok) { ev_watch(c); ok = !c->dead; }
     ev_leave(c);
     return ok;
 }

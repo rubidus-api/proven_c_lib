@@ -167,7 +167,10 @@ proven_err_t proven_http_event_client_start(proven_http_event_client_t *client, 
  *        Keep the rest and offer it again when `on_writable` is called. It may be called
  *        before the connection is made: what is taken waits.
  * @return the number of bytes taken; PROVEN_ERR_INVALID_STATE when the request has no body to
- *         write, or it was ended; PROVEN_ERR_OUT_OF_BOUNDS for more than the length promised.
+ *         write, or it was ended; PROVEN_ERR_OUT_OF_BOUNDS for more than the length promised;
+ *         PROVEN_ERR_RESET when the request ended over it (its connection failed, or memory ran
+ *         out) - `on_done` has then been called, inside this call, so neither the request nor
+ *         what `on_done` freed may be used after it returns.
  */
 [[nodiscard]]
 proven_result_size_t proven_http_event_request_write(proven_http_event_request_t *request, proven_mem_view_t data);

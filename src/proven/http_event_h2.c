@@ -901,6 +901,9 @@ proven_err_t proven_http_event_h2_begin_(proven_http_stream_t *stream, proven_u1
         s->response_left = s->bodiless ? PROVEN_HTTP_EVENT_LENGTH_UNKNOWN : content_length;
     }
     d_pump(d);
+    /* The stream may have ended in there (on_done has then been called): the caller must not
+     * go on to write to it. */
+    if (e == PROVEN_OK && s->dead) e = PROVEN_ERR_RESET;
     d->calls--;
     d_leave(d);
     s_leave(s);
@@ -965,8 +968,8 @@ proven_result_size_t proven_http_event_h2_write_(proven_http_stream_t *stream, p
         if (s_out_pending(s) > 0) s_push(s);
         if (!s->dead && done < data.size) s->want_writable = true;
     }
-    alive = alive && !s->dead;
     d_pump(d);
+    alive = alive && !s->dead;                     /* after the pump, which may end the stream */
     d->calls--;
     d_leave(d);
     s_leave(s);
@@ -982,8 +985,8 @@ proven_err_t proven_http_event_h2_flush_(proven_http_stream_t *stream) {
     d_enter(d);
     d->calls++;
     if (!s_zip(s, (void *)0, 0, PROVEN_DEFLATE_FLUSH_SYNC)) s_reset(s, PROVEN_H2_INTERNAL_ERROR, PROVEN_ERR_NOMEM);
-    const bool alive = !s->dead;
     d_pump(d);
+    const bool alive = !s->dead;
     d->calls--;
     d_leave(d);
     s_leave(s);
@@ -1214,9 +1217,12 @@ proven_err_t proven_http_event_h2_raw_begin_(proven_http_stream_t *stream, void 
         if (s->dead || d->dead) e = PROVEN_ERR_RESET;
         else {
             s->user = (void *)0;
-            s->raw = raw;
-            /* Input that came before this is fed from the loop, once the caller has the object. */
+            /* Input that came before this is fed from the loop, once the caller has the object.
+             * Asked before the owner is set: asking can end the connection, and then the caller
+             * learns it from the return, not from the owner's on_closed as well. */
             if (s->held_len > 0 || s->in_done) proven_http_event_raw_again_(d->conn);
+            if (s->dead || d->dead) e = PROVEN_ERR_RESET;
+            else s->raw = raw;
         }
     } else {
         e = e == PROVEN_ERR_NOMEM ? PROVEN_ERR_NOMEM : PROVEN_ERR_RESET;

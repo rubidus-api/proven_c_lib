@@ -96,7 +96,13 @@ static void flush_first_fire(void *ctx) {
     static proven_byte_t half[2000];
     for (proven_size_t i = 0; i < sizeof half; i++) half[i] = pat(i);
     proven_result_size_t w = proven_http_stream_write(a->stream, (proven_mem_view_t){ half, sizeof half });
-    if (w.err != PROVEN_OK || w.value != sizeof half || proven_http_stream_flush(a->stream) != PROVEN_OK || proven_http_stream_flush(a->stream) != PROVEN_OK) atomic_fetch_add(&g_flush_bad, 1);
+    /* PROVEN_ERR_RESET: the stream ended inside the call, and on_done has freed `a`. */
+    if (w.err == PROVEN_ERR_RESET) return;
+    const proven_err_t f1 = w.err == PROVEN_OK ? proven_http_stream_flush(a->stream) : w.err;
+    if (f1 == PROVEN_ERR_RESET) return;
+    const proven_err_t f2 = f1 == PROVEN_OK ? proven_http_stream_flush(a->stream) : f1;
+    if (f2 == PROVEN_ERR_RESET) return;
+    if (w.err != PROVEN_OK || w.value != sizeof half || f1 != PROVEN_OK || f2 != PROVEN_OK) atomic_fetch_add(&g_flush_bad, 1);
     a->sent = sizeof half;
     a->total = 2 * sizeof half;
     proven_loop_timer_set(g_loop, &a->timer, 5, flush_go_fire, a);

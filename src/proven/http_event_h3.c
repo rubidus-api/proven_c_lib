@@ -1118,12 +1118,16 @@ static const proven_h3s_t *h3s_of_const(const proven_http_stream_t *stream) { re
 /* A call of a handler's on a stream: counted, so that nothing of the round runs inside it, and
  * what it made sent when it is done. */
 static void call_begin(proven_h3s_t *s) { s_enter(s); d_enter(s->d); s->d->calls++; }
-static void call_end(proven_h3s_t *s) {
+/* True when the stream is still there after the call's sending, which can end it (on_done has
+ * then been called): read before the leave, which may free it. */
+static bool call_end(proven_h3s_t *s) {
     h3d_t *d = s->d;
     d->calls--;
     d_after_call(d);
+    const bool alive = !s->dead;
     d_leave(d);
     s_leave(s);
+    return alive;
 }
 
 void proven_http_event_h3_compress_(proven_http_stream_t *stream) {
@@ -1222,7 +1226,7 @@ proven_err_t proven_http_event_h3_begin_(proven_http_stream_t *stream, proven_u1
         s->zip = zip;
         s->response_left = s->bodiless ? PROVEN_HTTP_EVENT_LENGTH_UNKNOWN : content_length;
     }
-    call_end(s);
+    if (!call_end(s) && e == PROVEN_OK) e = PROVEN_ERR_RESET;     /* the caller must not go on to write */
     return e;
 }
 
@@ -1268,9 +1272,8 @@ proven_result_size_t proven_http_event_h3_write_(proven_http_stream_t *stream, p
         if (s->response_left != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) s->response_left -= n;
         done += n;
     }
-    const bool alive = !s->dead;
-    if (alive && done < data.size) s->want_writable = true;
-    call_end(s);
+    if (!s->dead && done < data.size) s->want_writable = true;
+    const bool alive = call_end(s);
     return alive ? (proven_result_size_t){ .err = PROVEN_OK, .value = done } : (proven_result_size_t){ .err = PROVEN_ERR_RESET, .value = 0 };
 }
 
@@ -1281,8 +1284,7 @@ proven_err_t proven_http_event_h3_flush_(proven_http_stream_t *stream) {
     call_begin(s);
     if (!s_zip(s, (void *)0, 0, PROVEN_DEFLATE_FLUSH_SYNC)) s_reset(s, PROVEN_H3_INTERNAL_ERROR, PROVEN_ERR_NOMEM);
     else s_push(s);
-    const bool alive = !s->dead;
-    call_end(s);
+    const bool alive = call_end(s);
     return alive ? PROVEN_OK : PROVEN_ERR_RESET;
 }
 

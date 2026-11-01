@@ -1610,8 +1610,8 @@ proven_result_size_t proven_http_event_client_h2_write_(proven_http_event_reques
         if (r->window_shut) break;
     }
     if (alive && !r->dead && done < data.size) r->want_writable = true;
-    alive = alive && !r->dead;
     c_pump(c);
+    alive = alive && !r->dead;                     /* after the pump, which may end the request */
     c->calls--;
     c_leave(c);
     r_leave(r);

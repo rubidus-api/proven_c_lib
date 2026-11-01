@@ -325,7 +325,7 @@ void proven_http_stream_compress(proven_http_stream_t *stream);
  * The body is copied, whatever its size - for a large or generated body use
  * proven_http_stream_begin and proven_http_stream_write, which respect the output limit.
  * `Content-Length`, `Date` and `Connection` are written for you and may not be among
- * `headers`.
+ * `headers`. As after proven_http_stream_end, `on_done` follows - possibly inside this call.
  *
  * @return PROVEN_ERR_INVALID_STATE when a response was already begun or the stream is over;
  *         PROVEN_ERR_INVALID_ARG for a status outside 200-999 or a header the server writes
@@ -340,7 +340,9 @@ proven_err_t proven_http_stream_respond(proven_http_stream_t *stream, proven_u16
 /**
  * @brief Begin a response whose body will follow in pieces.
  * @param content_length the body's size, or PROVEN_HTTP_EVENT_LENGTH_UNKNOWN to send it chunked.
- * @return as proven_http_stream_respond.
+ * @return as proven_http_stream_respond; PROVEN_ERR_RESET when the connection or the stream ended
+ *         over it - `on_done` has then been called, inside this call, and the stream may not be
+ *         written to.
  */
 [[nodiscard]]
 proven_err_t proven_http_stream_begin(proven_http_stream_t *stream, proven_u16 status,
@@ -353,7 +355,9 @@ proven_err_t proven_http_stream_begin(proven_http_stream_t *stream, proven_u16 s
  *        called.
  * @return the number of bytes taken; PROVEN_ERR_INVALID_STATE before proven_http_stream_begin,
  *         after proven_http_stream_end, or when the stream is over; PROVEN_ERR_OUT_OF_BOUNDS
- *         for more than the Content-Length that was promised.
+ *         for more than the Content-Length that was promised; PROVEN_ERR_RESET when the
+ *         connection or the stream ended over it - `on_done` has then been called, inside this
+ *         call, so neither the stream nor what `on_done` freed may be used after it returns.
  */
 [[nodiscard]]
 proven_result_size_t proven_http_stream_write(proven_http_stream_t *stream, proven_mem_view_t data);
@@ -371,7 +375,8 @@ proven_result_size_t proven_http_stream_write(proven_http_stream_t *stream, prov
  *
  * @return PROVEN_ERR_INVALID_STATE before proven_http_stream_begin, after
  *         proven_http_stream_end, or when the stream is over; PROVEN_ERR_RESET when the
- *         connection or the stream ended over it.
+ *         connection or the stream ended over it - `on_done` has then been called, inside this
+ *         call, as for proven_http_stream_write.
  */
 [[nodiscard]]
 proven_err_t proven_http_stream_flush(proven_http_stream_t *stream);

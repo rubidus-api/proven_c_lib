@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 132 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 133 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -348,7 +348,7 @@ Last run, 2026-11-01, Windows 11 test VM (v0.107.0): x86-64 383 PASS, 0 FAIL, 10
 ## Test catalog
 
 
-The hosted full run builds and executes 201 registered tests plus the 192 runnable manual examples - 393 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 214 test files: the 197 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 202 registered tests plus the 192 runnable manual examples - 394 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 215 test files: the 202 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1222,6 +1222,19 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/http_event_client.c` - `cl_process` for the response and the end-of-stream branch after its loop, `cl_flush` and `cl_progress` for the request, `cl_arm` for the time limits, `cl_kill` for the end. A request that never ends after the server closed is that branch: it once waited for the stash to be empty, which a half-received head never is.
 
+
+### `tests/test_unit_http_event_alloc_fail` - the event-driven drivers when an allocation fails
+
+Intent: verify that the calls that hand out a body keep their word when an allocation fails: once `on_done` has run - inside the call, when the failure ends the stream there - the call says `PROVEN_ERR_RESET`, never `PROVEN_OK`.
+
+Sub-checks, over HTTP/1.1 (TLS without ALPN), HTTP/2 and HTTP/3, this library at both ends on one loop, the calls made from the program between the loop's rounds (as a handler answering later makes them):
+
+- The client and its TLS configuration get an allocator that fails their N-th allocation (or growing reallocation), for N = 1, 2, ... until a whole exchange runs without reaching it: a PUT of 40,000 bytes with no length, written 1,000 bytes at a time. Every request ends; no `proven_http_event_request_write` says `PROVEN_OK` after `on_done`, or `PROVEN_ERR_RESET` before it.
+- The same for the server and its TLS configuration, against a client on the heap: a compressed response begun later, written 1,000 bytes at a time under an 8 KiB output limit and flushed once - `proven_http_stream_begin`, `_write` and `_flush` held to the same rule.
+
+Each side's allocation count for one exchange is printed (about 40 to 130). Before v0.107.2 the HTTP/2 client's write failed it: with its 37th allocation failing, a write said `PROVEN_OK` about a request it had just freed. The same fault, by the same order of work, was fixed in the other drivers; this test does not reach those (their final step fails on the loop's refusal or a send, not on the side's own allocator). The allocation-failure sweep over the whole suite is the private `docs/checks/oom/` check.
+
+Failure tip: inspect where `proven_http_event_request_write` (`http_event_client.c`, `_h2.c`, `_h3.c`) and `proven_http_stream_begin`, `_write`, `_flush` (`http_event.c`, `http_event_h2.c`, `http_event_h3.c`) take their answer: after the last pump, watch or send of the call, which can end the stream.
 
 ### `tests/test_unit_http_event_trailers` - trailers through the event-driven server and client
 

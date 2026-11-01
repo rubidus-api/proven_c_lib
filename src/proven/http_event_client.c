@@ -1385,6 +1385,7 @@ proven_result_size_t proven_http_event_request_write(proven_http_event_request_t
         if (done < data.size) c->want_writable = true;
         cl_watch(c);
         cl_arm(c);
+        alive = !c->dead;                          /* the loop may refuse what cl_watch asks: that ends it here */
     }
     cl_leave(c);
     return alive ? (proven_result_size_t){ .err = PROVEN_OK, .value = done } : (proven_result_size_t){ .err = PROVEN_ERR_RESET, .value = 0 };
@@ -1482,8 +1483,10 @@ void proven_http_event_request_pause(proven_http_event_request_t *c) {
 #endif
     if (c->dead || c->paused) return;
     c->paused = true;
+    cl_enter(c);                                   /* cl_watch may end it: freed on the way out, not left */
     cl_watch(c);
     cl_arm(c);
+    cl_leave(c);
 }
 
 void proven_http_event_request_resume(proven_http_event_request_t *c) {

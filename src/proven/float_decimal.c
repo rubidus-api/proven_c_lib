@@ -2754,7 +2754,9 @@ static int proven_float_u256_bit_length(proven_u256_parts_t value) {
 }
 
 static proven_u64 proven_float_u256_shr_to_u64(proven_u256_parts_t value, unsigned shift, bool *sticky) {
-    const proven_u64 *limbs = &value.limb0;
+    /* An array of its own: indexing past `limb0` would leave that member (undefined behaviour,
+     * whatever the struct's layout). */
+    const proven_u64 limbs[4] = { value.limb0, value.limb1, value.limb2, value.limb3 };
     proven_u64 result = 0;
     bool extra = false;
     unsigned limb = shift / 64u;
