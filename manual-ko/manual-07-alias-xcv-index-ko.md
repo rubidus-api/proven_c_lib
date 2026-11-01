@@ -714,12 +714,14 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_http_event_port_t` | `proven_http_event_port_t` |
 | `xcv_http_event_request_abort` | `proven_http_event_request_abort` |
 | `xcv_http_event_request_end` | `proven_http_event_request_end` |
+| `xcv_http_event_request_end_trailers` | `proven_http_event_request_end_trailers` |
 | `xcv_http_event_request_options_t` | `proven_http_event_request_options_t` |
 | `xcv_http_event_request_pause` | `proven_http_event_request_pause` |
 | `xcv_http_event_request_protocol` | `proven_http_event_request_protocol` |
 | `xcv_http_event_request_resume` | `proven_http_event_request_resume` |
 | `xcv_http_event_request_set_user` | `proven_http_event_request_set_user` |
 | `xcv_http_event_request_t` | `proven_http_event_request_t` |
+| `xcv_http_event_request_trailers` | `proven_http_event_request_trailers` |
 | `xcv_http_event_request_user` | `proven_http_event_request_user` |
 | `xcv_http_event_request_write` | `proven_http_event_request_write` |
 | `xcv_http_event_server_adopt` | `proven_http_event_server_adopt` |
@@ -799,6 +801,7 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_http_stream_compress` | `proven_http_stream_compress` |
 | `xcv_http_stream_early` | `proven_http_stream_early` |
 | `xcv_http_stream_end` | `proven_http_stream_end` |
+| `xcv_http_stream_end_trailers` | `proven_http_stream_end_trailers` |
 | `xcv_http_stream_flush` | `proven_http_stream_flush` |
 | `xcv_http_stream_pause` | `proven_http_stream_pause` |
 | `xcv_http_stream_peer` | `proven_http_stream_peer` |
@@ -807,6 +810,7 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_http_stream_resume` | `proven_http_stream_resume` |
 | `xcv_http_stream_set_user` | `proven_http_stream_set_user` |
 | `xcv_http_stream_t` | `proven_http_stream_t` |
+| `xcv_http_stream_trailers` | `proven_http_stream_trailers` |
 | `xcv_http_stream_user` | `proven_http_stream_user` |
 | `xcv_http_stream_write` | `proven_http_stream_write` |
 | `xcv_http_tls_wrap_fn` | `proven_http_tls_wrap_fn` |

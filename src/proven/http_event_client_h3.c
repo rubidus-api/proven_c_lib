@@ -71,6 +71,9 @@ typedef struct c3req {
     bool sent_early;                   /* submitted before the handshake was complete: early data (RFC-0021) */
     bool early_again;                  /* sent again once after a 425 or a refusal: never early, never a third time */
     proven_http_event_request_t *tcp;  /* RFC-0031: the request over TCP this became; every call goes to it */
+    bool body_over;                    /* the response's end has arrived (proven_http_event_request_trailers) */
+    proven_http_trailers_t_ in_trailers;   /* the response's, until the struct goes - over TCP too, copied at its end */
+    proven_http_trailers_t_ out_trailers;  /* the request's, sent as the stream's end once `out` has drained */
     proven_byte_t host[256];
 } proven_c3req_t;
 
@@ -161,6 +164,8 @@ static void r_enter(proven_c3req_t *r) { r->h.depth++; }
 static void r_leave(proven_c3req_t *r) {
     if (--r->h.depth > 0 || !r->dead) return;
     proven_allocator_t a = r->h.client->alloc;
+    proven_http_trailers_free_(a, &r->in_trailers);
+    proven_http_trailers_free_(a, &r->out_trailers);
     a.free_fn(a.ctx, r);
 }
 
@@ -279,8 +284,18 @@ static void x_response(void *ctx, proven_http_event_request_t *in, const proven_
     if (r->on.on_response) r->on.on_response(r->ctx, c3_handle(r), head);
 }
 static void x_body(void *ctx, proven_http_event_request_t *in, proven_mem_view_t piece, bool last) {
-    (void)in;
     proven_c3req_t *r = ctx;
+    if (last) {
+        /* The trailers over TCP, copied: the request over TCP is gone by the time on_done returns. */
+        proven_http_header_t fields[64];
+        proven_size_t n = 0;
+        r->body_over = true;
+        if (proven_http_event_request_trailers(in, fields, 64, &n) != PROVEN_OK ||
+            proven_http_trailers_keep_(r->h.client->alloc, &r->in_trailers, fields, n, false, false) != PROVEN_OK) {
+            proven_http_event_request_abort(in);
+            return;
+        }
+    }
     if (r->on.on_body) r->on.on_body(r->ctx, c3_handle(r), piece, last);
 }
 static void x_writable(void *ctx, proven_http_event_request_t *in) {
@@ -332,6 +347,9 @@ static void r_fallback(proven_c3req_t *r) {
     r->tcp = made;
     r_free_parts(r);                               /* what it was started with is the new request's now */
     if (r->paused) proven_http_event_request_pause(made);
+    /* Ended with trailers before it had a stream: they end it over TCP instead. */
+    if (r->end_asked && r->out_trailers.count && proven_http_event_request_end_trailers(made, r->out_trailers.fields, r->out_trailers.count) != PROVEN_OK)
+        proven_http_event_request_abort(made);
     if (r->streamed && r->want_writable) proven_loop_timer_set(cl->loop, &r->wait_timer, 0, x_writable_fire, r);
     r_leave(r);
 }
@@ -557,18 +575,21 @@ static void r_push(proven_c3req_t *r) {
     proven_http_event_client_t *cl = r->h.client;
     if (r->out_off < r->out_len && !r->blocked) {
         proven_size_t taken = 0;
-        const proven_err_t e = proven_h3_send_data(c->h3, r->id, (proven_mem_view_t){ .ptr = r->out + r->out_off, .size = r->out_len - r->out_off }, r->end_asked, &taken);
+        const bool fin = r->end_asked && r->out_trailers.count == 0;     /* with trailers, they end it */
+        const proven_err_t e = proven_h3_send_data(c->h3, r->id, (proven_mem_view_t){ .ptr = r->out + r->out_off, .size = r->out_len - r->out_off }, fin, &taken);
         if (e != PROVEN_OK) { r_finish(r, PROVEN_ERR_RESET); return; }
         r->out_off += taken;
         if (taken > 0) c->write_since = 0;
         if (r->out_off < r->out_len) { r->blocked = true; return; }
         cl->alloc.free_fn(cl->alloc.ctx, r->out);
         r->out = (void *)0; r->out_len = r->out_off = 0;
-        if (r->end_asked) { r->engine_done = true; r_expect(r); return; }
+        if (fin) { r->engine_done = true; r_expect(r); return; }
     }
     if (r->out_len == 0 && r->end_asked && !r->engine_done) {
         proven_size_t taken = 0;
-        if (proven_h3_send_data(c->h3, r->id, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true, &taken) != PROVEN_OK) { r_finish(r, PROVEN_ERR_RESET); return; }
+        const proven_err_t e = r->out_trailers.count ? proven_h3_send_trailers(c->h3, r->id, r->out_trailers.fields, r->out_trailers.count)
+                                                     : proven_h3_send_data(c->h3, r->id, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true, &taken);
+        if (e != PROVEN_OK) { r_finish(r, PROVEN_ERR_RESET); return; }
         r->engine_done = true;
         r_expect(r);
     }
@@ -755,7 +776,7 @@ static void c_response(c3conn_t *c, proven_c3req_t *r, const proven_h3_event_t *
     r_enter(r);
     if (r->on.on_response) r->on.on_response(r->ctx, c3_handle(r), &res);
     if (!r->dead) {
-        if (ev->end_stream || r->head_only) r_finish(r, PROVEN_OK);
+        if (ev->end_stream || r->head_only) { r->body_over = true; r_finish(r, PROVEN_OK); }
         else r_expect(r);
     }
     r_leave(r);
@@ -830,12 +851,14 @@ static void c_event(c3conn_t *c, const proven_h3_event_t *ev) {
         case PROVEN_H3_EV_DATA:
             if (r && !r->head_only) {
                 r_enter(r);
+                if (ev->end_stream) r->body_over = true;
                 if (r_deliver(r, ev->data, ev->end_stream)) { if (ev->end_stream) r_finish(r, PROVEN_OK); else r_expect(r); }
                 r_leave(r);
             }
             break;
-        case PROVEN_H3_EV_TRAILERS:                    /* not passed on: the request's end */
-            if (r) { r_enter(r); if (r_deliver(r, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true)) r_finish(r, PROVEN_OK); r_leave(r); }
+        case PROVEN_H3_EV_TRAILERS:                    /* kept for proven_http_event_request_trailers, then the body's end */
+            if (r && proven_http_trailers_keep_(r->h.client->alloc, &r->in_trailers, ev->fields, ev->field_count, true, false) != PROVEN_OK) { r_finish(r, PROVEN_ERR_NOMEM); break; }
+            if (r) { r->body_over = true; r_enter(r); if (r_deliver(r, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true)) r_finish(r, PROVEN_OK); r_leave(r); }
             break;
         case PROVEN_H3_EV_STREAM_RESET:
             if (r) {
@@ -1376,10 +1399,33 @@ proven_result_size_t proven_http_event_client_h3_write_(proven_http_event_reques
     return alive ? (proven_result_size_t){ .err = PROVEN_OK, .value = taken } : (proven_result_size_t){ .err = PROVEN_ERR_RESET, .value = 0 };
 }
 
-proven_err_t proven_http_event_client_h3_end_(proven_http_event_request_t *request) {
+proven_err_t proven_http_event_client_h3_trailers_(const proven_http_event_request_t *request, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count) {
+    const proven_c3req_t *r = (const proven_c3req_t *)(const void *)request;
+    if (!r->body_over) return PROVEN_ERR_INVALID_STATE;
+    return proven_http_trailers_give_(&r->in_trailers, fields, cap, count);
+}
+
+proven_err_t proven_http_event_client_h3_end_(proven_http_event_request_t *request, const proven_http_header_t *trailers, proven_size_t count) {
     proven_c3req_t *r = c3_of(request);
-    if (r->tcp) { r_enter(r); const proven_err_t e = proven_http_event_request_end(r->tcp); r_leave(r); return e; }
+    if (r->tcp) {
+        r_enter(r);
+        const proven_err_t e = count > 0 ? proven_http_event_request_end_trailers(r->tcp, trailers, count) : proven_http_event_request_end(r->tcp);
+        r_leave(r);
+        return e;
+    }
     if (r->dead || !r->streamed || r->end_asked) return PROVEN_ERR_INVALID_STATE;
+    if (count > 0) {
+        /* As over HTTP/1.1: after a body written with no length. Kept until the body has gone. */
+        if (r->body_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) return PROVEN_ERR_INVALID_STATE;
+        if (!proven_http_trailers_valid_(trailers, count)) return PROVEN_ERR_INVALID_ARG;
+        const proven_err_t e = proven_http_trailers_keep_(r->h.client->alloc, &r->out_trailers, trailers, count, false, true);
+        if (e != PROVEN_OK) return e;
+        if (!r->has_id) {
+            /* Not on a stream yet: its HEADERS go without the end, and the trailers after them. */
+            r->end_asked = true;
+            return PROVEN_OK;
+        }
+    }
     if (r->body_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN && (r->has_id ? r->send_left : r->body_length) != 0) {
         r_finish(r, PROVEN_ERR_INVALID_FORMAT);
         return PROVEN_ERR_INVALID_FORMAT;

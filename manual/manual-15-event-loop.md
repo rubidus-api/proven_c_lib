@@ -859,6 +859,19 @@ writes what it receives to something slower than the network uses the pair so th
 is slowed instead of the body being piled up in memory. Pieces that were waiting may arrive
 inside the call to `proven_http_stream_resume`.
 
+**Trailers** (since v0.107.0) are fields a sender puts after a body - a checksum, a status it knows
+only at the end. Over HTTP/1.1 they follow a chunked body; over HTTP/2 and HTTP/3 they are a
+HEADERS frame that ends the stream.
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_http_stream_trailers(stream, fields, cap, &count)` | The request's trailers, from `on_body` with `last` until `on_done` returns: views into the server's copy. None for a request whose body was not chunked (HTTP/1.1) or that had none. | `proven_err_t`: `INVALID_STATE` before the body's end; `OUT_OF_BOUNDS` for more than `cap`. |
+| `proven_http_stream_end_trailers(stream, fields, count)` | End a response begun with `PROVEN_HTTP_EVENT_LENGTH_UNKNOWN` with trailers after its body. The fields are copied. | `proven_err_t`: `INVALID_ARG` for none, or a field `proven_http_trailer_allowed` refuses (the response stays open); `INVALID_STATE` for a response with a length, to `HEAD`, or to an HTTP/1.0 client; `OUT_OF_BOUNDS` past `PROVEN_HTTP_MAX_TRAILER_BYTES`. |
+
+A received field that may not be a trailer (`Content-Length`, `Set-Cookie`...) is left out. Over
+HTTP/1.1 a chunked request body holds a buffer of `PROVEN_HTTP_MAX_TRAILER_BYTES` (8 KiB) for its
+trailer section while it arrives; an idle connection holds none. The client's side is in section 12.
+
 ## 9. Limits, time and refusals
 
 Zero-initialise a `proven_http_event_server_config_t`, set `on.on_request`, and set what you
@@ -1953,6 +1966,144 @@ int main(void) {
     proven_http_event_client_destroy(app.client);
     proven_http_event_server_destroy(server);
     proven_loop_destroy(app.loop);
+    return EXAMPLE_OK();
+}
+```
+
+### Trailers
+
+A request whose body is written with `body_length` `PROVEN_HTTP_EVENT_LENGTH_UNKNOWN` can end with
+trailers, and a response's trailers can be read after its body (since v0.107.0), over every
+protocol the client speaks:
+
+| API | Intent | Return |
+|---|---|---|
+| `proven_http_event_request_end_trailers(request, fields, count)` | Finish the body with trailers after it: sent once the body before them has gone. The fields are copied. | `proven_err_t`: `INVALID_ARG` for none, or a field `proven_http_trailer_allowed` refuses; `INVALID_STATE` for a body with a length, or none to finish; `OUT_OF_BOUNDS` past `PROVEN_HTTP_MAX_TRAILER_BYTES`. |
+| `proven_http_event_request_trailers(request, fields, cap, &count)` | The response's trailers, from `on_body` with `last` (for a response with no body, `on_done`) until `on_done` returns. | `proven_err_t`: `INVALID_STATE` before the body's end; `OUT_OF_BOUNDS` for more than `cap`. |
+
+As on the server, a received field that may not be a trailer is left out, and over HTTP/1.1 a
+chunked response holds an 8 KiB buffer for its trailer section. Compiled and run by the test suite:
+
+<!-- example: manual/examples/en/ex_15_trailers.c -->
+```c
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * Trailers on the loop: fields after a body. A client uploads with a checksum it knows only at
+ * the end; the server checks it after the body and answers with a trailer of its own. The same
+ * calls work over HTTP/2 and HTTP/3 - there the trailers are a HEADERS frame that ends the stream.
+ */
+
+static unsigned sum_of(const proven_byte_t *p, proven_size_t n, unsigned s) { for (proven_size_t i = 0; i < n; ++i) s = s * 31 + p[i]; return s; }
+
+// ---- the server -------------------------------------------------------------
+
+typedef struct { unsigned sum; } ex_upload_t;
+static ex_upload_t g_upload;                    /* one request here; a real server keeps one per stream (proven_http_stream_set_user) */
+
+static void serve(void *ctx, proven_http_stream_t *stream, const proven_http_request_t *head) {
+    (void)ctx; (void)stream; (void)head;
+    g_upload.sum = 0;
+}
+
+static void serve_body(void *ctx, proven_http_stream_t *stream, proven_mem_view_t piece, bool last) {
+    (void)ctx;
+    g_upload.sum = sum_of(piece.ptr, piece.size, g_upload.sum);
+    if (!last) return;
+    /* The body is over: its trailers are here, until on_done returns. */
+    proven_http_header_t trailers[4];
+    proven_size_t count = 0;
+    proven_u8str_view_t claimed = { 0 };
+    char mine[16];
+    const int ml = snprintf(mine, sizeof mine, "%u", g_upload.sum);
+    const bool good = proven_http_stream_trailers(stream, trailers, 4, &count) == PROVEN_OK &&
+                      proven_http_header_find(trailers, count, PROVEN_LIT("X-Checksum"), &claimed) &&
+                      proven_u8str_view_eq(claimed, (proven_u8str_view_t){ (const proven_byte_t *)mine, (proven_size_t)ml });
+    /* Trailers follow a body of no stated length. */
+    if (proven_http_stream_begin(stream, 200, NULL, 0, PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) != PROVEN_OK) return;
+    (void)proven_http_stream_write(stream, proven_mem_view_from_u8(PROVEN_LIT("stored\n")));
+    const proven_http_header_t status = { PROVEN_LIT("X-Upload"), good ? PROVEN_LIT("verified") : PROVEN_LIT("corrupt") };
+    (void)proven_http_stream_end_trailers(stream, &status, 1);
+}
+
+// ---- the client -------------------------------------------------------------
+
+typedef struct {
+    proven_loop_t *loop;
+    proven_http_event_request_t *request;
+    proven_mem_view_t data;
+    proven_size_t sent;
+    bool ended;
+    char verdict[16];
+    proven_err_t why;
+} ex_put_t;
+
+/* Write what the client takes; when it is all written, end with the checksum. */
+static void put_more(ex_put_t *p) {
+    while (p->sent < p->data.size) {
+        proven_result_size_t w = proven_http_event_request_write(p->request, (proven_mem_view_t){ p->data.ptr + p->sent, p->data.size - p->sent });
+        if (w.err != PROVEN_OK || w.value == 0) return;            /* on_writable says when to go on */
+        p->sent += w.value;
+    }
+    if (p->ended) return;
+    char sum[16];
+    const int sl = snprintf(sum, sizeof sum, "%u", sum_of(p->data.ptr, p->data.size, 0));
+    const proven_http_header_t trailer = { PROVEN_LIT("X-Checksum"), { (const proven_byte_t *)sum, (proven_size_t)sl } };
+    p->ended = proven_http_event_request_end_trailers(p->request, &trailer, 1) == PROVEN_OK;    /* the fields are copied */
+}
+
+static void on_writable(void *ctx, proven_http_event_request_t *request) { (void)request; put_more(ctx); }
+
+static void on_body(void *ctx, proven_http_event_request_t *request, proven_mem_view_t piece, bool last) {
+    (void)piece;
+    ex_put_t *p = ctx;
+    if (!last) return;
+    proven_http_header_t trailers[4];
+    proven_size_t count = 0;
+    proven_u8str_view_t v = { 0 };
+    if (proven_http_event_request_trailers(request, trailers, 4, &count) == PROVEN_OK && proven_http_header_find(trailers, count, PROVEN_LIT("X-Upload"), &v))
+        memcpy(p->verdict, v.ptr, v.size < sizeof p->verdict - 1 ? v.size : sizeof p->verdict - 1);
+}
+
+static void on_done(void *ctx, proven_http_event_request_t *request, proven_err_t why) {
+    (void)request;
+    ex_put_t *p = ctx;
+    p->why = why;
+    proven_loop_stop(p->loop);
+}
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+    proven_loop_t *loop = NULL;
+    EXAMPLE_REQUIRE(proven_loop_create(heap, &loop) == PROVEN_OK, "a loop");
+    proven_http_event_server_config_t server_config = { .on = { .on_request = serve, .on_body = serve_body } };
+    proven_http_event_server_t *server = NULL;
+    proven_net_addr_t at;
+    EXAMPLE_REQUIRE(proven_http_event_server_create(loop, &server_config, &server) == PROVEN_OK &&
+                    proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server");
+    proven_http_event_client_t *client = NULL;
+    EXAMPLE_REQUIRE(proven_http_event_client_create(loop, NULL, &client) == PROVEN_OK, "a client");
+
+    /* A field that frames the message may not be a trailer; a checksum may. */
+    EXAMPLE_REQUIRE(!proven_http_trailer_allowed(PROVEN_LIT("Content-Length")) && proven_http_trailer_allowed(PROVEN_LIT("X-Checksum")), "what may be a trailer");
+
+    char url[64];
+    const int n = snprintf(url, sizeof url, "http://127.0.0.1:%u/upload", (unsigned)at.port);
+    ex_put_t put = { .loop = loop, .data = proven_mem_view_from_u8(PROVEN_LIT("the bytes of a file, sent as they are read")) };
+    proven_http_event_request_options_t options = {
+        .method = PROVEN_LIT("PUT"), .url = { (const proven_byte_t *)url, (proven_size_t)n },
+        .body_length = PROVEN_HTTP_EVENT_LENGTH_UNKNOWN,         /* written afterwards, with no length: so trailers can follow */
+        .on = { NULL, on_body, on_writable, on_done }, .ctx = &put,
+    };
+    EXAMPLE_REQUIRE(proven_http_event_client_start(client, &options, &put.request) == PROVEN_OK, "the upload started");
+    put_more(&put);
+    EXAMPLE_REQUIRE(proven_loop_run(loop) == PROVEN_OK, "the loop ran until the upload was done");
+    EXAMPLE_REQUIRE(put.why == PROVEN_OK && put.ended && strcmp(put.verdict, "verified") == 0, "the server says, after its body, that the checksum matched");
+
+    proven_http_event_client_destroy(client);
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(loop);
     return EXAMPLE_OK();
 }
 ```

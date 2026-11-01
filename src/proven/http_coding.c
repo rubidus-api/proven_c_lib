@@ -278,3 +278,53 @@ proven_err_t proven_http_compress_all_(proven_allocator_t alloc, proven_http_cod
     *out_size = written;
     return PROVEN_OK;
 }
+
+// ---------------------------------------------------------------------------------------
+// Trailers kept for the event-driven drivers
+// ---------------------------------------------------------------------------------------
+
+void proven_http_trailers_free_(proven_allocator_t alloc, proven_http_trailers_t_ *t) {
+    if (t->fields) alloc.free_fn(alloc.ctx, t->fields);
+    *t = (proven_http_trailers_t_){ 0 };
+}
+
+proven_err_t proven_http_trailers_keep_(proven_allocator_t alloc, proven_http_trailers_t_ *t, const proven_http_header_t *fields, proven_size_t count, bool drop, bool lower) {
+    proven_http_trailers_free_(alloc, t);
+    proven_size_t kept = 0, bytes = 0;
+    for (proven_size_t i = 0; i < count; ++i) {
+        if (drop && !proven_http_trailer_allowed(fields[i].name)) continue;
+        kept++;
+        bytes += fields[i].name.size + fields[i].value.size;
+        if (bytes > PROVEN_HTTP_MAX_TRAILER_BYTES) return PROVEN_ERR_OUT_OF_BOUNDS;
+    }
+    if (kept == 0) return PROVEN_OK;
+    const proven_size_t size = kept * sizeof(proven_http_header_t) + bytes;
+    proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, size, _Alignof(proven_http_header_t));
+    if (m.err != PROVEN_OK || !m.value.ptr) return PROVEN_ERR_NOMEM;
+    proven_http_header_t *out = (proven_http_header_t *)(void *)m.value.ptr;
+    proven_byte_t *at = m.value.ptr + kept * sizeof(proven_http_header_t);
+    proven_size_t n = 0;
+    for (proven_size_t i = 0; i < count; ++i) {
+        if (drop && !proven_http_trailer_allowed(fields[i].name)) continue;
+        for (proven_size_t k = 0; k < fields[i].name.size; ++k) {
+            const proven_byte_t c = fields[i].name.ptr[k];
+            at[k] = lower && c >= 'A' && c <= 'Z' ? (proven_byte_t)(c + 32) : c;
+        }
+        out[n].name = (proven_u8str_view_t){ .ptr = at, .size = fields[i].name.size };
+        at += fields[i].name.size;
+        for (proven_size_t k = 0; k < fields[i].value.size; ++k) at[k] = fields[i].value.ptr[k];
+        out[n].value = (proven_u8str_view_t){ .ptr = at, .size = fields[i].value.size };
+        at += fields[i].value.size;
+        n++;
+    }
+    *t = (proven_http_trailers_t_){ .fields = out, .count = n, .size = size };
+    return PROVEN_OK;
+}
+
+proven_err_t proven_http_trailers_give_(const proven_http_trailers_t_ *t, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count) {
+    *count = 0;
+    if (t->count > cap) return PROVEN_ERR_OUT_OF_BOUNDS;
+    for (proven_size_t i = 0; i < t->count; ++i) fields[i] = t->fields[i];
+    *count = t->count;
+    return PROVEN_OK;
+}

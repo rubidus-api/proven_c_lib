@@ -73,6 +73,8 @@ typedef struct h2s {
     proven_loop_timer_t timer;
     bool told_drain;                   /* the WebSocket was told the server is ending */
     proven_size_t held_off;            /* a WebSocket's: how much of `held` it has taken */
+    proven_http_trailers_t_ in_trailers;   /* the request's, from its end until on_done (proven_http_stream_trailers) */
+    proven_http_trailers_t_ out_trailers;  /* the response's, sent in place of END_STREAM once `out` has drained */
 } proven_h2s_t;
 
 struct h2d {
@@ -176,6 +178,8 @@ static void s_finish(proven_h2s_t *s, proven_err_t why) {
         s->active = false;
         if (sv->cfg.on.on_done) sv->cfg.on.on_done(sv->cfg.ctx, (proven_http_stream_t *)(void *)s, why);
     }
+    proven_http_trailers_free_(a, &s->in_trailers);
+    proven_http_trailers_free_(a, &s->out_trailers);
     if (s->raw) {
         void *raw = s->raw;
         s->raw = (void *)0;
@@ -286,8 +290,9 @@ static void s_push(proven_h2s_t *s) {
     if (!s->dead && s_out_pending(s) == 0) {
         if (s->out) { sv->alloc.free_fn(sv->alloc.ctx, s->out); s->out = (void *)0; s->out_len = s->out_off = s->out_cap = 0; }
         if (s->end_asked) {
-            proven_result_size_t r = s->engine_done ? (proven_result_size_t){ .err = PROVEN_OK, .value = 0 }
-                                                    : proven_h2_conn_send_data(d->engine, s->id, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true);
+            proven_result_size_t r = s->engine_done            ? (proven_result_size_t){ .err = PROVEN_OK, .value = 0 }
+                                     : s->out_trailers.count ? (proven_result_size_t){ .err = proven_h2_conn_send_trailers(d->engine, s->id, s->out_trailers.fields, s->out_trailers.count) }
+                                                             : proven_h2_conn_send_data(d->engine, s->id, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true);
             s_finish(s, r.err == PROVEN_OK ? PROVEN_OK : PROVEN_ERR_RESET);
         } else if (s->want_writable && !s->window_shut && d_room(d) > 0) {
             if (d->calls > 0) {
@@ -444,7 +449,11 @@ static void d_event(h2d_t *d, const proven_h2_event_t *ev) {
             if (s) d_body(d, s, ev->data, ev->end_stream);
             else proven_h2_conn_consumed(d->engine, ev->stream_id, ev->data.size);
             break;
-        case PROVEN_H2_EVENT_TRAILERS:             /* the fields are not passed on: the event server has no trailers */
+        case PROVEN_H2_EVENT_TRAILERS:             /* kept for proven_http_stream_trailers, then the body's end */
+            if (s && proven_http_trailers_keep_(d->server->alloc, &s->in_trailers, ev->fields, ev->field_count, true, false) != PROVEN_OK) {
+                s_reset(s, PROVEN_H2_INTERNAL_ERROR, PROVEN_ERR_NOMEM);
+                break;
+            }
             if (s) d_body(d, s, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true);
             break;
         case PROVEN_H2_EVENT_STREAM_RESET: if (s) { s->engine_done = true; s_finish(s, PROVEN_ERR_RESET); } break;
@@ -981,9 +990,22 @@ proven_err_t proven_http_event_h2_flush_(proven_http_stream_t *stream) {
     return alive ? PROVEN_OK : PROVEN_ERR_RESET;
 }
 
-proven_err_t proven_http_event_h2_end_(proven_http_stream_t *stream) {
+proven_err_t proven_http_event_h2_trailers_(const proven_http_stream_t *stream, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count) {
+    const proven_h2s_t *s = (const proven_h2s_t *)(const void *)stream;
+    if (!s->in_done) return PROVEN_ERR_INVALID_STATE;
+    return proven_http_trailers_give_(&s->in_trailers, fields, cap, count);
+}
+
+proven_err_t proven_http_event_h2_end_(proven_http_stream_t *stream, const proven_http_header_t *trailers, proven_size_t count) {
     proven_h2s_t *s = h2s_of(stream);
     if (s->dead || !s->active || !s->response_begun || s->response_ended) return PROVEN_ERR_INVALID_STATE;
+    if (count > 0) {
+        /* As over HTTP/1.1: after a body begun with no length, and not to HEAD. */
+        if (s->response_left != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN || s->bodiless || s->engine_done) return PROVEN_ERR_INVALID_STATE;
+        if (!proven_http_trailers_valid_(trailers, count)) return PROVEN_ERR_INVALID_ARG;
+        const proven_err_t e = proven_http_trailers_keep_(s->h.server->alloc, &s->out_trailers, trailers, count, false, true);
+        if (e != PROVEN_OK) return e;
+    }
     h2d_t *d = s->d;
     proven_err_t result = PROVEN_OK;
     s_enter(s);

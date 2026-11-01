@@ -83,9 +83,20 @@ static void cl_leave(proven_http_event_request_t *c);
 
 static void cl_enter(proven_http_event_request_t *c) { c->h.depth++; }
 
+/* The buffer a chunked response's trailer section is kept in (proven_http_event_request_trailers):
+ * from its body's start until the request is freed. */
+static void cl_drop_trailers(proven_http_event_request_t *c) {
+    if (!c->body.trailers) return;
+    proven_http_event_client_t *cl = c->h.client;
+    cl->alloc.free_fn(cl->alloc.ctx, c->body.trailers);
+    c->body.trailers = (void *)0;
+    c->body.trailer_cap = 0;
+}
+
 static void cl_leave(proven_http_event_request_t *c) {
     if (--c->h.depth > 0 || !c->dead) return;
     proven_http_event_client_t *cl = c->h.client;
+    cl_drop_trailers(c);
     buf_release(cl, &c->stash);
     buf_release(cl, &c->out);
     buf_release(cl, &c->hold);
@@ -831,7 +842,17 @@ static void cl_process(proven_http_event_request_t *c) {
             }
             proven_http_framing_t framing = { 0 };
             if (proven_http_response_framing(&res, c->method, &framing) != PROVEN_OK) { cl_kill(c, PROVEN_ERR_INVALID_FORMAT); break; }
+            cl_drop_trailers(c);
             if (proven_http_body_init(&c->body, framing, cl->cfg.max_body_bytes) != PROVEN_OK) { cl_kill(c, PROVEN_ERR_OUT_OF_BOUNDS); break; }
+            if (framing.kind == PROVEN_HTTP_BODY_CHUNKED) {
+                proven_result_mem_mut_t m = cl->alloc.alloc_fn(cl->alloc.ctx, PROVEN_HTTP_MAX_TRAILER_BYTES, 1);
+                if (m.err != PROVEN_OK || !m.value.ptr) { cl_kill(c, PROVEN_ERR_NOMEM); break; }
+                if (proven_http_body_keep_trailers(&c->body, (proven_mem_mut_t){ .ptr = m.value.ptr, .size = PROVEN_HTTP_MAX_TRAILER_BYTES }) != PROVEN_OK) {
+                    cl->alloc.free_fn(cl->alloc.ctx, m.value.ptr);
+                    cl_kill(c, PROVEN_ERR_NOMEM);
+                    break;
+                }
+            }
             bool no_body = framing.kind == PROVEN_HTTP_BODY_NONE || (framing.kind == PROVEN_HTTP_BODY_LENGTH && framing.length == 0);
             proven_http_coding_t coding = PROVEN_HTTP_CODING_IDENTITY;
             if (cl->cfg.decompress && !no_body && proven_http_decoder_wanted_(res.status, res.headers, res.header_count, cl->cfg.decompress_zstd, cl->cfg.decompress_brotli, &coding)) {
@@ -1369,13 +1390,26 @@ proven_result_size_t proven_http_event_request_write(proven_http_event_request_t
     return alive ? (proven_result_size_t){ .err = PROVEN_OK, .value = done } : (proven_result_size_t){ .err = PROVEN_ERR_RESET, .value = 0 };
 }
 
-proven_err_t proven_http_event_request_end(proven_http_event_request_t *c) {
-    if (!c) return PROVEN_ERR_INVALID_ARG;
-    if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) return proven_http_event_client_h2_end_(c);
-#if !defined(PROVEN_NO_HTTP3)
-    if (PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) return proven_http_event_client_h3_end_(c);
-#endif
+static proven_err_t cl_end(proven_http_event_request_t *c, const proven_http_header_t *trailers, proven_size_t count) {
     if (c->dead || !c->streamed || c->request_ended) return PROVEN_ERR_INVALID_STATE;
+    proven_http_event_client_t *cl = c->h.client;
+    /* Trailers go after the last chunk: checked, and written out, before anything ends. */
+    proven_byte_t *last = (void *)0;
+    proven_size_t last_len = 0;
+    if (count > 0) {
+        if (!c->chunked) return PROVEN_ERR_INVALID_STATE;
+        if (!proven_http_trailers_valid_(trailers, count)) return PROVEN_ERR_INVALID_ARG;
+        proven_size_t need = 5;
+        for (proven_size_t i = 0; i < count; ++i) need += trailers[i].name.size + trailers[i].value.size + 4;
+        if (need > PROVEN_HTTP_MAX_TRAILER_BYTES + 5) return PROVEN_ERR_OUT_OF_BOUNDS;
+        proven_result_mem_mut_t m = cl->alloc.alloc_fn(cl->alloc.ctx, need, 1);
+        if (m.err != PROVEN_OK || !m.value.ptr) return PROVEN_ERR_NOMEM;
+        last = m.value.ptr;
+        if (proven_http_write_trailers((proven_mem_mut_t){ .ptr = last, .size = need }, &last_len, trailers, count) != PROVEN_OK) {
+            cl->alloc.free_fn(cl->alloc.ctx, last);
+            return PROVEN_ERR_INVALID_ARG;
+        }
+    }
     cl_enter(c);
     proven_err_t result = PROVEN_OK;
     if (!c->chunked && c->send_left != 0) {
@@ -1386,15 +1420,45 @@ proven_err_t proven_http_event_request_end(proven_http_event_request_t *c) {
         c->request_ended = true;
         bool alive = true;
         if (c->chunked && !c->body_refused) {
-            alive = buf_append(c->h.client, c->expecting ? &c->hold : &c->out, (const proven_byte_t *)"0\r\n\r\n", 5);
+            alive = last ? buf_append(cl, c->expecting ? &c->hold : &c->out, last, last_len)
+                         : buf_append(cl, c->expecting ? &c->hold : &c->out, (const proven_byte_t *)"0\r\n\r\n", 5);
             if (!alive) cl_kill(c, PROVEN_ERR_NOMEM);
         }
         if (alive) alive = cl_flush(c);
         if (alive) cl_progress(c);
         else result = PROVEN_ERR_RESET;
     }
+    if (last) cl->alloc.free_fn(cl->alloc.ctx, last);
     cl_leave(c);
     return result;
+}
+
+proven_err_t proven_http_event_request_end(proven_http_event_request_t *c) {
+    if (!c) return PROVEN_ERR_INVALID_ARG;
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) return proven_http_event_client_h2_end_(c, (void *)0, 0);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) return proven_http_event_client_h3_end_(c, (void *)0, 0);
+#endif
+    return cl_end(c, (void *)0, 0);
+}
+
+proven_err_t proven_http_event_request_end_trailers(proven_http_event_request_t *c, const proven_http_header_t *fields, proven_size_t count) {
+    if (!c || count == 0 || !fields) return PROVEN_ERR_INVALID_ARG;
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) return proven_http_event_client_h2_end_(c, fields, count);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) return proven_http_event_client_h3_end_(c, fields, count);
+#endif
+    return cl_end(c, fields, count);
+}
+
+proven_err_t proven_http_event_request_trailers(const proven_http_event_request_t *c, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count) {
+    if (count) *count = 0;
+    if (!c || !count || (cap > 0 && !fields)) return PROVEN_ERR_INVALID_ARG;
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H2_(c)) return proven_http_event_client_h2_trailers_(c, fields, cap, count);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_REQUEST_IS_H3_(c)) return proven_http_event_client_h3_trailers_(c, fields, cap, count);
+#endif
+    return proven_http_body_trailers(&c->body, fields, cap, count);    /* PROVEN_ERR_INVALID_STATE before the body's end */
 }
 
 void proven_http_event_request_abort(proven_http_event_request_t *c) {

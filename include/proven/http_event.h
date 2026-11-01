@@ -386,6 +386,31 @@ proven_err_t proven_http_stream_flush(proven_http_stream_t *stream);
 [[nodiscard]]
 proven_err_t proven_http_stream_end(proven_http_stream_t *stream);
 
+/**
+ * @brief Finish a response begun with PROVEN_HTTP_EVENT_LENGTH_UNKNOWN with trailer fields after
+ *        its body (since v0.107.0): over HTTP/1.1 after the last chunk, over HTTP/2 and
+ *        HTTP/3 as a HEADERS frame that ends the stream. A client that does not read trailers
+ *        passes over them. The fields are copied.
+ * @return PROVEN_ERR_INVALID_ARG for no fields, or one proven_http_trailer_allowed refuses (or not a
+ *         valid field); PROVEN_ERR_INVALID_STATE for a response with a length, to HEAD, to an
+ *         HTTP/1.0 client (it has no chunks), or one not begun or already ended;
+ *         PROVEN_ERR_OUT_OF_BOUNDS past PROVEN_HTTP_MAX_TRAILER_BYTES; otherwise as proven_http_stream_end.
+ */
+[[nodiscard]]
+proven_err_t proven_http_stream_end_trailers(proven_http_stream_t *stream, const proven_http_header_t *fields, proven_size_t count);
+
+/**
+ * @brief The request's trailer fields (since v0.107.0), once its body has ended - from `on_body`
+ *        with `last` until `on_done` returns: views into the server's copy. None for a request
+ *        whose body was not chunked (HTTP/1.1) or had none. A field that may not be a trailer
+ *        (proven_http_trailer_allowed) is left out. Over HTTP/1.1 a chunked request body holds a
+ *        buffer of PROVEN_HTTP_MAX_TRAILER_BYTES for its trailer section while it arrives.
+ * @return PROVEN_ERR_INVALID_STATE before the body's end or after `on_done`; PROVEN_ERR_OUT_OF_BOUNDS
+ *         for more fields than `cap`.
+ */
+[[nodiscard]]
+proven_err_t proven_http_stream_trailers(const proven_http_stream_t *stream, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count);
+
 /** @brief Give up on this exchange: the connection is closed at once and `on_done` is called
  *         with PROVEN_ERR_RESET. */
 void proven_http_stream_abort(proven_http_stream_t *stream);

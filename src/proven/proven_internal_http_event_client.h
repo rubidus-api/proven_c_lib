@@ -242,7 +242,9 @@ void proven_http_event_client_h2_forwarded_done_(proven_http_event_request_t *fa
 [[nodiscard]]
 proven_result_size_t proven_http_event_client_h2_write_(proven_http_event_request_t *request, proven_mem_view_t data);
 [[nodiscard]]
-proven_err_t proven_http_event_client_h2_end_(proven_http_event_request_t *request);
+proven_err_t proven_http_event_client_h2_end_(proven_http_event_request_t *request, const proven_http_header_t *trailers, proven_size_t count);
+[[nodiscard]]
+proven_err_t proven_http_event_client_h2_trailers_(const proven_http_event_request_t *request, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count);
 void proven_http_event_client_h2_abort_(proven_http_event_request_t *request);
 void proven_http_event_client_h2_pause_(proven_http_event_request_t *request);
 void proven_http_event_client_h2_resume_(proven_http_event_request_t *request);
@@ -281,7 +283,9 @@ void proven_http_event_client_h3_freed_(proven_http_event_client_t *client);
 [[nodiscard]]
 proven_result_size_t proven_http_event_client_h3_write_(proven_http_event_request_t *request, proven_mem_view_t data);
 [[nodiscard]]
-proven_err_t proven_http_event_client_h3_end_(proven_http_event_request_t *request);
+proven_err_t proven_http_event_client_h3_end_(proven_http_event_request_t *request, const proven_http_header_t *trailers, proven_size_t count);
+[[nodiscard]]
+proven_err_t proven_http_event_client_h3_trailers_(const proven_http_event_request_t *request, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count);
 void proven_http_event_client_h3_abort_(proven_http_event_request_t *request);
 void proven_http_event_client_h3_pause_(proven_http_event_request_t *request);
 void proven_http_event_client_h3_resume_(proven_http_event_request_t *request);

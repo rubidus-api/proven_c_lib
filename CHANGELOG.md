@@ -18,6 +18,18 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **Trailers in the event-driven server and client** (RFC-0041 H-5, second part), over HTTP/1.1,
+  HTTP/2 and HTTP/3: `proven_http_stream_trailers` reads a request's after its body and
+  `proven_http_stream_end_trailers` ends a response of no stated length with trailers;
+  `proven_http_event_request_end_trailers` ends a request body written with no length with trailers
+  and `proven_http_event_request_trailers` reads a response's after its body. Over HTTP/1.1 after the
+  last chunk, over HTTP/2 and HTTP/3 a HEADERS frame that ends the stream. Received fields that may
+  not be trailers are left out; one sent is refused (`PROVEN_ERR_INVALID_ARG`) and leaves the message
+  open. Over HTTP/1.1 a chunked body holds an 8 KiB buffer for its trailer section while it arrives.
+  Manual chapter 15.
+
 ## [0.106.0] - 2026-11-01
 
 ### Added

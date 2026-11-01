@@ -906,12 +906,21 @@ proven_err_t proven_http_write_chunk_end(proven_mem_mut_t out, proven_size_t *le
     return proven_http_write_head_end(out, len);
 }
 
-proven_err_t proven_http_write_trailers(proven_mem_mut_t out, proven_size_t *len, const proven_http_header_t *fields, proven_size_t count) {
-    if (!len || (count > 0 && !fields)) return PROVEN_ERR_INVALID_ARG;
+/* For the drivers (declared in proven_internal_http_coding.h): fields that may be sent as
+ * trailers - valid names and values that proven_http_trailer_allowed lets through. */
+bool proven_http_trailers_valid_(const proven_http_header_t *fields, proven_size_t count);
+bool proven_http_trailers_valid_(const proven_http_header_t *fields, proven_size_t count) {
+    if (count > 0 && !fields) return false;
     for (proven_size_t i = 0; i < count; ++i) {
-        if (!http_is_token(fields[i].name) || !proven_http_trailer_allowed(fields[i].name)) return PROVEN_ERR_INVALID_ARG;
-        for (proven_size_t k = 0; k < fields[i].value.size; ++k) if (!http_is_field_byte(fields[i].value.ptr[k])) return PROVEN_ERR_INVALID_ARG;
+        if (!http_is_token(fields[i].name) || !proven_http_trailer_allowed(fields[i].name)) return false;
+        if (fields[i].value.size > 0 && !fields[i].value.ptr) return false;
+        for (proven_size_t k = 0; k < fields[i].value.size; ++k) if (!http_is_field_byte(fields[i].value.ptr[k])) return false;
     }
+    return true;
+}
+
+proven_err_t proven_http_write_trailers(proven_mem_mut_t out, proven_size_t *len, const proven_http_header_t *fields, proven_size_t count) {
+    if (!len || !proven_http_trailers_valid_(fields, count)) return PROVEN_ERR_INVALID_ARG;
     const proven_size_t start = *len;
     proven_http_w_t w;
     if (!http_w_begin(&w, out, len)) return PROVEN_ERR_INVALID_ARG;

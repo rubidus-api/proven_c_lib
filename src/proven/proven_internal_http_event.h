@@ -217,8 +217,11 @@ void proven_http_event_h2_compress_(proven_http_stream_t *stream);
 proven_err_t proven_http_event_h2_begin_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count, proven_u64 content_length);
 [[nodiscard]]
 proven_result_size_t proven_http_event_h2_write_(proven_http_stream_t *stream, proven_mem_view_t data);
+/* `count` trailers after the body, or none (proven_http_stream_end). */
 [[nodiscard]]
-proven_err_t proven_http_event_h2_end_(proven_http_stream_t *stream);
+proven_err_t proven_http_event_h2_end_(proven_http_stream_t *stream, const proven_http_header_t *trailers, proven_size_t count);
+[[nodiscard]]
+proven_err_t proven_http_event_h2_trailers_(const proven_http_stream_t *stream, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count);
 proven_err_t proven_http_event_h2_flush_(proven_http_stream_t *stream);
 
 /* A WebSocket on an HTTP/2 stream (RFC 8441), for ws_event.c through the raw_* functions:
@@ -314,8 +317,11 @@ void proven_http_event_h3_compress_(proven_http_stream_t *stream);
 proven_err_t proven_http_event_h3_begin_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count, proven_u64 content_length);
 [[nodiscard]]
 proven_result_size_t proven_http_event_h3_write_(proven_http_stream_t *stream, proven_mem_view_t data);
+/* `count` trailers after the body, or none (proven_http_stream_end). */
 [[nodiscard]]
-proven_err_t proven_http_event_h3_end_(proven_http_stream_t *stream);
+proven_err_t proven_http_event_h3_end_(proven_http_stream_t *stream, const proven_http_header_t *trailers, proven_size_t count);
+[[nodiscard]]
+proven_err_t proven_http_event_h3_trailers_(const proven_http_stream_t *stream, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count);
 proven_err_t proven_http_event_h3_flush_(proven_http_stream_t *stream);
 [[nodiscard]]
 proven_err_t proven_http_event_h3_respond_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count, proven_mem_view_t body);

@@ -65,6 +65,8 @@ typedef struct h3s {
     bool end_asked;                    /* the end goes when `out` has drained */
     bool engine_done;                  /* the engine has this side's end already, or the stream is gone from it */
     bool blocked;                      /* the engine took less than offered: it says when there is room (STREAM_WRITABLE) */
+    proven_http_trailers_t_ in_trailers;   /* the request's, from its end until on_done (proven_http_stream_trailers) */
+    proven_http_trailers_t_ out_trailers;  /* the response's, sent as the stream's end once `out` has drained */
 } proven_h3s_t;
 
 struct h3e {
@@ -370,6 +372,8 @@ static void s_finish(proven_h3s_t *s, proven_err_t why) {
         s->active = false;
         if (sv->cfg.on.on_done) sv->cfg.on.on_done(sv->cfg.ctx, (proven_http_stream_t *)(void *)s, why);
     }
+    proven_http_trailers_free_(a, &s->in_trailers);
+    proven_http_trailers_free_(a, &s->out_trailers);
     s_leave(s);
 }
 
@@ -484,7 +488,7 @@ static void s_push(proven_h3s_t *s) {
     s_enter(s);
     while (!s->dead && !s->blocked && s_out_pending(s) > 0) {
         proven_size_t taken = 0;
-        const bool fin = s->end_asked;
+        const bool fin = s->end_asked && s->out_trailers.count == 0;     /* with trailers, they end it */
         const proven_err_t e = proven_h3_send_data(d->h3, s->id, (proven_mem_view_t){ .ptr = s->out + s->out_off, .size = s_out_pending(s) }, fin, &taken);
         if (e != PROVEN_OK) { s_reset(s, PROVEN_H3_INTERNAL_ERROR, PROVEN_ERR_RESET); break; }
         s->out_off += taken;
@@ -496,7 +500,9 @@ static void s_push(proven_h3s_t *s) {
         if (s->out) { sv->alloc.free_fn(sv->alloc.ctx, s->out); s->out = (void *)0; s->out_len = s->out_off = s->out_cap = 0; }
         if (s->end_asked) {
             proven_size_t taken = 0;
-            const proven_err_t e = s->engine_done ? PROVEN_OK : proven_h3_send_data(d->h3, s->id, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true, &taken);
+            const proven_err_t e = s->engine_done            ? PROVEN_OK
+                                 : s->out_trailers.count ? proven_h3_send_trailers(d->h3, s->id, s->out_trailers.fields, s->out_trailers.count)
+                                                         : proven_h3_send_data(d->h3, s->id, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true, &taken);
             s->engine_done = true;
             s_finish(s, e == PROVEN_OK ? PROVEN_OK : PROVEN_ERR_RESET);
         }
@@ -645,7 +651,13 @@ static void d_event(h3d_t *d, const proven_h3_event_t *ev) {
     switch (ev->kind) {
         case PROVEN_H3_EV_HEADERS: d_request(d, ev); break;
         case PROVEN_H3_EV_DATA: if (s) d_body(d, s, ev->data, ev->end_stream); break;
-        case PROVEN_H3_EV_TRAILERS: if (s) d_body(d, s, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true); break;   /* the event server has no trailers */
+        case PROVEN_H3_EV_TRAILERS:                /* kept for proven_http_stream_trailers, then the body's end */
+            if (s && proven_http_trailers_keep_(d->server->alloc, &s->in_trailers, ev->fields, ev->field_count, true, false) != PROVEN_OK) {
+                s_reset(s, PROVEN_H3_INTERNAL_ERROR, PROVEN_ERR_NOMEM);
+                break;
+            }
+            if (s) d_body(d, s, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true);
+            break;
         case PROVEN_H3_EV_STREAM_RESET: if (s) { s->engine_done = true; s_finish(s, PROVEN_ERR_RESET); } break;
         case PROVEN_H3_EV_STOP_SENDING:
             /* The client wants no more of the response: what is left of it cannot go. */
@@ -1274,9 +1286,22 @@ proven_err_t proven_http_event_h3_flush_(proven_http_stream_t *stream) {
     return alive ? PROVEN_OK : PROVEN_ERR_RESET;
 }
 
-proven_err_t proven_http_event_h3_end_(proven_http_stream_t *stream) {
+proven_err_t proven_http_event_h3_trailers_(const proven_http_stream_t *stream, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count) {
+    const proven_h3s_t *s = (const proven_h3s_t *)(const void *)stream;
+    if (!s->in_done) return PROVEN_ERR_INVALID_STATE;
+    return proven_http_trailers_give_(&s->in_trailers, fields, cap, count);
+}
+
+proven_err_t proven_http_event_h3_end_(proven_http_stream_t *stream, const proven_http_header_t *trailers, proven_size_t count) {
     proven_h3s_t *s = h3s_of(stream);
     if (s->dead || !s->active || !s->response_begun || s->response_ended) return PROVEN_ERR_INVALID_STATE;
+    if (count > 0) {
+        /* As over HTTP/1.1: after a body begun with no length, and not to HEAD. */
+        if (s->response_left != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN || s->bodiless || s->engine_done) return PROVEN_ERR_INVALID_STATE;
+        if (!proven_http_trailers_valid_(trailers, count)) return PROVEN_ERR_INVALID_ARG;
+        const proven_err_t e = proven_http_trailers_keep_(s->h.server->alloc, &s->out_trailers, trailers, count, false, true);
+        if (e != PROVEN_OK) return e;
+    }
     proven_err_t result = PROVEN_OK;
     call_begin(s);
     if (s->response_left != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN && s->response_left != 0) {

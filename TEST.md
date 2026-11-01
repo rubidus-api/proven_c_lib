@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 131 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 132 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -348,7 +348,7 @@ Last run, 2026-11-01, Windows 11 test VM (v0.106.0): x86-64 380 PASS, 0 FAIL, 10
 ## Test catalog
 
 
-The hosted full run builds and executes 200 registered tests plus the 190 runnable manual examples - 390 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 213 test files: the 196 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 201 registered tests plus the 192 runnable manual examples - 393 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 214 test files: the 197 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -1222,6 +1222,22 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/http_event_client.c` - `cl_process` for the response and the end-of-stream branch after its loop, `cl_flush` and `cl_progress` for the request, `cl_arm` for the time limits, `cl_kill` for the end. A request that never ends after the server closed is that branch: it once waited for the stash to be empty, which a half-received head never is.
 
+
+### `tests/test_unit_http_event_trailers` - trailers through the event-driven server and client
+
+Intent: verify that a request's trailers reach the event-driven server after its body, and a response's reach the event-driven client after its own, over each protocol both speak, and that trailers are refused where they cannot go.
+
+Sub-checks, over HTTP/1.1 (TLS without ALPN), HTTP/2 and HTTP/3, this library at both ends on one loop:
+
+- A PUT written in two pieces with no length, ended with an `X-Sum` trailer after `Content-Length` as a trailer is refused (`PROVEN_ERR_INVALID_ARG`); the server reads `X-Sum` with `proven_http_stream_trailers` after the body - not in `on_request` (`PROVEN_ERR_INVALID_STATE`) - and still in `on_done`, and it matches the body.
+- The server's `Content-Type` as a trailer refused without ending its response; its two trailers read by the client with `proven_http_event_request_trailers` after the response body - not in `on_response` - and still in `on_done`.
+- First, on a client with no connection yet: a request ended with trailers at once, with no body - before it is on a stream over HTTP/2 and HTTP/3.
+- A compressed response (`Content-Encoding` checked) decoded whole, its two trailers after the compressor's last bytes - over HTTP/3 the only case in which body bytes are still queued when the trailers are asked for.
+- A request body with a length: `proven_http_event_request_end_trailers` is `PROVEN_ERR_INVALID_STATE`, and with no fields `PROVEN_ERR_INVALID_ARG`; a response with a length refuses trailers (`PROVEN_ERR_INVALID_STATE`) and has none.
+
+Not covered here: a received field that may not be a trailer over HTTP/2 and HTTP/3 (this library will not send one; the HTTP/1.1 decoder's dropping is in `test_unit_http_body`, and the shared copy drops by the same function).
+
+Failure tip: inspect `ev_end` in `src/proven/http_event.c`, `s_push` and `proven_http_event_h2_end_` in `http_event_h2.c` (and the HTTP/3 one), `cl_end` in `http_event_client.c`, `r_push` and `proven_http_event_client_h2_end_` in `http_event_client_h2.c` (and the HTTP/3 one), and the `trailers_` helpers in `http_coding.c`.
 
 ### `tests/test_unit_http_event_client_h2` - the event-driven HTTP client, speaking HTTP/2
 

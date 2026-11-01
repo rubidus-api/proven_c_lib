@@ -112,4 +112,30 @@ proven_err_t proven_http_compressor_step_(proven_http_compressor_t_ *c, proven_m
 proven_err_t proven_http_compress_all_(proven_allocator_t alloc, proven_http_coding_t coding, const proven_http_compress_cfg_t_ *cfg, proven_mem_view_t body,
                                        proven_byte_t **out, proven_size_t *out_cap, proven_size_t *out_size);
 
+/* Trailers (RFC 9110 section 6.5), for the event-driven drivers. */
+
+/* Fields that may be sent as trailers: valid names and values proven_http_trailer_allowed lets
+ * through (defined in http.c). */
+[[nodiscard]]
+bool proven_http_trailers_valid_(const proven_http_header_t *fields, proven_size_t count);
+
+/* Trailer fields kept past the call that gave them: one allocation holding the array and the
+ * bytes. Zero-initialise. */
+typedef struct {
+    proven_http_header_t *fields;
+    proven_size_t count;
+    proven_size_t size;                /* of the allocation */
+} proven_http_trailers_t_;
+
+/* Copy `fields` into `t` (freeing what it held). `drop`: leave out the fields that may not be
+ * trailers, as a receiver does; otherwise every field is kept. `lower`: names in lowercase, as
+ * HTTP/2 and HTTP/3 send them. PROVEN_ERR_OUT_OF_BOUNDS past PROVEN_HTTP_MAX_TRAILER_BYTES of
+ * names and values; PROVEN_ERR_NOMEM. */
+[[nodiscard]]
+proven_err_t proven_http_trailers_keep_(proven_allocator_t alloc, proven_http_trailers_t_ *t, const proven_http_header_t *fields, proven_size_t count, bool drop, bool lower);
+void proven_http_trailers_free_(proven_allocator_t alloc, proven_http_trailers_t_ *t);
+/* Views of the kept fields into the caller's array: PROVEN_ERR_OUT_OF_BOUNDS for more than `cap`. */
+[[nodiscard]]
+proven_err_t proven_http_trailers_give_(const proven_http_trailers_t_ *t, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count);
+
 #endif /* PROVEN_INTERNAL_HTTP_CODING_H */

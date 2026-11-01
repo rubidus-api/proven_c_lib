@@ -71,6 +71,9 @@ typedef struct c2req {
      * again (answered 425); it went; what came of it (proven_http_event_client_early_). */
     bool early_ok, no_early, went_early;
     proven_u8 early_result;
+    bool body_over;                    /* the response's end has arrived (proven_http_event_request_trailers) */
+    proven_http_trailers_t_ in_trailers;   /* the response's, until the struct goes */
+    proven_http_trailers_t_ out_trailers;  /* the request's, sent in place of END_STREAM once `out` has drained */
 } proven_c2req_t;
 
 struct c2conn {
@@ -175,6 +178,8 @@ static void r_free_parts(proven_c2req_t *r) {
 static void r_leave(proven_c2req_t *r) {
     if (--r->h.depth > 0 || !r->dead) return;
     proven_allocator_t a = r->h.client->alloc;
+    proven_http_trailers_free_(a, &r->in_trailers);
+    proven_http_trailers_free_(a, &r->out_trailers);
     a.free_fn(a.ctx, r);
 }
 
@@ -447,7 +452,8 @@ static void r_push(proven_c2req_t *r) {
     if (!r->dead && r_out_pending(r) == 0) {
         if (r->out) { a.free_fn(a.ctx, r->out); r->out = (void *)0; r->out_len = r->out_off = r->out_cap = 0; }
         if (r->end_asked && !r->engine_done) {
-            proven_result_size_t w = proven_h2_conn_send_data(c->engine, r->id, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true);
+            proven_result_size_t w = r->out_trailers.count ? (proven_result_size_t){ .err = proven_h2_conn_send_trailers(c->engine, r->id, r->out_trailers.fields, r->out_trailers.count) }
+                                                           : proven_h2_conn_send_data(c->engine, r->id, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true);
             if (w.err != PROVEN_OK) r_finish(r, PROVEN_ERR_RESET);
             else { r->engine_done = true; r_expect(r); }
         } else if (!r->end_asked && r->want_writable && !r->window_shut && c_room(c) > 0) {
@@ -636,6 +642,7 @@ static bool r_deliver(proven_c2req_t *r, proven_mem_view_t piece, bool last) {
 static void c_body(c2conn_t *c, proven_c2req_t *r, proven_mem_view_t piece, bool last) {
     proven_http_event_client_t *cl = c->client;
     const proven_u32 id = r->id;
+    if (last) r->body_over = true;
     if (!r->dec) {
         r->got += piece.size;
         if (r->got > cl->cfg.max_body_bytes) { r_finish(r, PROVEN_ERR_OUT_OF_BOUNDS); return; }
@@ -690,7 +697,7 @@ static void c_response(c2conn_t *c, proven_c2req_t *r, const proven_h2_event_t *
     r_enter(r);
     if (r->on.on_response) r->on.on_response(r->ctx, c2_handle(r), &res);
     if (!r->dead) {
-        if (ev->end_stream) r_finish(r, PROVEN_OK);
+        if (ev->end_stream) { r->body_over = true; r_finish(r, PROVEN_OK); }
         else r_expect(r);
     }
     r_leave(r);
@@ -704,7 +711,10 @@ static void c_event(c2conn_t *c, const proven_h2_event_t *ev) {
             if (r) c_body(c, r, ev->data, ev->end_stream);
             else proven_h2_conn_consumed(c->engine, ev->stream_id, ev->data.size);
             break;
-        case PROVEN_H2_EVENT_TRAILERS: if (r) c_body(c, r, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true); break;
+        case PROVEN_H2_EVENT_TRAILERS:             /* kept for proven_http_event_request_trailers, then the body's end */
+            if (r && proven_http_trailers_keep_(c->client->alloc, &r->in_trailers, ev->fields, ev->field_count, true, false) != PROVEN_OK) { r_finish(r, PROVEN_ERR_NOMEM); break; }
+            if (r) c_body(c, r, (proven_mem_view_t){ .ptr = (void *)0, .size = 0 }, true);
+            break;
         case PROVEN_H2_EVENT_STREAM_RESET:
             if (r) {
                 r->engine_done = true;
@@ -927,6 +937,9 @@ static void c_fall_back(c2conn_t *c) {
         r->fwd = made;
         made->want_writable = r->want_writable;
         if (r->paused) proven_http_event_request_pause(made);
+        /* Ended with trailers before it had a stream: they end it over HTTP/1.1 instead. */
+        if (r->end_asked && r->out_trailers.count && proven_http_event_request_end_trailers(made, r->out_trailers.fields, r->out_trailers.count) != PROVEN_OK)
+            proven_http_event_request_abort(made);
         r_free_parts(r);                           /* the copy has been used */
     }
     c_leave(c);
@@ -1605,12 +1618,31 @@ proven_result_size_t proven_http_event_client_h2_write_(proven_http_event_reques
     return alive ? (proven_result_size_t){ .err = PROVEN_OK, .value = done } : (proven_result_size_t){ .err = PROVEN_ERR_RESET, .value = 0 };
 }
 
-proven_err_t proven_http_event_client_h2_end_(proven_http_event_request_t *request) {
+proven_err_t proven_http_event_client_h2_trailers_(const proven_http_event_request_t *request, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count) {
+    const proven_c2req_t *r = (const proven_c2req_t *)(const void *)request;
+    if (r->fwd) return proven_http_event_request_trailers(r->fwd, fields, cap, count);
+    if (!r->body_over) return PROVEN_ERR_INVALID_STATE;
+    return proven_http_trailers_give_(&r->in_trailers, fields, cap, count);
+}
+
+proven_err_t proven_http_event_client_h2_end_(proven_http_event_request_t *request, const proven_http_header_t *trailers, proven_size_t count) {
     proven_c2req_t *r = c2_of(request);
-    if (r->fwd) return proven_http_event_request_end(r->fwd);
+    if (r->fwd) return count > 0 ? proven_http_event_request_end_trailers(r->fwd, trailers, count) : proven_http_event_request_end(r->fwd);
     if (r->dead || !r->streamed || r->end_asked) return PROVEN_ERR_INVALID_STATE;
     c2conn_t *c = r->conn;
     proven_err_t result = PROVEN_OK;
+    if (count > 0) {
+        /* As over HTTP/1.1: after a body written with no length. Kept until the body has gone. */
+        if (r->body_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) return PROVEN_ERR_INVALID_STATE;
+        if (!proven_http_trailers_valid_(trailers, count)) return PROVEN_ERR_INVALID_ARG;
+        const proven_err_t e = proven_http_trailers_keep_(r->h.client->alloc, &r->out_trailers, trailers, count, false, true);
+        if (e != PROVEN_OK) return e;
+        if (!c || r->id == 0) {
+            /* Not on a stream yet: its HEADERS go without END_STREAM, and the trailers after them. */
+            r->end_asked = true;
+            return PROVEN_OK;
+        }
+    }
     if (!c) {
         /* Waiting for a place: on no connection, so on no stream. */
         if (r->body_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN && r->body_length != 0) {

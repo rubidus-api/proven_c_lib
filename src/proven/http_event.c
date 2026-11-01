@@ -108,8 +108,19 @@ static void ev_ended(proven_http_event_server_t *s) {
     if (s->destroyed && s->ending == 0) ev_server_free(s);
 }
 
+/* The buffer a chunked request's trailer section is kept in (proven_http_stream_trailers): held
+ * from its body's start until the exchange is over, so an idle connection holds none. */
+static void ev_drop_trailers(proven_http_stream_t *c) {
+    if (!c->body.trailers) return;
+    proven_http_event_server_t *s = c->h.server;
+    s->alloc.free_fn(s->alloc.ctx, c->body.trailers);
+    c->body.trailers = (void *)0;
+    c->body.trailer_cap = 0;
+}
+
 static void ev_free(proven_http_stream_t *c) {
     proven_http_event_server_t *s = c->h.server;
+    ev_drop_trailers(c);
     buf_release(s, &c->stash);
     buf_release(s, &c->out);
     const bool was_attached = c->attached;
@@ -364,6 +375,7 @@ static void ev_finish(proven_http_stream_t *c) {
     ev_enter(c);
     if (s->cfg.on.on_done) s->cfg.on.on_done(s->cfg.ctx, c, PROVEN_OK);
     if (!c->dead) {
+        ev_drop_trailers(c);
         c->user = (void *)0;
         c->response_begun = false; c->response_ended = false; c->chunked = false; c->bodiless = false;
         c->want_writable = false; c->paused = false; c->expect_continue = false;
@@ -488,7 +500,16 @@ static void ev_process(proven_http_stream_t *c) {
                 if (e == PROVEN_ERR_UNSUPPORTED) refuse = 501;
                 else if (e != PROVEN_OK) refuse = 400;
             }
+            ev_drop_trailers(c);
             if (!refuse && proven_http_body_init(&c->body, framing, s->cfg.max_body_bytes) != PROVEN_OK) refuse = 413;
+            if (!refuse && framing.kind == PROVEN_HTTP_BODY_CHUNKED) {
+                proven_result_mem_mut_t m = s->alloc.alloc_fn(s->alloc.ctx, PROVEN_HTTP_MAX_TRAILER_BYTES, 1);
+                if (m.err != PROVEN_OK || !m.value.ptr || proven_http_body_keep_trailers(&c->body, (proven_mem_mut_t){ .ptr = m.value.ptr, .size = PROVEN_HTTP_MAX_TRAILER_BYTES }) != PROVEN_OK) {
+                    if (m.err == PROVEN_OK && m.value.ptr) s->alloc.free_fn(s->alloc.ctx, m.value.ptr);
+                    ev_reject(c, 503, PROVEN_ERR_NOMEM);
+                    break;
+                }
+            }
             /* HTTP/1.1 requires Host; a server that guesses is the back end a smuggled request is aimed at. */
             if (!refuse && req.version_minor >= 1 && proven_http_header_count(s->headers, req.header_count, ev_lit("Host")) != 1) refuse = 400;
             if (refuse) { ev_reject(c, refuse, PROVEN_ERR_INVALID_FORMAT); break; }
@@ -1363,13 +1384,26 @@ proven_err_t proven_http_stream_flush(proven_http_stream_t *c) {
     return alive ? PROVEN_OK : PROVEN_ERR_RESET;
 }
 
-proven_err_t proven_http_stream_end(proven_http_stream_t *c) {
-    if (!c) return PROVEN_ERR_INVALID_ARG;
-    if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_end_(c);
-#if !defined(PROVEN_NO_HTTP3)
-    if (PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_end_(c);
-#endif
+static proven_err_t ev_end(proven_http_stream_t *c, const proven_http_header_t *trailers, proven_size_t count) {
     if (c->dead || !c->active || !c->response_begun || c->response_ended) return PROVEN_ERR_INVALID_STATE;
+    proven_http_event_server_t *s = c->h.server;
+    /* Trailers go after the last chunk: checked, and written out, before anything ends. */
+    proven_byte_t *last = (void *)0;
+    proven_size_t last_len = 0;
+    if (count > 0) {
+        if (!c->chunked || c->bodiless) return PROVEN_ERR_INVALID_STATE;
+        if (!proven_http_trailers_valid_(trailers, count)) return PROVEN_ERR_INVALID_ARG;
+        proven_size_t need = 5;
+        for (proven_size_t i = 0; i < count; ++i) need += trailers[i].name.size + trailers[i].value.size + 4;
+        if (need > PROVEN_HTTP_MAX_TRAILER_BYTES + 5) return PROVEN_ERR_OUT_OF_BOUNDS;
+        proven_result_mem_mut_t m = s->alloc.alloc_fn(s->alloc.ctx, need, 1);
+        if (m.err != PROVEN_OK || !m.value.ptr) return PROVEN_ERR_NOMEM;
+        last = m.value.ptr;
+        if (proven_http_write_trailers((proven_mem_mut_t){ .ptr = last, .size = need }, &last_len, trailers, count) != PROVEN_OK) {
+            s->alloc.free_fn(s->alloc.ctx, last);
+            return PROVEN_ERR_INVALID_ARG;
+        }
+    }
     ev_enter(c);
     proven_err_t result = PROVEN_OK;
     if (c->response_left != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN && c->response_left != 0) {
@@ -1383,12 +1417,41 @@ proven_err_t proven_http_stream_end(proven_http_stream_t *c) {
             alive = ev_zip(c, (void *)0, 0, PROVEN_DEFLATE_FLUSH_FINISH);
             if (alive) { proven_http_compressor_destroy_(c->zip); c->zip = (void *)0; }
         }
-        if (alive && c->chunked) alive = ev_send(c, (const proven_byte_t *)"0\r\n\r\n", 5);
+        if (alive && c->chunked) alive = last ? ev_send(c, last, last_len) : ev_send(c, (const proven_byte_t *)"0\r\n\r\n", 5);
         if (alive) ev_progress(c);
         else result = PROVEN_ERR_RESET;
     }
+    if (last) s->alloc.free_fn(s->alloc.ctx, last);
     ev_leave(c);
     return result;
+}
+
+proven_err_t proven_http_stream_end(proven_http_stream_t *c) {
+    if (!c) return PROVEN_ERR_INVALID_ARG;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_end_(c, (void *)0, 0);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_end_(c, (void *)0, 0);
+#endif
+    return ev_end(c, (void *)0, 0);
+}
+
+proven_err_t proven_http_stream_end_trailers(proven_http_stream_t *c, const proven_http_header_t *fields, proven_size_t count) {
+    if (!c || count == 0 || !fields) return PROVEN_ERR_INVALID_ARG;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_end_(c, fields, count);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_end_(c, fields, count);
+#endif
+    return ev_end(c, fields, count);
+}
+
+proven_err_t proven_http_stream_trailers(const proven_http_stream_t *c, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count) {
+    if (count) *count = 0;
+    if (!c || !count || (cap > 0 && !fields)) return PROVEN_ERR_INVALID_ARG;
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_trailers_(c, fields, cap, count);
+#if !defined(PROVEN_NO_HTTP3)
+    if (PROVEN_HTTP_EVENT_IS_H3_(c)) return proven_http_event_h3_trailers_(c, fields, cap, count);
+#endif
+    return proven_http_body_trailers(&c->body, fields, cap, count);    /* PROVEN_ERR_INVALID_STATE before the body's end */
 }
 
 proven_err_t proven_http_stream_respond(proven_http_stream_t *c, proven_u16 status,

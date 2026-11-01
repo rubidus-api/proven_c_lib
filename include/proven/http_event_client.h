@@ -181,6 +181,31 @@ proven_result_size_t proven_http_event_request_write(proven_http_event_request_t
 [[nodiscard]]
 proven_err_t proven_http_event_request_end(proven_http_event_request_t *request);
 
+/**
+ * @brief Finish a body written with `body_length` PROVEN_HTTP_EVENT_LENGTH_UNKNOWN with trailer
+ *        fields after it (since v0.107.0): over HTTP/1.1 after the last chunk, over HTTP/2 and
+ *        HTTP/3 as a HEADERS frame that ends the stream - sent once the body before them has gone.
+ *        The fields are copied. A server that does not read trailers passes over them.
+ * @return PROVEN_ERR_INVALID_ARG for no fields, or one proven_http_trailer_allowed refuses (or not
+ *         a valid field); PROVEN_ERR_INVALID_STATE for a body with a length, or none to finish;
+ *         PROVEN_ERR_OUT_OF_BOUNDS past PROVEN_HTTP_MAX_TRAILER_BYTES; otherwise as
+ *         proven_http_event_request_end.
+ */
+[[nodiscard]]
+proven_err_t proven_http_event_request_end_trailers(proven_http_event_request_t *request, const proven_http_header_t *fields, proven_size_t count);
+
+/**
+ * @brief The response's trailer fields (since v0.107.0), once its body has ended - from `on_body`
+ *        with `last` (or, for a response with no body, `on_done`) until `on_done` returns: views
+ *        into the client's copy. None for an HTTP/1.1 response that was not chunked. A field that
+ *        may not be a trailer (proven_http_trailer_allowed) is left out. Over HTTP/1.1 a chunked
+ *        response holds a buffer of PROVEN_HTTP_MAX_TRAILER_BYTES for its trailer section.
+ * @return PROVEN_ERR_INVALID_STATE before the body's end; PROVEN_ERR_OUT_OF_BOUNDS for more fields
+ *         than `cap`.
+ */
+[[nodiscard]]
+proven_err_t proven_http_event_request_trailers(const proven_http_event_request_t *request, proven_http_header_t *fields, proven_size_t cap, proven_size_t *count);
+
 /** @brief Give up: the connection is closed at once and `on_done` is called with
  *         PROVEN_ERR_RESET, inside this call. */
 void proven_http_event_request_abort(proven_http_event_request_t *request);
