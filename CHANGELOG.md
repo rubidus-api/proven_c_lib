@@ -18,6 +18,12 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Fixed
+
+- Tests: three event-client tests gave up a request after a pause without asking whether it had
+  ended meanwhile, and aborted freed memory when it had (found by the allocation-failure sweep;
+  tests only).
+
 ## [0.107.2] - 2026-11-02
 
 ### Fixed
