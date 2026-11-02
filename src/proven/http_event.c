@@ -437,6 +437,30 @@ static void ev_reject(proven_http_stream_t *c, proven_u16 status, proven_err_t w
 // Input
 // -----------------------------------------------------------------------------
 
+/* Another connection's on_request is running: what this one has is read when it returns. */
+static void ev_defer(proven_http_stream_t *c) {
+    c->deferred = true;
+    c->h.server->deferred_any = true;
+}
+
+void proven_http_event_request_begin_(proven_http_event_server_t *s) { s->delivering++; }
+
+void proven_http_event_request_end_(proven_http_event_server_t *s) {
+    if (--s->delivering != 0) return;
+    /* One at a time, from the list's head again after each: reading may end any connection, or
+     * deliver a request whose handler defers others. */
+    while (s->deferred_any && s->delivering == 0 && !s->destroyed) {
+        s->deferred_any = false;
+        for (proven_http_stream_t *c = s->conns; c; c = c->next) {
+            if (!c->deferred) continue;
+            c->deferred = false;
+            s->deferred_any = true;
+            ev_process(c);
+            break;
+        }
+    }
+}
+
 static void ev_process(proven_http_stream_t *c) {
     proven_http_event_server_t *s = c->h.server;
     if (c->processing || c->dead) return;         /* the outer call will see what changed */
@@ -448,6 +472,7 @@ static void ev_process(proven_http_stream_t *c) {
         if (c->h.state == EV_RESPOND) break;        /* what follows belongs to the next request */
         if (c->h.state == EV_RAW) {
             if (c->paused || in.size == 0 || !c->raw) break;
+            if (s->delivering && proven_http_event_h2_owns_(c->raw)) { ev_defer(c); break; }
             proven_size_t used = (*(const proven_http_event_raw_ops_t *const *)c->raw)->on_input(
                 c->raw, (proven_mem_mut_t){ .ptr = c->stash.ptr + c->stash.off, .size = in.size });
             if (c->dead || c->h.state != EV_RAW) break;      /* closed from inside: the input is void */
@@ -457,6 +482,7 @@ static void ev_process(proven_http_stream_t *c) {
         }
         if (c->h.state == EV_HEAD) {
             if (in.size == 0) break;
+            if (s->delivering) { ev_defer(c); break; }
             c->head_started = true;
             if (s->cfg.http2 && !c->sniffed) {
                 /* Once, before anything is parsed. Over TLS the handshake has said (ALPN). In
@@ -531,7 +557,9 @@ static void ev_process(proven_http_stream_t *c) {
             c->active = true;
             c->stash.off += head;                 /* consumed; the views stay good until this loop ends */
             ev_arm(c);
+            proven_http_event_request_begin_(s);
             s->cfg.on.on_request(s->cfg.ctx, c, &req);
+            proven_http_event_request_end_(s);
             if (c->dead) break;
             if (c->h.state == EV_BODY && c->expect_continue && !c->response_begun) {
                 static const char go_on[] = "HTTP/1.1 100 Continue\r\n\r\n";

@@ -611,7 +611,9 @@ static void d_request(h3d_t *d, const proven_h3_event_t *ev) {
 
     s_enter(s);
     d->calls++;                                    /* what the handler does in here is sent when it returns */
+    proven_http_event_request_begin_(sv);
     sv->cfg.on.on_request(sv->cfg.ctx, (proven_http_stream_t *)(void *)s, &req);
+    proven_http_event_request_end_(sv);
     d->calls--;
     if (!s->dead && !d->dead && expects && !s->response_begun) {
         proven_http_header_t go_on[1] = { { .name = PROVEN_LIT(":status"), .value = PROVEN_LIT("100") } };

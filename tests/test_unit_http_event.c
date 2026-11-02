@@ -697,6 +697,77 @@ static void linger_case(void) {
     proven_loop_destroy(loop);
 }
 
+/* A handler that answers another connection: that one's next request head, already here, must
+ * not be read into the memory the running handler's head is in (v0.108.1). */
+static proven_http_stream_t *g_nest_waiting;
+static char g_nest_before[32], g_nest_after[32], g_nest_second[32];
+static int g_nest_second_depth;
+static bool g_nest_in_go;
+
+static void nest_who(const proven_http_request_t *head, char out[32]) {
+    proven_u8str_view_t v = { 0 };
+    out[0] = '\0';
+    if (proven_http_header_find(head->headers, head->header_count, PROVEN_LIT("X-Who"), &v) && v.size < 32) { memcpy(out, v.ptr, v.size); out[v.size] = '\0'; }
+}
+
+static void nest_request(void *ctx, proven_http_stream_t *s, const proven_http_request_t *head) {
+    (void)ctx;
+    if (proven_u8str_view_eq(head->target, PROVEN_LIT("/wait"))) { g_nest_waiting = s; return; }
+    if (proven_u8str_view_eq(head->target, PROVEN_LIT("/second"))) {
+        nest_who(head, g_nest_second);
+        g_nest_second_depth = g_nest_in_go ? 1 : 0;
+    }
+    if (proven_u8str_view_eq(head->target, PROVEN_LIT("/go"))) {
+        g_nest_in_go = true;
+        nest_who(head, g_nest_before);
+        if (g_nest_waiting) (void)proven_http_stream_respond(g_nest_waiting, 200, NULL, 0, mv("woke"));
+        g_nest_waiting = NULL;
+        nest_who(head, g_nest_after);
+        g_nest_in_go = false;
+    }
+    (void)proven_http_stream_respond(s, 200, NULL, 0, mv("ok"));
+}
+
+static void nested_case(void) {
+    proven_loop_t *loop = NULL;
+    proven_http_event_server_t *server = NULL;
+    proven_http_event_server_config_t cfg = { .on = { .on_request = nest_request } };
+    proven_net_addr_t at;
+    proven_net_conn_t a, b;
+    PROVEN_TEST_ASSERT(proven_loop_create(g_heap, &loop) == PROVEN_OK && proven_http_event_server_create(loop, &cfg, &server) == PROVEN_OK &&
+                       proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server", "");
+    PROVEN_TEST_ASSERT(proven_net_connect(at, proven_net_deadline_in(5000), &b) == PROVEN_OK &&
+                       proven_net_write_all(&b, mv("GET /wait HTTP/1.1\r\nHost: x\r\nX-Who: B\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\nX-Who: B-second\r\nX-Pad: 1\r\n\r\n"),
+                                            proven_net_deadline_in(5000)).err == PROVEN_OK, "B sends two requests at once; the first waits", "");
+    proven_net_deadline_t until = proven_net_deadline_in(5000);
+    while (!g_nest_waiting && proven_time_monotonic_now() < until) (void)proven_loop_poll(loop, proven_net_deadline_in(5));
+    PROVEN_TEST_ASSERT(g_nest_waiting != NULL, "B's first request is held", "");
+    PROVEN_TEST_ASSERT(proven_net_connect(at, proven_net_deadline_in(5000), &a) == PROVEN_OK &&
+                       proven_net_write_all(&a, mv("GET /go HTTP/1.1\r\nHost: x\r\nX-Who: A\r\n\r\n"), proven_net_deadline_in(5000)).err == PROVEN_OK,
+                       "A's handler answers B", "");
+    until = proven_net_deadline_in(5000);
+    while (!g_nest_second[0] && proven_time_monotonic_now() < until) (void)proven_loop_poll(loop, proven_net_deadline_in(5));
+    PROVEN_TEST_ASSERT(strcmp(g_nest_before, "A") == 0 && strcmp(g_nest_after, "A") == 0,
+        "A's head is A's for all of its handler, after answering B too", "Check ev_defer and proven_http_event_request_end_ in src/proven/http_event.c.");
+    PROVEN_TEST_ASSERT(strcmp(g_nest_second, "B-second") == 0 && g_nest_second_depth == 0,
+        "B's second request is read, and handled, once A's handler has returned", "");
+    char text[512] = { 0 };
+    proven_size_t have = 0;
+    until = proven_net_deadline_in(5000);
+    while (count_of(text, "HTTP/1.1 200") < 2 && proven_time_monotonic_now() < until) {
+        (void)proven_loop_poll(loop, proven_net_deadline_in(5));
+        proven_result_size_t got = proven_net_read(&b, (proven_mem_mut_t){ .ptr = (proven_byte_t *)text + have, .size = sizeof text - 1 - have }, proven_net_deadline_in(0));
+        if (got.err == PROVEN_OK) have += got.value;
+        text[have] = '\0';
+    }
+    PROVEN_TEST_ASSERT(count_of(text, "HTTP/1.1 200") == 2 && strstr(text, "woke") != NULL && strstr(text, "ok") != NULL, "and B has both answers", "");
+    (void)proven_net_close(&a);
+    (void)proven_net_close(&b);
+    proven_http_event_server_destroy(server);
+    for (int i = 0; i < 20; ++i) (void)proven_loop_poll(loop, proven_net_deadline_in(5));
+    proven_loop_destroy(loop);
+}
+
 /* ---- the graceful end (proven_http_event_server_shutdown) ---- */
 
 typedef struct { proven_http_stream_t *stream; proven_loop_timer_t timer; bool used; } drain_slot_t;
@@ -921,6 +992,8 @@ int main(void) {
     idle_case();
     PROVEN_TEST_SECTION("the linger time", "A connection that is being closed after its answer.", "Check ev_linger and ev_arm.");
     linger_case();
+    PROVEN_TEST_SECTION("a handler that answers another connection", "A held request answered from another's handler, with its connection's next request already here.", "Check ev_defer and proven_http_event_request_end_: no head is read while an on_request runs.");
+    nested_case();
     PROVEN_TEST_SECTION("the graceful end", "proven_http_event_server_shutdown with an idle connection, a request in progress, half a request head and a request nobody answers; with nothing open; finishing in time; and stop_listening alone.", "Check proven_http_event_server_shutdown, ev_drain_check and ev_drain_deadline in src/proven/http_event.c, and the `close` decision for HTTP/1.1 responses.");
     drain_case();
 

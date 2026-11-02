@@ -157,6 +157,7 @@ struct proven_http_stream {
     /* 0-RTT over TCP (RFC-0027): the request being served arrived as early data (where its head
      * ended among the plaintext the TLS engine counted says so: proven_tls_read_counts_). */
     bool early_req : 1;
+    bool deferred : 1;                 /* input left for after another connection's on_request (proven_http_event_request_end_) */
 };
 
 /* One listener, allocated on its own: after stop_listening its accept may still be answered
@@ -184,6 +185,12 @@ struct proven_http_event_server {
     proven_size_t ending;              /* connections and listeners ended, waiting for the loop's last answer */
     bool destroyed;                    /* destroy was called: the struct goes when `ending` is 0 */
     proven_http_header_t *headers;
+    /* While an on_request runs - HTTP/1.1, 2 or 3 - its head's fields are in `headers` and, for
+     * HTTP/2, in `h2buf`; a handler that answers another connection can make that one read its
+     * next request head into the same memory. So no connection reads a head meanwhile: it is
+     * marked `deferred` and read when the outermost on_request returns. */
+    proven_u32 delivering;
+    bool deferred_any;
     proven_byte_t *rbuf, *pbuf, *hbuf;
     proven_byte_t *zbuf;               /* what a compressor gives out, on its way to a connection's output; made when first needed */
     proven_byte_t *h2buf;              /* where every HTTP/2 connection reads its header lists: one event at a time, one thread; made when first needed */
@@ -209,6 +216,11 @@ struct proven_http_event_server {
  * delivered by the loop that called. PROVEN_ERR_NOMEM leaves the connection as it was. */
 [[nodiscard]]
 proven_err_t proven_http_event_h2_take_(proven_http_stream_t *conn);
+/* Whether a taken-over connection's owner is the HTTP/2 driver. */
+bool proven_http_event_h2_owns_(const void *raw);
+/* Around every on_request of the server's, whatever the protocol: see `delivering`. */
+void proven_http_event_request_begin_(proven_http_event_server_t *server);
+void proven_http_event_request_end_(proven_http_event_server_t *server);
 
 /* What the public proven_http_stream_* functions do for a stream whose head says EV_KIND_H2.
  * `stream` is such a stream, in the public type's clothes. */

@@ -390,7 +390,9 @@ static void d_request(h2d_t *d, const proven_h2_event_t *ev) {
     const bool expects = !ev->end_stream && proven_http_header_has_token(sv->headers, n, PROVEN_LIT("expect"), PROVEN_LIT("100-continue"));
 
     s_enter(s);
+    proven_http_event_request_begin_(sv);
     sv->cfg.on.on_request(sv->cfg.ctx, (proven_http_stream_t *)(void *)s, &req);
+    proven_http_event_request_end_(sv);
     if (!s->dead && !d->dead && expects && !s->response_begun) {
         proven_http_header_t go_on[1] = { { .name = PROVEN_LIT(":status"), .value = PROVEN_LIT("100") } };
         (void)proven_h2_conn_submit_response(d->engine, s->id, go_on, 1, false);
@@ -738,6 +740,10 @@ static bool h2_tls_adequate(const proven_tls_conn_t *tls) {
     if (version < 0x0303) return false;
     return suite == 0xc02b || suite == 0xc02c || suite == 0xc02f || suite == 0xc030 ||
            suite == 0xcca8 || suite == 0xcca9 || suite == 0xccaa || suite == 0x009e || suite == 0x009f;
+}
+
+bool proven_http_event_h2_owns_(const void *raw) {
+    return raw && *(const proven_http_event_raw_ops_t *const *)raw == &h2_ops;
 }
 
 proven_err_t proven_http_event_h2_take_(proven_http_stream_t *conn) {

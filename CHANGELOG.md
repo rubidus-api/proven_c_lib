@@ -26,6 +26,15 @@ written; their tags still exist.
   `PROVEN_ERR_PERMISSION`, as RFC 6265bis section 5.7 step 16 asks: over a connection that is not
   secure, no cookie of the name of a live `Secure` one whose host is this host, a parent or a child
   of it, and whose path covers the new cookie's. `test_unit_http_cookie` has the cases.
+- **The event-driven server: a handler that answered another connection could find its own
+  request head changed under it.** Every connection read its request head into one array of the
+  server's, and HTTP/2 its fields into one buffer; answering a held request on connection B from
+  the handler of A's let B read its next pipelined request at once, into that memory - A's handler
+  then read B's fields as A's (a long poll answered from another request is the usual shape). No
+  connection now reads a request head while an `on_request` of the server's runs, whatever its
+  protocol: it is read as soon as the outermost one returns, in the same call. The event client
+  has one array too but reads a head only from the loop, never from inside a callback.
+  `test_unit_http_event` has the long poll.
 
 ### Fixed
 
