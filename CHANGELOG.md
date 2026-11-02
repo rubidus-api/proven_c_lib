@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.109.0] - 2026-11-03
+
 ### Security
 
 - **A cookie set over plain HTTP could replace or delete a `Secure` one** of the same name, host
