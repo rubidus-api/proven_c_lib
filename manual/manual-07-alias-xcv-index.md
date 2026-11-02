@@ -514,7 +514,10 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_float_format_options_fixed_default` | `proven_float_format_options_fixed_default` |
 | `xcv_float_format_options_scientific` | `proven_float_format_options_scientific` |
 | `xcv_float_format_options_shortest` | `proven_float_format_options_shortest` |
+| `xcv_fmt_arg_count` | `proven_fmt_arg_count` |
 | `xcv_fmt_put` | `proven_fmt_put` |
+| `xcv_fmt_to` | `proven_fmt_to` |
+| `xcv_fmt_to_internal` | `proven_fmt_to_internal` |
 | `xcv_fmt_to_writer_impl` | `proven_fmt_to_writer_impl` |
 | `xcv_fprint` | `proven_fprint` |
 | `xcv_free_fn_t` | `proven_free_fn_t` |

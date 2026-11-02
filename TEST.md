@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 133 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 134 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -348,7 +348,7 @@ Last run, 2026-11-02, Windows 11 test VM (v0.108.0): x86-64 384 PASS, 0 FAIL, 10
 ## Test catalog
 
 
-The hosted full run builds and executes 202 registered tests plus the 192 runnable manual examples - 394 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 215 test files: the 202 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 203 registered tests plus the 192 runnable manual examples - 395 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 216 test files: the 203 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -571,6 +571,22 @@ Sub-checks:
 - Every pre-existing spelling still means what it meant.
 
 Failure tip: inspect the spec parser and `render_integer` / the float case in `src/proven/fmt.c`.
+
+### `tests/test_unit_fmt_to` - fmt: string precision, argument counts, proven_fmt_to
+
+Intent: verify `{:.N}` on strings keeps at most N bytes and no partial UTF-8 character, `proven_fmt_arg_count` gives the count a call must pass, and `proven_fmt_to` ends its text with a NUL and cuts between characters.
+
+Sub-checks:
+
+- `{:.2}`, `{:.5}` and `{:.0}` on `"abc"`; width and alignment on what is kept (`{:6.2}`, `{:<6.2}`, `{:*^6.2}`).
+- A text of one-, two-, three- and four-byte characters cut at every N from 1 to 11 and at 40, as a C string and as a view: each cut back to a whole character. A C string with no NUL within N is not read past it; bytes that are not UTF-8 are cut at N; a NULL C string is empty.
+- A precision on an integer or a char is still `PROVEN_ERR_INVALID_FORMAT`; a float's above 60 `PROVEN_ERR_OUT_OF_BOUNDS`; a string's of 300 keeps 300 bytes.
+- `proven_fmt_arg_count` on twelve formats - none, escaped braces, automatic, positional, both, with specs - and `PROVEN_ERR_INVALID_FORMAT` for `{`, `}` and `{:q}`; a call one argument short or over writes nothing and says `PROVEN_ERR_INVALID_ARG`; `{1}` with two arguments is allowed.
+- `proven_fmt_to`: a whole line with `written` and `required`; cut at `cap - 1` between characters, and before a character that would be split; a buffer of one byte holds the NUL; after a format error the text is empty and ends; `cap` 0 with no buffer measures; a buffer of NULL with a size is refused. `proven_u8str_append_fmt_trunc` also cuts between characters.
+
+The panic of a library built with `-DPROVEN_FMT_CHECK_ARGS` is not in the suite (the suite's library is built without it); it was checked by hand for too few, too many and a positional index past the arguments.
+
+Failure tip: inspect `fmt_utf8_whole`, the CSTR and STR_VIEW cases of `render_arg`, `proven_fmt_arg_count` and `proven_fmt_to_internal` in `src/proven/fmt.c`.
 
 ### `tests/test_unit_fmt_scientific` - the `{:e}` scientific float form
 

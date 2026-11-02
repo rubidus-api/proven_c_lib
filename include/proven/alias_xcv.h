@@ -494,7 +494,10 @@
 #define xcv_float_format_options_fixed_default proven_float_format_options_fixed_default
 #define xcv_float_format_options_scientific proven_float_format_options_scientific
 #define xcv_float_format_options_shortest proven_float_format_options_shortest
+#define xcv_fmt_arg_count proven_fmt_arg_count
 #define xcv_fmt_put proven_fmt_put
+#define xcv_fmt_to proven_fmt_to
+#define xcv_fmt_to_internal proven_fmt_to_internal
 #define xcv_fmt_to_writer_impl proven_fmt_to_writer_impl
 #define xcv_fprint proven_fprint
 #define xcv_free_fn_t proven_free_fn_t

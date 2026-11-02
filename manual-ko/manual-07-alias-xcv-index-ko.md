@@ -516,7 +516,10 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_float_format_options_fixed_default` | `proven_float_format_options_fixed_default` |
 | `xcv_float_format_options_scientific` | `proven_float_format_options_scientific` |
 | `xcv_float_format_options_shortest` | `proven_float_format_options_shortest` |
+| `xcv_fmt_arg_count` | `proven_fmt_arg_count` |
 | `xcv_fmt_put` | `proven_fmt_put` |
+| `xcv_fmt_to` | `proven_fmt_to` |
+| `xcv_fmt_to_internal` | `proven_fmt_to_internal` |
 | `xcv_fmt_to_writer_impl` | `proven_fmt_to_writer_impl` |
 | `xcv_fprint` | `proven_fprint` |
 | `xcv_free_fn_t` | `proven_free_fn_t` |

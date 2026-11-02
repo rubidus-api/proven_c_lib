@@ -520,6 +520,16 @@ Supported forms:
 The numbering is user-facing and zero-based.
 The implementation stores a hidden sentinel at index 0 and maps user index `0` to internal argument slot `1`.
 
+**How many arguments a call passes** (since v0.109.0 a stated rule): `{}` names the argument after
+the one the previous `{}` named, starting from 0; `{N}` names N and does not move that count. A
+call passes exactly the highest number named plus one: one fewer leaves a placeholder with
+nothing, one more is an argument nobody shows, and either way the call writes nothing and says
+`PROVEN_ERR_INVALID_ARG`. `proven_fmt_arg_count(fmt)` applies the rule to a format, so a test or a
+project's own script can check its literal formats; a library built with
+`-DPROVEN_FMT_CHECK_ARGS` panics on a wrong count instead, with the format and both counts in the
+message (`proven fmt: "{} and {}" names 2 argument(s), 1 given`). C23 has no way to read a string
+literal in a constant expression, so the check cannot happen at compile time.
+
 ### Escaped braces
 
 - `{{` becomes a literal `{`
@@ -542,7 +552,7 @@ spec copied from Python or Rust means here what it means there.
 | `#` | | alternate form: `0x`, `0X`, `0o`, `0b` prefixes. Integers only. |
 | `0` | | zero-fill. `{:08}` on 42 is `00000042`. |
 | `width` | digits, up to 10000 | minimum field width. |
-| `.precision` | `.N`, up to 60 | decimals. **Floats only.** |
+| `.precision` | `.N` | a float's decimals (up to 60); a string's most bytes (up to 10000), cut back to a whole UTF-8 character. Not for integers. |
 | `type` | `x X o b d` (int), `f g e` (float) | base and case; `f` fixed, `g` shortest round-trip, `e` scientific (printf `%e`). |
 
 Two things are worth knowing because they used to be false:
@@ -573,6 +583,35 @@ proven_byte_t buf[64];
 proven_u8str_t line = proven_u8str_borrow(buf, sizeof buf);
 (void)proven_u8str_append_fmt(&line, "{:>9.2}", PROVEN_ARG(12.5));    /* "    12.50" */
 ```
+
+### Strings: `.N`
+
+`{:.N}` on a C string or a view shows at most N bytes, as printf's `%.Ns` - cut back, when the
+N-th byte falls inside a UTF-8 character, to where that character begins, so no partial
+character comes out (since v0.109.0; before it the spec was refused). Width and alignment apply to
+what is kept: `{:6.2}` on `"abc"` is `"    ab"`, `{:<6.2}` is `"ab    "`. A C string is read no
+further than N bytes, so it need not end within them. Bytes that are not UTF-8 are cut where N
+says.
+
+### Differences from printf
+
+For the integer and string conversions these are the only ones (each checked against glibc):
+
+| proven | printf | proven gives | printf gives |
+|---|---|---|---|
+| `{:#x}` on 0 | `%#x` | `0x0` | `0` |
+| `{:#o}` on 8 | `%#o` | `0o10` | `010` |
+| `{}` on a NULL C string | `%s` | nothing | `(null)` (glibc; undefined in C) |
+| `{:.2}` on `"h\xc3\xa9llo"` | `%.2s` | `h` | `h\xc3` (half a character) |
+| `{:^5}` | none | centred | - |
+
+Everything else in this list gives the same bytes: `{}` as `%d`, `%u`, `%lld`, `%zu`, `%c` and
+`%s`; `{:5}` as `%5d` and `%5s` (strings, too, go right by default, and a width counts bytes, as
+printf's does); `{:<5}` as `%-5d` and `%-5s`; `{:05}` as `%05d` (the zeros after the sign);
+`{:+}` and `{: }` as `%+d` and `% d`; `{:x}`, `{:X}`, `{:o}` as `%x`, `%X`, `%o` - on a negative
+`int` too (`ffffffff`); `{:08X}` as `%08X`; `{:#x}` on a non-zero value and `{:#010x}` as `%#x` and
+`%#010x`; `{:.N}` as `%.Ns` on whole characters; a pointer as `%p` on glibc. Floats are in the
+section above.
 
 ### A spec the argument cannot honour is an error
 
@@ -649,6 +688,8 @@ Use this when you want all-or-nothing behavior.
 
 Best-effort formatting.
 It writes as much as fits and reports how much was written and how much was required.
+Since v0.109.0 it cuts only between UTF-8 characters: a character that would not fit whole is
+left out.
 
 Use this when partial output is acceptable.
 
@@ -667,6 +708,32 @@ This is useful when the argument list contains string views that may alias the d
 
 Use a real allocator for both `alloc` and `scratch`.
 Do not pass a dead arena or a one-shot temporary buffer unless its lifetime is long enough for the call.
+
+### `proven_fmt_to(buf, cap, fmt, ...)`
+
+snprintf's shape, for a fixed buffer: `cap` counts the NUL, at most `cap - 1` bytes are written,
+and when `cap > 0` the text always ends with a NUL - empty after an error. Output that does not
+fit is cut between UTF-8 characters, with `PROVEN_ERR_OUT_OF_BOUNDS`, `written` the bytes kept and
+`required` the whole length (without the NUL); `cap == 0` measures, and `buf` may then be NULL.
+It is `proven_u8str_borrow` and `proven_u8str_append_fmt_trunc` in one call (since v0.109.0).
+
+```c
+char line[64];
+proven_fmt_result_t r = proven_fmt_to(line, sizeof line, "{:<10.8}|{:>6}", PROVEN_ARG("filename.txt"), PROVEN_ARG(42));
+/* line is "filename  |    42", r.written == 17 == r.required */
+(void)r;
+```
+
+### `proven_fmt_arg_count(fmt)`
+
+The number of arguments a call with `fmt` must pass (the rule under "Replacement fields"), or
+`PROVEN_ERR_INVALID_FORMAT` when `fmt` is not a format. It reads the format only: whether each
+argument suits its spec is checked by a call.
+
+```c
+proven_result_size_t n = proven_fmt_arg_count("{} of {1:x}, {{literal}}");   /* n.value == 2 */
+(void)n;
+```
 
 ### Float format policy seam
 

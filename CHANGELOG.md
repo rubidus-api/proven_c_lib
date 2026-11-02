@@ -18,6 +18,28 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **`proven_fmt_to(buf, cap, fmt, ...)`**: snprintf's shape for a fixed buffer - always NUL-terminated
+  when `cap > 0`, cut between UTF-8 characters, `required` reported, `cap == 0` to measure. Asked by
+  a downstream project replacing its `snprintf` calls.
+- **`{:.N}` on C strings and views**: at most N bytes, as `%.Ns`, cut back to the start of a UTF-8
+  character the N-th byte would split; width and alignment apply to what is kept, and a C string
+  is not read past N bytes. It was `PROVEN_ERR_INVALID_FORMAT`. A string's precision may be up to
+  10000; a float's stays at most 60.
+- **`proven_fmt_arg_count(fmt)`** and the rule it applies, now stated in `fmt.h` and chapter 8: how
+  many arguments a call with a format must pass, for a test or a project's own script to check its
+  literal formats. A library built with `-DPROVEN_FMT_CHECK_ARGS` panics on a call whose arguments
+  are too few or too many, with the format and both counts, instead of writing nothing and saying
+  `PROVEN_ERR_INVALID_ARG` - a diagnostic that would have come out empty stops where it was written.
+- Chapter 8 lists every difference from printf for the integer and string conversions (`{:#x}` on
+  0, `{:#o}`, a NULL C string, a precision inside a character).
+
+### Changed
+
+- **`proven_u8str_append_fmt_trunc` cuts only between UTF-8 characters**: a character that does not
+  fit whole is left out, where the first bytes of it were kept before.
+
 ### Security
 
 - **A cookie set over plain HTTP could replace or delete a `Secure` one** of the same name, host
