@@ -51,6 +51,12 @@ written; their tags still exist.
   ended meanwhile, and aborted freed memory when it had (found by the allocation-failure sweep;
   tests only).
 
+### Changed
+
+- `THIRD_PARTY_NOTICES.md` names the data in `src/proven/brotli_dict.h` - the static dictionary,
+  transforms and context tables generated from the text of RFC 7932 - and carries the IETF Trust's
+  license text for code components extracted from an RFC, in case these tables count as such.
+
 ## [0.107.2] - 2026-11-02
 
 ### Fixed
