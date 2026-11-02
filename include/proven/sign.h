@@ -59,7 +59,8 @@ typedef struct {
 
 /**
  * @brief Read a private key: PEM ("PRIVATE KEY" - PKCS #8, unencrypted - "RSA PRIVATE KEY" or
- *        "EC PRIVATE KEY"; the first such block in `text`) or DER of any of the three.
+ *        "EC PRIVATE KEY"; the first such block in `text`) or DER of any of the three - DER
+ *        when `text` has no "-----BEGIN" line.
  *
  * An RSA key is checked for its shape (n = p q, the CRT values in range) and then signs once
  * and verifies that, so a key that cannot sign is refused here. `rng` makes RSA's blinding pair;

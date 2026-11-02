@@ -276,7 +276,15 @@ static proven_err_t pk_der(proven_allocator_t alloc, proven_mem_view_t der, prov
 proven_err_t proven_pkey_parse(proven_allocator_t alloc, proven_mem_view_t text, proven_rng_t rng, proven_pkey_t **out) {
     if (out) *out = (void *)0;
     if (!out || !proven_alloc_is_valid(alloc) || !text.ptr || text.size == 0) return PROVEN_ERR_INVALID_ARG;
-    if (text.ptr[0] == 0x30) return pk_der(alloc, text, rng, out);
+    /* PEM when it has a BEGIN line; DER otherwise (0x30 is also '0', so the first byte cannot say). */
+    static const char begin[] = "-----BEGIN";
+    bool pem = false;
+    for (proven_size_t i = 0; !pem && i + sizeof begin - 1 <= text.size; ++i) {
+        proven_size_t k = 0;
+        while (k < sizeof begin - 1 && text.ptr[i + k] == (proven_byte_t)begin[k]) ++k;
+        pem = k == sizeof begin - 1;
+    }
+    if (!pem) return pk_der(alloc, text, rng, out);
     proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, text.size, 1);
     if (m.err != PROVEN_OK || !m.value.ptr) return PROVEN_ERR_NOMEM;
     proven_size_t pos = 0, len = 0;
