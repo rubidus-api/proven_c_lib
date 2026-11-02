@@ -499,7 +499,7 @@ sci.precision = 2;
 않는 인자가 생기며, 어느 쪽이든 아무것도 쓰지 않고 `PROVEN_ERR_INVALID_ARG`를 돌려준다.
 `proven_fmt_arg_count(fmt)`는 이 규칙을 형식 문자열에 적용하므로, 시험이나 프로젝트 자체 스크립트가
 리터럴 형식을 검사할 수 있다. `-DPROVEN_FMT_CHECK_ARGS`로 빌드한 라이브러리는 개수가 틀리면 대신
-panic하며, 메시지에 형식과 두 개수가 담긴다(`proven fmt: "{} and {}" names 2 argument(s), 1 given`).
+패닉(panic)하며, 메시지에 형식과 두 개수가 담긴다(`proven fmt: "{} and {}" names 2 argument(s), 1 given`).
 C23에는 상수식에서 문자열 리터럴을 읽을 방법이 없어 컴파일 시점에는 검사할 수 없다.
 
 ### 중괄호 이스케이프
