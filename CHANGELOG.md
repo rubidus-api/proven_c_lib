@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.108.0] - 2026-11-02
+
 ### Added
 
 - **`proven_parse_double_ascii` and `proven_strtod` read hexadecimal floats**, as C's `strtod`
