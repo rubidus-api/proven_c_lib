@@ -191,6 +191,9 @@ int main(void) {
             "000010",                    /* indexed after the Base */
             "00004100",                  /* a literal with a dynamic name */
             "00000000",                  /* a literal named after the Base */
+            "000180",                    /* indexed, dynamic, below a Base of 1: no table to look in */
+            "000582",                    /* the same below a Base of 5 */
+            "00014000",                  /* a literal with a dynamic name below a Base of 1 */
             "0000ff24",                  /* static index 99 */
             "00005f5400",                /* a literal with static name 99 */
             "000051",                    /* a value missing */

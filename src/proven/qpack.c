@@ -451,7 +451,8 @@ proven_err_t proven_qpack_decode_dyn(proven_qpack_dec_t *d, proven_mem_view_t se
                 name = qp_static_name((proven_size_t)index);
                 value = qp_static_value((proven_size_t)index);
             } else {
-                if (index >= base || !(dyn = qp_entry(d, base - 1 - index)) || base - 1 - index >= ric) return PROVEN_ERR_INVALID_FORMAT;
+                /* At or past the Required Insert Count first: with none, there may be no table to look in. */
+                if (index >= base || base - 1 - index >= ric || !(dyn = qp_entry(d, base - 1 - index))) return PROVEN_ERR_INVALID_FORMAT;
                 if (base - index > top) top = base - index;
                 whole = true;
             }
@@ -463,7 +464,7 @@ proven_err_t proven_qpack_decode_dyn(proven_qpack_dec_t *d, proven_mem_view_t se
                 if (index >= QPACK_STATIC_COUNT) return PROVEN_ERR_INVALID_FORMAT;
                 name = qp_static_name((proven_size_t)index);
             } else {
-                if (index >= base || !(dyn = qp_entry(d, base - 1 - index)) || base - 1 - index >= ric) return PROVEN_ERR_INVALID_FORMAT;
+                if (index >= base || base - 1 - index >= ric || !(dyn = qp_entry(d, base - 1 - index))) return PROVEN_ERR_INVALID_FORMAT;
                 if (base - index > top) top = base - index;
             }
         } else if ((b & 0x20) != 0) {
