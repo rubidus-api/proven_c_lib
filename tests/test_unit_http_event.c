@@ -698,7 +698,7 @@ static void linger_case(void) {
 }
 
 /* A handler that answers another connection: that one's next request head, already here, must
- * not be read into the memory the running handler's head is in (v0.108.1). */
+ * not be read into the memory the running handler's head is in (v0.109.0). */
 static proven_http_stream_t *g_nest_waiting;
 static char g_nest_before[32], g_nest_after[32], g_nest_second[32];
 static int g_nest_second_depth;
