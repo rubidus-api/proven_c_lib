@@ -2063,6 +2063,7 @@ Sub-checks:
 - Store and return for the same host; nothing for another host, a parent or a child of it.
 - `Path` matching on segment boundaries; a cookie with no `Path` takes the request's directory; longer paths come first in the header.
 - `Secure` cookies are refused when set over plain HTTP and withheld from it.
+- Over plain HTTP a cookie may not replace, delete or shadow a `Secure` one of its name (RFC 6265bis 5.7 step 16): the same path, a path under it and a child host are refused; another host and another name are not; once the `Secure` one is deleted over an encrypted connection the name may be set.
 - `Max-Age` and `Expires` end a cookie; `Max-Age` wins when both are given; an expired cookie in a `Set-Cookie` deletes the stored one.
 - A `Domain` that does not cover the setting host is `PROVEN_ERR_PERMISSION`; one that does is accepted and the cookie stays host-only.
 - Replacement by name and path; the count limit evicts the oldest; clear empties the jar.

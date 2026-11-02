@@ -183,8 +183,21 @@ proven_err_t proven_http_cookie_jar_store(proven_http_cookie_jar_t *jar, proven_
     }
     if (is_secure && !secure) return PROVEN_ERR_PERMISSION;
 
-    /* An existing cookie of the same name, host and path is replaced - or just removed. */
     proven_cookie_t *e = ck_entries(jar);
+    /* RFC 6265bis section 5.7 step 16: over a connection that is not secure, a cookie may not
+     * replace, delete or shadow a Secure one of its name whose host is this one's, or a parent
+     * or child of it, and whose path covers its path - else plain HTTP could fix a session. */
+    if (!secure) {
+        for (proven_size_t i = 0; i < jar->count; ++i) {
+            proven_u8str_view_t h = ck_host(&e[i]);
+            if (e[i].expires != 0 && e[i].expires <= now_wall) continue;      /* gone, if not yet removed */
+            if (e[i].secure && proven_u8str_view_eq(ck_name(&e[i]), name) &&
+                (ck_domain_covers(h, host) || ck_domain_covers(host, h)) && ck_path_covers(ck_path(&e[i]), cookie_path))
+                return PROVEN_ERR_PERMISSION;
+        }
+    }
+
+    /* An existing cookie of the same name, host and path is replaced - or just removed. */
     proven_size_t same = jar->count;
     for (proven_size_t i = 0; i < jar->count; ++i) {
         if (proven_u8str_view_eq(ck_name(&e[i]), name) && proven_u8str_view_eq_ascii_ci(ck_host(&e[i]), host) && proven_u8str_view_eq(ck_path(&e[i]), cookie_path)) { same = i; break; }

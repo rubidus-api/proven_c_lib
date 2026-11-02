@@ -82,7 +82,10 @@ proven_size_t proven_http_cookie_jar_count(const proven_http_cookie_jar_t *jar);
  *         PROVEN_ERR_INVALID_FORMAT when it is not a cookie (no `=`, an empty name, a control
  *         character) - the header is ignored, as a browser would.
  *         PROVEN_ERR_PERMISSION when the cookie is well formed but may not be set from here:
- *         a `Domain` that is not this host or a parent of it, or `Secure` over plain HTTP.
+ *         a `Domain` that is not this host or a parent of it, `Secure` over plain HTTP, or -
+ *         over plain HTTP - a cookie of the name of a `Secure` one the jar holds for this host,
+ *         a parent or a child of it, on a path that covers this cookie's (RFC 6265bis section
+ *         5.7 step 16: plain HTTP may not replace or delete a Secure cookie).
  *         PROVEN_ERR_OUT_OF_BOUNDS when name plus value pass PROVEN_HTTP_COOKIE_MAX_SIZE.
  *         PROVEN_ERR_NOMEM. In every one of these cases the jar is unchanged.
  */

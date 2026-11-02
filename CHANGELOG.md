@@ -18,6 +18,15 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Security
+
+- **A cookie set over plain HTTP could replace or delete a `Secure` one** of the same name, host
+  and path - so anyone between the client and an `http://` URL of the site could fix the session
+  an `https://` login had stored. `proven_http_cookie_jar_store` now refuses it with
+  `PROVEN_ERR_PERMISSION`, as RFC 6265bis section 5.7 step 16 asks: over a connection that is not
+  secure, no cookie of the name of a live `Secure` one whose host is this host, a parent or a child
+  of it, and whose path covers the new cookie's. `test_unit_http_cookie` has the cases.
+
 ### Fixed
 
 - **`proven_ws_event_connect`: a 101 whose head arrived in more than one read ended the

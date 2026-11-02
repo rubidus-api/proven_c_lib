@@ -105,6 +105,21 @@ int main(void) {
                            strcmp(header(&jar, "example.com", "/", true, NOW), "s=1") == 0 &&
                            strcmp(header(&jar, "example.com", "/", false, NOW), "") == 0,
             "set over an encrypted connection it is stored, and is only ever sent over one", "");
+        PROVEN_TEST_ASSERT(store(&jar, "example.com", "/", false, "s=evil") == PROVEN_ERR_PERMISSION &&
+                           store(&jar, "example.com", "/", false, "s=; Max-Age=0") == PROVEN_ERR_PERMISSION &&
+                           store(&jar, "example.com", "/deeper", false, "s=evil; Path=/deeper") == PROVEN_ERR_PERMISSION &&
+                           store(&jar, "www.example.com", "/", false, "s=evil") == PROVEN_ERR_PERMISSION &&
+                           strcmp(header(&jar, "example.com", "/", true, NOW), "s=1") == 0,
+            "plain HTTP may not replace, delete or shadow it - on its path or under it, from a child host (RFC 6265bis 5.7 step 16)", "");
+        PROVEN_TEST_ASSERT(store(&jar, "other.org", "/", false, "s=fine") == PROVEN_OK &&
+                           store(&jar, "example.com", "/", false, "t=fine") == PROVEN_OK &&
+                           store(&jar, "example.com", "/", true, "s=2; Secure") == PROVEN_OK &&
+                           strstr(header(&jar, "example.com", "/", true, NOW), "s=2") != NULL &&
+                           strstr(header(&jar, "example.com", "/", true, NOW), "t=fine") != NULL,
+            "another host, another name, and the same cookie over an encrypted connection are as before", "");
+        PROVEN_TEST_ASSERT(store(&jar, "example.com", "/", true, "s=; Max-Age=0") == PROVEN_OK &&
+                           store(&jar, "example.com", "/", false, "s=plain") == PROVEN_OK,
+            "once the Secure one is gone, plain HTTP may set the name", "");
 
         before = proven_http_cookie_jar_count(&jar);
         PROVEN_TEST_ASSERT(store(&jar, "example.com", "/", false, "novalue") == PROVEN_ERR_INVALID_FORMAT &&
