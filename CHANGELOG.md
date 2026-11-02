@@ -18,7 +18,34 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Security
+
+- **A field section could crash an HTTP/3 server or client that keeps no QPACK table.** With
+  `http3_no_header_table` set, the decoder has no dynamic table, and a field section with a Base
+  above 0 that named an entry below it was looked up in the table that is not there - a null
+  dereference, from one HEADERS frame of the peer's. The reference is now refused first, as one
+  at or past the Required Insert Count (`QPACK_DECOMPRESSION_FAILED`), as the other forms already
+  were. With a table (the default) the same sections were refused already. Found by reading the
+  decoder; `test_unit_qpack` has the three sections.
+
 ### Fixed
+
+- **A Zstandard stream at the high levels ran about twice as slow as `encode_all` in place.** Once
+  the encoder's input buffer was full it slid after every block - 128 KiB - and each slide goes
+  through all the match tables, 80 MiB at level 19 with the largest window. It now slides when no
+  whole block is left to compress, as far as it can, about every half window: 32 MiB at level 19
+  went from 16.6 s to 9.0 s of CPU (in place: 8.9 s), and the 2 GiB check's 4,403 s against 1,772 s
+  in place is explained. The frames are the same, byte for byte (149 cases compared: levels 1 to
+  19, windows of 1 KiB to 8 MiB, input in pieces of 999 bytes to all at once, with and without
+  block flushes, long-distance matching and a dictionary).
+
+- Tests: `test_unit_http_event_alloc_fail` now also reaches the HTTP/2 server's fix of v0.107.2: a
+  peer that closes before the program answers makes the server's send fail inside `begin`, `write`
+  or `flush`, and each of the three, undone alone, fails the test. It also fails the loop's own
+  allocations. v0.107.2's entry said the fault was in all six drivers; read again, the step after the
+  old answer can end a stream in the HTTP/2 server and client, in HTTP/1.1 only when the operating
+  system refuses to watch the socket, and in HTTP/3 not at all - there the change keeps the drivers
+  alike.
 
 - Tests: three event-client tests gave up a request after a pause without asking whether it had
   ended meanwhile, and aborted freed memory when it had (found by the allocation-failure sweep;
