@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.107.3] - 2026-11-02
+
 ### Security
 
 - **A field section could crash an HTTP/3 server or client that keeps no QPACK table.** With
