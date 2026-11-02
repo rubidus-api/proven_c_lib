@@ -1107,7 +1107,9 @@ if (!proven_is_ok(e)) {
   정확한 bigint fallback으로 넘긴다.
 - 체크인된 캐시 `5^q` 상수들은 `scripts/generate_float_decimal_tables.py`로
   로컬에서 생성된다.
-- `proven_parse_double_ascii()`는 선행 공백을 건너뛰지 않는다.
+- `proven_parse_double_ascii()`는 선행 공백을 건너뛰지 않는다. 이 함수와
+  `proven_strtod()`는 16진 부동소수(`0x1.8p3`)도 읽으며, 이 함수는 binary64에 너무 큰 수를
+  길이와 함께 `PROVEN_ERR_OVERFLOW`로 보고한다(8장).
 - `proven_strtod()`는 선행 ASCII 공백을 건너뛰고, `endptr`을 갱신하며, 오버플로 시
   부호 있는 무한대를 반환하고, 언더플로 시 부호 있는 0을 보존한다.
 

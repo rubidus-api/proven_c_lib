@@ -986,7 +986,7 @@ Two things this table tells you that the file names do not:
 | `utf.h` | Strict UTF-8 <-> UTF-16 transcoding: measure, convert, convert in pieces, grow | Chapter 3 |
 | `fmt.h` | Structural formatter and format arguments | Chapter 3 |
 | `scan.h` | Structural scanner and typed scan destinations | Chapter 3 |
-| `float_parse.h` | Locale-free decimal -> `double`/`float` parser (`proven_strtod`, `proven_parse_double_ascii`) | Chapter 8 |
+| `float_parse.h` | Locale-free decimal and hexadecimal -> `double`/`float` parser (`proven_strtod`, `proven_parse_double_ascii`) | Chapter 8 |
 | `float_format.h` | `double`/`float` -> decimal formatter (fixed `%f`/`%e`, shortest) | Chapter 8 |
 | `float_config.h` | Float-engine tuning (`PROVEN_FLOAT_BIGINT_LIMBS`, precision caps) | Chapters 6 and 8 |
 | `array.h` | Generic growable vector | Chapter 4 |

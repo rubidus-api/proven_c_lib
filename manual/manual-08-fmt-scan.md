@@ -418,6 +418,19 @@ Three entry points, sharing one correctly-rounded backend:
 - `proven_strtod(nptr, endptr)` - a `strtod`-style convenience wrapper over a C
   string: skips leading ASCII whitespace and reports `endptr`.
 
+The last two also read a hexadecimal float as C's `strtod` does - `0x`, hex
+digits with an optional point, an optional binary exponent `p` with decimal
+digits (`"0x1.8p3"` is 12, `"0x10"` is 16) - rounded to nearest, ties to even,
+from every digit. `"0x"` with no hex digit after it is the decimal `0`, and the
+`x` is not taken. `proven_scan_f64` reads decimal only.
+
+A number too large for binary64 (`"1e400"`, `"0x1p1024"`) is
+`PROVEN_ERR_OVERFLOW` from `proven_parse_double_ascii`, with `val` the signed
+infinity and `consumed` its length, so a caller can tell it from text that is
+not a number (`PROVEN_ERR_INVALID_ARG`, `consumed` 0); `proven_strtod` returns
+the infinity and sets `ERANGE`. Up to v0.107.3 the view parser reported an
+overflow as `PROVEN_ERR_INVALID_ARG`.
+
 #### Worked example: parsing
 
 ```c
@@ -436,6 +449,13 @@ if (r.err == PROVEN_OK) {
 char *end = NULL;
 double v = proven_strtod("  -0.5\t", &end);   /* v == -0.5, *end == '\t' */
 (void)v;
+
+/* (3) A hexadecimal float, and a number too large for a double. */
+proven_parse_double_result_t h = proven_parse_double_ascii(PROVEN_LIT("0x1.8p3"));
+/* h.err == PROVEN_OK, h.val == 12.0, h.consumed == 7 */
+proven_parse_double_result_t big = proven_parse_double_ascii(PROVEN_LIT("1e400"));
+/* big.err == PROVEN_ERR_OVERFLOW, big.val == +infinity, big.consumed == 5 */
+(void)h; (void)big;
 
 /* A trailing exponent marker with no digits stops like strtod: "1e" parses 1,
    leaving endptr at 'e'. Inputs with hundreds of significant digits and extreme

@@ -397,6 +397,17 @@ API를 사용하는 데 이 내용이 전혀 필요하지 않다. 이는 출력�
 - `proven_strtod(nptr, endptr)` — C 문자열 위의 `strtod` 스타일 편의 래퍼로, 선행
   ASCII 공백을 건너뛰고 `endptr`을 보고한다.
 
+뒤의 둘은 16진 부동소수도 C의 `strtod`처럼 읽는다. `0x`, 소수점을 둘 수 있는 16진
+숫자, 생략할 수 있는 이진 지수 `p`와 십진 숫자(`"0x1.8p3"`은 12, `"0x10"`은 16)이며,
+모든 숫자로부터 최근접·짝수 쪽으로 반올림한다. 뒤에 16진 숫자가 없는 `"0x"`는 십진
+`0`이고 `x`는 소비하지 않는다. `proven_scan_f64`는 십진수만 읽는다.
+
+binary64에 담기에 너무 큰 수(`"1e400"`, `"0x1p1024"`)는 `proven_parse_double_ascii`에서
+`PROVEN_ERR_OVERFLOW`이며, `val`은 부호 있는 무한대, `consumed`는 그 길이다. 그래서
+호출자는 수가 아닌 텍스트(`PROVEN_ERR_INVALID_ARG`, `consumed` 0)와 구별할 수 있다.
+`proven_strtod`는 무한대를 돌려주고 `ERANGE`를 설정한다. v0.107.3까지 뷰 파서는
+오버플로를 `PROVEN_ERR_INVALID_ARG`로 보고했다.
+
 #### 실전 예제: 파싱
 ```c
 #include "proven/scan.h"
@@ -414,6 +425,13 @@ if (r.err == PROVEN_OK) {
 char *end = NULL;
 double v = proven_strtod("  -0.5\t", &end);   /* v == -0.5, *end == '\t' */
 (void)v;
+
+/* (3) A hexadecimal float, and a number too large for a double. */
+proven_parse_double_result_t h = proven_parse_double_ascii(PROVEN_LIT("0x1.8p3"));
+/* h.err == PROVEN_OK, h.val == 12.0, h.consumed == 7 */
+proven_parse_double_result_t big = proven_parse_double_ascii(PROVEN_LIT("1e400"));
+/* big.err == PROVEN_ERR_OVERFLOW, big.val == +infinity, big.consumed == 5 */
+(void)h; (void)big;
 
 /* A trailing exponent marker with no digits stops like strtod: "1e" parses 1,
    leaving endptr at 'e'. Inputs with hundreds of significant digits and extreme

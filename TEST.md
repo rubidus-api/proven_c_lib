@@ -2295,7 +2295,7 @@ Failure tip: inspect src/proven/float_format.c and include/proven/float_format.h
 
 ### `tests/test_unit_float_parse_api` - float parse API
 
-Intent: verify the public ASCII float parser and strtod-like wrapper expose consumed-length, endptr, and range signaling over the shared exact backend.
+Intent: verify the public ASCII float parser and strtod-like wrapper expose consumed-length, endptr, and range signaling over the shared exact backend, and read hexadecimal floats as C's strtod does.
 
 Failure tip: inspect include/proven/float_parse.h, src/proven/float_parse.c, and src/proven/float_decimal.c if the public parser seam or wrapper contract drifts.
 
@@ -3517,7 +3517,7 @@ Failure tip: inspect `src/proven/float_decimal.c` if the wide multiply helper st
 
 ### 38a. `tests/test_unit_float_parse_api` - float parse public API
 
-Intent: verify the public locale-free float parser and `strtod`-style wrapper expose consumed-length, `endptr`, and range signaling over the shared exact backend.
+Intent: verify the public locale-free float parser and `strtod`-style wrapper expose consumed-length, `endptr`, and range signaling over the shared exact backend, and read hexadecimal floats as C's `strtod` does.
 
 Sub-checks:
 
@@ -3529,6 +3529,8 @@ Sub-checks:
 - Confirms the documented representative staged inputs currently finish through the shared cached-power product plan, while uncertain negative cases defer straight to the exact fallback.
 - Confirms a significand longer than 19 digits whose 19-digit bounds round alike takes the fast path, and one whose bounds straddle a tie (`9007199254740993.00000000000000000001`) reaches the exact path and rounds up.
 - Compares, bit for bit with `strtod`, every digit shape the one-pass reader handles: the 20-digit `u64` edge (`18446744073709551615` and `...616`), zeros before, inside and after the digits, a point at either end, long fractions and extreme exponents.
+- Reads hexadecimal floats: twenty-six spellings with the value and length C's `strtod` gives (no exponent, a point at either end, leading zeros, more digits than a double holds, the smallest subnormal and the tie below it, ties to even both ways, an exponent past any range, a `p` with no digits not taken); `0x` with no hex digit after it read as the decimal `0`; and 200,000 doubles written exactly in hex, each six ways - as is, with a zero, with digits below the half, the half, and past it - read to the double the digits round to (on the half, the even one; past the largest double, `PROVEN_ERR_OVERFLOW`).
+- A number too large for binary64, decimal or hexadecimal, is `PROVEN_ERR_OVERFLOW` from `proven_parse_double_ascii` with the signed infinity and its length (up to v0.107.3, `PROVEN_ERR_INVALID_ARG` with no length); `proven_strtod` reads hexadecimal floats too and sets `ERANGE` for one that underflows or overflows.
 
 Failure tip: inspect `include/proven/float_parse.h`, `src/proven/float_parse.c`, and `src/proven/float_decimal.c` if the public parser seam or wrapper contract drifts.
 

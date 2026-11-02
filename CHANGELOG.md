@@ -18,6 +18,27 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- **`proven_parse_double_ascii` and `proven_strtod` read hexadecimal floats**, as C's `strtod`
+  does: `0x` or `0X`, hex digits with an optional point, and an optional binary exponent `p` with
+  a sign and decimal digits - `"0x1.8p3"` is 12, `"0x1p-2"` 0.25, `"0x10"` 16. The value is
+  rounded to nearest, ties to even, from every digit, and needs no C library (the freestanding
+  build reads them too). `"0x"` with no hex digit after it is still the decimal 0 with the `x`
+  not taken. `proven_scan_f64` reads decimal only, as before. Asked by a downstream compiler whose
+  language has hex float literals and which kept the C library's `strtod` for them alone. The
+  test reads 200,000 doubles written in hex six ways each, and the spellings were compared with
+  glibc's `strtod` (25 million random ones, no difference).
+
+### Changed
+
+- **`proven_parse_double_ascii` reports a number too large for binary64 as `PROVEN_ERR_OVERFLOW`**,
+  with `val` the signed infinity and `consumed` its length. Up to v0.107.3 it said
+  `PROVEN_ERR_INVALID_ARG` with nothing consumed, the same as for text that is not a number, so a
+  caller could not tell `"1e400"` from `"abc"` without `proven_strtod` and `errno`. A caller that
+  checks `err != PROVEN_OK` sees no change; one that compares with `PROVEN_ERR_INVALID_ARG`
+  should take `PROVEN_ERR_OVERFLOW` too.
+
 ## [0.107.3] - 2026-11-02
 
 ### Security

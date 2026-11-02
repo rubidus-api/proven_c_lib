@@ -39,7 +39,7 @@ static void observe_decimal_path(const char *label, const char *text, proven_flo
 int main(void) {
     PROVEN_TEST_SUITE(
         "test_unit_float_parse_api",
-        "Verify the public ASCII float parser and strtod-like wrapper expose consumed-length, endptr, and range-error behavior over the shared exact backend.",
+        "Verify the public ASCII float parser and strtod-like wrapper expose consumed-length, endptr, and range-error behavior over the shared exact backend, and read hexadecimal floats as C's strtod does.",
         "Inspect include/proven/float_parse.h, src/proven/float_parse.c, and src/proven/float_decimal.c if the RFC parser seam or wrapper contract drifts."
     );
 
@@ -128,6 +128,128 @@ int main(void) {
                                double_bits(r.val) == double_bits(strtod(shapes[i], NULL)),
                 shapes[i], "Compare mantissa, significant digits and exp10 with the spelling.");
         }
+    }
+
+    PROVEN_TEST_SECTION(
+        "hexadecimal floats",
+        "C's strtod reads 0x1.8p3 as 12: the same here, with no C library, rounded to nearest, ties to even, from every digit; a number too large for binary64 is PROVEN_ERR_OVERFLOW with its length.",
+        "Inspect proven_float_parse_hex in src/proven/float_parse.c: the digits kept, the point, the exponent, the rounding."
+    );
+    {
+        static const struct { const char *text; proven_size_t consumed; uint64_t bits; } hex[] = {
+            { "0x1.8p3", 7, 0x4028000000000000ull },             /* 12 */
+            { "0x1p-2", 6, 0x3fd0000000000000ull },              /* 0.25 */
+            { "-0X1P+3", 7, 0xc020000000000000ull },             /* -8 */
+            { "0x10", 4, 0x4030000000000000ull },                /* 16: no exponent */
+            { "0x.8", 4, 0x3fe0000000000000ull },                /* 0.5 */
+            { "0x1.", 4, 0x3ff0000000000000ull },
+            { "0xA.Bp0", 7, 0x4025600000000000ull },             /* 10.6875 */
+            { "0x0p0", 5, 0x0000000000000000ull },
+            { "-0x0.000p99", 11, 0x8000000000000000ull },
+            { "0x1p", 3, 0x3ff0000000000000ull },                /* a p with no digits is not taken */
+            { "0x1p+", 3, 0x3ff0000000000000ull },
+            { "0x1.8p1z", 7, 0x4008000000000000ull },
+            { "0x1.fffffffffffffp1023", 22, 0x7fefffffffffffffull },
+            { "0x1p-1022", 9, 0x0010000000000000ull },
+            { "0x1p-1074", 9, 0x0000000000000001ull },           /* the smallest subnormal */
+            { "0x1p-1075", 9, 0x0000000000000000ull },           /* half of it: the tie goes to even, 0 */
+            { "0x1.0000000000000000001p-1075", 29, 0x0000000000000001ull },
+            { "0x3p-1076", 9, 0x0000000000000001ull },           /* 0.75 of it */
+            { "0x1.fffffffffffff8p-1023", 24, 0x0010000000000000ull }, /* rounds up into the normals */
+            { "0x1.00000000000008p0", 20, 0x3ff0000000000000ull },  /* a tie, to the even below */
+            { "0x1.00000000000018p0", 20, 0x3ff0000000000002ull },  /* a tie, to the even above */
+            { "0x1.000000000000080000000000000000001p0", 39, 0x3ff0000000000001ull }, /* past the tie */
+            { "0x0000000000000000000000001p0", 29, 0x3ff0000000000000ull },
+            { "0x0.0000000000000000000000001p100", 33, 0x3ff0000000000000ull },
+            { "0x100000000000000000000p-80", 27, 0x3ff0000000000000ull },
+            { "0x1p-99999999999999999999", 25, 0x0000000000000000ull },
+        };
+        for (size_t i = 0; i < sizeof hex / sizeof *hex; ++i) {
+            proven_parse_double_result_t r = proven_parse_double_ascii(proven_u8str_view_from_cstr(hex[i].text));
+            PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.consumed == hex[i].consumed && double_bits(r.val) == hex[i].bits,
+                hex[i].text, "Compare the value and the length with what C's strtod gives for this spelling.");
+        }
+        /* Not a hexadecimal float: the decimal 0, and the x is not taken. */
+        static const char *not_hex[] = { "0x", "0xg", "0x.", "0x.p1", "-0x" };
+        for (size_t i = 0; i < sizeof not_hex / sizeof *not_hex; ++i) {
+            proven_parse_double_result_t r = proven_parse_double_ascii(proven_u8str_view_from_cstr(not_hex[i]));
+            PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.consumed == (not_hex[i][0] == '-' ? 2u : 1u) && r.val == 0.0,
+                not_hex[i], "A 0x with no hex digit after it is the decimal 0.");
+        }
+        static const struct { const char *text; proven_size_t consumed; bool negative; } over[] = {
+            { "1e400", 5, false }, { "-1e400xyz", 6, true }, { "0x1p1024", 8, false }, { "-0x1p99999999999999999999", 25, true },
+            { "0x1.fffffffffffff8p1023", 23, false }, /* rounds past the largest double */
+        };
+        for (size_t i = 0; i < sizeof over / sizeof *over; ++i) {
+            proven_parse_double_result_t r = proven_parse_double_ascii(proven_u8str_view_from_cstr(over[i].text));
+            PROVEN_TEST_ASSERT(r.err == PROVEN_ERR_OVERFLOW && r.consumed == over[i].consumed &&
+                               double_bits(r.val) == (over[i].negative ? 0xfff0000000000000ull : 0x7ff0000000000000ull),
+                over[i].text, "A number too large is PROVEN_ERR_OVERFLOW, the signed infinity and its length - not INVALID_ARG.");
+        }
+        {
+            proven_parse_double_result_t r = proven_parse_double_ascii(proven_u8str_view_from_cstr("0x1.fffffffffffff7ffp1023"));
+            PROVEN_TEST_ASSERT(r.err == PROVEN_OK && double_bits(r.val) == 0x7fefffffffffffffull,
+                "just under the tie above the largest double: the largest double", "Inspect the overflow test after rounding.");
+        }
+        {
+            const char *text = "  -0x1.8p1 rest";
+            char *end = NULL;
+            double v = proven_strtod(text, &end);
+            PROVEN_TEST_ASSERT(double_bits(v) == double_bits(-3.0) && end == text + 10, "proven_strtod reads a hexadecimal float", "");
+        }
+#if !defined(PROVEN_FREESTANDING)
+        {
+            const char *text = "0x1p-1080";
+            char *end = NULL;
+            errno = 0;
+            double v = proven_strtod(text, &end);
+            PROVEN_TEST_ASSERT(v == 0.0 && end == text + 9 && errno == ERANGE, "proven_strtod: a hexadecimal float that underflows sets ERANGE", "");
+            errno = 0;
+            v = proven_strtod("0x1p1024", &end);
+            PROVEN_TEST_ASSERT(double_bits(v) == 0x7ff0000000000000ull && errno == ERANGE, "proven_strtod: one that overflows, infinity and ERANGE", "");
+        }
+#endif
+        /* Every double, written exactly in hex, reads back to itself; with digits past its last
+         * bit it rounds as the digits say: below the half, down; the half, to even; past it, up. */
+        uint64_t x = 0x9e3779b97f4a7c15ull;
+        size_t bad = 0;
+        for (int i = 0; i < 200000; ++i) {
+            x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+            uint64_t bits = x;
+            if (i % 4 == 1) bits &= 0x800fffffffffffffull;          /* subnormals too */
+            if (((bits >> 52) & 0x7ffu) == 0x7ffu) continue;
+            uint64_t mag = bits & 0x7fffffffffffffffull;
+            bool neg = (bits >> 63) != 0;
+            unsigned biased = (unsigned)(mag >> 52);
+            uint64_t frac = mag & 0xfffffffffffffull;
+            char text[64];
+            static const char *tail[] = { "", "0", "7ff", "8", "800001", "8000000000000000000001" };
+            for (size_t t = 0; t < sizeof tail / sizeof *tail; ++t) {
+                int n = 0;
+                const char *digits = "0123456789abcdef";
+                if (neg) text[n++] = '-';
+                text[n++] = '0'; text[n++] = 'x'; text[n++] = biased ? '1' : '0'; text[n++] = '.';
+                for (int k = 48; k >= 0; k -= 4) text[n++] = digits[(frac >> k) & 0xfu];
+                for (const char *c = tail[t]; *c; ++c) text[n++] = *c;
+                text[n++] = 'p';
+                int e = biased ? (int)biased - 1023 : -1022;
+                if (e < 0) { text[n++] = '-'; e = -e; }
+                char ebuf[8]; int en = 0;
+                do { ebuf[en++] = (char)('0' + e % 10); e /= 10; } while (e);
+                while (en) text[n++] = ebuf[--en];
+                text[n] = '\0';
+                bool up = tail[t][0] == '8' && (tail[t][1] != '\0' || (mag & 1u));
+                uint64_t want = mag + (up ? 1u : 0u);
+                proven_parse_double_result_t r = proven_parse_double_ascii(proven_u8str_view_from_cstr(text));
+                if (want == 0x7ff0000000000000ull) {
+                    if (r.err != PROVEN_ERR_OVERFLOW) ++bad;
+                } else if (r.err != PROVEN_OK || r.consumed != (proven_size_t)n ||
+                           double_bits(r.val) != (want | (neg ? 0x8000000000000000ull : 0))) {
+                    if (bad++ == 0) PROVEN_TEST_ASSERT(false, text, "This spelling reads to the wrong double.");
+                }
+            }
+        }
+        PROVEN_TEST_ASSERT(bad == 0, "200,000 doubles in hex, six ways each, read to the double their digits round to", "");
     }
 
     PROVEN_TEST_SECTION(

@@ -1129,7 +1129,9 @@ if (!proven_is_ok(e)) {
   defer to the exact bigint fallback.
 - The checked-in cached `5^q` constants are generated locally by
   `scripts/generate_float_decimal_tables.py`.
-- `proven_parse_double_ascii()` does not skip leading whitespace.
+- `proven_parse_double_ascii()` does not skip leading whitespace. It and
+  `proven_strtod()` also read hexadecimal floats (`0x1.8p3`), and it reports a
+  number too large for binary64 as `PROVEN_ERR_OVERFLOW` with its length (chapter 8).
 - `proven_strtod()` skips leading ASCII whitespace, updates `endptr`, returns
   signed infinity on overflow, and preserves signed zero on underflow.
 
