@@ -258,8 +258,11 @@ static bool scripted(proven_net_listener_t *l, proven_net_conn_t *x, const char 
 }
 
 /* Accept on `l`, read the request, and grant the upgrade as a server would - and then say
- * nothing at all, ever: no pong, no answer to a close. */
-static bool granted_then_silent(proven_net_listener_t *l, proven_net_conn_t *x) {
+ * nothing at all, ever: no pong, no answer to a close. With `split`, the answer goes in two
+ * writes with the loop turned between them: the client reads half a head first. */
+static bool granted(proven_net_listener_t *l, proven_net_conn_t *x, bool split);
+static bool granted_then_silent(proven_net_listener_t *l, proven_net_conn_t *x) { return granted(l, x, false); }
+static bool granted(proven_net_listener_t *l, proven_net_conn_t *x, bool split) {
     bool came = false;
     for (int i = 0; i < 400 && !came; ++i) { (void)proven_loop_poll(g_loop, proven_net_deadline_in(5)); came = proven_net_accept(l, PROVEN_NET_DONT_WAIT, x, NULL) == PROVEN_OK; }
     if (!came) return false;
@@ -277,7 +280,11 @@ static bool granted_then_silent(proven_net_listener_t *l, proven_net_conn_t *x) 
     proven_byte_t accept[PROVEN_WS_ACCEPT_SIZE];
     if (proven_ws_accept_key((proven_u8str_view_t){ (const proven_byte_t *)key, PROVEN_WS_KEY_SIZE }, accept) != PROVEN_OK) return false;
     int n = snprintf(answer, sizeof answer, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %.*s\r\n\r\n", (int)sizeof accept, (const char *)accept);
-    return proven_net_write_all(x, (proven_mem_view_t){ (const proven_byte_t *)answer, (proven_size_t)n }, proven_net_deadline_in(5000)).err == PROVEN_OK;
+    const proven_size_t first = split ? 30 : (proven_size_t)n;
+    if (proven_net_write_all(x, (proven_mem_view_t){ (const proven_byte_t *)answer, first }, proven_net_deadline_in(5000)).err != PROVEN_OK) return false;
+    if (!split) return true;
+    for (int i = 0; i < 20; ++i) (void)proven_loop_poll(g_loop, proven_net_deadline_in(5));
+    return proven_net_write_all(x, (proven_mem_view_t){ (const proven_byte_t *)answer + first, (proven_size_t)n - first }, proven_net_deadline_in(5000)).err == PROVEN_OK;
 }
 
 static void cases(bool tls) {
@@ -517,6 +524,12 @@ int main(void) {
         proven_ws_stream_close(c.ws, 1000, sv("anyone?"));
         PROVEN_TEST_ASSERT(c.closes == 0 && turn_until(&c.closes, 1, 5000) && c.closes == 1 && c.code == 1000 && c.why == PROVEN_ERR_TIMEOUT,
             "a close that is never answered: after close_timeout_ms the end is reported with this side's code and PROVEN_ERR_TIMEOUT", "");
+        (void)proven_net_close(&x);
+        /* A head that arrives in pieces is waited for: the parser's "need more" is not a failure. */
+        PROVEN_TEST_ASSERT(dial(&c, false, at.port, "/x", plain) == PROVEN_OK && granted(&l, &x, true) && turn_until(&c.opens, 1, 5000) && c.opens == 1 && c.closes == 0,
+            "a 101 whose head comes in two pieces: the first is kept, the second completes it, and the connection opens",
+            "Check wsc_answer in src/proven/ws_event_client.c: proven_http_parse_response says PROVEN_ERR_NEED_MORE for a head that is not all here.");
+        proven_ws_stream_abort(c.ws);
         (void)proven_net_close(&x);
         /* Aborted, and closed, while it is still being made. */
         PROVEN_TEST_ASSERT(dial(&c, false, at.port, "/x", plain) == PROVEN_OK, "another attempt", "");

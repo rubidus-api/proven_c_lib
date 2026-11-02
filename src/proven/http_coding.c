@@ -5,11 +5,6 @@
  * compressed, and the small machines that do it over deflate.h and zstd.h.
  */
 
-static proven_u8str_view_t hc_lit_n(const char *s, proven_size_t n) {
-    return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n };
-}
-#define HC_LIT(s) hc_lit_n("" s, sizeof(s) - 1)
-
 // -----------------------------------------------------------------------------
 // Decoding
 // -----------------------------------------------------------------------------
@@ -25,7 +20,7 @@ bool proven_http_decoder_wanted_(proven_u16 status, const proven_http_header_t *
 }
 
 proven_u8str_view_t proven_http_decoder_accept_(bool zstd, bool br) {
-    return zstd && br ? HC_LIT("zstd, br, gzip") : zstd ? HC_LIT("zstd, gzip") : br ? HC_LIT("br, gzip") : HC_LIT("gzip");
+    return zstd && br ? PROVEN_LIT("zstd, br, gzip") : zstd ? PROVEN_LIT("zstd, gzip") : br ? PROVEN_LIT("br, gzip") : PROVEN_LIT("gzip");
 }
 
 proven_err_t proven_http_decoder_cfg_check_(bool decompress, bool zstd, bool br) {
@@ -179,21 +174,21 @@ proven_http_coding_t proven_http_compress_choose_(const proven_http_header_t *he
 }
 
 proven_u8str_view_t proven_http_coding_token_(proven_http_coding_t coding) {
-    return coding == PROVEN_HTTP_CODING_ZSTD ? HC_LIT("zstd") : HC_LIT("gzip");
+    return coding == PROVEN_HTTP_CODING_ZSTD ? PROVEN_LIT("zstd") : PROVEN_LIT("gzip");
 }
 
 bool proven_http_compress_applies_(bool accepted, proven_u16 status, const proven_http_header_t *headers, proven_size_t count) {
     if (!accepted) return false;
     if (status == 204 || status == 206 || status == 304) return false;
     proven_u8str_view_t value;
-    if (proven_http_header_find(headers, count, HC_LIT("Content-Encoding"), &value)) return false;
-    if (proven_http_header_find(headers, count, HC_LIT("Content-Range"), &value)) return false;
+    if (proven_http_header_find(headers, count, PROVEN_LIT("Content-Encoding"), &value)) return false;
+    if (proven_http_header_find(headers, count, PROVEN_LIT("Content-Range"), &value)) return false;
     return true;
 }
 
 bool proven_http_compress_needs_vary_(const proven_http_header_t *headers, proven_size_t count) {
-    return !proven_http_header_has_token(headers, count, HC_LIT("Vary"), HC_LIT("Accept-Encoding")) &&
-           !proven_http_header_has_token(headers, count, HC_LIT("Vary"), HC_LIT("*"));
+    return !proven_http_header_has_token(headers, count, PROVEN_LIT("Vary"), PROVEN_LIT("Accept-Encoding")) &&
+           !proven_http_header_has_token(headers, count, PROVEN_LIT("Vary"), PROVEN_LIT("*"));
 }
 
 struct proven_http_compressor {

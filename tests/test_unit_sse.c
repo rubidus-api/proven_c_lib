@@ -151,6 +151,11 @@ int main(void) {
         PROVEN_TEST_ASSERT(consistent && r.count == 2 && strcmp(r.ev[0].id, "5") == 0 && r.ev[1].event[0] == '\0' && strcmp(r.ev[1].id, "5") == 0,
             "an id set by an event with no data is remembered; an event type set by one is not", "");
 
+        r = every_way("retry: 5000\n\ndata: x\n\ndata: y\n\n", &consistent);
+        PROVEN_TEST_ASSERT(consistent && r.count == 2 && r.ev[0].has_retry && r.ev[0].retry == 5000 && !r.ev[1].has_retry,
+            "a retry sent alone, in an event with no data, is remembered too: it comes with the next event delivered, once",
+            "Check the empty-line case of sse_line in src/proven/sse.c: a dataless event forgets its type, not a retry.");
+
         const proven_byte_t with_nul[] = "id: a\0b\ndata: x\n\n";
         run_t n = run(with_nul, sizeof with_nul - 1, 0, 0);
         PROVEN_TEST_ASSERT(n.count == 1 && n.ev[0].id[0] == '\0', "an id containing a NUL is ignored", "");

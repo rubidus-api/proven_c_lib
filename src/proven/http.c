@@ -1,4 +1,5 @@
 #include "proven/http.h"
+#include "../../platform/proven_sys_mem.h"
 
 /*
  * An HTTP/1.1 message codec written from RFC 9110 and RFC 9112. Plain byte code: no C library
@@ -34,13 +35,6 @@ static bool http_is_field_byte(proven_byte_t c) {
 static bool http_is_ows(proven_byte_t c) { return c == ' ' || c == '\t'; }
 
 static proven_byte_t http_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
-
-
-static bool http_eq(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) if (a.ptr[i] != b.ptr[i]) return false;
-    return true;
-}
 
 static bool http_is_token(proven_u8str_view_t s) {
     if (s.size == 0) return false;
@@ -298,17 +292,12 @@ bool proven_http_header_has_token(const proven_http_header_t *headers, proven_si
     return false;
 }
 
-static proven_u8str_view_t http_lit_n(const char *s, proven_size_t n) {
-    return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n };
-}
-#define HTTP_LIT(s) http_lit_n("" s, sizeof(s) - 1)
-
 static proven_http_coding_t http_coding_named(proven_u8str_view_t name) {
-    if (proven_u8str_view_eq_ascii_ci(name, HTTP_LIT("gzip")) || proven_u8str_view_eq_ascii_ci(name, HTTP_LIT("x-gzip"))) return PROVEN_HTTP_CODING_GZIP;
-    if (proven_u8str_view_eq_ascii_ci(name, HTTP_LIT("deflate"))) return PROVEN_HTTP_CODING_DEFLATE;
-    if (proven_u8str_view_eq_ascii_ci(name, HTTP_LIT("zstd"))) return PROVEN_HTTP_CODING_ZSTD;
-    if (proven_u8str_view_eq_ascii_ci(name, HTTP_LIT("br"))) return PROVEN_HTTP_CODING_BROTLI;
-    if (proven_u8str_view_eq_ascii_ci(name, HTTP_LIT("identity"))) return PROVEN_HTTP_CODING_IDENTITY;
+    if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("gzip")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("x-gzip"))) return PROVEN_HTTP_CODING_GZIP;
+    if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("deflate"))) return PROVEN_HTTP_CODING_DEFLATE;
+    if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("zstd"))) return PROVEN_HTTP_CODING_ZSTD;
+    if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("br"))) return PROVEN_HTTP_CODING_BROTLI;
+    if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("identity"))) return PROVEN_HTTP_CODING_IDENTITY;
     return PROVEN_HTTP_CODING_OTHER;
 }
 
@@ -317,7 +306,7 @@ proven_http_coding_t proven_http_content_coding(const proven_http_header_t *head
     proven_size_t fields = 0, items = 0;
     if (!headers) return found;
     for (proven_size_t i = 0; i < count; ++i) {
-        if (!proven_u8str_view_eq_ascii_ci(headers[i].name, HTTP_LIT("Content-Encoding"))) continue;
+        if (!proven_u8str_view_eq_ascii_ci(headers[i].name, PROVEN_LIT("Content-Encoding"))) continue;
         if (++fields > 1) return PROVEN_HTTP_CODING_OTHER;
         proven_u8str_view_t rest = headers[i].value, item;
         while (http_list_next(&rest, &item)) {
@@ -367,7 +356,7 @@ unsigned proven_http_accept_weight(const proven_http_header_t *headers, proven_s
     unsigned listed_weight = 0, star_weight = 0;
     if (!headers) return identity;
     for (proven_size_t i = 0; i < count; ++i) {
-        if (!proven_u8str_view_eq_ascii_ci(headers[i].name, HTTP_LIT("Accept-Encoding"))) continue;
+        if (!proven_u8str_view_eq_ascii_ci(headers[i].name, PROVEN_LIT("Accept-Encoding"))) continue;
         proven_u8str_view_t rest = headers[i].value, item;
         while (http_list_next(&rest, &item)) {
             proven_u8str_view_t name;
@@ -391,28 +380,24 @@ bool proven_http_accepts_coding(const proven_http_header_t *headers, proven_size
     return proven_http_accept_weight(headers, count, coding) > 0;
 }
 
-static const struct { proven_http_method_t method; const char *text; } http_methods[] = {
-    { PROVEN_HTTP_GET, "GET" }, { PROVEN_HTTP_HEAD, "HEAD" }, { PROVEN_HTTP_POST, "POST" },
-    { PROVEN_HTTP_PUT, "PUT" }, { PROVEN_HTTP_DELETE, "DELETE" }, { PROVEN_HTTP_CONNECT, "CONNECT" },
-    { PROVEN_HTTP_OPTIONS, "OPTIONS" }, { PROVEN_HTTP_TRACE, "TRACE" }, { PROVEN_HTTP_PATCH, "PATCH" },
+/* Views with their lengths known at compile time (PROVEN_LIT_INIT): a request's method is told
+ * apart without measuring nine names first. */
+static const struct { proven_http_method_t method; proven_u8str_view_t text; } http_methods[] = {
+    { PROVEN_HTTP_GET, PROVEN_LIT_INIT("GET") }, { PROVEN_HTTP_HEAD, PROVEN_LIT_INIT("HEAD") }, { PROVEN_HTTP_POST, PROVEN_LIT_INIT("POST") },
+    { PROVEN_HTTP_PUT, PROVEN_LIT_INIT("PUT") }, { PROVEN_HTTP_DELETE, PROVEN_LIT_INIT("DELETE") }, { PROVEN_HTTP_CONNECT, PROVEN_LIT_INIT("CONNECT") },
+    { PROVEN_HTTP_OPTIONS, PROVEN_LIT_INIT("OPTIONS") }, { PROVEN_HTTP_TRACE, PROVEN_LIT_INIT("TRACE") }, { PROVEN_HTTP_PATCH, PROVEN_LIT_INIT("PATCH") },
 };
-
-static proven_u8str_view_t http_cstr(const char *s) {
-    proven_size_t n = 0;
-    while (s[n] != '\0') n++;
-    return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n };
-}
 
 proven_http_method_t proven_http_method_from_text(proven_u8str_view_t text) {
     for (proven_size_t i = 0; i < sizeof http_methods / sizeof http_methods[0]; ++i) {
-        if (http_eq(text, http_cstr(http_methods[i].text))) return http_methods[i].method;
+        if (proven_u8str_view_eq(text, http_methods[i].text)) return http_methods[i].method;
     }
     return PROVEN_HTTP_METHOD_OTHER;
 }
 
 proven_u8str_view_t proven_http_method_text(proven_http_method_t method) {
     for (proven_size_t i = 0; i < sizeof http_methods / sizeof http_methods[0]; ++i) {
-        if (http_methods[i].method == method) return http_cstr(http_methods[i].text);
+        if (http_methods[i].method == method) return http_methods[i].text;
     }
     return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)"", .size = 0 };
 }
@@ -435,16 +420,16 @@ proven_u8str_view_t proven_http_reason_phrase(proven_u16 status) {
         { 503, "Service Unavailable" }, { 504, "Gateway Timeout" }, { 505, "HTTP Version Not Supported" },
     };
     for (proven_size_t i = 0; i < sizeof phrases / sizeof phrases[0]; ++i) {
-        if (phrases[i].status == status) return http_cstr(phrases[i].text);
+        if (phrases[i].status == status) return proven_u8str_view_from_cstr(phrases[i].text);
     }
-    return http_cstr("Unknown");
+    return PROVEN_LIT("Unknown");
 }
 
 static bool http_keep_alive(const proven_http_header_t *headers, proven_size_t count, proven_u8 minor) {
-    proven_u8str_view_t connection = http_cstr("Connection");
-    if (proven_http_header_has_token(headers, count, connection, http_cstr("close"))) return false;
+    proven_u8str_view_t connection = PROVEN_LIT("Connection");
+    if (proven_http_header_has_token(headers, count, connection, PROVEN_LIT("close"))) return false;
     if (minor >= 1) return true;
-    return proven_http_header_has_token(headers, count, connection, http_cstr("keep-alive"));
+    return proven_http_header_has_token(headers, count, connection, PROVEN_LIT("keep-alive"));
 }
 
 bool proven_http_request_keep_alive(const proven_http_request_t *request) {
@@ -462,8 +447,8 @@ bool proven_http_response_keep_alive(const proven_http_response_t *response) {
 /* The framing headers of one head. OK with `*out` filled, or the reason it is unacceptable. */
 static proven_err_t http_framing_headers(const proven_http_header_t *headers, proven_size_t count, proven_u8 minor,
                                          bool *has_framing, proven_http_framing_t *out) {
-    proven_u8str_view_t te_name = http_cstr("Transfer-Encoding");
-    proven_u8str_view_t cl_name = http_cstr("Content-Length");
+    proven_u8str_view_t te_name = PROVEN_LIT("Transfer-Encoding");
+    proven_u8str_view_t cl_name = PROVEN_LIT("Content-Length");
     proven_size_t te = proven_http_header_count(headers, count, te_name);
     proven_size_t cl = proven_http_header_count(headers, count, cl_name);
     *has_framing = false;
@@ -486,7 +471,7 @@ static proven_err_t http_framing_headers(const proven_http_header_t *headers, pr
                 while (t < item.size && http_is_tchar(item.ptr[t])) t++;
                 if (t == 0) return PROVEN_ERR_INVALID_FORMAT;
                 codings++;
-                if (t != item.size || !proven_u8str_view_eq_ascii_ci(item, http_cstr("chunked"))) only_chunked = false;
+                if (t != item.size || !proven_u8str_view_eq_ascii_ci(item, PROVEN_LIT("chunked"))) only_chunked = false;
             }
         }
         if (codings == 0) return PROVEN_ERR_INVALID_FORMAT;
@@ -764,11 +749,15 @@ proven_err_t proven_http_body_trailers(const proven_http_body_t *body, proven_ht
 
 bool proven_http_trailer_allowed(proven_u8str_view_t name) {
     if (name.size == 0 || name.ptr[0] == ':') return false;
-    static const char *const NOT[] = { "Content-Length", "Transfer-Encoding", "Trailer", "Host", "Connection", "Keep-Alive", "TE", "Upgrade",
-                                       "Expect", "Max-Forwards", "Cache-Control", "Pragma", "Range", "Authorization", "Proxy-Authorization",
-                                       "WWW-Authenticate", "Proxy-Authenticate", "Cookie", "Set-Cookie", "Age", "Date", "Expires", "Location",
-                                       "Retry-After", "Vary", "Content-Encoding", "Content-Type", "Content-Range" };
-    for (proven_size_t i = 0; i < sizeof NOT / sizeof NOT[0]; ++i) if (proven_u8str_view_eq_ascii_ci(name, http_cstr(NOT[i]))) return false;
+    static const proven_u8str_view_t NOT[] = {
+        PROVEN_LIT_INIT("Content-Length"), PROVEN_LIT_INIT("Transfer-Encoding"), PROVEN_LIT_INIT("Trailer"), PROVEN_LIT_INIT("Host"),
+        PROVEN_LIT_INIT("Connection"), PROVEN_LIT_INIT("Keep-Alive"), PROVEN_LIT_INIT("TE"), PROVEN_LIT_INIT("Upgrade"), PROVEN_LIT_INIT("Expect"),
+        PROVEN_LIT_INIT("Max-Forwards"), PROVEN_LIT_INIT("Cache-Control"), PROVEN_LIT_INIT("Pragma"), PROVEN_LIT_INIT("Range"),
+        PROVEN_LIT_INIT("Authorization"), PROVEN_LIT_INIT("Proxy-Authorization"), PROVEN_LIT_INIT("WWW-Authenticate"), PROVEN_LIT_INIT("Proxy-Authenticate"),
+        PROVEN_LIT_INIT("Cookie"), PROVEN_LIT_INIT("Set-Cookie"), PROVEN_LIT_INIT("Age"), PROVEN_LIT_INIT("Date"), PROVEN_LIT_INIT("Expires"),
+        PROVEN_LIT_INIT("Location"), PROVEN_LIT_INIT("Retry-After"), PROVEN_LIT_INIT("Vary"), PROVEN_LIT_INIT("Content-Encoding"),
+        PROVEN_LIT_INIT("Content-Type"), PROVEN_LIT_INIT("Content-Range") };
+    for (proven_size_t i = 0; i < sizeof NOT / sizeof NOT[0]; ++i) if (proven_u8str_view_eq_ascii_ci(name, NOT[i])) return false;
     return true;
 }
 
@@ -795,11 +784,15 @@ typedef struct {
 
 static void http_put(proven_http_w_t *w, proven_u8str_view_t s) {
     if (w->full || s.size > w->out.size - w->len) { w->full = true; return; }
-    for (proven_size_t i = 0; i < s.size; ++i) w->out.ptr[w->len + i] = s.ptr[i];
+    proven_byte_t *to = w->out.ptr + w->len;
+    /* A long value - a cookie, a policy - as a block; the short pieces of syntax byte by byte,
+     * where a call costs more than the copy. */
+    if (s.size > 32) proven_sys_mem_copy(to, s.ptr, s.size);
+    else for (proven_size_t i = 0; i < s.size; ++i) to[i] = s.ptr[i];
     w->len += s.size;
 }
 
-static void http_put_cstr(proven_http_w_t *w, const char *s) { http_put(w, http_cstr(s)); }
+#define http_put_cstr(w, s) http_put((w), PROVEN_LIT(s))
 
 static void http_put_u64(proven_http_w_t *w, proven_u64 v, unsigned base) {
     static const char digits[] = "0123456789abcdef";
@@ -993,7 +986,7 @@ proven_err_t proven_http_range_parse(proven_u8str_view_t value, proven_u64 size,
     if (eq == value.size || eq == 0) return PROVEN_ERR_INVALID_FORMAT;
     proven_u8str_view_t unit = { .ptr = value.ptr, .size = eq };
     if (!http_is_token(unit)) return PROVEN_ERR_INVALID_FORMAT;
-    if (!proven_u8str_view_eq_ascii_ci(unit, http_cstr("bytes"))) return PROVEN_ERR_UNSUPPORTED;
+    if (!proven_u8str_view_eq_ascii_ci(unit, PROVEN_LIT("bytes"))) return PROVEN_ERR_UNSUPPORTED;
 
     proven_u8str_view_t spec = { .ptr = value.ptr + eq + 1, .size = value.size - eq - 1 };
     for (proven_size_t i = 0; i < spec.size; ++i) if (spec.ptr[i] == ',') return PROVEN_ERR_UNSUPPORTED;
@@ -1192,9 +1185,7 @@ static bool http_param_next(proven_u8str_view_t v, proven_size_t *at, proven_u8s
     return true;
 }
 
-static bool http_eq_ci_lit(proven_u8str_view_t a, const char *lit) {
-    return proven_u8str_view_eq_ascii_ci(a, http_cstr(lit));
-}
+#define http_eq_ci_lit(a, lit) proven_u8str_view_eq_ascii_ci((a), PROVEN_LIT(lit))
 
 proven_err_t proven_http_multipart_boundary_parse(proven_u8str_view_t content_type, proven_u8str_view_t *boundary) {
     if (boundary) *boundary = (proven_u8str_view_t){0};
@@ -1202,9 +1193,9 @@ proven_err_t proven_http_multipart_boundary_parse(proven_u8str_view_t content_ty
     const proven_u8str_view_t v = content_type;
     proven_size_t i = 0;
     while (i < v.size && http_is_ows(v.ptr[i])) i++;
-    static const char multi[] = "multipart/";
-    if (v.size - i < sizeof multi - 1 || !http_eq_ci_lit((proven_u8str_view_t){ .ptr = v.ptr + i, .size = sizeof multi - 1 }, multi)) return PROVEN_ERR_NOT_FOUND;
-    i += sizeof multi - 1;
+    const proven_u8str_view_t multi = PROVEN_LIT("multipart/");
+    if (v.size - i < multi.size || !proven_u8str_view_eq_ascii_ci((proven_u8str_view_t){ .ptr = v.ptr + i, .size = multi.size }, multi)) return PROVEN_ERR_NOT_FOUND;
+    i += multi.size;
     const proven_size_t sub = i;
     while (i < v.size && http_is_tchar(v.ptr[i])) i++;
     if (i == sub) return PROVEN_ERR_NOT_FOUND;
@@ -1436,7 +1427,8 @@ proven_err_t proven_http_range_parse_list(proven_u8str_view_t value, proven_u64 
     const proven_size_t u0 = i;
     while (i < value.size && http_is_tchar(value.ptr[i])) i++;
     if (i == u0 || i == value.size || value.ptr[i] != '=') return PROVEN_ERR_INVALID_FORMAT;
-    if (!http_eq_ci_lit((proven_u8str_view_t){ .ptr = value.ptr + u0, .size = i - u0 }, "bytes")) return PROVEN_ERR_UNSUPPORTED;
+    const proven_u8str_view_t unit = { .ptr = value.ptr + u0, .size = i - u0 };
+    if (!http_eq_ci_lit(unit, "bytes")) return PROVEN_ERR_UNSUPPORTED;
     i++;
     proven_size_t n = 0, specs = 0;
     proven_u64 asked = 0;
@@ -1664,8 +1656,8 @@ proven_err_t proven_http_date_parse(proven_u8str_view_t text, proven_time_t now_
         /* RFC 850: Sunday, 06-Nov-94 08:49:37 GMT */
         int found = -1;
         for (int i = 0; i < 7; ++i) {
-            proven_u8str_view_t name = http_cstr(http_weekday[i]);
-            if (name.size == comma && http_eq(name, (proven_u8str_view_t){ .ptr = text.ptr, .size = comma })) found = i;
+            proven_u8str_view_t name = proven_u8str_view_from_cstr(http_weekday[i]);
+            if (name.size == comma && proven_u8str_view_eq(name, (proven_u8str_view_t){ .ptr = text.ptr, .size = comma })) found = i;
         }
         if (found < 0) return PROVEN_ERR_INVALID_FORMAT;
         wd = (unsigned)found;

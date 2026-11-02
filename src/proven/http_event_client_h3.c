@@ -112,9 +112,6 @@ struct c3conn {
     proven_byte_t host[256];
 };
 
-static proven_u8str_view_t c3_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
-#define c3_lit(s) c3_lit_n((s), sizeof(s) - 1)
-
 static proven_byte_t c3_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
 
@@ -600,7 +597,7 @@ static proven_err_t r_submit(proven_c3req_t *r) {
     c3conn_t *c = r->conn;
     proven_http_event_client_t *cl = c->client;
     if (r->query_alone) return PROVEN_ERR_INVALID_ARG;
-    const proven_u8str_view_t path = r->target.size > 0 ? r->target : c3_lit("/");
+    const proven_u8str_view_t path = r->target.size > 0 ? r->target : PROVEN_LIT("/");
     proven_byte_t authority[300], digits[20];
     proven_size_t al = 0, nd = 0;
     if (r->host_is_ipv6) authority[al++] = '[';
@@ -619,30 +616,30 @@ static proven_err_t r_submit(proven_c3req_t *r) {
     }
     proven_size_t n = 0, at = 0;
     proven_err_t e = PROVEN_OK;
-    list[n++] = (proven_http_header_t){ .name = c3_lit(":method"), .value = r->method };
-    list[n++] = (proven_http_header_t){ .name = c3_lit(":scheme"), .value = c3_lit("https") };
-    list[n++] = (proven_http_header_t){ .name = c3_lit(":authority"), .value = { .ptr = authority, .size = al } };
-    list[n++] = (proven_http_header_t){ .name = c3_lit(":path"), .value = path };
+    list[n++] = (proven_http_header_t){ .name = PROVEN_LIT(":method"), .value = r->method };
+    list[n++] = (proven_http_header_t){ .name = PROVEN_LIT(":scheme"), .value = PROVEN_LIT("https") };
+    list[n++] = (proven_http_header_t){ .name = PROVEN_LIT(":authority"), .value = { .ptr = authority, .size = al } };
+    list[n++] = (proven_http_header_t){ .name = PROVEN_LIT(":path"), .value = path };
     bool has_accept = false, has_range = false;
     for (proven_size_t i = 0; i < r->header_count; ++i) {
         proven_u8str_view_t name = r->headers[i].name;
-        if (proven_u8str_view_eq_ascii_ci(name, c3_lit("accept-encoding"))) has_accept = true;
-        if (proven_u8str_view_eq_ascii_ci(name, c3_lit("range"))) has_range = true;
+        if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("accept-encoding"))) has_accept = true;
+        if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("range"))) has_range = true;
         /* Fields that describe an HTTP/1.1 connection are not sent on this one. */
-        if (proven_u8str_view_eq_ascii_ci(name, c3_lit("keep-alive")) || proven_u8str_view_eq_ascii_ci(name, c3_lit("proxy-connection")) || proven_u8str_view_eq_ascii_ci(name, c3_lit("upgrade"))) continue;
-        if (proven_u8str_view_eq_ascii_ci(name, c3_lit("te")) && !proven_u8str_view_eq_ascii_ci(r->headers[i].value, c3_lit("trailers"))) continue;
+        if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("keep-alive")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("proxy-connection")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("upgrade"))) continue;
+        if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("te")) && !proven_u8str_view_eq_ascii_ci(r->headers[i].value, PROVEN_LIT("trailers"))) continue;
         if (at + name.size > cl->cfg.max_head_bytes) { e = PROVEN_ERR_OUT_OF_BOUNDS; break; }
         for (proven_size_t k = 0; k < name.size; ++k) cl->hbuf[at + k] = c3_lower(name.ptr[k]);
         list[n++] = (proven_http_header_t){ .name = { .ptr = cl->hbuf + at, .size = name.size }, .value = r->headers[i].value };
         at += name.size;
     }
-    const bool body_method = proven_u8str_view_eq_ascii_ci(r->method, c3_lit("POST")) || proven_u8str_view_eq_ascii_ci(r->method, c3_lit("PUT")) || proven_u8str_view_eq_ascii_ci(r->method, c3_lit("PATCH"));
+    const bool body_method = proven_u8str_view_eq_ascii_ci(r->method, PROVEN_LIT("POST")) || proven_u8str_view_eq_ascii_ci(r->method, PROVEN_LIT("PUT")) || proven_u8str_view_eq_ascii_ci(r->method, PROVEN_LIT("PATCH"));
     if (e == PROVEN_OK) {
-        if (cl->cfg.decompress && !has_accept && !has_range) list[n++] = (proven_http_header_t){ .name = c3_lit("accept-encoding"), .value = proven_http_decoder_accept_(cl->cfg.decompress_zstd, cl->cfg.decompress_brotli) };
+        if (cl->cfg.decompress && !has_accept && !has_range) list[n++] = (proven_http_header_t){ .name = PROVEN_LIT("accept-encoding"), .value = proven_http_decoder_accept_(cl->cfg.decompress_zstd, cl->cfg.decompress_brotli) };
         proven_u64 length = r->body.size > 0 ? r->body.size : r->body_length;
         if (r->body.size > 0 || (r->body_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN && (r->body_length > 0 || body_method))) {
             do { digits[sizeof digits - 1 - nd++] = (proven_byte_t)('0' + length % 10); length /= 10; } while (length > 0);
-            list[n++] = (proven_http_header_t){ .name = c3_lit("content-length"), .value = { .ptr = digits + sizeof digits - nd, .size = nd } };
+            list[n++] = (proven_http_header_t){ .name = PROVEN_LIT("content-length"), .value = { .ptr = digits + sizeof digits - nd, .size = nd } };
         }
         e = proven_h3_submit_request(c->h3, list, n, !r->streamed && r->body.size == 0, &r->id);
     }
@@ -650,7 +647,7 @@ static proven_err_t r_submit(proven_c3req_t *r) {
     if (e == PROVEN_ERR_INVALID_STATE) return PROVEN_ERR_BUSY;          /* the handshake is not over */
     if (e != PROVEN_OK) return e;
     r->has_id = true;
-    r->head_only = proven_u8str_view_eq_ascii_ci(r->method, c3_lit("HEAD"));
+    r->head_only = proven_u8str_view_eq_ascii_ci(r->method, PROVEN_LIT("HEAD"));
     if (!r->streamed) {
         r->end_asked = true;
         if (r->body.size == 0) r->engine_done = true;
@@ -1204,8 +1201,8 @@ proven_err_t proven_http_event_client_h3_start_(proven_http_event_client_t *cl, 
     const proven_u8str_view_t host = url->host;
     const proven_u16 port = url->has_port ? url->port : 443;
     if (host.size == 0 || host.size > 255) return PROVEN_ERR_INVALID_ARG;
-    const proven_u8str_view_t method = o->method.size ? o->method : c3_lit("GET");
-    if (proven_u8str_view_eq_ascii_ci(method, c3_lit("CONNECT"))) return PROVEN_ERR_INVALID_ARG;
+    const proven_u8str_view_t method = o->method.size ? o->method : PROVEN_LIT("GET");
+    if (proven_u8str_view_eq_ascii_ci(method, PROVEN_LIT("CONNECT"))) return PROVEN_ERR_INVALID_ARG;
     /* An origin whose QUIC connection did not come up lately: over TCP from the start (RFC-0031). */
     if (cl->cfg.http3_fallback && c3_gone(cl, host, port)) return r_start_tcp(cl, o, to, out);
     c3conn_t *c = c_find(cl, host, port, &to);

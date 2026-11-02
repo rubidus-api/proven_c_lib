@@ -1,4 +1,5 @@
 #include "proven/sse.h"
+#include "../../platform/proven_sys_mem.h"
 
 /* The event-stream parsing rules of the HTML standard ("9.2.6 Interpreting an event stream"),
  * one byte at a time, so that input may be cut anywhere. */
@@ -14,13 +15,7 @@ proven_err_t proven_sse_init(proven_sse_t *sse, proven_mem_mut_t work) {
     return PROVEN_OK;
 }
 
-static bool sse_is(proven_u8str_view_t s, const char *lit) {
-    proven_size_t n = 0;
-    while (lit[n] != '\0') n++;
-    if (s.size != n) return false;
-    for (proven_size_t i = 0; i < n; ++i) if (s.ptr[i] != (proven_byte_t)lit[i]) return false;
-    return true;
-}
+#define sse_is(s, lit) proven_u8str_view_eq((s), PROVEN_LIT(lit))
 
 /* One complete line (without its terminator). Returns true when it ends an event that is to
  * be delivered. */
@@ -30,10 +25,11 @@ static proven_err_t sse_line(proven_sse_t *s, bool *dispatch) {
 
     if (line.size == 0) {
         /* An empty line ends the event. With no data line there is nothing to deliver, and
-         * the type is forgotten; the id is not. */
+         * the type is forgotten; the id is not, and neither is a retry: the standard sets the
+         * reconnection time when the field is read, so it goes out with the next event
+         * delivered. A server that sends `retry:` alone, as many do, is heard. */
         if (!s->has_data) {
             s->type_len = 0;
-            s->has_retry = false;
             return PROVEN_OK;
         }
         *dispatch = true;
@@ -54,7 +50,7 @@ static proven_err_t sse_line(proven_sse_t *s, bool *dispatch) {
     if (sse_is(field, "data")) {
         /* Each data line is followed by LF; the last one is removed when the event is sent. */
         if (value.size + 1 > s->data_cap - s->data_len) return PROVEN_ERR_OUT_OF_BOUNDS;
-        for (proven_size_t i = 0; i < value.size; ++i) s->data[s->data_len + i] = value.ptr[i];
+        proven_sys_mem_copy(s->data + s->data_len, value.ptr, value.size);
         s->data_len += value.size;
         s->data[s->data_len++] = '\n';
         s->has_data = true;

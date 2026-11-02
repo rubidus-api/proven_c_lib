@@ -63,9 +63,6 @@ typedef struct wsc {
     proven_byte_t protocols[256];      /* the offer, to check the answer against */
 } proven_wsc_t;
 
-static proven_u8str_view_t wsc_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
-#define wsc_lit(s) wsc_lit_n((s), sizeof(s) - 1)
-
 static const proven_http_event_raw_ops_t *wsc_ops(const proven_wsc_t *c) { return *(const proven_http_event_raw_ops_t *const *)(const void *)c->ws; }
 
 static void wsc_enter(proven_wsc_t *c) { c->depth++; }
@@ -306,7 +303,7 @@ static void wsc_answer(proven_wsc_t *c) {
     proven_http_response_t head;
     proven_size_t head_size = 0;
     proven_err_t e = proven_http_parse_response((proven_mem_view_t){ .ptr = c->in.p, .size = c->in.len }, headers, 64, c->max_head, &head, &head_size);
-    if (e == PROVEN_ERR_AGAIN) return;             /* not all of it yet */
+    if (e == PROVEN_ERR_NEED_MORE) return;         /* not all of it yet: the parser's word for that */
     if (e != PROVEN_OK) { wsc_gone(c, PROVEN_ERR_INVALID_FORMAT); return; }
     /* Anything but 101 is the server saying no, in whatever words: nothing is followed and
      * nothing is answered. */
@@ -537,7 +534,7 @@ proven_err_t proven_ws_event_connect(proven_loop_t *loop, const proven_ws_event_
             for (proven_size_t i = 0; i < u.path.size; ++i) target[tl++] = u.path.ptr[i];
             if (u.has_query) { target[tl++] = '?'; for (proven_size_t i = 0; i < u.query.size; ++i) target[tl++] = u.query.ptr[i]; }
         }
-        if (e == PROVEN_OK) e = proven_http_write_request_line(text, &len, wsc_lit("GET"), (proven_u8str_view_t){ .ptr = target, .size = tl });
+        if (e == PROVEN_OK) e = proven_http_write_request_line(text, &len, PROVEN_LIT("GET"), (proven_u8str_view_t){ .ptr = target, .size = tl });
         /* Host: the port is written only when it is not the scheme's own. */
         proven_byte_t host[300];
         proven_size_t hl = 0;
@@ -552,16 +549,16 @@ proven_err_t proven_ws_event_connect(proven_loop_t *loop, const proven_ws_event_
             host[hl++] = ':';
             while (dn > 0) host[hl++] = digits[--dn];
         }
-        if (e == PROVEN_OK) e = proven_http_write_header(text, &len, wsc_lit("Host"), (proven_u8str_view_t){ .ptr = host, .size = hl });
-        if (e == PROVEN_OK) e = proven_http_write_header(text, &len, wsc_lit("Upgrade"), wsc_lit("websocket"));
-        if (e == PROVEN_OK) e = proven_http_write_header(text, &len, wsc_lit("Connection"), wsc_lit("Upgrade"));
-        if (e == PROVEN_OK) e = proven_http_write_header(text, &len, wsc_lit("Sec-WebSocket-Key"), (proven_u8str_view_t){ .ptr = c->key, .size = sizeof c->key });
-        if (e == PROVEN_OK) e = proven_http_write_header(text, &len, wsc_lit("Sec-WebSocket-Version"), wsc_lit("13"));
-        if (e == PROVEN_OK && o->protocols.size > 0) e = proven_http_write_header(text, &len, wsc_lit("Sec-WebSocket-Protocol"), o->protocols);
+        if (e == PROVEN_OK) e = proven_http_write_header(text, &len, PROVEN_LIT("Host"), (proven_u8str_view_t){ .ptr = host, .size = hl });
+        if (e == PROVEN_OK) e = proven_http_write_header(text, &len, PROVEN_LIT("Upgrade"), PROVEN_LIT("websocket"));
+        if (e == PROVEN_OK) e = proven_http_write_header(text, &len, PROVEN_LIT("Connection"), PROVEN_LIT("Upgrade"));
+        if (e == PROVEN_OK) e = proven_http_write_header(text, &len, PROVEN_LIT("Sec-WebSocket-Key"), (proven_u8str_view_t){ .ptr = c->key, .size = sizeof c->key });
+        if (e == PROVEN_OK) e = proven_http_write_header(text, &len, PROVEN_LIT("Sec-WebSocket-Version"), PROVEN_LIT("13"));
+        if (e == PROVEN_OK && o->protocols.size > 0) e = proven_http_write_header(text, &len, PROVEN_LIT("Sec-WebSocket-Protocol"), o->protocols);
         if (e == PROVEN_OK && o->ws.compress) {
-            e = proven_http_write_header(text, &len, wsc_lit("Sec-WebSocket-Extensions"),
-                                         c->offered_peer_none ? wsc_lit(PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER)
-                                         : c->offered_takeover ? wsc_lit(PROVEN_WS_DEFLATE_OFFER_TAKEOVER) : wsc_lit(PROVEN_WS_DEFLATE_OFFER));
+            e = proven_http_write_header(text, &len, PROVEN_LIT("Sec-WebSocket-Extensions"),
+                                         c->offered_peer_none ? PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER)
+                                         : c->offered_takeover ? PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER_TAKEOVER) : PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER));
         }
         for (proven_size_t i = 0; i < o->header_count && e == PROVEN_OK; ++i) {
             /* The seven this call writes are not the caller's to write as well. */

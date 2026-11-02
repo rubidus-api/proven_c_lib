@@ -9,12 +9,6 @@
  * receiver's rules. Nothing here reads, writes, allocates or draws a random number.
  */
 
-static proven_u8str_view_t ws_lit(const char *s) {
-    proven_size_t n = 0;
-    while (s[n] != '\0') n++;
-    return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n };
-}
-
 static bool ws_eq(proven_u8str_view_t a, proven_u8str_view_t b) {
     if (a.size != b.size) return false;
     for (proven_size_t i = 0; i < a.size; ++i) if (a.ptr[i] != b.ptr[i]) return false;
@@ -82,25 +76,25 @@ proven_err_t proven_ws_check_request(const proven_http_request_t *request, prove
     proven_size_t n = request->header_count;
     /* HTTP/2 (RFC 8441): an extended CONNECT, which the event-driven server presents with a
      * `:protocol` field first. It has no key: the stream itself is the proof. */
-    if (request->method == PROVEN_HTTP_CONNECT && n > 0 && proven_u8str_view_eq(h[0].name, ws_lit(":protocol"))) {
-        if (!proven_u8str_view_eq_ascii_ci(h[0].value, ws_lit("websocket"))) return PROVEN_ERR_NOT_FOUND;
+    if (request->method == PROVEN_HTTP_CONNECT && n > 0 && proven_u8str_view_eq(h[0].name, PROVEN_LIT(":protocol"))) {
+        if (!proven_u8str_view_eq_ascii_ci(h[0].value, PROVEN_LIT("websocket"))) return PROVEN_ERR_NOT_FOUND;
         proven_u8str_view_t version;
-        if (proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Version")) != 1 ||
-            !proven_http_header_find(h, n, ws_lit("Sec-WebSocket-Version"), &version)) return PROVEN_ERR_INVALID_FORMAT;
-        if (!ws_eq(ws_trim(version), ws_lit("13"))) return PROVEN_ERR_UNSUPPORTED;
+        if (proven_http_header_count(h, n, PROVEN_LIT("Sec-WebSocket-Version")) != 1 ||
+            !proven_http_header_find(h, n, PROVEN_LIT("Sec-WebSocket-Version"), &version)) return PROVEN_ERR_INVALID_FORMAT;
+        if (!ws_eq(ws_trim(version), PROVEN_LIT("13"))) return PROVEN_ERR_UNSUPPORTED;
         *key = (proven_u8str_view_t){ .ptr = (const proven_byte_t *)"", .size = 0 };
         return PROVEN_OK;
     }
-    if (!proven_http_header_has_token(h, n, ws_lit("Upgrade"), ws_lit("websocket"))) return PROVEN_ERR_NOT_FOUND;
+    if (!proven_http_header_has_token(h, n, PROVEN_LIT("Upgrade"), PROVEN_LIT("websocket"))) return PROVEN_ERR_NOT_FOUND;
     if (request->method != PROVEN_HTTP_GET || request->version_minor < 1) return PROVEN_ERR_INVALID_FORMAT;
-    if (!proven_http_header_has_token(h, n, ws_lit("Connection"), ws_lit("Upgrade"))) return PROVEN_ERR_INVALID_FORMAT;
+    if (!proven_http_header_has_token(h, n, PROVEN_LIT("Connection"), PROVEN_LIT("Upgrade"))) return PROVEN_ERR_INVALID_FORMAT;
     proven_u8str_view_t version;
-    if (proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Version")) != 1 ||
-        !proven_http_header_find(h, n, ws_lit("Sec-WebSocket-Version"), &version)) return PROVEN_ERR_INVALID_FORMAT;
-    if (!ws_eq(ws_trim(version), ws_lit("13"))) return PROVEN_ERR_UNSUPPORTED;
+    if (proven_http_header_count(h, n, PROVEN_LIT("Sec-WebSocket-Version")) != 1 ||
+        !proven_http_header_find(h, n, PROVEN_LIT("Sec-WebSocket-Version"), &version)) return PROVEN_ERR_INVALID_FORMAT;
+    if (!ws_eq(ws_trim(version), PROVEN_LIT("13"))) return PROVEN_ERR_UNSUPPORTED;
     proven_u8str_view_t k;
-    if (proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Key")) != 1 ||
-        !proven_http_header_find(h, n, ws_lit("Sec-WebSocket-Key"), &k)) return PROVEN_ERR_INVALID_FORMAT;
+    if (proven_http_header_count(h, n, PROVEN_LIT("Sec-WebSocket-Key")) != 1 ||
+        !proven_http_header_find(h, n, PROVEN_LIT("Sec-WebSocket-Key"), &k)) return PROVEN_ERR_INVALID_FORMAT;
     k = ws_trim(k);
     proven_byte_t probe[PROVEN_WS_ACCEPT_SIZE];
     if (proven_ws_accept_key(k, probe) != PROVEN_OK) return PROVEN_ERR_INVALID_FORMAT;
@@ -291,21 +285,21 @@ static proven_err_t ws_check_response(const proven_http_response_t *response, pr
     const proven_http_header_t *h = response->headers;
     proven_size_t n = response->header_count;
     if (response->status != 101) return PROVEN_ERR_INVALID_FORMAT;
-    if (!proven_http_header_has_token(h, n, ws_lit("Upgrade"), ws_lit("websocket")) ||
-        !proven_http_header_has_token(h, n, ws_lit("Connection"), ws_lit("Upgrade"))) return PROVEN_ERR_INVALID_FORMAT;
+    if (!proven_http_header_has_token(h, n, PROVEN_LIT("Upgrade"), PROVEN_LIT("websocket")) ||
+        !proven_http_header_has_token(h, n, PROVEN_LIT("Connection"), PROVEN_LIT("Upgrade"))) return PROVEN_ERR_INVALID_FORMAT;
     proven_byte_t want[PROVEN_WS_ACCEPT_SIZE];
     proven_u8str_view_t got;
     if (proven_ws_accept_key(key, want) != PROVEN_OK) return PROVEN_ERR_INVALID_ARG;
-    if (proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Accept")) != 1 ||
-        !proven_http_header_find(h, n, ws_lit("Sec-WebSocket-Accept"), &got) ||
+    if (proven_http_header_count(h, n, PROVEN_LIT("Sec-WebSocket-Accept")) != 1 ||
+        !proven_http_header_find(h, n, PROVEN_LIT("Sec-WebSocket-Accept"), &got) ||
         !ws_eq(ws_trim(got), (proven_u8str_view_t){ .ptr = want, .size = sizeof want })) return PROVEN_ERR_INVALID_FORMAT;
-    proven_size_t extensions = proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Extensions"));
+    proven_size_t extensions = proven_http_header_count(h, n, PROVEN_LIT("Sec-WebSocket-Extensions"));
     if (extensions != 0) {
         /* Only a client that offered permessage-deflate may be answered with it, once, in a
          * form that was offered: without takeover, the server must keep nothing between
          * messages, and the client's window was not put up for negotiation. */
         proven_u8str_view_t value;
-        if (!deflate || extensions != 1 || !proven_http_header_find(h, n, ws_lit("Sec-WebSocket-Extensions"), &value)) return PROVEN_ERR_INVALID_FORMAT;
+        if (!deflate || extensions != 1 || !proven_http_header_find(h, n, PROVEN_LIT("Sec-WebSocket-Extensions"), &value)) return PROVEN_ERR_INVALID_FORMAT;
         proven_ws_deflate_params_t params;
         if (!ws_deflate_parse(value, false, &params) || !params.whole) return PROVEN_ERR_INVALID_FORMAT;
         if ((!terms || server_none) && !params.server_no_takeover) return PROVEN_ERR_INVALID_FORMAT;
@@ -316,11 +310,11 @@ static proven_err_t ws_check_response(const proven_http_response_t *response, pr
         }
         *deflate = true;
     }
-    proven_size_t protocols = proven_http_header_count(h, n, ws_lit("Sec-WebSocket-Protocol"));
+    proven_size_t protocols = proven_http_header_count(h, n, PROVEN_LIT("Sec-WebSocket-Protocol"));
     if (protocols > 1) return PROVEN_ERR_INVALID_FORMAT;
     if (protocols == 1) {
         proven_u8str_view_t p;
-        if (!proven_http_header_find(h, n, ws_lit("Sec-WebSocket-Protocol"), &p)) return PROVEN_ERR_INVALID_FORMAT;
+        if (!proven_http_header_find(h, n, PROVEN_LIT("Sec-WebSocket-Protocol"), &p)) return PROVEN_ERR_INVALID_FORMAT;
         p = ws_trim(p);
         if (p.size == 0 || !ws_list_has(offered, p)) return PROVEN_ERR_INVALID_FORMAT;
         *protocol = p;

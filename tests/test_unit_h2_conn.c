@@ -1884,6 +1884,40 @@ int main(void) {
         PROVEN_TEST_ASSERT(opened_count > 2500, "thousands of streams came and went", "");
         proven_h2_conn_destroy(c);
     }
+    {
+        /* A request refused for its size leaves nothing behind - not its slot in the map either:
+         * its number is the next request's, which must be found where it is once the table has
+         * moved, not at the refused one's old place. */
+        pair_t p;
+        proven_h2_config_t sc = base; sc.max_header_list_bytes = 1024;
+        pair_open(&p, &base, &sc, 1 << 19);
+        p.plain = true;
+        static char big[2000];
+        memset(big, 'x', sizeof big);
+        const proven_http_header_t large[5] = { H(":method", "GET"), H(":scheme", "https"), H(":authority", "example.org"), H(":path", "/"),
+                                                { .name = sv("x-big"), .value = { (const proven_byte_t *)big, sizeof big } } };
+        proven_u32 a = 0, b = 0, refused = 0, d = 0;
+        bool ok = proven_h2_conn_submit_request(p.client, GET, 4, true, &a) == PROVEN_OK && proven_h2_conn_submit_request(p.client, GET, 4, true, &b) == PROVEN_OK;
+        carry(&p, p.client, p.server);
+        ok = ok && proven_h2_conn_submit_request(p.client, large, 5, true, &refused) == PROVEN_ERR_OUT_OF_BOUNDS && proven_h2_conn_stream_count(p.client) == 2;
+        PROVEN_TEST_ASSERT(ok, "two requests go, and a third over the peer's header-list limit is refused, leaving two open", "");
+        ok = proven_h2_conn_submit_response(p.server, a, OK200, 2, true) == PROVEN_OK;
+        carry(&p, p.server, p.client);
+        ok = ok && proven_h2_conn_stream_count(p.client) == 1;
+        ok = ok && proven_h2_conn_submit_request(p.client, POST, 4, false, &d) == PROVEN_OK && d == 5;
+        static int tag;
+        proven_h2_conn_stream_set_user(p.client, d, &tag);
+        const proven_result_size_t w = proven_h2_conn_send_data(p.client, d, (proven_mem_view_t){ (const proven_byte_t *)"hello", 5 }, true);
+        PROVEN_TEST_ASSERT(ok && w.err == PROVEN_OK && w.value == 5 && proven_h2_conn_stream_user(p.client, d) == &tag,
+            "after the first ends and the table moves, the next request takes the refused one's number: it is found, and its body goes",
+            "Check the failure path of proven_h2_conn_submit_request in src/proven/h2_conn.c: a stream taken back must leave the map as h2c_remove leaves it.");
+        carry(&p, p.client, p.server);
+        ok = proven_h2_conn_submit_response(p.server, d, OK200, 2, true) == PROVEN_OK && proven_h2_conn_submit_response(p.server, b, OK200, 2, true) == PROVEN_OK;
+        carry(&p, p.server, p.client);
+        PROVEN_TEST_ASSERT(ok && proven_h2_conn_stream_count(p.client) == 0 && p.resp_done[(d - 1) / 2] && p.resp_done[(b - 1) / 2] && p.bad == 0,
+            "and both answers end their streams: none is left open", "");
+        pair_close(&p);
+    }
 
     PROVEN_TEST_SECTION("windows that grow", "With growth turned on (an internal call the event-driven drivers make), a stream's window doubles when its reader takes half of it within two round trips of its last move, up to the cap, and the connection's follows; a slow reader, an unread stream, a connection without the call and one whose SETTINGS were never acknowledged keep the window they started with (RFC-0019 section 10).", "Check h2c_stream_credit, h2c_conn_follow and proven_h2_conn_grow_ in src/proven/h2_conn.c.");
     {

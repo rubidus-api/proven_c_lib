@@ -1601,13 +1601,16 @@ static proven_u64 on_ack(proven_quic_conn_t *c, int lvl, const proven_quic_frame
     bool largest_new = false;
     const proven_u64 bif_before = c->bif;
     /* The ranges come highest first and the records lowest first: each range is found by a
-     * search, and its records taken out. */
+     * search, and its records taken and marked - their number set to QC_INF, above every range
+     * still to come, so that the searches below them find what they would have. The marked
+     * leave in one pass at the end: moving the rest down for every range made an ACK frame
+     * with many ranges cost its ranges times the packets in flight, a price the peer chooses. */
+    proven_size_t first_gone = sp->sent_n;
     while (proven_quic_ack_next(&it, &lo, &hi)) {
         proven_size_t a = 0, b = sp->sent_n;
         while (a < b) { proven_size_t m = (a + b) / 2; if (sp->sent[m].pn < lo) a = m + 1; else b = m; }
-        proven_size_t i = a;
-        for (; i < sp->sent_n && sp->sent[i].pn <= hi; ++i) {
-            const proven_qsent_t *p = &sp->sent[i];
+        for (proven_size_t i = a; i < sp->sent_n && sp->sent[i].pn <= hi; ++i) {
+            proven_qsent_t *p = &sp->sent[i];
             newly = true;
             if (p->ack_eliciting) eliciting = true;
             if (p->pn == f->largest) { largest_new = true; largest_time = p->time; }
@@ -1617,11 +1620,18 @@ static proven_u64 on_ack(proven_quic_conn_t *c, int lvl, const proven_quic_frame
             if (p->size > c->cfg.datagram_size) c->pm_big_lost = 0;
             for (unsigned j = 0; j < p->nfr; ++j) frame_acked(c, lvl, &p->fr[j]);
             cc_acked(c, p, bif_before);
+            p->pn = QC_INF;
+            if (i < first_gone) first_gone = i;
         }
-        if (i > a) {
-            for (proven_size_t j = i; j < sp->sent_n; ++j) sp->sent[a + j - i] = sp->sent[j];
-            sp->sent_n -= i - a;
+    }
+    if (first_gone < sp->sent_n) {
+        proven_size_t keep = first_gone;
+        for (proven_size_t j = first_gone; j < sp->sent_n; ++j) {
+            if (sp->sent[j].pn == QC_INF) continue;
+            if (keep != j) sp->sent[keep] = sp->sent[j];
+            ++keep;
         }
+        sp->sent_n = keep;
     }
     /* A packet declared lost and acknowledged after all was only reordered (RFC 9002 section
      * 6.1.1): the packet threshold grows past the distance it was declared at. */

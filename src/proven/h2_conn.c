@@ -1,5 +1,6 @@
 #include "proven/h2.h"
 #include "proven/hpack.h"
+#include "../../platform/proven_sys_mem.h"
 
 /*
  * HTTP/2 (RFC 9113): one connection, either end. Bytes in, events and bytes out; no socket
@@ -121,14 +122,15 @@ static proven_u32 h2c_u32(const proven_byte_t *p) {
     return ((proven_u32)p[0] << 24) | ((proven_u32)p[1] << 16) | ((proven_u32)p[2] << 8) | (proven_u32)p[3];
 }
 
+/* Through the PAL's block copy: every byte of a DATA frame this side sends passes here, and a
+ * loop of single bytes was what the compiler left of it at -O2. */
 static void h2c_copy(proven_byte_t *dst, const proven_byte_t *src, proven_size_t n) {
-    for (proven_size_t i = 0; i < n; i++) dst[i] = src[i];
+    proven_sys_mem_copy(dst, src, n);
 }
 
 /* Overlapping, towards higher addresses or lower. */
 static void h2c_move(proven_byte_t *dst, const proven_byte_t *src, proven_size_t n) {
-    if (dst < src) for (proven_size_t i = 0; i < n; i++) dst[i] = src[i];
-    else if (dst > src) for (proven_size_t i = n; i > 0; i--) dst[i - 1] = src[i - 1];
+    proven_sys_mem_move(dst, src, n);
 }
 
 static void h2c_free(proven_h2_conn_t *c, void *p) {
@@ -1387,7 +1389,9 @@ proven_err_t proven_h2_conn_submit_request(proven_h2_conn_t *c, const proven_htt
     proven_h2c_stream_t *s = h2c_add(c, c->next_id);
     if (!s) return PROVEN_ERR_NOMEM;
     proven_err_t err = h2c_send_block(c, s->id, headers, count, end_stream, sensitive);
-    if (err != PROVEN_OK) { c->stream_count--; return err; }
+    /* Taken out as it was put in: its slot in the map too, or the number - the next request's -
+     * would be found at this place after the table has moved. */
+    if (err != PROVEN_OK) { h2c_remove(c, s, false, 0); return err; }
     s->flags |= ST_HEAD_SENT | (end_stream ? ST_LOCAL_END : 0u) | (h2c_method_is_head(headers, count) ? ST_NO_BODY : 0u);
     *stream_id = s->id;
     c->next_id += 2;

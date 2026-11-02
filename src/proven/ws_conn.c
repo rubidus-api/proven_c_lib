@@ -6,6 +6,7 @@
 #include "proven/utf.h"
 #include "proven/url.h"
 #include "proven_internal_ws.h"
+#include "../../platform/proven_sys_mem.h"
 
 /*
  * The WebSocket connection driver. The frames are ws.c's business and the opening handshake's
@@ -64,12 +65,6 @@ struct proven_ws_conn {
     proven_byte_t send_buf[WC_SEND_SIZE];
 };
 
-static proven_u8str_view_t wc_lit(const char *s) {
-    proven_size_t n = 0;
-    while (s[n] != '\0') n++;
-    return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n };
-}
-
 static proven_net_deadline_t wc_write_deadline(const proven_ws_conn_t *c) {
     return proven_net_deadline_in(c->cfg.io_timeout_ms);
 }
@@ -78,7 +73,8 @@ static proven_net_deadline_t wc_write_deadline(const proven_ws_conn_t *c) {
 // Sending
 // -----------------------------------------------------------------------------
 
-/* One frame. A client's payload goes through send_buf to be masked; a server's goes as it is. */
+/* One frame. A client's payload goes through send_buf to be masked; a server's goes as it is,
+ * from the caller's memory - only its first piece is copied, to leave with the header. */
 static proven_err_t wc_send_frame(proven_ws_conn_t *c, bool fin, proven_u8 opcode, bool rsv1, proven_mem_view_t data) {
     proven_ws_frame_t f = { .fin = fin, .opcode = opcode, .masked = !c->is_server, .length = data.size, .rsv1 = rsv1 };
     if (f.masked) proven_chacha_rng_fill(&c->masks, f.mask, sizeof f.mask);
@@ -88,12 +84,18 @@ static proven_err_t wc_send_frame(proven_ws_conn_t *c, bool fin, proven_u8 opcod
 
     proven_size_t done = 0;
     for (;;) {
-        /* The header and as much payload as fits leave together: a small frame is one write. */
+        /* The header and as much payload as fits leave together: a small frame is one write.
+         * Each piece is a write of its own, with its own time limit, as it always was. */
         proven_size_t room = sizeof c->send_buf - n;
         proven_size_t take = data.size - done < room ? data.size - done : room;
-        for (proven_size_t i = 0; i < take; ++i) c->send_buf[n + i] = data.ptr[done + i];
-        if (f.masked) proven_ws_mask((proven_mem_mut_t){ .ptr = c->send_buf + n, .size = take }, f.mask, done);
-        proven_result_size_t w = proven_transport_write_all(c->t, (proven_mem_view_t){ .ptr = c->send_buf, .size = n + take }, wc_write_deadline(c));
+        const proven_byte_t *from = take > 0 ? data.ptr + done : (const proven_byte_t *)0;    /* an empty payload may have no pointer */
+        proven_mem_view_t piece = { .ptr = from, .size = take };
+        if (f.masked || n > 0) {
+            proven_sys_mem_copy(c->send_buf + n, from, take);
+            if (f.masked) proven_ws_mask((proven_mem_mut_t){ .ptr = c->send_buf + n, .size = take }, f.mask, done);
+            piece = (proven_mem_view_t){ .ptr = c->send_buf, .size = n + take };
+        }
+        proven_result_size_t w = proven_transport_write_all(c->t, piece, wc_write_deadline(c));
         if (w.err != PROVEN_OK) { c->failed = w.err; return w.err; }
         done += take;
         n = 0;
@@ -220,7 +222,7 @@ static proven_err_t wc_message_append(proven_ws_conn_t *c, proven_mem_view_t pie
         c->message = m.value.ptr;
         c->message_cap = cap;
     }
-    for (proven_size_t i = 0; i < piece.size; ++i) c->message[c->message_len + i] = piece.ptr[i];
+    proven_sys_mem_copy(c->message + c->message_len, piece.ptr, piece.size);
     c->message_len = need;
     return PROVEN_OK;
 }
@@ -490,7 +492,7 @@ static proven_err_t wc_open(proven_transport_t transport, bool is_server, proven
         if (bits < 9) c->zip_off = true;
         else c->cfg.compress_window_bits = bits;
     }
-    for (proven_size_t i = 0; i < early.size; ++i) c->read_buf[i] = early.ptr[i];
+    proven_sys_mem_copy(c->read_buf, early.ptr, early.size);
     proven_ws_decoder_init(&c->decoder, is_server, c->cfg.max_message_bytes);
     if (deflate) proven_ws_decoder_allow_compressed(&c->decoder);
     if (!is_server) {
@@ -558,7 +560,7 @@ proven_err_t proven_ws_conn_accept(proven_http_exchange_t *exchange, proven_u8st
     proven_err_t e = proven_ws_check_request(req, &key);
     if (e == PROVEN_ERR_NOT_FOUND) return e;
     if (e == PROVEN_ERR_UNSUPPORTED) {
-        proven_http_header_t h = { wc_lit("Sec-WebSocket-Version"), wc_lit("13") };
+        proven_http_header_t h = { PROVEN_LIT("Sec-WebSocket-Version"), PROVEN_LIT("13") };
         (void)proven_http_exchange_respond(exchange, 426, &h, 1, (proven_mem_view_t){0});
         return e;
     }
@@ -571,9 +573,9 @@ proven_err_t proven_ws_conn_accept(proven_http_exchange_t *exchange, proven_u8st
     proven_byte_t accept[PROVEN_WS_ACCEPT_SIZE];
     e = proven_ws_accept_key(key, accept);
     if (e != PROVEN_OK) return e;
-    proven_http_header_t headers[3] = { { wc_lit("Sec-WebSocket-Accept"), { .ptr = accept, .size = sizeof accept } } };
+    proven_http_header_t headers[3] = { { PROVEN_LIT("Sec-WebSocket-Accept"), { .ptr = accept, .size = sizeof accept } } };
     proven_size_t header_count = 1;
-    if (protocol.size > 0) headers[header_count++] = (proven_http_header_t){ wc_lit("Sec-WebSocket-Protocol"), protocol };
+    if (protocol.size > 0) headers[header_count++] = (proven_http_header_t){ PROVEN_LIT("Sec-WebSocket-Protocol"), protocol };
     /* Compression, when this side wants it and the client offered a form of it that can be met. */
     proven_byte_t extension[PROVEN_WS_DEFLATE_ANSWER_MAX];
     proven_size_t extension_len = 0;
@@ -583,13 +585,13 @@ proven_err_t proven_ws_conn_accept(proven_http_exchange_t *exchange, proven_u8st
                    (config->compress_no_takeover ? wc_accept_plain(req, room, &extension_len, &terms)
                     : config->compress_peer_no_takeover ? proven_ws_deflate_accept_peer_no_takeover(req, room, &extension_len, &terms)
                                                         : proven_ws_deflate_accept_takeover(req, room, &extension_len, &terms)) == PROVEN_OK;
-    if (deflate) headers[header_count++] = (proven_http_header_t){ wc_lit("Sec-WebSocket-Extensions"), { .ptr = extension, .size = extension_len } };
+    if (deflate) headers[header_count++] = (proven_http_header_t){ PROVEN_LIT("Sec-WebSocket-Extensions"), { .ptr = extension, .size = extension_len } };
     proven_transport_t t;
     proven_mem_view_t early;
-    e = proven_http_exchange_upgrade(exchange, wc_lit("websocket"), headers, header_count, &t, &early);
+    e = proven_http_exchange_upgrade(exchange, PROVEN_LIT("websocket"), headers, header_count, &t, &early);
     if (e == PROVEN_ERR_BUSY) {
         /* The server's `max_upgraded` are open: try again soon. */
-        const proven_http_header_t h = { wc_lit("Retry-After"), wc_lit("1") };
+        const proven_http_header_t h = { PROVEN_LIT("Retry-After"), PROVEN_LIT("1") };
         (void)proven_http_exchange_respond(exchange, 503, &h, 1, (proven_mem_view_t){0});
         return e;
     }
@@ -626,21 +628,21 @@ proven_err_t proven_ws_conn_connect(proven_http_client_t *client, proven_u8str_v
     proven_http_header_t all[MAX_EXTRA + 4];
     proven_size_t n = 0;
     for (proven_size_t i = 0; i < header_count; ++i) all[n++] = headers[i];
-    all[n++] = (proven_http_header_t){ wc_lit("Sec-WebSocket-Key"), { .ptr = key, .size = sizeof key } };
-    all[n++] = (proven_http_header_t){ wc_lit("Sec-WebSocket-Version"), wc_lit("13") };
-    if (protocols.size > 0) all[n++] = (proven_http_header_t){ wc_lit("Sec-WebSocket-Protocol"), protocols };
+    all[n++] = (proven_http_header_t){ PROVEN_LIT("Sec-WebSocket-Key"), { .ptr = key, .size = sizeof key } };
+    all[n++] = (proven_http_header_t){ PROVEN_LIT("Sec-WebSocket-Version"), PROVEN_LIT("13") };
+    if (protocols.size > 0) all[n++] = (proven_http_header_t){ PROVEN_LIT("Sec-WebSocket-Protocol"), protocols };
     if (config->compress) {
-        all[n++] = (proven_http_header_t){ wc_lit("Sec-WebSocket-Extensions"),
-                                           config->compress_no_takeover ? wc_lit(PROVEN_WS_DEFLATE_OFFER)
-                                           : config->compress_peer_no_takeover ? wc_lit(PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER) : wc_lit(PROVEN_WS_DEFLATE_OFFER_TAKEOVER) };
+        all[n++] = (proven_http_header_t){ PROVEN_LIT("Sec-WebSocket-Extensions"),
+                                           config->compress_no_takeover ? PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER)
+                                           : config->compress_peer_no_takeover ? PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER_PEER_NO_TAKEOVER) : PROVEN_LIT(PROVEN_WS_DEFLATE_OFFER_TAKEOVER) };
     }
 
     proven_http_client_request_t req = {
-        .method = wc_lit("GET"),
+        .method = PROVEN_LIT("GET"),
         .url = { .ptr = http_url, .size = ul },
         .headers = all,
         .header_count = n,
-        .upgrade = wc_lit("websocket"),
+        .upgrade = PROVEN_LIT("websocket"),
     };
     proven_http_client_response_t resp;
     proven_err_t e = proven_http_client_send(client, &req, &resp);

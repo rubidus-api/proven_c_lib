@@ -34,10 +34,6 @@
  *     until the last has come.
  */
 
-static proven_u8str_view_t ev_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
-#define ev_lit(s) ev_lit_n((s), sizeof(s) - 1)
-
-
 static void *ev_alloc(proven_allocator_t a, proven_size_t n) {
     proven_result_mem_mut_t m = a.alloc_fn(a.ctx, n, 16);
     return m.err == PROVEN_OK ? m.value.ptr : (void *)0;
@@ -420,9 +416,9 @@ static void ev_reject(proven_http_stream_t *c, proven_u16 status, proven_err_t w
         proven_byte_t msg[128];
         proven_mem_mut_t out = { .ptr = msg, .size = sizeof msg };
         proven_size_t len = 0;
-        proven_err_t e = proven_http_write_status_line(out, &len, status, ev_lit(""));
-        if (e == PROVEN_OK) e = proven_http_write_header(out, &len, ev_lit("Content-Length"), ev_lit("0"));
-        if (e == PROVEN_OK) e = proven_http_write_header(out, &len, ev_lit("Connection"), ev_lit("close"));
+        proven_err_t e = proven_http_write_status_line(out, &len, status, PROVEN_LIT(""));
+        if (e == PROVEN_OK) e = proven_http_write_header(out, &len, PROVEN_LIT("Content-Length"), PROVEN_LIT("0"));
+        if (e == PROVEN_OK) e = proven_http_write_header(out, &len, PROVEN_LIT("Connection"), PROVEN_LIT("close"));
         if (e == PROVEN_OK) e = proven_http_write_head_end(out, &len);
         if (e == PROVEN_OK && !ev_send(c, msg, len)) return;
     }
@@ -511,7 +507,7 @@ static void ev_process(proven_http_stream_t *c) {
                 }
             }
             /* HTTP/1.1 requires Host; a server that guesses is the back end a smuggled request is aimed at. */
-            if (!refuse && req.version_minor >= 1 && proven_http_header_count(s->headers, req.header_count, ev_lit("Host")) != 1) refuse = 400;
+            if (!refuse && req.version_minor >= 1 && proven_http_header_count(s->headers, req.header_count, PROVEN_LIT("Host")) != 1) refuse = 400;
             if (refuse) { ev_reject(c, refuse, PROVEN_ERR_INVALID_FORMAT); break; }
 
             bool no_body = framing.kind == PROVEN_HTTP_BODY_NONE || (framing.kind == PROVEN_HTTP_BODY_LENGTH && framing.length == 0);
@@ -529,7 +525,7 @@ static void ev_process(proven_http_stream_t *c) {
             c->keep = proven_http_request_keep_alive(&req);
             c->compress_coding = (proven_u8)proven_http_compress_choose_(s->headers, req.header_count, s->cfg.compress_zstd);
             c->compress_asked = false;
-            c->expect_continue = req.version_minor >= 1 && !no_body && proven_http_header_has_token(s->headers, req.header_count, ev_lit("Expect"), ev_lit("100-continue"));
+            c->expect_continue = req.version_minor >= 1 && !no_body && proven_http_header_has_token(s->headers, req.header_count, PROVEN_LIT("Expect"), PROVEN_LIT("100-continue"));
             c->h.state = no_body ? EV_RESPOND : EV_BODY;
             c->head_started = false;
             c->active = true;
@@ -1167,8 +1163,8 @@ void proven_http_event_gone_(proven_http_event_server_t *s) {
 // -----------------------------------------------------------------------------
 
 static bool ev_is_driver_header(proven_u8str_view_t name) {
-    return proven_u8str_view_eq_ascii_ci(name, ev_lit("Content-Length")) || proven_u8str_view_eq_ascii_ci(name, ev_lit("Transfer-Encoding")) ||
-           proven_u8str_view_eq_ascii_ci(name, ev_lit("Connection")) || proven_u8str_view_eq_ascii_ci(name, ev_lit("Date"));
+    return proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("Content-Length")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("Transfer-Encoding")) ||
+           proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("Connection")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("Date"));
 }
 
 /* The response head into the server's head buffer. */
@@ -1178,22 +1174,22 @@ static proven_err_t ev_build_head(proven_http_stream_t *c, proven_u16 status, co
     if (status < 200 || status > 999 || (header_count > 0 && !headers)) return PROVEN_ERR_INVALID_ARG;
     proven_mem_mut_t out = { .ptr = s->hbuf, .size = s->cfg.max_head_bytes };
     proven_size_t len = 0;
-    proven_err_t e = proven_http_write_status_line(out, &len, status, ev_lit(""));
+    proven_err_t e = proven_http_write_status_line(out, &len, status, PROVEN_LIT(""));
     proven_byte_t date[PROVEN_HTTP_DATE_SIZE];
     if (e == PROVEN_OK && proven_http_date_format(proven_time_now(), date) == PROVEN_OK) {
-        e = proven_http_write_header(out, &len, ev_lit("Date"), (proven_u8str_view_t){ .ptr = date, .size = sizeof date });
+        e = proven_http_write_header(out, &len, PROVEN_LIT("Date"), (proven_u8str_view_t){ .ptr = date, .size = sizeof date });
     }
     for (proven_size_t i = 0; i < header_count && e == PROVEN_OK; ++i) {
         if (ev_is_driver_header(headers[i].name)) return PROVEN_ERR_INVALID_ARG;
         e = proven_http_write_header(out, &len, headers[i].name, headers[i].value);
     }
-    if (e == PROVEN_OK && vary) e = proven_http_write_header(out, &len, ev_lit("Vary"), ev_lit("Accept-Encoding"));
-    if (e == PROVEN_OK && coding != PROVEN_HTTP_CODING_IDENTITY) e = proven_http_write_header(out, &len, ev_lit("Content-Encoding"), proven_http_coding_token_(coding));
+    if (e == PROVEN_OK && vary) e = proven_http_write_header(out, &len, PROVEN_LIT("Vary"), PROVEN_LIT("Accept-Encoding"));
+    if (e == PROVEN_OK && coding != PROVEN_HTTP_CODING_IDENTITY) e = proven_http_write_header(out, &len, PROVEN_LIT("Content-Encoding"), proven_http_coding_token_(coding));
 #if !defined(PROVEN_NO_HTTP3)
     if (e == PROVEN_OK && s->h3) {
         proven_byte_t alt[16];
         const proven_size_t n = proven_http_event_alt_svc_(s, c->local_port, headers, header_count, alt);
-        if (n > 0) e = proven_http_write_header(out, &len, ev_lit("Alt-Svc"), (proven_u8str_view_t){ .ptr = alt, .size = n });
+        if (n > 0) e = proven_http_write_header(out, &len, PROVEN_LIT("Alt-Svc"), (proven_u8str_view_t){ .ptr = alt, .size = n });
     }
 #endif
     /* 204 and 304 never have a body; a response to HEAD has the headers of one and no bytes. */
@@ -1203,13 +1199,13 @@ static proven_err_t ev_build_head(proven_http_stream_t *c, proven_u16 status, co
      * 100 Continue: where the next request starts is no longer certain. */
     bool close = !c->keep || c->h.state == EV_BODY || c->expect_continue || c->peer_eof || s->stopped || s->closed_to_new;
     if (e == PROVEN_OK && !no_body_status) {
-        if (content_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) e = proven_http_write_header_u64(out, &len, ev_lit("Content-Length"), content_length);
-        else if (c->h.version_minor >= 1) { e = proven_http_write_header(out, &len, ev_lit("Transfer-Encoding"), ev_lit("chunked")); chunked = true; }
+        if (content_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) e = proven_http_write_header_u64(out, &len, PROVEN_LIT("Content-Length"), content_length);
+        else if (c->h.version_minor >= 1) { e = proven_http_write_header(out, &len, PROVEN_LIT("Transfer-Encoding"), PROVEN_LIT("chunked")); chunked = true; }
         else close = true;                         /* an HTTP/1.0 client reads until the connection closes */
     }
     if (e == PROVEN_OK) {
-        if (close) e = proven_http_write_header(out, &len, ev_lit("Connection"), ev_lit("close"));
-        else if (c->h.version_minor == 0) e = proven_http_write_header(out, &len, ev_lit("Connection"), ev_lit("keep-alive"));
+        if (close) e = proven_http_write_header(out, &len, PROVEN_LIT("Connection"), PROVEN_LIT("close"));
+        else if (c->h.version_minor == 0) e = proven_http_write_header(out, &len, PROVEN_LIT("Connection"), PROVEN_LIT("keep-alive"));
     }
     if (e == PROVEN_OK) e = proven_http_write_head_end(out, &len);
     if (e != PROVEN_OK) return e;

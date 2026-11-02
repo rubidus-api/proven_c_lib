@@ -18,6 +18,46 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`proven_ws_event_connect`: a 101 whose head arrived in more than one read ended the
+  connection** with `PROVEN_ERR_INVALID_FORMAT`. `wsc_answer` waited for `PROVEN_ERR_AGAIN`, but
+  `proven_http_parse_response` says `PROVEN_ERR_NEED_MORE` for a head that is not all there, so the
+  first piece was taken for a malformed answer. It now waits for the rest. `test_unit_ws_event_client`
+  answers an upgrade in two writes.
+- **HTTP/2: a request that `proven_h2_conn_submit_request` refused left its stream's slot in the
+  stream map.** The refusal (a header list over the peer's `SETTINGS_MAX_HEADER_LIST_SIZE`, or no
+  memory) took the stream back by its count alone; the next request takes the same number, and once
+  an earlier stream had ended and the table moved, that number was found at the refused one's old
+  place: `proven_h2_conn_send_data` said `PROVEN_ERR_INVALID_STATE` on a stream whose head had gone,
+  and its end was recorded on a record no longer in the table. The stream is now taken out as any
+  other is. `test_unit_h2_conn` has the sequence.
+- **The blocking HTTP client wrote the URL's userinfo into the request target sent to an HTTP
+  proxy** (`GET http://user:password@host/ HTTP/1.1`), which RFC 9110 section 4.2.4 forbids and which
+  handed those credentials to the proxy and, through it, to the origin. The absolute form is now the
+  scheme, the authority without userinfo, the path and the query; a proxy's Digest `uri` is the same.
+- **`proven_sse_feed` forgot a `retry` sent in an event with no data line**, which `sse.h` says is
+  remembered and the HTML standard applies when the field is read; `retry: 10000` sent alone, as
+  servers do, was lost. It now comes with the next event delivered.
+
+### Changed
+
+- **QUIC: an ACK frame's ranges are taken in one pass.** Each range that acknowledged anything moved
+  every later sent-packet record down, so a frame of many ranges - its sender's choice - cost the
+  ranges times the packets in flight (up to 8,192 records of 224 bytes a space). The records
+  acknowledged are now marked and leave together at the end.
+- **Bulk copies in the drivers go through the platform's block copy** (`proven_sys_mem_copy` /
+  `_move`), as the event-driven drivers' have since v0.49.0: the loop's send queue (every byte a
+  socket did not take at once, and with sends through io_uring every byte), every DATA payload
+  `proven_h2_conn_send_data` frames, the blocking client's and server's body reads, the blocking
+  WebSocket connection's message assembly and masking, long values in the HTTP/1.1 head writers,
+  and SSE data lines. At `-O2` gcc 14 had left them loops of single bytes. A server's unmasked
+  WebSocket payload is no longer copied at all after the piece that leaves with the frame header.
+- **String literals in the network code are `PROVEN_LIT` views**: the per-file helpers that
+  measured a literal at run time (`cl_lit`, `sv_lit`, `ws_lit`, `wc_lit`, `http_cstr`) and the
+  ten copies of a compile-time one are gone, the method and trailer tables of `http.c` hold views,
+  and byte-by-byte equality helpers are `proven_u8str_view_eq`. Nothing a caller sees changes.
+
 ## [0.108.0] - 2026-11-02
 
 ### Added

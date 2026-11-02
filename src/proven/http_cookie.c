@@ -16,18 +16,7 @@ typedef struct {
 
 static proven_byte_t ck_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
-static bool ck_eq(proven_u8str_view_t a, proven_u8str_view_t b) {
-    if (a.size != b.size) return false;
-    for (proven_size_t i = 0; i < a.size; ++i) if (a.ptr[i] != b.ptr[i]) return false;
-    return true;
-}
-
-
-static bool ck_is(proven_u8str_view_t a, const char *b) {
-    proven_size_t n = 0;
-    while (b[n] != '\0') n++;
-    return proven_u8str_view_eq_ascii_ci(a, (proven_u8str_view_t){ .ptr = (const proven_byte_t *)b, .size = n });
-}
+#define ck_is(a, lit) proven_u8str_view_eq_ascii_ci((a), PROVEN_LIT(lit))
 
 static proven_u8str_view_t ck_trim(proven_u8str_view_t s) {
     while (s.size > 0 && (s.ptr[0] == ' ' || s.ptr[0] == '\t')) { s.ptr++; s.size--; }
@@ -198,7 +187,7 @@ proven_err_t proven_http_cookie_jar_store(proven_http_cookie_jar_t *jar, proven_
     proven_cookie_t *e = ck_entries(jar);
     proven_size_t same = jar->count;
     for (proven_size_t i = 0; i < jar->count; ++i) {
-        if (ck_eq(ck_name(&e[i]), name) && proven_u8str_view_eq_ascii_ci(ck_host(&e[i]), host) && ck_eq(ck_path(&e[i]), cookie_path)) { same = i; break; }
+        if (proven_u8str_view_eq(ck_name(&e[i]), name) && proven_u8str_view_eq_ascii_ci(ck_host(&e[i]), host) && proven_u8str_view_eq(ck_path(&e[i]), cookie_path)) { same = i; break; }
     }
     if (expired) {
         if (same < jar->count) ck_remove(jar, same);

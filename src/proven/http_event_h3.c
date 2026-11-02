@@ -131,9 +131,6 @@ struct h3d {
     proven_time_t born, idle_since, write_since, bye_due;
 };
 
-static proven_u8str_view_t h3_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
-#define h3_lit(s) h3_lit_n((s), sizeof(s) - 1)
-
 static proven_byte_t h3_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
 
@@ -540,7 +537,7 @@ static proven_h3s_t *d_stream(const h3d_t *d, proven_u64 id) {
 
 /* A request the server will not pass on: a status and nothing else. */
 static void d_refuse(h3d_t *d, proven_u64 id, const char status[4]) {
-    proven_http_header_t h[1] = { { .name = h3_lit(":status"), .value = h3_lit_n(status, 3) } };
+    proven_http_header_t h[1] = { { .name = PROVEN_LIT(":status"), .value = proven_u8str_view_from_bytes(status, 3) } };
     if (proven_h3_submit_response(d->h3, id, h, 1, true) != PROVEN_OK) (void)proven_h3_stream_reset(d->h3, id, PROVEN_H3_REQUEST_REJECTED);
 }
 
@@ -557,11 +554,11 @@ static void d_request(h3d_t *d, const proven_h3_event_t *ev) {
     proven_u64 length = 0;
     for (proven_size_t i = 0; i < rq->field_count; ++i) {
         const proven_http_header_t *f = &rq->fields[i];
-        if (proven_u8str_view_eq_ascii_ci(f->name, h3_lit("host"))) {
+        if (proven_u8str_view_eq_ascii_ci(f->name, PROVEN_LIT("host"))) {
             /* Two different targets in one request (RFC 9114 section 4.3.1). */
             if (has_host || (rq->authority.size > 0 && !proven_u8str_view_eq_ascii_ci(f->value, rq->authority))) bad = true;
             has_host = true;
-        } else if (proven_u8str_view_eq_ascii_ci(f->name, h3_lit("content-length"))) {
+        } else if (proven_u8str_view_eq_ascii_ci(f->name, PROVEN_LIT("content-length"))) {
             has_length = true;
             length = 0;
             for (proven_size_t k = 0; k < f->value.size && length <= sv->cfg.max_body_bytes; ++k) length = length * 10 + (proven_u64)(f->value.ptr[k] - '0');
@@ -587,9 +584,9 @@ static void d_request(h3d_t *d, const proven_h3_event_t *ev) {
     proven_h3s_t *s = h3_alloc(sv->alloc, sizeof *s);
     if (!s) { d_refuse(d, ev->stream_id, "503"); return; }
     proven_size_t n = 0;
-    if (add_host) sv->headers[n++] = (proven_http_header_t){ .name = h3_lit("host"), .value = rq->authority };
+    if (add_host) sv->headers[n++] = (proven_http_header_t){ .name = PROVEN_LIT("host"), .value = rq->authority };
     for (proven_size_t i = 0; i < rq->field_count; ++i) sv->headers[n++] = rq->fields[i];
-    if (add_chunked) sv->headers[n++] = (proven_http_header_t){ .name = h3_lit("transfer-encoding"), .value = h3_lit("chunked") };
+    if (add_chunked) sv->headers[n++] = (proven_http_header_t){ .name = PROVEN_LIT("transfer-encoding"), .value = PROVEN_LIT("chunked") };
     proven_http_request_t req = {
         .method = proven_http_method_from_text(rq->method), .method_text = rq->method,
         .target = connect ? rq->authority : rq->path,
@@ -610,14 +607,14 @@ static void d_request(h3d_t *d, const proven_h3_event_t *ev) {
     if (d->streams) d->streams->prev = s;
     d->streams = s;
     d->stream_count++;
-    const bool expects = !ev->end_stream && proven_http_header_has_token(sv->headers, n, h3_lit("expect"), h3_lit("100-continue"));
+    const bool expects = !ev->end_stream && proven_http_header_has_token(sv->headers, n, PROVEN_LIT("expect"), PROVEN_LIT("100-continue"));
 
     s_enter(s);
     d->calls++;                                    /* what the handler does in here is sent when it returns */
     sv->cfg.on.on_request(sv->cfg.ctx, (proven_http_stream_t *)(void *)s, &req);
     d->calls--;
     if (!s->dead && !d->dead && expects && !s->response_begun) {
-        proven_http_header_t go_on[1] = { { .name = h3_lit(":status"), .value = h3_lit("100") } };
+        proven_http_header_t go_on[1] = { { .name = PROVEN_LIT(":status"), .value = PROVEN_LIT("100") } };
         (void)proven_h3_submit_response(d->h3, s->id, go_on, 1, false);
     }
     s_leave(s);
@@ -629,7 +626,7 @@ static void d_body(h3d_t *d, proven_h3s_t *s, proven_mem_view_t piece, bool last
     if (s->body_seen > sv->cfg.max_body_bytes) {
         if (!s->response_begun) {
             /* A complete answer to an unfinished request tells the client to stop sending. */
-            proven_http_header_t h[1] = { { .name = h3_lit(":status"), .value = h3_lit("413") } };
+            proven_http_header_t h[1] = { { .name = PROVEN_LIT(":status"), .value = PROVEN_LIT("413") } };
             if (proven_h3_submit_response(d->h3, s->id, h, 1, true) == PROVEN_OK) s->engine_done = true;
         }
         s_reset(s, PROVEN_H3_REQUEST_CANCELLED, PROVEN_ERR_OUT_OF_BOUNDS);
@@ -1095,7 +1092,7 @@ proven_u16 proven_http_event_h3_port_(const proven_http_event_server_t *sv, prov
 
 proven_size_t proven_http_event_alt_svc_(const proven_http_event_server_t *sv, proven_u16 local_port, const proven_http_header_t *headers,
                                          proven_size_t header_count, proven_byte_t out[16]) {
-    for (proven_size_t i = 0; i < header_count && headers; ++i) if (proven_u8str_view_eq_ascii_ci(headers[i].name, h3_lit("alt-svc"))) return 0;
+    for (proven_size_t i = 0; i < header_count && headers; ++i) if (proven_u8str_view_eq_ascii_ci(headers[i].name, PROVEN_LIT("alt-svc"))) return 0;
     proven_u16 port = proven_http_event_h3_port_(sv, local_port);
     if (port == 0) return 0;
     proven_byte_t digits[5];
@@ -1136,14 +1133,14 @@ void proven_http_event_h3_compress_(proven_http_stream_t *stream) {
 }
 
 static bool h3_is_driver_header(proven_u8str_view_t name) {
-    return proven_u8str_view_eq_ascii_ci(name, h3_lit("content-length")) || proven_u8str_view_eq_ascii_ci(name, h3_lit("transfer-encoding")) ||
-           proven_u8str_view_eq_ascii_ci(name, h3_lit("connection")) || proven_u8str_view_eq_ascii_ci(name, h3_lit("date"));
+    return proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("content-length")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("transfer-encoding")) ||
+           proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("connection")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("date"));
 }
 
 /* Fields of an HTTP/1.1 connection: not sent over HTTP/3 (RFC 9114 section 4.2), rather than
  * the response refused for them. */
 static bool h3_is_hop_header(proven_u8str_view_t name) {
-    return proven_u8str_view_eq_ascii_ci(name, h3_lit("keep-alive")) || proven_u8str_view_eq_ascii_ci(name, h3_lit("proxy-connection")) || proven_u8str_view_eq_ascii_ci(name, h3_lit("upgrade"));
+    return proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("keep-alive")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("proxy-connection")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("upgrade"));
 }
 
 static proven_err_t s_head(proven_h3s_t *s, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
@@ -1162,8 +1159,8 @@ static proven_err_t s_head(proven_h3s_t *s, proven_u16 status, const proven_http
     proven_byte_t date[PROVEN_HTTP_DATE_SIZE], digits[20];
     proven_size_t n = 0, at = 0, nd = 0;
     proven_err_t e = PROVEN_OK;
-    list[n++] = (proven_http_header_t){ .name = h3_lit(":status"), .value = { .ptr = code, .size = 3 } };
-    if (proven_http_date_format(proven_time_now(), date) == PROVEN_OK) list[n++] = (proven_http_header_t){ .name = h3_lit("date"), .value = { .ptr = date, .size = sizeof date } };
+    list[n++] = (proven_http_header_t){ .name = PROVEN_LIT(":status"), .value = { .ptr = code, .size = 3 } };
+    if (proven_http_date_format(proven_time_now(), date) == PROVEN_OK) list[n++] = (proven_http_header_t){ .name = PROVEN_LIT("date"), .value = { .ptr = date, .size = sizeof date } };
     for (proven_size_t i = 0; i < header_count && e == PROVEN_OK; ++i) {
         if (h3_is_hop_header(headers[i].name)) continue;
         if (at + headers[i].name.size > sv->cfg.max_head_bytes) { e = PROVEN_ERR_OUT_OF_BOUNDS; break; }
@@ -1173,12 +1170,12 @@ static proven_err_t s_head(proven_h3s_t *s, proven_u16 status, const proven_http
     }
     const bool no_body_status = status == 204 || status == 304;
     if (e == PROVEN_OK) {
-        if (vary) list[n++] = (proven_http_header_t){ .name = h3_lit("vary"), .value = h3_lit("accept-encoding") };
-        if (coding != PROVEN_HTTP_CODING_IDENTITY) list[n++] = (proven_http_header_t){ .name = h3_lit("content-encoding"), .value = proven_http_coding_token_(coding) };
+        if (vary) list[n++] = (proven_http_header_t){ .name = PROVEN_LIT("vary"), .value = PROVEN_LIT("accept-encoding") };
+        if (coding != PROVEN_HTTP_CODING_IDENTITY) list[n++] = (proven_http_header_t){ .name = PROVEN_LIT("content-encoding"), .value = proven_http_coding_token_(coding) };
         if (!no_body_status && length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) {
             proven_u64 v = length;
             do { digits[sizeof digits - 1 - nd++] = (proven_byte_t)('0' + v % 10); v /= 10; } while (v > 0);
-            list[n++] = (proven_http_header_t){ .name = h3_lit("content-length"), .value = { .ptr = digits + sizeof digits - nd, .size = nd } };
+            list[n++] = (proven_http_header_t){ .name = PROVEN_LIT("content-length"), .value = { .ptr = digits + sizeof digits - nd, .size = nd } };
         }
         s->bodiless = no_body_status || s->method == PROVEN_HTTP_HEAD;
         e = proven_h3_submit_response(d->h3, s->id, list, n, end_stream || s->bodiless);

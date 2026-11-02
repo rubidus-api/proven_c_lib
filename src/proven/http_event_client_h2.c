@@ -116,9 +116,6 @@ struct c2conn {
 /* The engine's clock for growing windows: microseconds. */
 static proven_u64 h2_now_us(void) { return (proven_u64)proven_time_monotonic_now() / 1000u; }
 
-static proven_u8str_view_t c2_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
-#define c2_lit(s) c2_lit_n((s), sizeof(s) - 1)
-
 static proven_byte_t c2_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
 
@@ -477,7 +474,7 @@ static proven_err_t r_submit(proven_c2req_t *r) {
     proven_http_event_client_t *cl = c->client;
     /* The URL was read when the request was started; the connection is its origin. */
     if (r->query_alone) return PROVEN_ERR_INVALID_ARG;
-    const proven_u8str_view_t path = r->target.size > 0 ? r->target : c2_lit("/");
+    const proven_u8str_view_t path = r->target.size > 0 ? r->target : PROVEN_LIT("/");
     /* :authority is what Host would have been: the port only when it is not the scheme's own. */
     proven_byte_t authority[300], digits[20];
     proven_size_t al = 0, nd = 0;
@@ -497,37 +494,37 @@ static proven_err_t r_submit(proven_c2req_t *r) {
     }
     proven_size_t n = 0, at = 0;
     proven_err_t e = PROVEN_OK;
-    list[n++] = (proven_http_header_t){ .name = c2_lit(":method"), .value = r->method };
-    list[n++] = (proven_http_header_t){ .name = c2_lit(":scheme"), .value = c->https ? c2_lit("https") : c2_lit("http") };
-    list[n++] = (proven_http_header_t){ .name = c2_lit(":authority"), .value = { .ptr = authority, .size = al } };
-    list[n++] = (proven_http_header_t){ .name = c2_lit(":path"), .value = path };
+    list[n++] = (proven_http_header_t){ .name = PROVEN_LIT(":method"), .value = r->method };
+    list[n++] = (proven_http_header_t){ .name = PROVEN_LIT(":scheme"), .value = c->https ? PROVEN_LIT("https") : PROVEN_LIT("http") };
+    list[n++] = (proven_http_header_t){ .name = PROVEN_LIT(":authority"), .value = { .ptr = authority, .size = al } };
+    list[n++] = (proven_http_header_t){ .name = PROVEN_LIT(":path"), .value = path };
     bool has_accept = false, has_range = false;
     for (proven_size_t i = 0; i < r->header_count; ++i) {
         proven_u8str_view_t name = r->headers[i].name;
-        if (proven_u8str_view_eq_ascii_ci(name, c2_lit("accept-encoding"))) has_accept = true;
-        if (proven_u8str_view_eq_ascii_ci(name, c2_lit("range"))) has_range = true;
+        if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("accept-encoding"))) has_accept = true;
+        if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("range"))) has_range = true;
         /* Fields that describe an HTTP/1.1 connection are not sent on this one. */
-        if (proven_u8str_view_eq_ascii_ci(name, c2_lit("keep-alive")) || proven_u8str_view_eq_ascii_ci(name, c2_lit("proxy-connection")) || proven_u8str_view_eq_ascii_ci(name, c2_lit("upgrade"))) continue;
-        if (proven_u8str_view_eq_ascii_ci(name, c2_lit("te")) && !proven_u8str_view_eq_ascii_ci(r->headers[i].value, c2_lit("trailers"))) continue;
+        if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("keep-alive")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("proxy-connection")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("upgrade"))) continue;
+        if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("te")) && !proven_u8str_view_eq_ascii_ci(r->headers[i].value, PROVEN_LIT("trailers"))) continue;
         if (at + name.size > cl->cfg.max_head_bytes) { e = PROVEN_ERR_OUT_OF_BOUNDS; break; }
         for (proven_size_t k = 0; k < name.size; ++k) cl->hbuf[at + k] = c2_lower(name.ptr[k]);
         list[n++] = (proven_http_header_t){ .name = { .ptr = cl->hbuf + at, .size = name.size }, .value = r->headers[i].value };
         at += name.size;
     }
-    const bool body_method = proven_u8str_view_eq_ascii_ci(r->method, c2_lit("POST")) || proven_u8str_view_eq_ascii_ci(r->method, c2_lit("PUT")) || proven_u8str_view_eq_ascii_ci(r->method, c2_lit("PATCH"));
+    const bool body_method = proven_u8str_view_eq_ascii_ci(r->method, PROVEN_LIT("POST")) || proven_u8str_view_eq_ascii_ci(r->method, PROVEN_LIT("PUT")) || proven_u8str_view_eq_ascii_ci(r->method, PROVEN_LIT("PATCH"));
     if (e == PROVEN_OK) {
-        if (cl->cfg.decompress && !has_accept && !has_range) list[n++] = (proven_http_header_t){ .name = c2_lit("accept-encoding"), .value = proven_http_decoder_accept_(cl->cfg.decompress_zstd, cl->cfg.decompress_brotli) };
+        if (cl->cfg.decompress && !has_accept && !has_range) list[n++] = (proven_http_header_t){ .name = PROVEN_LIT("accept-encoding"), .value = proven_http_decoder_accept_(cl->cfg.decompress_zstd, cl->cfg.decompress_brotli) };
         proven_u64 length = r->body.size > 0 ? r->body.size : r->body_length;
         if (r->body.size > 0 || (r->body_length != PROVEN_HTTP_EVENT_LENGTH_UNKNOWN && (r->body_length > 0 || body_method))) {
             do { digits[sizeof digits - 1 - nd++] = (proven_byte_t)('0' + length % 10); length /= 10; } while (length > 0);
-            list[n++] = (proven_http_header_t){ .name = c2_lit("content-length"), .value = { .ptr = digits + sizeof digits - nd, .size = nd } };
+            list[n++] = (proven_http_header_t){ .name = PROVEN_LIT("content-length"), .value = { .ptr = digits + sizeof digits - nd, .size = nd } };
         }
         e = proven_h2_conn_submit_request(c->engine, list, n, !r->streamed && r->body.size == 0, &r->id);
     }
     if (list != small) cl->alloc.free_fn(cl->alloc.ctx, list);
     if (e != PROVEN_OK) { r->id = 0; return e; }
     proven_h2_conn_stream_set_user(c->engine, r->id, r);
-    r->head_only = proven_u8str_view_eq_ascii_ci(r->method, c2_lit("HEAD"));
+    r->head_only = proven_u8str_view_eq_ascii_ci(r->method, PROVEN_LIT("HEAD"));
     if (!r->streamed) {
         r->end_asked = true;
         if (r->body.size == 0) r->engine_done = true;
@@ -1126,7 +1123,7 @@ static proven_err_t c_open(proven_http_event_client_t *cl, bool https, proven_u8
         c->session_stored = c->session_mark;
         /* Early data (RFC-0027) is offered with a session made over HTTP/2: what goes early is
          * HTTP/2's preface, settings and a request, which only a server that agrees h2 again reads. */
-        e = cl->cfg.tls->early_data && proven_tls_session_alpn_is_(&c->session, c2_lit("h2")) ? proven_tls_client_create_early_(cl->cfg.tls, host, &c->session, &c->tls)
+        e = cl->cfg.tls->early_data && proven_tls_session_alpn_is_(&c->session, PROVEN_LIT("h2")) ? proven_tls_client_create_early_(cl->cfg.tls, host, &c->session, &c->tls)
                                                                                                 : proven_tls_client_create(cl->cfg.tls, host, &c->session, &c->tls);
     }
     /* The loop makes the connection and says how it went from the loop, so that nothing is
@@ -1435,7 +1432,7 @@ proven_err_t proven_http_event_client_h2_start_(proven_http_event_client_t *cl, 
     const proven_u8str_view_t host = url->host;
     const proven_u16 port = url->has_port ? url->port : proven_url_default_port(url->scheme);
     if (host.size == 0 || host.size > 255) return PROVEN_ERR_INVALID_ARG;
-    const proven_u8str_view_t method = o->method.size ? o->method : c2_lit("GET");
+    const proven_u8str_view_t method = o->method.size ? o->method : PROVEN_LIT("GET");
     c2conn_t *c = c_find(cl, https, host, port, &to, (void *)0);
     if (c && c->state == C2_H1) return PROVEN_ERR_UNSUPPORTED;
     if (c) {

@@ -6,6 +6,7 @@
 #include "proven/time.h"
 #include "proven_internal_net.h"
 #include "proven_internal_quic_net.h"
+#include "../../platform/proven_sys_mem.h"
 #include <stdatomic.h>
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -1833,7 +1834,9 @@ static proven_err_t sock_hold(proven_loop_t *l, loop_sock_t *s, const proven_byt
         proven_size_t k = n - *taken;
         if (k > room.size) k = room.size;
         if (k > limit - s->queued) k = limit - s->queued;
-        for (proven_size_t i = 0; i < k; ++i) room.ptr[i] = p[*taken + i];
+        /* A block copy: every byte the socket does not take at once - with sends through the
+         * ring, every byte - is held here, and a loop of single bytes is what -O2 made of it. */
+        proven_sys_mem_copy(room.ptr, p + *taken, k);
         sock_tail(s)->used += (proven_u32)k;
         s->queued += (proven_u32)k;
         *taken += k;
@@ -1861,7 +1864,7 @@ proven_result_size_t proven_loop_sendv_(proven_loop_t *l, proven_loop_sock_t *so
         proven_byte_t small[2048];
         if (count > 1 && total <= sizeof small) {
             proven_size_t at = 0;
-            for (proven_size_t i = 0; i < count; ++i) { for (proven_size_t k = 0; k < parts[i].size; ++k) small[at + k] = parts[i].ptr[k]; at += parts[i].size; }
+            for (proven_size_t i = 0; i < count; ++i) { proven_sys_mem_copy(small + at, parts[i].ptr, parts[i].size); at += parts[i].size; }
             proven_result_size_t w = proven_net_write(&conn, (proven_mem_view_t){ .ptr = small, .size = total }, PROVEN_NET_DONT_WAIT);
             e = w.err;
             gone = w.value;

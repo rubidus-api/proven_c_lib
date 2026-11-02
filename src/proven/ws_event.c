@@ -95,9 +95,6 @@ static proven_chacha_rng_t *ws_masks(const proven_ws_stream_t *ws) {
     return (proven_chacha_rng_t *)(void *)((proven_byte_t *)(ws + 1) + (ws->may_deflate ? sizeof(proven_ws_z_t) : 0));
 }
 
-static proven_u8str_view_t ws_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
-#define ws_lit(s) ws_lit_n((s), sizeof(s) - 1)
-
 static void ws_enter(proven_ws_stream_t *ws) { ws->depth++; }
 static void ws_rx_free(proven_ws_stream_t *ws) {
     proven_ws_rx_t *rx = ws_rx(ws);
@@ -182,7 +179,7 @@ static void ws_send_close(proven_ws_stream_t *ws, proven_u16 code, proven_u8str_
     proven_mem_mut_t out = { .ptr = payload, .size = sizeof payload };
     if (code != PROVEN_WS_CLOSE_NO_STATUS && proven_ws_close_write(out, &len, code, reason) != PROVEN_OK) {
         len = 0;
-        if (proven_ws_close_write(out, &len, code, ws_lit("")) != PROVEN_OK) len = 0;
+        if (proven_ws_close_write(out, &len, code, PROVEN_LIT("")) != PROVEN_OK) len = 0;
     }
     ws->close_sent = true;
     ws->close_code = code;
@@ -194,7 +191,7 @@ static void ws_send_close(proven_ws_stream_t *ws, proven_u16 code, proven_u8str_
 /* The client broke the protocol, or sent more than is accepted: say so and end. */
 static void ws_fail(proven_ws_stream_t *ws, proven_err_t why) {
     proven_u16 code = proven_ws_close_code_for(why);
-    if (!ws->close_sent) ws_send_close(ws, code, ws_lit(""));
+    if (!ws->close_sent) ws_send_close(ws, code, PROVEN_LIT(""));
     if (!ws->closed) ws_end(ws, true, code, why);
 }
 
@@ -324,7 +321,7 @@ static proven_size_t ws_on_input(void *raw, proven_mem_mut_t in) {
                 ws_end(ws, true, ws->close_code, PROVEN_OK);
             } else {
                 proven_u16 code = ev.close_code;
-                ws_send_close(ws, code, ws_lit(""));
+                ws_send_close(ws, code, PROVEN_LIT(""));
                 if (!ws->closed) ws_end(ws, true, code, PROVEN_OK);
             }
             break;
@@ -458,8 +455,8 @@ proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_h
     proven_http_header_t h2_fields[2];
     proven_size_t h2_count = 0;
     if (h2) {
-        if (config->subprotocol.size > 0) h2_fields[h2_count++] = (proven_http_header_t){ .name = ws_lit("sec-websocket-protocol"), .value = config->subprotocol };
-        if (deflate) h2_fields[h2_count++] = (proven_http_header_t){ .name = ws_lit("sec-websocket-extensions"), .value = { .ptr = extension, .size = extension_len } };
+        if (config->subprotocol.size > 0) h2_fields[h2_count++] = (proven_http_header_t){ .name = PROVEN_LIT("sec-websocket-protocol"), .value = config->subprotocol };
+        if (deflate) h2_fields[h2_count++] = (proven_http_header_t){ .name = PROVEN_LIT("sec-websocket-extensions"), .value = { .ptr = extension, .size = extension_len } };
     }
 
     /* Over HTTP/1.1, the 101 as text. */
@@ -467,16 +464,16 @@ proven_err_t proven_ws_event_accept(proven_http_stream_t *stream, const proven_h
     proven_mem_mut_t answer = { .ptr = text, .size = sizeof text };
     proven_size_t len = 0;
     if (!h2) {
-        e = proven_http_write_status_line(answer, &len, 101, ws_lit(""));
+        e = proven_http_write_status_line(answer, &len, 101, PROVEN_LIT(""));
         proven_byte_t date[PROVEN_HTTP_DATE_SIZE];
         if (e == PROVEN_OK && proven_http_date_format(proven_time_now(), date) == PROVEN_OK) {
-            e = proven_http_write_header(answer, &len, ws_lit("Date"), (proven_u8str_view_t){ .ptr = date, .size = sizeof date });
+            e = proven_http_write_header(answer, &len, PROVEN_LIT("Date"), (proven_u8str_view_t){ .ptr = date, .size = sizeof date });
         }
-        if (e == PROVEN_OK) e = proven_http_write_header(answer, &len, ws_lit("Upgrade"), ws_lit("websocket"));
-        if (e == PROVEN_OK) e = proven_http_write_header(answer, &len, ws_lit("Connection"), ws_lit("Upgrade"));
-        if (e == PROVEN_OK) e = proven_http_write_header(answer, &len, ws_lit("Sec-WebSocket-Accept"), (proven_u8str_view_t){ .ptr = accept, .size = sizeof accept });
-        if (e == PROVEN_OK && config->subprotocol.size > 0) e = proven_http_write_header(answer, &len, ws_lit("Sec-WebSocket-Protocol"), config->subprotocol);
-        if (e == PROVEN_OK && deflate) e = proven_http_write_header(answer, &len, ws_lit("Sec-WebSocket-Extensions"), (proven_u8str_view_t){ .ptr = extension, .size = extension_len });
+        if (e == PROVEN_OK) e = proven_http_write_header(answer, &len, PROVEN_LIT("Upgrade"), PROVEN_LIT("websocket"));
+        if (e == PROVEN_OK) e = proven_http_write_header(answer, &len, PROVEN_LIT("Connection"), PROVEN_LIT("Upgrade"));
+        if (e == PROVEN_OK) e = proven_http_write_header(answer, &len, PROVEN_LIT("Sec-WebSocket-Accept"), (proven_u8str_view_t){ .ptr = accept, .size = sizeof accept });
+        if (e == PROVEN_OK && config->subprotocol.size > 0) e = proven_http_write_header(answer, &len, PROVEN_LIT("Sec-WebSocket-Protocol"), config->subprotocol);
+        if (e == PROVEN_OK && deflate) e = proven_http_write_header(answer, &len, PROVEN_LIT("Sec-WebSocket-Extensions"), (proven_u8str_view_t){ .ptr = extension, .size = extension_len });
         if (e == PROVEN_OK) e = proven_http_write_head_end(answer, &len);
         if (e != PROVEN_OK) return e == PROVEN_ERR_OUT_OF_BOUNDS ? PROVEN_ERR_INVALID_ARG : e;      /* a subprotocol too long to name */
     }

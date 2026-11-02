@@ -1196,9 +1196,11 @@ int main(void) {
         via.proxy = sv(proxy);
         PROVEN_TEST_ASSERT(proven_http_client_create(&via, &c2) == PROVEN_OK, "a client with an HTTP proxy", "");
         memset(proxy, 0, sizeof proxy);        /* the client copied it */
-        PROVEN_TEST_ASSERT(fetch(c2, sv("http://origin.invalid:8080/a/b?c=d#frag"), &e) == 200 && e == PROVEN_OK && body_is("via proxy"), "a plain URL is fetched through it", "");
+        PROVEN_TEST_ASSERT(fetch(c2, sv("http://ouser:osecret@origin.invalid:8080/a/b?c=d#frag"), &e) == 200 && e == PROVEN_OK && body_is("via proxy"), "a plain URL is fetched through it", "");
         peer_finish(&p);
-        PROVEN_TEST_ASSERT(strstr(p.first, "GET http://origin.invalid:8080/a/b?c=d HTTP/1.1\r\n") == p.first, "the proxy was asked for the absolute URL, without the fragment", "");
+        PROVEN_TEST_ASSERT(strstr(p.first, "GET http://origin.invalid:8080/a/b?c=d HTTP/1.1\r\n") == p.first && strstr(p.first, "osecret") == NULL,
+            "the proxy was asked for the absolute URL, without the fragment and without the URL's user and password (RFC 9110 section 4.2.4)",
+            "Check cl_absolute_target in src/proven/http_client.c: the userinfo of the URL is never written into a request.");
         PROVEN_TEST_ASSERT(strstr(p.first, "\r\nHost: origin.invalid:8080\r\n") != NULL, "with the origin as Host", "");
         PROVEN_TEST_ASSERT(strstr(p.first, "\r\nProxy-Authorization: Basic cHVzZXI6cHBhc3M=\r\n") != NULL, "and the proxy's credentials from its URL", "");
 

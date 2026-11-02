@@ -24,9 +24,6 @@
  * begins the connect, and everything that can fail afterwards happens from the loop.
  */
 
-static proven_u8str_view_t cl_lit_n(const char *s, proven_size_t n) { return (proven_u8str_view_t){ .ptr = (const proven_byte_t *)s, .size = n }; }
-#define cl_lit(s) cl_lit_n((s), sizeof(s) - 1)
-
 static proven_byte_t cl_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
 static void *cl_alloc(proven_allocator_t a, proven_size_t n) {
@@ -1175,8 +1172,8 @@ void proven_http_event_client_ended_(proven_http_event_client_t *cl) {
 proven_size_t proven_http_event_client_requests(const proven_http_event_client_t *cl) { return cl ? cl->request_count : 0; }
 
 static bool cl_is_reserved_header(proven_u8str_view_t name) {
-    return proven_u8str_view_eq_ascii_ci(name, cl_lit("Host")) || proven_u8str_view_eq_ascii_ci(name, cl_lit("Content-Length")) ||
-           proven_u8str_view_eq_ascii_ci(name, cl_lit("Transfer-Encoding")) || proven_u8str_view_eq_ascii_ci(name, cl_lit("Connection"));
+    return proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("Host")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("Content-Length")) ||
+           proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("Transfer-Encoding")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("Connection"));
 }
 
 /* Write the request head into the client's head buffer. */
@@ -1184,7 +1181,7 @@ static proven_err_t cl_build_head(proven_http_event_client_t *cl, const proven_h
                                   proven_u8str_view_t method, bool expect, proven_size_t *len) {
     proven_mem_mut_t out = { .ptr = cl->hbuf, .size = cl->cfg.max_head_bytes };
     /* The target is the path and the query, exactly as written. */
-    proven_u8str_view_t target = cl_lit("/");
+    proven_u8str_view_t target = PROVEN_LIT("/");
     if (u->path.size > 0) {
         target = u->path;
         if (u->has_query) target.size = (proven_size_t)(u->query.ptr + u->query.size - u->path.ptr);
@@ -1208,26 +1205,26 @@ static proven_err_t cl_build_head(proven_http_event_client_t *cl, const proven_h
         do { digits[dn++] = (char)('0' + p % 10); p /= 10; } while (p);
         while (dn > 0) host[hl++] = (proven_byte_t)digits[--dn];
     }
-    if (e == PROVEN_OK) e = proven_http_write_header(out, len, cl_lit("Host"), (proven_u8str_view_t){ .ptr = host, .size = hl });
+    if (e == PROVEN_OK) e = proven_http_write_header(out, len, PROVEN_LIT("Host"), (proven_u8str_view_t){ .ptr = host, .size = hl });
     for (proven_size_t i = 0; i < o->header_count && e == PROVEN_OK; ++i) {
         if (cl_is_reserved_header(o->headers[i].name)) return PROVEN_ERR_INVALID_ARG;
-        if (expect && proven_u8str_view_eq_ascii_ci(o->headers[i].name, cl_lit("Expect"))) return PROVEN_ERR_INVALID_ARG;     /* this writes it */
+        if (expect && proven_u8str_view_eq_ascii_ci(o->headers[i].name, PROVEN_LIT("Expect"))) return PROVEN_ERR_INVALID_ARG;     /* this writes it */
         e = proven_http_write_header(out, len, o->headers[i].name, o->headers[i].value);
     }
-    if (e == PROVEN_OK && expect) e = proven_http_write_header(out, len, cl_lit("Expect"), cl_lit("100-continue"));
+    if (e == PROVEN_OK && expect) e = proven_http_write_header(out, len, PROVEN_LIT("Expect"), PROVEN_LIT("100-continue"));
     if (e == PROVEN_OK && cl->cfg.decompress &&
-        !proven_http_header_find(o->headers, o->header_count, cl_lit("Accept-Encoding"), &(proven_u8str_view_t){0}) &&
-        !proven_http_header_find(o->headers, o->header_count, cl_lit("Range"), &(proven_u8str_view_t){0})) {
-        e = proven_http_write_header(out, len, cl_lit("Accept-Encoding"), proven_http_decoder_accept_(cl->cfg.decompress_zstd, cl->cfg.decompress_brotli));
+        !proven_http_header_find(o->headers, o->header_count, PROVEN_LIT("Accept-Encoding"), &(proven_u8str_view_t){0}) &&
+        !proven_http_header_find(o->headers, o->header_count, PROVEN_LIT("Range"), &(proven_u8str_view_t){0})) {
+        e = proven_http_write_header(out, len, PROVEN_LIT("Accept-Encoding"), proven_http_decoder_accept_(cl->cfg.decompress_zstd, cl->cfg.decompress_brotli));
     }
-    bool body_method = proven_u8str_view_eq_ascii_ci(method, cl_lit("POST")) || proven_u8str_view_eq_ascii_ci(method, cl_lit("PUT")) || proven_u8str_view_eq_ascii_ci(method, cl_lit("PATCH"));
+    bool body_method = proven_u8str_view_eq_ascii_ci(method, PROVEN_LIT("POST")) || proven_u8str_view_eq_ascii_ci(method, PROVEN_LIT("PUT")) || proven_u8str_view_eq_ascii_ci(method, PROVEN_LIT("PATCH"));
     if (e == PROVEN_OK) {
-        if (o->body.size > 0) e = proven_http_write_header_u64(out, len, cl_lit("Content-Length"), o->body.size);
-        else if (o->body_length == PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) e = proven_http_write_header(out, len, cl_lit("Transfer-Encoding"), cl_lit("chunked"));
-        else if (o->body_length > 0 || body_method) e = proven_http_write_header_u64(out, len, cl_lit("Content-Length"), o->body_length);
+        if (o->body.size > 0) e = proven_http_write_header_u64(out, len, PROVEN_LIT("Content-Length"), o->body.size);
+        else if (o->body_length == PROVEN_HTTP_EVENT_LENGTH_UNKNOWN) e = proven_http_write_header(out, len, PROVEN_LIT("Transfer-Encoding"), PROVEN_LIT("chunked"));
+        else if (o->body_length > 0 || body_method) e = proven_http_write_header_u64(out, len, PROVEN_LIT("Content-Length"), o->body_length);
     }
     /* HTTP/1.1 keeps a connection unless told otherwise. */
-    if (e == PROVEN_OK && cl->cfg.no_connection_reuse) e = proven_http_write_header(out, len, cl_lit("Connection"), cl_lit("close"));
+    if (e == PROVEN_OK && cl->cfg.no_connection_reuse) e = proven_http_write_header(out, len, PROVEN_LIT("Connection"), PROVEN_LIT("close"));
     if (e == PROVEN_OK) e = proven_http_write_head_end(out, len);
     return e;
 }
@@ -1243,11 +1240,11 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
     if (!cl || !o || !o->on.on_done || (o->header_count > 0 && !o->headers) || (o->body.size > 0 && !o->body.ptr)) return PROVEN_ERR_INVALID_ARG;
     proven_url_t u;
     if (proven_url_parse(o->url, &u) != PROVEN_OK || u.host.size == 0 || u.has_userinfo) return PROVEN_ERR_INVALID_ARG;
-    bool https = proven_url_scheme_is(&u, cl_lit("https"));
-    if (!https && !proven_url_scheme_is(&u, cl_lit("http"))) return PROVEN_ERR_INVALID_ARG;
+    bool https = proven_url_scheme_is(&u, PROVEN_LIT("https"));
+    if (!https && !proven_url_scheme_is(&u, PROVEN_LIT("http"))) return PROVEN_ERR_INVALID_ARG;
     if (https && !cl->cfg.tls) return PROVEN_ERR_INVALID_ARG;      /* never in the clear instead */
-    proven_u8str_view_t method = o->method.size ? o->method : cl_lit("GET");
-    if (proven_u8str_view_eq_ascii_ci(method, cl_lit("CONNECT"))) return PROVEN_ERR_INVALID_ARG;
+    proven_u8str_view_t method = o->method.size ? o->method : PROVEN_LIT("GET");
+    if (proven_u8str_view_eq_ascii_ci(method, PROVEN_LIT("CONNECT"))) return PROVEN_ERR_INVALID_ARG;
 
     proven_net_addr_t to;
     if (o->address) to = *o->address;
@@ -1282,7 +1279,7 @@ proven_err_t proven_http_event_client_start_h1_(proven_http_event_client_t *cl, 
     if (!c) return PROVEN_ERR_NOMEM;
     *c = (proven_http_event_request_t){
         .h = { .client = cl, .kind = CL_KIND_H1 }, .on = o->on, .ctx = o->ctx, .state = CL_CONNECTING,
-        .method = proven_u8str_view_eq_ascii_ci(method, cl_lit("HEAD")) ? PROVEN_HTTP_HEAD : PROVEN_HTTP_GET,
+        .method = proven_u8str_view_eq_ascii_ci(method, PROVEN_LIT("HEAD")) ? PROVEN_HTTP_HEAD : PROVEN_HTTP_GET,
         .https = https, .to = to, .port = u.has_port ? u.port : proven_url_default_port(u.scheme), .host_len = (proven_u8)u.host.size,
     };
     for (proven_size_t i = 0; i < u.host.size; ++i) ((proven_byte_t *)(c + 1))[i] = u.host.ptr[i];
@@ -1326,7 +1323,7 @@ bool proven_http_event_client_may_go_early_(proven_u8str_view_t method, const pr
         const proven_size_t n = (proven_size_t)(i == 0 ? 3 : i == 1 ? 4 : 7);
         if (method.size == n) { bool same = true; for (proven_size_t k = 0; k < n; ++k) same = same && method.ptr[k] == (proven_byte_t)safe[i][k]; ok = ok || same; }
     }
-    for (proven_size_t i = 0; ok && i < o->header_count; ++i) if (proven_u8str_view_eq_ascii_ci(o->headers[i].name, cl_lit("Upgrade"))) ok = false;
+    for (proven_size_t i = 0; ok && i < o->header_count; ++i) if (proven_u8str_view_eq_ascii_ci(o->headers[i].name, PROVEN_LIT("Upgrade"))) ok = false;
     return ok;
 }
 
