@@ -41,6 +41,9 @@ PROVEN_BUILD_SOURCE("src/proven/crypto_ec.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/crypto_25519.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/crypto_rsa.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/cert.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("src/proven/der.c", PROVEN_SOURCE_FREESTANDING)   /* der.h: the strict DER reader and the writer */
+PROVEN_BUILD_SOURCE("src/proven/sign.c", PROVEN_SOURCE_FREESTANDING)   /* sign.h: private keys, signing and verification */
+PROVEN_BUILD_SOURCE("src/proven/aes.c", PROVEN_SOURCE_FREESTANDING)   /* aes.h: CBC and PKCS #7 padding */
 PROVEN_BUILD_SOURCE("src/proven/tls_keys.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/tls12_keys.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/tls_legacy.c", PROVEN_SOURCE_FREESTANDING)

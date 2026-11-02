@@ -34,6 +34,9 @@
 #include "proven/brotli.h"
 #endif
 #include "proven/cert.h"
+#include "proven/der.h"
+#include "proven/sign.h"
+#include "proven/aes.h"
 #include "proven/tls.h"
 #include "proven/url.h"
 #include "proven/http.h"

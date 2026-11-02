@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 134 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 135 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -348,7 +348,7 @@ Last run, 2026-11-02, Windows 11 test VM (v0.108.0): x86-64 384 PASS, 0 FAIL, 10
 ## Test catalog
 
 
-The hosted full run builds and executes 203 registered tests plus the 192 runnable manual examples - 395 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 216 test files: the 203 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 204 registered tests plus the 194 runnable manual examples - 398 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 217 test files: the 204 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -571,6 +571,24 @@ Sub-checks:
 - Every pre-existing spelling still means what it meant.
 
 Failure tip: inspect the spec parser and `render_integer` / the float case in `src/proven/fmt.c`.
+
+### `tests/test_unit_sign` - sign.h, der.h, aes.h, PBKDF2: public signing crypto
+
+Intent: verify the strict DER reader and the writer, PBKDF2 and HMAC-SHA-1 against published vectors, and RSA and P-256/P-384 keys read from PEM and DER or made from parts, signing deterministically (RFC 6979 A.2.5) and verifying both ways.
+
+Sub-checks:
+
+- DER read: an indefinite length, a long form for a short length, a leading zero length byte, a length past the input and a high tag refused with nothing taken; a two-byte length; INTEGERs minimal and non-negative (00, 7f, 0080, 010000 read; 80, 007f, empty and another tag refused); 64-bit overflow; BIT STRING unused bits that must be zero.
+- DER write: a nested element over 127 bytes read back by the reader; a SET OF of four given out of order comes out in X.690 11.6 order; too small a buffer, more than 16 deep, an element left open and one closed twice are reported once at the end.
+- PBKDF2: RFC 6070's four SHA-1 cases (to 4096 iterations, a 25-byte output), RFC 7914's SHA-256 case, SHA-512 and SHA-384 cases computed with Python's hashlib; zero iterations, an empty output and an unknown hash refused. HMAC-SHA-1: RFC 2202 cases 1 and 6.
+- EC keys: RFC 6979 A.2.5's key gives the RFC's point and signature byte for byte; the DER form and the raw one verify, a changed bit and a short signature do not; the SubjectPublicKeyInfo is 91 bytes and verifies; ECDSA over a SHA-1 digest; a zero scalar, the order, a short scalar and a non-curve refused. The TLS tests' P-256 key from "PRIVATE KEY" and "EC PRIVATE KEY" is one key and verifies under its certificate. A P-384 key written as SEC1 and PKCS #8 with der.h, read from PEM and both DERs, signs the same bytes each way; a SEC1 key whose public point is not its own, an Ed25519 key, an encrypted key and DER that is no key are refused.
+- RSA keys: the TLS tests' 2048-bit key from PKCS #8 and PKCS #1, and the same made from its parts, give the same v1.5 signature (deterministic, blinded); it verifies here, by the TLS engine's code and under the SubjectPublicKeyInfo, which is byte for byte its certificate's; v1.5 over SHA-1; PSS signatures differ by their salt and verify; a wrong qInv refused when the key is made; d optional; no generator, and a 1024-bit key, refused.
+- Certificate purposes: leaves of one CA with codeSigning (with SKI and AKI read back), serverAuth, none, a critical timeStamping, a non-critical one and a critical one with codeSigning too: only the codeSigning leaf may sign code, only the critical timeStamping-alone leaf is a TSA, no purposes still means any for a server.
+- AES-CBC: NIST SP 800-38A F.2 for 128-, 192- and 256-bit keys, encrypted whole and decrypted in two calls, with the processor's AES and with the bitsliced one; a 20-byte key and a partial block refused. PKCS #7: seven last blocks, valid and not.
+
+OpenSSL 3.5 agreed outside the suite (by hand, 2026-11-03): its 3072-bit RSA, P-256 and P-384 keys in PKCS #8, PKCS #1 and SEC1 were read; v1.5 signatures over SHA-256 and SHA-1 were identical to its own; each side verified the other's PSS and ECDSA signatures.
+
+Failure tip: inspect `src/proven/der.c`, `src/proven/sign.c`, `src/proven/aes.c`, `proven_pbkdf2` in `src/proven/hmac.c` and the EKU and key-identifier code of `src/proven/cert.c`.
 
 ### `tests/test_unit_fmt_to` - fmt: string precision, argument counts, proven_fmt_to
 

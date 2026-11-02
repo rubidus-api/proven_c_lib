@@ -279,6 +279,8 @@ void proven_crypto_aes_encrypt_block(const proven_crypto_aes_gcm_t *ctx, const p
  * elsewhere decryption is the portable, bitsliced inverse cipher. Neither takes a time that
  * depends on the data. These exist for the legacy TLS suites.
  * SECRET: the key, and the plaintext. */
+/* A context for CBC alone: 16-, 24- or 32-byte keys, no GHASH key (aes.h). SECRET: key. */
+[[nodiscard]] bool proven_crypto_aes_cbc_init(proven_crypto_aes_gcm_t *ctx, const proven_byte_t *key, proven_size_t key_len);
 void proven_crypto_aes_cbc_encrypt(const proven_crypto_aes_gcm_t *ctx, proven_byte_t iv[16], proven_byte_t *data, proven_size_t len);
 void proven_crypto_aes_cbc_decrypt(const proven_crypto_aes_gcm_t *ctx, proven_byte_t iv[16], proven_byte_t *data, proven_size_t len);
 /* A test hook: when set, contexts initialised afterwards use the portable code even where the

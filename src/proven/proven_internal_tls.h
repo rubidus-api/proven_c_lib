@@ -418,7 +418,9 @@ typedef struct {
     const proven_crypto_rsa_key_t *subject_rsa;   /* instead of subject_key, for PROVEN_TLS_KEY_RSA */
     const proven_crypto_rsa_key_t *issuer_rsa;
     bool is_ca;
-    proven_u32 eku;                               /* PROVEN_CERT_EKU_SERVER_AUTH | PROVEN_CERT_EKU_CLIENT_AUTH; 0: none */
+    proven_u32 eku;                               /* PROVEN_CERT_EKU_SERVER_AUTH, _CLIENT_AUTH, _CODE_SIGNING, _TIME_STAMPING; 0: none */
+    bool eku_critical;                            /* extendedKeyUsage marked critical (a TSA's, RFC 3161) */
+    proven_mem_view_t ski, aki;                   /* subjectKeyIdentifier and authorityKeyIdentifier's keyIdentifier; empty: none */
     const proven_u8str_view_t *names;             /* subjectAltName entries: DNS names and IP literals */
     proven_size_t name_count;
     proven_i64 not_before, not_after;

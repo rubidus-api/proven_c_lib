@@ -995,7 +995,7 @@ Two things this table tells you that the file names do not:
 | `map.h` | Open-addressing map | Chapter 4 |
 | `algorithm.h` | Array sort and search helpers | Chapter 4 |
 | `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512, by use case | Chapter 4 |
-| `hmac.h` | HMAC and HKDF over the SHA-2 family | Chapter 4 |
+| `hmac.h` | HMAC, HKDF and PBKDF2 over the SHA-2 family (and SHA-1, for old formats) | Chapters 4 and 13 |
 | `deflate.h` | DEFLATE compression and decompression, bare or as zlib or gzip; streaming, with the output bounded by the caller | Chapter 16 |
 | `zstd.h` | Zstandard decompression and compression (nineteen levels, dictionaries, long-distance matching), streaming, with the output and the window bounded by the caller | Chapter 16 |
 | `brotli.h` | Brotli decompression, streaming, with the output and the window bounded by the caller; left out by `PROVEN_NO_BROTLI` | Chapter 16 |
@@ -1016,6 +1016,9 @@ Two things this table tells you that the file names do not:
 | `ws.h` | WebSocket codec: handshake values and checks, frames, a message decoder, the compression extension's handshake and frame bit | Chapter 12 |
 | `ws_conn.h` | WebSocket connections over a transport, client and server; compressed messages when asked for (hosted-only) | Chapter 12 |
 | `cert.h` | X.509 certificates: a strict reader, host-name matching, PEM, a store of trust anchors, chain verification. Only reading the system's roots is hosted. | Chapter 13 |
+| `sign.h` | Private keys (RSA, P-256, P-384) from PEM, DER or parts; signing a digest (PKCS #1 v1.5, PSS, deterministic ECDSA) and verifying | Chapter 13 |
+| `der.h` | The strict DER reader, and a writer with lengths fixed up and SET OF sorted | Chapter 13 |
+| `aes.h` | AES-CBC (128, 192, 256) and PKCS #7 padding, for reading encrypted key files | Chapter 13 |
 | `tls.h` | TLS 1.3 and a cut-down TLS 1.2, client and server: a config, an engine with no I/O, and (hosted-only) a transport wrapper and the HTTP wrap | Chapter 14 |
 | `loop.h` | An event loop: socket readiness, timers, work posted from other threads, a shared scratch buffer (hosted-only) | Chapter 15 |
 | `http_event.h` | HTTP server driven by events on a loop - HTTP/1.1, and HTTP/2 and HTTP/3 beside it when asked: callbacks, responses in pieces with backpressure, optional TLS, a response compressed when asked (hosted-only) | Chapters 15, 16, 17 |

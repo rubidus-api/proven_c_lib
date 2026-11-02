@@ -60,6 +60,28 @@ written; their tags still exist.
 
 ### Added
 
+- **Public signing crypto** (RFC-0042), asked by a downstream signer that carried its own copies
+  of what the TLS engine already had inside:
+  - `sign.h`: private keys (`proven_pkey_t`) read from PEM or DER - "PRIVATE KEY" (PKCS #8),
+    "RSA PRIVATE KEY", "EC PRIVATE KEY" - or made from parts (RSA n, e, d, p, q, dP, dQ, qInv; an
+    EC scalar): RSA 2048 to 4096 bits, P-256 and P-384. `proven_pkey_sign` signs a digest with
+    RSA PKCS #1 v1.5 or PSS, or ECDSA (DER or raw, nonces of RFC 6979); v1.5 and ECDSA are
+    deterministic. RSA signatures are blinded (the caller's `proven_rng_t`) and checked against
+    the public key before they are given out. `proven_verify_rsa`, `proven_verify_ecdsa` and
+    `proven_verify_spki` verify; the parts, the point and a SubjectPublicKeyInfo can be read
+    back. v1.5 signatures are byte for byte OpenSSL's, and each side verifies the other's PSS and
+    ECDSA (checked by hand with OpenSSL 3.5).
+  - `der.h`: the strict DER reader X.509 and the keys use, and a writer into caller memory with
+    lengths fixed up on close and `proven_der_end_set_of` putting a SET OF in DER order.
+  - `aes.h`: AES-CBC with 128-, 192- and 256-bit keys over whole blocks, and
+    `proven_pkcs7_unpad`, for opening encrypted key files.
+  - `hmac.h`: `proven_pbkdf2` (RFC 8018), and `PROVEN_HMAC_SHA1` for PKCS #12, RSA v1.5 over
+    SHA-1 and old signatures. Certificate verification still refuses SHA-1 signatures.
+  - `cert.h`: `PROVEN_CERT_USE_CODE_SIGNING` and `PROVEN_CERT_USE_TIMESTAMPING` for
+    `proven_cert_verify` (the leaf must name the purpose; a time-stamping one alone and critical,
+    RFC 3161 2.3); `PROVEN_CERT_EKU_CODE_SIGNING` and `_TIME_STAMPING`, which were `_OTHER`;
+    `subject_key_id`, `authority_key_id`, `ext_key_usage_critical` and `ext_key_usage_count`.
+  Chapter 13 has a section for each and a runnable example; `test_unit_sign` the vectors.
 - **`proven_fmt_to(buf, cap, fmt, ...)`**: snprintf's shape for a fixed buffer - always NUL-terminated
   when `cap > 0`, cut between UTF-8 characters, `required` reported, `cap == 0` to measure. Asked by
   a downstream project replacing its `snprintf` calls. The macro calls `proven_fmt_to_internal`,

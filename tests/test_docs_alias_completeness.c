@@ -122,7 +122,7 @@ int main(void) {
         "could not read include/proven/alias_xcv.h",
         "This test must run from the repository root; check the build driver's working directory.");
 
-    static char names[512][96];
+    static char names[1024][96];
     int count = 0;
 
     DIR *d = opendir("include/proven");
@@ -140,7 +140,7 @@ int main(void) {
         snprintf(path, sizeof path, "include/proven/%s", n);
         char *src = read_text_file(path);
         PROVEN_TEST_ASSERT(src != NULL, "could not read a public header", "");
-        count = collect_public_fns(src, names, 512, count);
+        count = collect_public_fns(src, names, 1024, count);
         free(src);
         ++headers;
     }

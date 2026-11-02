@@ -29,6 +29,9 @@
 6. [체인 검증](#6-체인-검증)
 7. [피닝](#7-피닝)
 8. [무엇을 검사하고, 무엇을 받아들이고, 무엇이 없는가](#8-무엇을-검사하고-무엇을-받아들이고-무엇이-없는가)
+9. [개인 키와 서명](#9-개인-키와-서명)
+10. [DER 읽기와 쓰기](#10-der-읽기와-쓰기)
+11. [암호화된 키 파일: PBKDF2와 AES-CBC](#11-암호화된-키-파일-pbkdf2와-aes-cbc)
 
 ## 1. 인증서가 무엇인지, 한 쪽으로
 
@@ -423,9 +426,234 @@ SHA-1로 서명된 오래된 루트도 여전히 체인의 닻이 된다.
 - **Certificate Transparency.** 인증서가 공개 로그에 기록되었는지 검사하지 않는다.
 - **인증서 정책.** 정책 확장은 그것을 담은 인증서가 거부되지 않도록 인식하되, 강제하지 않는다.
 - **국제화된 이름.** ASCII로 비교한다. `xn--` 꼴로 줘라.
-- **개인 키.** 여기 있는 어떤 것도 개인 키를 읽거나 갖고 있지 않다.
+- **개인 키.** `proven_cert_*`는 개인 키를 읽거나 갖지 않는다. `sign.h`(9절)가 한다.
 
 **어떻게 시험했는가.** 다른 구현이 만든 인증서 체인으로, 위에 적은 수락과 거부 하나하나에 대해.
 공개 서버에서 저장한 체인을 시스템의 루트에 대해. 그리고 그 밑의 서명 알고리즘은 Project
 Wycheproof로 - 구현이 깨진다고 알려진 방식으로 구현을 깨도록 만든 입력 모음이다. `TEST.md`의
 카탈로그가 등록된 테스트 각각이 무엇을 덮는지 말한다.
+
+## 9. 개인 키와 서명
+
+`sign.h`(v0.109.0부터)는 개인 키로 다이제스트에 서명하고 공개 키로 서명을 검증한다. TLS 엔진이
+핸드셰이크에 서명하는 코드를, 파일에 서명하는 프로그램 - 코드, 타임스탬프 요청, CMS - 에 연 것이다.
+2048~4096비트 키의 RSA(PKCS #1 v1.5와 PSS), 그리고 P-256과 P-384 위의 ECDSA.
+
+키는 `proven_pkey_t`이고, 세 가지로 만든다.
+
+- `proven_pkey_parse(alloc, text, rng, &key)`: PEM - "PRIVATE KEY"(PKCS #8, 암호화되지 않은 것),
+  "RSA PRIVATE KEY", "EC PRIVATE KEY" - 또는 그 DER. 암호화된 PKCS #8은 `PROVEN_ERR_UNSUPPORTED`이고,
+  여는 데 필요한 조각은 11절에 있다.
+- `proven_pkey_from_rsa(alloc, &parts, rng, &key)`: n, e, d, p, q, dP, dQ, qInv.
+- `proven_pkey_from_ec(alloc, curve, scalar, &key)`.
+
+RSA 키는 만들 때 검사한다 - n이 p와 q의 곱인지, 한 번 서명해 그것을 검증하는지 - 그래서 서명할 수
+없는 키는 첫 서명 때가 아니라 그때 거부된다. 또 생성기(`rng`)를 받는다. RSA 서명은 모두 블라인딩되어
+개인 지수가 다루는 값이 공격자가 고른 값이 아니며, 그 블라인딩이 무작위 바이트에서 시작하기
+때문이다. `proven_random_bytes`로 시드한 `proven_chacha_rng_t`를 넘겨라 - 암호학적인 것이어야 하고,
+xoshiro는 안 된다. EC 키는 필요 없다.
+
+`proven_pkey_sign(key, scheme, hash, digest, rng, out, &len)`이 서명한다. 방식은
+`PROVEN_SIGN_RSA_PKCS1`, `PROVEN_SIGN_RSA_PSS`, `PROVEN_SIGN_ECDSA`(X.509와 CMS가 쓰는 DER 꼴),
+`PROVEN_SIGN_ECDSA_RAW`(r 다음 s)다. RSA v1.5와 ECDSA는 **결정적**이다. ECDSA의 nonce는 키와
+다이제스트에서 나오므로(RFC 6979), 같은 키, 다이제스트, 방식은 이 버전에서도 다음 버전에서도 같은
+바이트를 낸다. `rng`는 PSS만 솔트에 쓴다. hash는 다이제스트를 가리킨다: SHA-256, SHA-384, SHA-512,
+또는 아직 그것을 요구하는 형식을 위한 `PROVEN_HMAC_SHA1`.
+
+검증에는 키 객체가 필요 없다. `proven_verify_rsa(n, e, ...)`, `proven_verify_ecdsa(curve, point, ...)`,
+또는 인증서의 `public_key_info`로 `proven_verify_spki(spki, ...)`. 각각 `PROVEN_OK`나
+`PROVEN_ERR_UNTRUSTED`를 돌려준다.
+
+```c
+/* An RSA key from its parts, as a format that carries them gives them. Each is an unsigned
+ * big-endian integer; empty views here stand for the caller's bytes. */
+proven_rsa_components_t parts = { 0 };
+proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE];
+proven_chacha_rng_t g;
+if (!proven_random_bytes(seed, sizeof seed)) return;
+proven_chacha_rng_seed(&g, seed);
+proven_pkey_t *key = NULL;
+if (proven_pkey_from_rsa(alloc, &parts, proven_chacha_rng(&g), &key) != PROVEN_OK) return;
+proven_byte_t digest[32], sig[PROVEN_SIGN_MAX_SIZE];
+proven_size_t sig_len = 0;
+proven_sha256((proven_mem_view_t){ (const proven_byte_t *)"to be signed", 12 }, digest);
+if (proven_pkey_sign(key, PROVEN_SIGN_RSA_PKCS1, PROVEN_HMAC_SHA256, (proven_mem_view_t){ digest, 32 },
+                     proven_chacha_rng(&g), (proven_mem_mut_t){ sig, sizeof sig }, &sig_len) == PROVEN_OK) {
+    proven_rsa_components_t pub;
+    (void)proven_pkey_rsa_components(key, &pub);       /* views into the key: n and e are the public half */
+    proven_err_t ok = proven_verify_rsa(pub.n, pub.e, PROVEN_SIGN_RSA_PKCS1, PROVEN_HMAC_SHA256, 0,
+                                        (proven_mem_view_t){ digest, 32 }, (proven_mem_view_t){ sig, sig_len });
+    (void)ok;                                           /* PROVEN_OK */
+}
+proven_pkey_destroy(key);                               /* wipes it */
+```
+
+키는 한 번에 한 스레드가 쓴다(블라인딩이 서명마다 다음으로 넘어간다). 부품은 키 안을 가리키는
+뷰로 다시 읽을 수 있고 - `proven_pkey_rsa_components`, `proven_pkey_ec_scalar`,
+`proven_pkey_ec_point` - `proven_pkey_spki`는 인증서 요청이나 CMS 구조에 필요한
+SubjectPublicKeyInfo로 공개 절반을 쓴다.
+
+**서명용 인증서.** `proven_cert_verify`는 이런 프로그램을 위한 용도 두 가지를 더 받는다.
+`PROVEN_CERT_USE_CODE_SIGNING`(말단의 extendedKeyUsage가 codeSigning을 들어야 한다)과
+`PROVEN_CERT_USE_TIMESTAMPING`(RFC 3161: timeStamping 하나만, critical로). 둘 다 extendedKeyUsage가
+없는 말단은 거부하고 - 없으면 무엇이든 되는 서버와 다르다 - keyUsage가 있으면 digitalSignature를
+허용해야 한다. `proven_cert_t`에는 `subject_key_id`, `authority_key_id`, `ext_key_usage_critical`,
+`ext_key_usage_count`도 있다.
+
+## 10. DER 읽기와 쓰기
+
+`der.h`는 이 라이브러리의 X.509와 키 코드가 쓰는 DER 읽개이고, 서명자가 보내는 것 - SignedData,
+타임스탬프 요청, 인증서 요청 - 을 만드는 쓰개다. 읽개는 뷰의 앞에서 요소를 하나씩 떼어 내며 DER만
+받는다: 가장 짧은 꼴의 확정 길이, 입력을 넘지 않음, 한 바이트 태그. 쓰개는 호출자의 메모리를
+채운다. 구성 요소는 `proven_der_begin`으로 열고 `proven_der_end`가 길이를 쓰며, 길이가 한 바이트를
+넘으면 내용을 옮긴다. `proven_der_end_set_of`는 나가는 길에 SET OF를 DER 순서로 정렬한다 - CMS의
+서명 속성은 그 순서여야 하고, 정렬되지 않은 것에 대한 서명은 다른 곳에서 검증되지 않는다. 에러는
+남아 있으므로 마지막에 `proven_der_writer_finish`를 한 번 확인하면 된다.
+
+## 11. 암호화된 키 파일: PBKDF2와 AES-CBC
+
+암호화된 PKCS #8("ENCRYPTED PRIVATE KEY")이나 PKCS #12 파일은, PBKDF2(`proven_pbkdf2`, `hmac.h`)로
+암호에서 키를 얻고, AES-CBC(`proven_aes_cbc_decrypt`, `aes.h`, 128·192·256비트 키)로 복호하고,
+PKCS #7 패딩을 떼어(`proven_pkcs7_unpad`) 연다. 솔트, 반복 수, 암호, IV는 `der.h`로 파일에서 읽는다.
+복호한 바이트가 `proven_pkey_parse`가 읽는 PKCS #8이다. CBC는 인증되지 않는다. 다른 도구가 쓴 것을
+읽기 위해 있는 것이지 새 설계를 위한 것이 아니다.
+
+테스트 스위트가 컴파일하고 실행한다:
+
+<!-- example: manual/examples/ko/ex_13_sign.c -->
+```c
+#include <string.h>
+
+/*
+ * 개인 키로 서명하기, 그리고 서명된 파일 형식을 이루는 조각들: 스칼라로 만들고 DER에서 다시 읽은 키,
+ * 다이제스트에 대한 서명과 그 검증, DER 쓰기와 읽기, 그리고 PBKDF2와 AES-CBC로 여는 키 파일의 암호화.
+ */
+
+static const proven_byte_t OID_EC[] = { 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01 };
+static const proven_byte_t OID_P256[] = { 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07 };
+
+int main(void) {
+    proven_allocator_t heap = proven_heap_allocator();
+
+    // ---- 키 하나, 그리고 서명 ---------------------------------------------------------
+    /* RFC 6979의 예제 키. 실제 키는 파일(proven_pkey_parse)이나 생성기에서 온다. */
+    static const proven_byte_t scalar[32] = {
+        0xc9, 0xaf, 0xa9, 0xd8, 0x45, 0xba, 0x75, 0x16, 0x6b, 0x5c, 0x21, 0x57, 0x67, 0xb1, 0xd6, 0x93,
+        0x4e, 0x50, 0xc3, 0xdb, 0x36, 0xe8, 0x9b, 0x12, 0x7b, 0x8a, 0x62, 0x2b, 0x12, 0x0f, 0x67, 0x21,
+    };
+    proven_pkey_t *key = NULL;
+    EXAMPLE_REQUIRE(proven_pkey_from_ec(heap, PROVEN_PKEY_P256, (proven_mem_view_t){ scalar, 32 }, &key) == PROVEN_OK, "a P-256 key");
+    EXAMPLE_REQUIRE(proven_pkey_kind(key) == PROVEN_PKEY_P256 && proven_pkey_bits(key) == 256, "of 256 bits");
+
+    /* 서명하는 것은 다이제스트다. 어떤 해시인지는 형식이 정한다. */
+    proven_byte_t digest[32];
+    proven_sha256((proven_mem_view_t){ (const proven_byte_t *)"sample", 6 }, digest);
+    proven_byte_t sig[PROVEN_SIGN_MAX_SIZE];
+    proven_size_t sig_len = 0;
+    /* ECDSA의 nonce는 키와 다이제스트에서 나온다(RFC 6979). 생성기가 필요 없고 매번 같은
+     * 바이트가 나온다 - 서명된 파일을 재현 가능하게 빌드하려면 이것이 필요하다. */
+    EXAMPLE_REQUIRE(proven_pkey_sign(key, PROVEN_SIGN_ECDSA, PROVEN_HMAC_SHA256, (proven_mem_view_t){ digest, 32 },
+                                     (proven_rng_t){ 0 }, (proven_mem_mut_t){ sig, sizeof sig }, &sig_len) == PROVEN_OK, "signed, as DER");
+
+    /* 공개 절반을 가진 누구나 확인할 수 있다: 점으로, 또는 인증서에 실린
+     * SubjectPublicKeyInfo(proven_cert_t의 public_key_info)로. */
+    proven_mem_view_t point;
+    EXAMPLE_REQUIRE(proven_pkey_ec_point(key, &point) == PROVEN_OK && point.size == 65, "the public point");
+    EXAMPLE_REQUIRE(proven_verify_ecdsa(PROVEN_PKEY_P256, point, PROVEN_SIGN_ECDSA, (proven_mem_view_t){ digest, 32 },
+                                        (proven_mem_view_t){ sig, sig_len }) == PROVEN_OK, "verifies under the point");
+    proven_byte_t spki[600];
+    proven_size_t spki_len = 0;
+    EXAMPLE_REQUIRE(proven_pkey_spki(key, (proven_mem_mut_t){ spki, sizeof spki }, &spki_len) == PROVEN_OK, "the SubjectPublicKeyInfo");
+    EXAMPLE_REQUIRE(proven_verify_spki((proven_mem_view_t){ spki, spki_len }, PROVEN_SIGN_ECDSA, PROVEN_HMAC_SHA256,
+                                       (proven_mem_view_t){ digest, 32 }, (proven_mem_view_t){ sig, sig_len }) == PROVEN_OK, "verifies under it too");
+    digest[0] ^= 1;
+    EXAMPLE_REQUIRE(proven_verify_spki((proven_mem_view_t){ spki, spki_len }, PROVEN_SIGN_ECDSA, PROVEN_HMAC_SHA256,
+                                       (proven_mem_view_t){ digest, 32 }, (proven_mem_view_t){ sig, sig_len }) == PROVEN_ERR_UNTRUSTED,
+                    "and a different digest does not");
+    proven_rsa_components_t rsa;
+    EXAMPLE_REQUIRE(proven_pkey_rsa_components(key, &rsa) == PROVEN_ERR_INVALID_STATE, "an EC key has no RSA parts");
+
+    // ---- DER 쓰기 -------------------------------------------------------------------
+    /* ECPrivateKey(RFC 5915)로서의 키: SEQUENCE { 1, OCTET STRING scalar, [0] curve, [1] point }.
+     * 길이는 각 요소를 닫을 때 쓴다. */
+    proven_mem_view_t secret;
+    EXAMPLE_REQUIRE(proven_pkey_ec_scalar(key, &secret) == PROVEN_OK, "its scalar");
+    proven_byte_t der[256];
+    proven_der_writer_t w;
+    proven_der_writer_init(&w, (proven_mem_mut_t){ der, sizeof der });
+    proven_der_begin(&w, PROVEN_DER_SEQUENCE);
+    proven_der_put_u64(&w, 1);
+    proven_der_put(&w, PROVEN_DER_OCTET_STRING, secret);
+    proven_der_begin(&w, PROVEN_DER_CONTEXT(0));
+    proven_der_put(&w, PROVEN_DER_OID, (proven_mem_view_t){ OID_P256, sizeof OID_P256 });
+    proven_der_end(&w);
+    proven_der_begin(&w, PROVEN_DER_CONTEXT(1));
+    proven_der_put_bits(&w, point);
+    proven_der_end(&w);
+    proven_der_end(&w);
+    proven_size_t der_len = 0;
+    EXAMPLE_REQUIRE(proven_der_writer_finish(&w, &der_len) == PROVEN_OK, "written");
+
+    /* proven_pkey_parse는 이것을 DER로, 또는 PEM 텍스트("EC PRIVATE KEY", "PRIVATE KEY",
+     * "RSA PRIVATE KEY")로 받는다. RSA 키는 블라인딩을 위해 생성기가 필요하고, EC 키는 아니다. */
+    proven_pkey_t *again = NULL;
+    EXAMPLE_REQUIRE(proven_pkey_parse(heap, (proven_mem_view_t){ der, der_len }, (proven_rng_t){ 0 }, &again) == PROVEN_OK, "read back");
+    proven_mem_view_t point2;
+    EXAMPLE_REQUIRE(proven_pkey_ec_point(again, &point2) == PROVEN_OK && memcmp(point2.ptr, point.ptr, 65) == 0, "the same key");
+    proven_pkey_destroy(again);
+    proven_mem_wipe((proven_mem_mut_t){ der, sizeof der });     /* 비밀을 담고 있었다 */
+
+    /* proven_der_end_set_of로 닫은 SET OF는 DER 순서로 놓인다. CMS가 서명하는 속성에 요구하는
+     * 그대로다. 여기서 INTEGER 2를 INTEGER 1보다 먼저 쓰지만 결과에서는 뒤에 온다. */
+    proven_byte_t set[32];
+    proven_der_writer_init(&w, (proven_mem_mut_t){ set, sizeof set });
+    proven_der_begin(&w, PROVEN_DER_SET);
+    proven_der_put_uint(&w, (proven_mem_view_t){ (const proven_byte_t *)"\x02", 1 });
+    proven_der_put_raw(&w, (proven_mem_view_t){ (const proven_byte_t *)"\x02\x01\x01", 3 });
+    proven_der_end_set_of(&w);
+    proven_size_t set_len = 0;
+    EXAMPLE_REQUIRE(proven_der_writer_finish(&w, &set_len) == PROVEN_OK && set_len == 8 && set[4] == 1 && set[7] == 2, "in order");
+
+    // ---- DER 읽기 -------------------------------------------------------------------
+    /* SubjectPublicKeyInfo ::= SEQUENCE { SEQUENCE { OID, OID }, BIT STRING }. 읽을 때마다 뷰의
+     * 앞에서 요소 하나를 떼어 낸다. 내용은 입력을 가리키는 뷰이고, 복사본이 아니다. */
+    proven_mem_view_t in = { spki, spki_len }, seq, alg, oid, bits;
+    proven_u8 unused = 0;
+    EXAMPLE_REQUIRE(proven_der_expect(&in, PROVEN_DER_SEQUENCE, &seq) == PROVEN_OK && in.size == 0, "the outer SEQUENCE, and nothing after it");
+    EXAMPLE_REQUIRE(proven_der_expect(&seq, PROVEN_DER_SEQUENCE, &alg) == PROVEN_OK, "the algorithm");
+    EXAMPLE_REQUIRE(proven_der_expect(&alg, PROVEN_DER_OID, &oid) == PROVEN_OK &&
+                    proven_der_oid_is(oid, (proven_mem_view_t){ OID_EC, sizeof OID_EC }), "is id-ecPublicKey");
+    EXAMPLE_REQUIRE(proven_der_read_bits(&seq, &bits, &unused) == PROVEN_OK && unused == 0 && bits.size == 65, "the point, as bits");
+    /* 서명은 SEQUENCE { INTEGER r, INTEGER s }이다: 부호 바이트 없는 크기. */
+    proven_mem_view_t sv = { sig, sig_len }, rs, r, s;
+    EXAMPLE_REQUIRE(proven_der_expect(&sv, PROVEN_DER_SEQUENCE, &rs) == PROVEN_OK && proven_der_read_uint(&rs, &r) == PROVEN_OK &&
+                    proven_der_read_uint(&rs, &s) == PROVEN_OK && r.size <= 32 && s.size <= 32, "r and s");
+    proven_der_item_t item;
+    proven_mem_view_t version = { (const proven_byte_t *)"\x02\x01\x01", 3 };
+    proven_u64 v = 0;
+    EXAMPLE_REQUIRE(proven_der_read(&version, &item) == PROVEN_OK && item.tag == PROVEN_DER_INTEGER, "any element, by its tag");
+    version = item.whole;
+    EXAMPLE_REQUIRE(proven_der_read_u64(&version, &v) == PROVEN_OK && v == 1, "a small INTEGER");
+
+    // ---- 암호화된 키 파일의 조각들 ----------------------------------------------------
+    /* PBES2(PKCS #8, PKCS #12): PBKDF2로 암호에서 키를 얻고, AES-CBC와 PKCS #7 패딩. 여기서는
+     * 하나를 만들고 연다. 솔트, 반복 수, IV는 파일이 말하는 값이다. */
+    proven_byte_t aes_key[32];
+    EXAMPLE_REQUIRE(proven_pbkdf2(PROVEN_HMAC_SHA256, (proven_mem_view_t){ (const proven_byte_t *)"correct horse", 13 },
+                                  (proven_mem_view_t){ (const proven_byte_t *)"8 bytes!", 8 }, 2048,
+                                  (proven_mem_mut_t){ aes_key, 32 }) == PROVEN_OK, "the key from the password");
+    proven_byte_t box[16] = "fourteen bytes";
+    memset(box + 14, 2, 2);                    /* 2바이트의 패딩, 각각 2: 블록 하나를 채운다 */
+    proven_byte_t iv[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }, iv2[16];
+    memcpy(iv2, iv, 16);
+    EXAMPLE_REQUIRE(proven_aes_cbc_encrypt((proven_mem_view_t){ aes_key, 32 }, iv, (proven_mem_mut_t){ box, 16 }) == PROVEN_OK, "encrypted");
+    EXAMPLE_REQUIRE(proven_aes_cbc_decrypt((proven_mem_view_t){ aes_key, 32 }, iv2, (proven_mem_mut_t){ box, 16 }) == PROVEN_OK, "decrypted");
+    proven_size_t plain_len = 0;
+    EXAMPLE_REQUIRE(proven_pkcs7_unpad((proven_mem_view_t){ box, 16 }, 16, &plain_len) == PROVEN_OK && plain_len == 14 &&
+                    memcmp(box, "fourteen bytes", 14) == 0, "and unpadded");
+    proven_mem_wipe((proven_mem_mut_t){ aes_key, 32 });
+
+    proven_pkey_destroy(key);
+    return EXAMPLE_OK();
+}
+```

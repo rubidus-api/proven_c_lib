@@ -198,10 +198,23 @@ proven_err_t proven_tls_issue_(const proven_tls_issue_t *q, proven_mem_mut_t out
         dw_close(&t, seq); dw_close(&t, val); dw_close(&t, ext);
     }
     if (q->eku != 0) {
-        val = dw_ext_open(&t, "\x55\x1d\x25", 3, false, &ext);    /* extendedKeyUsage */
+        val = dw_ext_open(&t, "\x55\x1d\x25", 3, q->eku_critical, &ext);    /* extendedKeyUsage */
         seq = dw_open(&t, 0x30);
         if (q->eku & PROVEN_CERT_EKU_SERVER_AUTH) DW_LIT(&t, 0x06, "\x2b\x06\x01\x05\x05\x07\x03\x01");
         if (q->eku & PROVEN_CERT_EKU_CLIENT_AUTH) DW_LIT(&t, 0x06, "\x2b\x06\x01\x05\x05\x07\x03\x02");
+        if (q->eku & PROVEN_CERT_EKU_CODE_SIGNING) DW_LIT(&t, 0x06, "\x2b\x06\x01\x05\x05\x07\x03\x03");
+        if (q->eku & PROVEN_CERT_EKU_TIME_STAMPING) DW_LIT(&t, 0x06, "\x2b\x06\x01\x05\x05\x07\x03\x08");
+        dw_close(&t, seq); dw_close(&t, val); dw_close(&t, ext);
+    }
+    if (q->ski.size > 0) {
+        val = dw_ext_open(&t, "\x55\x1d\x0e", 3, false, &ext);    /* subjectKeyIdentifier */
+        dw_tlv(&t, 0x04, q->ski.ptr, q->ski.size);
+        dw_close(&t, val); dw_close(&t, ext);
+    }
+    if (q->aki.size > 0) {
+        val = dw_ext_open(&t, "\x55\x1d\x23", 3, false, &ext);    /* authorityKeyIdentifier */
+        seq = dw_open(&t, 0x30);
+        dw_tlv(&t, 0x80, q->aki.ptr, q->aki.size);
         dw_close(&t, seq); dw_close(&t, val); dw_close(&t, ext);
     }
     dw_close(&t, exts); dw_close(&t, exts_wrap);
