@@ -62,7 +62,8 @@ written; their tags still exist.
 
 - **`proven_fmt_to(buf, cap, fmt, ...)`**: snprintf's shape for a fixed buffer - always NUL-terminated
   when `cap > 0`, cut between UTF-8 characters, `required` reported, `cap == 0` to measure. Asked by
-  a downstream project replacing its `snprintf` calls.
+  a downstream project replacing its `snprintf` calls. The macro calls `proven_fmt_to_internal`,
+  marked MACRO SUPPORT like `proven_u8str_fmt_internal`: not a stable interface.
 - **`{:.N}` on C strings and views**: at most N bytes, as `%.Ns`, cut back to the start of a UTF-8
   character the N-th byte would split; width and alignment apply to what is kept, and a C string
   is not read past N bytes. It was `PROVEN_ERR_INVALID_FORMAT`. A string's precision may be up to

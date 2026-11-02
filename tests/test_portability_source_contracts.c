@@ -192,7 +192,7 @@ int main(void) {
         static const char *const allowed[] = {
             "proven_u8str_fmt_internal", "proven_scan_fmt_internal", "proven_scan_fmt_internal_view",
             "proven_fmt_to_writer_impl", "proven_sysio_scanner_scan_impl", "proven_sysio_print_impl",
-            "proven_sysio_scan_chunk_impl",
+            "proven_sysio_scan_chunk_impl", "proven_fmt_to_internal",
         };
         int found = 0;
         for (size_t h = 0; h < sizeof build_header_manifest / sizeof build_header_manifest[0]; ++h) {
