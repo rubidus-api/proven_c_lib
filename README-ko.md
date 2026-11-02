@@ -654,7 +654,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- 해싱과 인코딩: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC과 HKDF), `deflate` (DEFLATE 압축과 풀기, 그대로 또는 zlib·gzip으로, 스트리밍, 풀 때 나올 양은 호출자가 한정), `zstd` (Zstandard 압축과 풀기 - 쓰는 쪽은 레벨 열아홉 개, 레벨 6은 gzip 6 크기에 세 배 속도, 19는 libzstd 크기의 약 1 % 안; 장거리 일치; 원시 사전과 형식 있는 사전(`zstd --train`이 쓰는 것)을 양쪽에서 -, 출력과 윈도는 호출자가 한정), `brotli` (Brotli 풀기, 출력과 윈도는 호출자가 한정; `PROVEN_NO_BROTLI`는 이것과 122,784바이트 사전을 뺍니다), `cert` (X.509 인증서: 읽기, 이름, 신뢰 앵커, 체인 검증), `hash_legacy` (SHA-1과 MD5, 그것을 못 박은 형식용), `encode` (hex, Base64, Base64URL), `utf` (엄격한 UTF-8 <-> UTF-16).
+- 해싱과 인코딩: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC, HKDF, PBKDF2), `deflate` (DEFLATE 압축과 풀기, 그대로 또는 zlib·gzip으로, 스트리밍, 풀 때 나올 양은 호출자가 한정), `zstd` (Zstandard 압축과 풀기 - 쓰는 쪽은 레벨 열아홉 개, 레벨 6은 gzip 6 크기에 세 배 속도, 19는 libzstd 크기의 약 1 % 안; 장거리 일치; 원시 사전과 형식 있는 사전(`zstd --train`이 쓰는 것)을 양쪽에서 -, 출력과 윈도는 호출자가 한정), `brotli` (Brotli 풀기, 출력과 윈도는 호출자가 한정; `PROVEN_NO_BROTLI`는 이것과 122,784바이트 사전을 뺍니다), `cert` (X.509 인증서: 읽기, 이름, 신뢰 앵커, 체인 검증, 코드 서명·타임스탬프 용도), `sign` (PEM, DER, 부품에서 만드는 개인 키 - RSA, P-256, P-384 -, 다이제스트에 대한 결정적 서명, PSS, 검증), `der` (엄격한 DER 읽개와 쓰개), `aes` (암호화된 키 파일을 위한 AES-CBC와 PKCS #7), `hash_legacy` (SHA-1과 MD5, 그것을 못 박은 형식용), `encode` (hex, Base64, Base64URL), `utf` (엄격한 UTF-8 <-> UTF-16).
 - 난수: `random` (xoshiro256** 재현 가능, ChaCha20 암호학적, 무편향 범위/셔플 헬퍼, 교체 가능한 엔트로피 소스 — 기본은 OS CSPRNG, 베어메탈은 보드의 하드웨어 TRNG).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - 네트워킹: `net` (기다리는 모든 호출에 기한이 있는 TCP·UDP·유닉스 도메인 소켓, 여러 소켓의 준비 상태, 전송 인터페이스). Hosted 전용이며 `PROVEN_NO_NET`으로 뺄 수 있습니다.
@@ -673,7 +673,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 
 플랫폼 경계가 **어디서 끝나는지**도 적어 둘 가치가 있습니다. 적어 두지 않으면 부딪혀 봐야 알게 되기 때문입니다. PAL이 덮는 범위는 메모리, 파일시스템, 시간, 메모리 매핑, 환경 변수, 콘솔 I/O, 스레드, 소켓입니다. 프로세스 제어(`fork` / `exec` / 파이프)와 터미널 제어(raw 모드, job control)는 **덮지 않습니다**. 프로그램의 본질이 그 중 하나라면 POSIX나 Win32를 직접 부르게 되고, "플랫폼 `#ifdef` 없음"이라는 성질은 거기까지 확장되지 않습니다. 소켓 계층은 단계적으로 짓고 있는 네트워킹 스택의 첫 걸음입니다. 소켓(`epoll`/`kqueue`/IOCP selector 포함), HTTP/1.1 메시지 코덱, HTTP 클라이언트와 서버, WebSocket, 인증서, TLS(1.3과 줄인 1.2), DEFLATE 코덱이 들어왔고, 그 뒤로 HTTP 콘텐츠 코딩·`permessage-deflate`·HTTP/2·HTTP/3도 들어왔습니다.
 
-`hash`와 `hmac` 모듈은 암호학적·비암호학적 해시(FNV·SipHash·CRC-32와 함께 SHA-2 계열)와 HMAC·HKDF를, `cert`는 X.509 인증서 읽기와 검증을, `tls`는 TLS 1.3과 1.2를, `random`은 OS 강도 바이트를 실제로 제공합니다. 다만 `proven`은 암호 라이브러리가 아닙니다. TLS 밑의 기본 연산은 내부용이고, 공개된 서명, 키 교환, 비밀번호 해싱, 인증 암호화(AEAD)는 없으니 찾아 헤매지 않으셔도 됩니다. `net`으로 만든 연결은 `tls`로 감싸지 않으면 암호화되지 않습니다. 경로 조작, 인자 파싱, 로깅 프레임워크도 없으며 이것들은 계획에도 없습니다.
+`hash`와 `hmac` 모듈은 암호학적·비암호학적 해시(FNV·SipHash·CRC-32와 함께 SHA-2 계열)와 HMAC·HKDF·PBKDF2를, `cert`는 X.509 인증서 읽기와 검증을, `sign`은 RSA·ECDSA 키로 서명과 검증을, `tls`는 TLS 1.3과 1.2를, `random`은 OS 강도 바이트를 실제로 제공합니다. 다만 `proven`은 범용 암호 라이브러리가 아닙니다. TLS 밑의 다른 기본 연산은 내부용이고, 공개된 키 교환, 메모리를 많이 쓰는 비밀번호 해싱, 인증 암호화(AEAD)는 없으니 찾아 헤매지 않으셔도 됩니다. `net`으로 만든 연결은 `tls`로 감싸지 않으면 암호화되지 않습니다. 경로 조작, 인자 파싱, 로깅 프레임워크도 없으며 이것들은 계획에도 없습니다.
 
 ## 실제로 프로젝트에 적용했을 때의 효용성
 
