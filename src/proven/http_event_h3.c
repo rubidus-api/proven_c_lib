@@ -131,7 +131,6 @@ struct h3d {
     proven_time_t born, idle_since, write_since, bye_due;
 };
 
-static proven_byte_t h3_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
 
 static void *h3_alloc(proven_allocator_t a, proven_size_t n) {
@@ -1166,7 +1165,7 @@ static proven_err_t s_head(proven_h3s_t *s, proven_u16 status, const proven_http
     for (proven_size_t i = 0; i < header_count && e == PROVEN_OK; ++i) {
         if (h3_is_hop_header(headers[i].name)) continue;
         if (at + headers[i].name.size > sv->cfg.max_head_bytes) { e = PROVEN_ERR_OUT_OF_BOUNDS; break; }
-        for (proven_size_t k = 0; k < headers[i].name.size; ++k) sv->hbuf[at + k] = h3_lower(headers[i].name.ptr[k]);
+        for (proven_size_t k = 0; k < headers[i].name.size; ++k) sv->hbuf[at + k] = proven_ascii_lower(headers[i].name.ptr[k]);
         list[n++] = (proven_http_header_t){ .name = { .ptr = sv->hbuf + at, .size = headers[i].name.size }, .value = headers[i].value };
         at += headers[i].name.size;
     }

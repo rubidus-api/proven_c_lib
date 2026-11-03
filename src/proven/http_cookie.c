@@ -14,7 +14,6 @@ typedef struct {
     bool secure;
 } proven_cookie_t;
 
-static proven_byte_t ck_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
 #define ck_is(a, lit) proven_u8str_view_eq_ascii_ci((a), PROVEN_LIT(lit))
 
@@ -214,7 +213,7 @@ proven_err_t proven_http_cookie_jar_store(proven_http_cookie_jar_t *jar, proven_
     proven_size_t w = 0;
     for (proven_size_t i = 0; i < name.size; ++i) t[w++] = name.ptr[i];
     for (proven_size_t i = 0; i < value.size; ++i) t[w++] = value.ptr[i];
-    for (proven_size_t i = 0; i < host.size; ++i) t[w++] = ck_lower(host.ptr[i]);
+    for (proven_size_t i = 0; i < host.size; ++i) t[w++] = proven_ascii_lower(host.ptr[i]);
     for (proven_size_t i = 0; i < cookie_path.size; ++i) t[w++] = cookie_path.ptr[i];
 
     if (same < jar->count) {

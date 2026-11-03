@@ -303,7 +303,7 @@ proven_err_t proven_http_trailers_keep_(proven_allocator_t alloc, proven_http_tr
         if (drop && !proven_http_trailer_allowed(fields[i].name)) continue;
         for (proven_size_t k = 0; k < fields[i].name.size; ++k) {
             const proven_byte_t c = fields[i].name.ptr[k];
-            at[k] = lower && c >= 'A' && c <= 'Z' ? (proven_byte_t)(c + 32) : c;
+            at[k] = lower ? proven_ascii_lower(c) : c;
         }
         out[n].name = (proven_u8str_view_t){ .ptr = at, .size = fields[i].name.size };
         at += fields[i].name.size;

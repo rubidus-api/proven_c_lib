@@ -120,7 +120,7 @@ int main(void) {
 
     PROVEN_TEST_SECTION("RFC-0022: ASCII case-insensitive equality and prefix, a view from bytes",
         "Every pair of bytes compared one-byte and inside longer views against a reference that folds only 'A' to 'Z'; lengths that differ, empty views and NULL with size 0; the prefix test at every length.",
-        "Check proven_u8str_view_eq_ascii_ci and proven_u8str_view_starts_with_ascii_ci in src/proven/u8str.c, and proven_u8str_view_from_bytes in u8str.h.");
+        "Check proven_u8str_view_eq_ascii_ci and proven_u8str_view_starts_with_ascii_ci in src/proven/u8str.c, and proven_u8str_view_from_bytes and proven_ascii_lower in u8str.h.");
     {
         unsigned long wrong = 0;
         for (unsigned x = 0; x < 256; ++x) {
@@ -134,6 +134,11 @@ int main(void) {
             }
         }
         PROVEN_TEST_ASSERT(wrong == 0, "every byte pair: equal exactly when they fold to the same byte, 'A' to 'Z' only - '@', '[', '`', '{' and bytes from 0x80 match only themselves", "");
+        unsigned long lowered = 0;
+        for (unsigned x = 0; x < 256; ++x) if (proven_ascii_lower((proven_byte_t)x) != (x >= 'A' && x <= 'Z' ? x + 32 : x)) lowered++;
+        PROVEN_TEST_ASSERT(lowered == 0 && proven_ascii_lower('A') == 'a' && proven_ascii_lower('Z') == 'z' && proven_ascii_lower('@') == '@' &&
+                           proven_ascii_lower('[') == '[' && proven_ascii_lower(0xC0) == 0xC0,
+            "proven_ascii_lower: every byte, 'A' to 'Z' and nothing else changed", "");
         PROVEN_TEST_ASSERT(proven_u8str_view_eq_ascii_ci(z("Content-Length"), z("content-length")) && !proven_u8str_view_eq_ascii_ci(z("abc"), z("abcd")) &&
                            proven_u8str_view_eq_ascii_ci(b(NULL, 0), z("")) && !proven_u8str_view_eq_ascii_ci(b(NULL, 0), z("a")),
             "field names; different lengths differ; NULL with size 0 is the empty view", "");

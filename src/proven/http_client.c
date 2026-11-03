@@ -104,7 +104,6 @@ typedef struct {
 #endif
 } proven_cl_call_t;
 
-static proven_byte_t cl_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
 
 static bool cl_has_control(proven_u8str_view_t s) {
@@ -503,7 +502,7 @@ static proven_err_t cl_connect(proven_http_client_t *c, const proven_url_t *u, b
     if (u->host.size > 255) return PROVEN_ERR_INVALID_FORMAT;
     const char *scheme = https ? "https://" : "http://";
     for (proven_size_t i = 0; scheme[i] != '\0'; ++i) key[kl++] = (proven_byte_t)scheme[i];
-    for (proven_size_t i = 0; i < u->host.size; ++i) key[kl++] = cl_lower(u->host.ptr[i]);
+    for (proven_size_t i = 0; i < u->host.size; ++i) key[kl++] = proven_ascii_lower(u->host.ptr[i]);
     key[kl++] = ':';
     key[kl++] = (proven_byte_t)('0' + port / 10000 % 10); key[kl++] = (proven_byte_t)('0' + port / 1000 % 10);
     key[kl++] = (proven_byte_t)('0' + port / 100 % 10); key[kl++] = (proven_byte_t)('0' + port / 10 % 10);
@@ -1285,7 +1284,7 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
         if (!https && !proven_url_scheme_is(&u, PROVEN_LIT("http"))) { e = PROVEN_ERR_UNSUPPORTED; break; }
         if (redirects == 0 && origin_host_len == 0) {
             if (request->http3 && !https) { e = PROVEN_ERR_INVALID_ARG; break; }
-            for (proven_size_t i = 0; i < u.host.size; ++i) origin_host[i] = cl_lower(u.host.ptr[i]);
+            for (proven_size_t i = 0; i < u.host.size; ++i) origin_host[i] = proven_ascii_lower(u.host.ptr[i]);
             origin_host_len = u.host.size;
             origin_port = proven_url_effective_port(&u);
             origin_https = https;
@@ -1295,7 +1294,7 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
 #if !defined(PROVEN_NO_HTTP3)
         if (request->http3 && https && u.host.size == origin_host_len && proven_url_effective_port(&u) == origin_port && origin_https) {
             use_h3 = true;
-            for (proven_size_t i = 0; use_h3 && i < u.host.size; ++i) if (cl_lower(u.host.ptr[i]) != origin_host[i]) use_h3 = false;
+            for (proven_size_t i = 0; use_h3 && i < u.host.size; ++i) if (proven_ascii_lower(u.host.ptr[i]) != origin_host[i]) use_h3 = false;
         }
         if (use_h3 && client->has_proxy && !cl_no_proxy(client, u.host)) { e = PROVEN_ERR_UNSUPPORTED; break; }   /* no CONNECT-UDP */
 #endif
@@ -1421,7 +1420,7 @@ proven_err_t proven_http_client_send(proven_http_client_t *client, const proven_
             if (ok && !next_https && !proven_url_scheme_is(&nu, PROVEN_LIT("http"))) ok = false;
             if (ok && https && !next_https) ok = false;               /* never from https down to http */
             bool same = ok && nu.host.size == origin_host_len && proven_url_effective_port(&nu) == origin_port && next_https == origin_https;
-            for (proven_size_t i = 0; same && i < nu.host.size; ++i) if (cl_lower(nu.host.ptr[i]) != origin_host[i]) same = false;
+            for (proven_size_t i = 0; same && i < nu.host.size; ++i) if (proven_ascii_lower(nu.host.ptr[i]) != origin_host[i]) same = false;
             /* Within the origin a request asked over HTTP/3 stays on it; anywhere else HTTPS is tls_wrap's. */
             if (ok && next_https && !client->cfg.tls_wrap && !(request->http3 && same)) ok = false;
             if (ok) {

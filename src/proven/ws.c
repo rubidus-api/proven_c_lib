@@ -127,9 +127,7 @@ bool proven_ws_request_offers(const proven_http_request_t *request, proven_u8str
         if (hn.size != sizeof want - 1) continue;
         bool same = true;
         for (proven_size_t k = 0; k < hn.size && same; ++k) {
-            proven_byte_t c = hn.ptr[k];
-            if (c >= 'A' && c <= 'Z') c = (proven_byte_t)(c + 32);
-            same = c == (proven_byte_t)want[k];
+            same = proven_ascii_lower(hn.ptr[k]) == (proven_byte_t)want[k];
         }
         if (same && ws_list_has(request->headers[i].value, name)) return true;
     }

@@ -92,6 +92,12 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_u8str_view_eq_ascii_ci(PROVEN_LIT("Content-Type"), PROVEN_LIT("content-TYPE")), "field names ignore ASCII case");
     EXAMPLE_REQUIRE(!proven_u8str_view_eq_ascii_ci(PROVEN_LIT("@"), PROVEN_LIT("`")), "a byte next to the letters is only itself");
     EXAMPLE_REQUIRE(proven_u8str_view_starts_with_ascii_ci(PROVEN_LIT("HTTPS://example.org"), PROVEN_LIT("https:")), "and so does a prefix test");
+    /* To write a name in its lower-case form - HTTP/2 wants field names so - fold it a byte at a time. */
+    proven_u8str_view_t field = PROVEN_LIT("X-Request-Id");
+    proven_byte_t folded[16];
+    for (proven_size_t i = 0; i < field.size; ++i) folded[i] = proven_ascii_lower(field.ptr[i]);
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_view_from_bytes(folded, field.size), PROVEN_LIT("x-request-id")), "lower case");
+    EXAMPLE_REQUIRE(proven_ascii_lower(0xC3) == 0xC3 && proven_ascii_lower('[') == '[', "only 'A' to 'Z' change");
 
     /* 어떤 버퍼든 부르는 자리에서 캐스트 없이 view로. */
     const unsigned char raw[] = { 'G', 'E', 'T' };

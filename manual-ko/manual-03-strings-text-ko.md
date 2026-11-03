@@ -208,6 +208,7 @@ proven_u8str_destroy(alloc, &s);
 | `proven_u8str_view_from_bytes(ptr, size)` | 어떤 객체 포인터에서든 `size` 바이트의 view를 캐스트 없이 만든다. | `proven_u8str_view_t`; 복사하지 않음. |
 | `proven_u8str_view_eq(a, b)` | 바이트 동등성 검사. | int 진리값. |
 | `proven_u8str_view_eq_ascii_ci(a, b)` | ASCII 글자의 대소문자를 무시한 동등성: HTTP 필드 이름, URL 스킴, MIME 타입. | int 진리값. |
+| `proven_ascii_lower(c)` | 바이트 하나의 'A'~'Z'를 'a'~'z'로 바꾸고, 0x80 이상을 포함한 다른 바이트는 그대로 돌려준다. 인라인(inline). | `proven_byte_t`. |
 | `proven_u8str_destroy(alloc, str)` | 일치하는 allocator로 owned 저장소를 해제한다. | void. |
 | `proven_u8str_as_view(str)` | 현재 내용을 borrow한다. | `proven_u8str_view_t`. |
 
@@ -417,6 +418,12 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_u8str_view_eq_ascii_ci(PROVEN_LIT("Content-Type"), PROVEN_LIT("content-TYPE")), "field names ignore ASCII case");
     EXAMPLE_REQUIRE(!proven_u8str_view_eq_ascii_ci(PROVEN_LIT("@"), PROVEN_LIT("`")), "a byte next to the letters is only itself");
     EXAMPLE_REQUIRE(proven_u8str_view_starts_with_ascii_ci(PROVEN_LIT("HTTPS://example.org"), PROVEN_LIT("https:")), "and so does a prefix test");
+    /* To write a name in its lower-case form - HTTP/2 wants field names so - fold it a byte at a time. */
+    proven_u8str_view_t field = PROVEN_LIT("X-Request-Id");
+    proven_byte_t folded[16];
+    for (proven_size_t i = 0; i < field.size; ++i) folded[i] = proven_ascii_lower(field.ptr[i]);
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_view_from_bytes(folded, field.size), PROVEN_LIT("x-request-id")), "lower case");
+    EXAMPLE_REQUIRE(proven_ascii_lower(0xC3) == 0xC3 && proven_ascii_lower('[') == '[', "only 'A' to 'Z' change");
 
     /* 어떤 버퍼든 부르는 자리에서 캐스트 없이 view로. */
     const unsigned char raw[] = { 'G', 'E', 'T' };

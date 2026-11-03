@@ -112,7 +112,6 @@ struct c3conn {
     proven_byte_t host[256];
 };
 
-static proven_byte_t c3_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
 
 static void *c3_alloc(proven_allocator_t a, proven_size_t n) {
@@ -233,7 +232,7 @@ typedef struct {
 
 static proven_u64 c3_origin_key(proven_u8str_view_t host, proven_u16 port) {
     proven_u64 h = 1469598103934665603u;
-    for (proven_size_t i = 0; i < host.size; ++i) { h ^= c3_lower(host.ptr[i]); h *= 1099511628211u; }
+    for (proven_size_t i = 0; i < host.size; ++i) { h ^= proven_ascii_lower(host.ptr[i]); h *= 1099511628211u; }
     h ^= port; h *= 1099511628211u;
     return h | 1u;
 }
@@ -601,7 +600,7 @@ static proven_err_t r_submit(proven_c3req_t *r) {
     proven_byte_t authority[300], digits[20];
     proven_size_t al = 0, nd = 0;
     if (r->host_is_ipv6) authority[al++] = '[';
-    for (proven_size_t i = 0; i < c->host_len; ++i) authority[al++] = c3_lower(c->host[i]);
+    for (proven_size_t i = 0; i < c->host_len; ++i) authority[al++] = proven_ascii_lower(c->host[i]);
     if (r->host_is_ipv6) authority[al++] = ']';
     if (c->port != 443) {
         authority[al++] = ':';
@@ -629,7 +628,7 @@ static proven_err_t r_submit(proven_c3req_t *r) {
         if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("keep-alive")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("proxy-connection")) || proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("upgrade"))) continue;
         if (proven_u8str_view_eq_ascii_ci(name, PROVEN_LIT("te")) && !proven_u8str_view_eq_ascii_ci(r->headers[i].value, PROVEN_LIT("trailers"))) continue;
         if (at + name.size > cl->cfg.max_head_bytes) { e = PROVEN_ERR_OUT_OF_BOUNDS; break; }
-        for (proven_size_t k = 0; k < name.size; ++k) cl->hbuf[at + k] = c3_lower(name.ptr[k]);
+        for (proven_size_t k = 0; k < name.size; ++k) cl->hbuf[at + k] = proven_ascii_lower(name.ptr[k]);
         list[n++] = (proven_http_header_t){ .name = { .ptr = cl->hbuf + at, .size = name.size }, .value = r->headers[i].value };
         at += name.size;
     }

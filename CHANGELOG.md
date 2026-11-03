@@ -18,6 +18,14 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- `proven_ascii_lower` (`u8str.h`, inline): one byte with 'A' to 'Z' made lower case and every
+  other byte as it is - the rule of `proven_u8str_view_eq_ascii_ci`. The library's ten private
+  copies of it (the HTTP/1.1, HTTP/2 and HTTP/3 drivers, cookies, certificates, strings) now use
+  it, and the TLS session cache and the WebSocket handshake compare names through it or
+  `proven_u8str_view_eq_ascii_ci`. No behavior changes.
+
 ## [0.109.0] - 2026-11-03
 
 ### Security

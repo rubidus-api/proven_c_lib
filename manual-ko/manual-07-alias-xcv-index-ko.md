@@ -478,6 +478,7 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_array_swap_remove` | `proven_array_swap_remove` |
 | `xcv_array_t` | `proven_array_t` |
 | `xcv_array_truncate` | `proven_array_truncate` |
+| `xcv_ascii_lower` | `proven_ascii_lower` |
 | `xcv_base64_decode` | `proven_base64_decode` |
 | `xcv_base64_decoded_size` | `proven_base64_decoded_size` |
 | `xcv_base64_encode` | `proven_base64_encode` |

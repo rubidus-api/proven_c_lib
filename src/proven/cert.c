@@ -318,7 +318,6 @@ bool proven_cert_alt_name_next(const proven_cert_t *cert, proven_size_t *pos,
     return true;
 }
 
-static proven_byte_t lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
 static bool ascii_eq_nocase(const proven_byte_t *a, const proven_byte_t *b, proven_size_t n) {
     return proven_u8str_view_eq_ascii_ci(proven_u8str_view_from_bytes(a, n), proven_u8str_view_from_bytes(b, n));
@@ -352,7 +351,7 @@ static bool parse_ipv6(const proven_byte_t *s, proven_size_t n, proven_byte_t ou
         proven_u32 v = 0;
         proven_size_t digits = 0;
         while (i < n && digits < 5) {
-            proven_byte_t c = lower(s[i]);
+            proven_byte_t c = proven_ascii_lower(s[i]);
             if (c >= '0' && c <= '9') v = v * 16 + (proven_u32)(c - '0');
             else if (c >= 'a' && c <= 'f') v = v * 16 + (proven_u32)(c - 'a' + 10);
             else break;

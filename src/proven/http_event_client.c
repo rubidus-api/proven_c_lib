@@ -24,7 +24,6 @@
  * begins the connect, and everything that can fail afterwards happens from the loop.
  */
 
-static proven_byte_t cl_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
 static void *cl_alloc(proven_allocator_t a, proven_size_t n) {
     proven_result_mem_mut_t m = a.alloc_fn(a.ctx, n, 16);
@@ -258,7 +257,7 @@ static proven_cl_session_t *cl_session_find(proven_http_event_client_t *cl, prov
         proven_cl_session_t *e = &t[i];
         if (!e->used || e->quic != quic || e->port != port || e->host_len != host.size) continue;
         bool same = true;
-        for (proven_size_t k = 0; k < host.size && same; ++k) same = cl_lower(e->host[k]) == cl_lower(host.ptr[k]);
+        for (proven_size_t k = 0; k < host.size && same; ++k) same = proven_ascii_lower(e->host[k]) == proven_ascii_lower(host.ptr[k]);
         if (same) return e;
     }
     return (void *)0;

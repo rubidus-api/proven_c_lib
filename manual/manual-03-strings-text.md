@@ -211,6 +211,7 @@ proven_u8str_destroy(alloc, &s);
 | `proven_u8str_view_from_bytes(ptr, size)` | Make a view of `size` bytes at any object pointer, no cast needed. | `proven_u8str_view_t`; nothing copied. |
 | `proven_u8str_view_eq(a, b)` | Byte equality test. | int truth value. |
 | `proven_u8str_view_eq_ascii_ci(a, b)` | Equality with ASCII letters compared without case: HTTP field names, URL schemes, MIME types. | int truth value. |
+| `proven_ascii_lower(c)` | One byte with 'A' to 'Z' made 'a' to 'z'; every other byte, 0x80 and up included, as it is. Inline. | `proven_byte_t`. |
 | `proven_u8str_destroy(alloc, str)` | Free owned storage with matching allocator. | void. |
 | `proven_u8str_as_view(str)` | Borrow current contents. | `proven_u8str_view_t`. |
 
@@ -429,6 +430,12 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_u8str_view_eq_ascii_ci(PROVEN_LIT("Content-Type"), PROVEN_LIT("content-TYPE")), "field names ignore ASCII case");
     EXAMPLE_REQUIRE(!proven_u8str_view_eq_ascii_ci(PROVEN_LIT("@"), PROVEN_LIT("`")), "a byte next to the letters is only itself");
     EXAMPLE_REQUIRE(proven_u8str_view_starts_with_ascii_ci(PROVEN_LIT("HTTPS://example.org"), PROVEN_LIT("https:")), "and so does a prefix test");
+    /* To write a name in its lower-case form - HTTP/2 wants field names so - fold it a byte at a time. */
+    proven_u8str_view_t field = PROVEN_LIT("X-Request-Id");
+    proven_byte_t folded[16];
+    for (proven_size_t i = 0; i < field.size; ++i) folded[i] = proven_ascii_lower(field.ptr[i]);
+    EXAMPLE_REQUIRE(proven_u8str_view_eq(proven_u8str_view_from_bytes(folded, field.size), PROVEN_LIT("x-request-id")), "lower case");
+    EXAMPLE_REQUIRE(proven_ascii_lower(0xC3) == 0xC3 && proven_ascii_lower('[') == '[', "only 'A' to 'Z' change");
 
     /* A view of any buffer, without a cast at the call site. */
     const unsigned char raw[] = { 'G', 'E', 'T' };

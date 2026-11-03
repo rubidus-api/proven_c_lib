@@ -456,6 +456,7 @@
 #define xcv_array_swap_remove proven_array_swap_remove
 #define xcv_array_t proven_array_t
 #define xcv_array_truncate proven_array_truncate
+#define xcv_ascii_lower proven_ascii_lower
 #define xcv_base64_decode proven_base64_decode
 #define xcv_base64_decoded_size proven_base64_decoded_size
 #define xcv_base64_encode proven_base64_encode

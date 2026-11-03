@@ -526,14 +526,8 @@ bool proven_tls_ticket_open(const proven_tls_config_t *config, proven_mem_view_t
 /* ---- A client's sessions by server name (RFC-0027) ---- */
 
 static bool cache_name_is(const proven_tls_client_entry_t *x, proven_u8str_view_t name) {
-    if (x->used == 0 || x->name_len != name.size) return false;
-    for (proven_size_t i = 0; i < name.size; ++i) {
-        proven_byte_t a = x->name[i], b = name.ptr[i];
-        if (a >= 'A' && a <= 'Z') a = (proven_byte_t)(a + 32);
-        if (b >= 'A' && b <= 'Z') b = (proven_byte_t)(b + 32);
-        if (a != b) return false;
-    }
-    return true;
+    if (x->used == 0) return false;
+    return proven_u8str_view_eq_ascii_ci((proven_u8str_view_t){ .ptr = x->name, .size = x->name_len }, name);
 }
 
 void proven_tls_client_cache_load_(const proven_tls_config_t *config, proven_u8str_view_t name, proven_tls_session_t *out) {

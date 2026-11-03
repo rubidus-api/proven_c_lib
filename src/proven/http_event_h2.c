@@ -103,7 +103,6 @@ struct h2d {
 /* The engine's clock for growing windows: microseconds. */
 static proven_u64 h2_now_us(void) { return (proven_u64)proven_time_monotonic_now() / 1000u; }
 
-static proven_byte_t h2_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
 
 static void *h2_alloc(proven_allocator_t a, proven_size_t n) {
@@ -835,7 +834,7 @@ static proven_err_t s_head(proven_h2s_t *s, proven_u16 status, const proven_http
     for (proven_size_t i = 0; i < header_count && e == PROVEN_OK; ++i) {
         if (h2_is_hop_header(headers[i].name)) continue;
         if (at + headers[i].name.size > sv->cfg.max_head_bytes) { e = PROVEN_ERR_OUT_OF_BOUNDS; break; }
-        for (proven_size_t k = 0; k < headers[i].name.size; ++k) sv->hbuf[at + k] = h2_lower(headers[i].name.ptr[k]);
+        for (proven_size_t k = 0; k < headers[i].name.size; ++k) sv->hbuf[at + k] = proven_ascii_lower(headers[i].name.ptr[k]);
         list[n++] = (proven_http_header_t){ .name = { .ptr = sv->hbuf + at, .size = headers[i].name.size }, .value = headers[i].value };
         at += headers[i].name.size;
     }

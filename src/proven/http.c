@@ -34,7 +34,6 @@ static bool http_is_field_byte(proven_byte_t c) {
 
 static bool http_is_ows(proven_byte_t c) { return c == ' ' || c == '\t'; }
 
-static proven_byte_t http_lower(proven_byte_t c) { return (c >= 'A' && c <= 'Z') ? (proven_byte_t)(c + 32) : c; }
 
 static bool http_is_token(proven_u8str_view_t s) {
     if (s.size == 0) return false;
@@ -1021,7 +1020,7 @@ proven_err_t proven_http_content_range_parse(proven_u8str_view_t value, proven_u
     if (!first || !last || !total || !has_total || (value.size > 0 && !value.ptr)) return PROVEN_ERR_INVALID_ARG;
     static const char unit[] = "bytes ";
     if (value.size < 6) return PROVEN_ERR_INVALID_FORMAT;
-    for (proven_size_t i = 0; i < 6; ++i) if (http_lower(value.ptr[i]) != (proven_byte_t)unit[i]) return PROVEN_ERR_INVALID_FORMAT;
+    for (proven_size_t i = 0; i < 6; ++i) if (proven_ascii_lower(value.ptr[i]) != (proven_byte_t)unit[i]) return PROVEN_ERR_INVALID_FORMAT;
     proven_size_t pos = 6;
     proven_u64 a = 0, b = 0, t = 0;
     if (!http_take_u64(value, &pos, &a) || pos >= value.size || value.ptr[pos] != '-') return PROVEN_ERR_INVALID_FORMAT;
