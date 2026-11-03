@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.110.0] - 2026-11-03
+
 ### Added
 
 - `proven_ascii_lower` (`u8str.h`, inline): one byte with 'A' to 'Z' made lower case and every
