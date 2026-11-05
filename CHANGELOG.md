@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.111.0] - 2026-11-06
+
 ### Added
 
 - `aead.h`: AES-GCM (`proven_aes_gcm_t`, `proven_aes_gcm_init`, `_seal`, `_open`) and
