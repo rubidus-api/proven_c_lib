@@ -80,7 +80,7 @@ static void run(bool force_poll) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("register, wait, and what is reported",
         "An empty selector times out; registered sockets are reported when ready and only then; readiness is level-triggered.",
-        "Inspect proven_net_selector_wait in src/proven/net.c, and for the system's kind proven_sys_net_selector_wait in platform/proven_sys_net.c.");
+        "Inspect proven_net_selector_wait in net/src/net.c, and for the system's kind proven_sys_net_selector_wait in net/platform/proven_sys_net.c.");
     // ---------------------------------------------------------------
     {
         proven_time_t start = proven_time_monotonic_now();
@@ -413,7 +413,7 @@ static void run(bool force_poll) {
 int main(void) {
     PROVEN_TEST_SUITE("net: the selector",
         "A registered set of sockets and a wait that reports the ready ones, in the system's kind and in the portable one.",
-        "Inspect the Selector section of src/proven/net.c and of platform/proven_sys_net.c.");
+        "Inspect the Selector section of net/src/net.c and of net/platform/proven_sys_net.c.");
 
     {
         proven_net_conn_t a, b;

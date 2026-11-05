@@ -8,7 +8,7 @@
 #include "proven/time.h"
 #include "proven_internal_http_coding.h"
 #include "proven_internal_tls.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 #if !defined(PROVEN_NO_HTTP3)
 #include "proven/loop.h"
 #include "proven/http_event_client.h"

@@ -1,6 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_h3.h"
+#include "../net/src/proven_internal_h3.h"
 #include "test_unit_qpack_vectors.h"
 #include "test_unit_hpack_vectors.h"
 #include <stdio.h>
@@ -57,7 +57,7 @@ static unsigned next(void) { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17
 int main(void) {
     PROVEN_TEST_SUITE("QPACK: header compression for HTTP/3",
         "QPACK with a dynamic table of capacity 0: RFC 9204's static table and appendix B, the encoder's choices, round trips, every refusal and limit, the peer's encoder and decoder streams, and every change of encoded sections.",
-        "Inspect src/proven/qpack.c. src/proven/qpack_static.h and tests/test_unit_qpack_vectors.h are generated from the RFC's text by a private program: regenerate, do not edit.");
+        "Inspect net/src/qpack.c. net/src/qpack_static.h and tests/test_unit_qpack_vectors.h are generated from the RFC's text by a private program: regenerate, do not edit.");
 
     static proven_byte_t out[1 << 16];
     proven_size_t count = 0, len = 0;
@@ -291,7 +291,7 @@ int main(void) {
         PROVEN_TEST_INFO("{} refused, {} decoded", PROVEN_ARG((long long)(refused)), PROVEN_ARG((long long)(decoded)));
     }
 
-    PROVEN_TEST_SECTION("The dynamic table, as a decoder (RFC-0032)", "RFC 9204 appendix B against a table of 220 bytes: a section that waits for its inserts, B.2 to B.5 decoded, the decoder's instructions as the appendix writes them, an evicted entry refused; a capacity over the maximum, an entry larger than the table, a count above what the section needs, a reference past it; Huffman-coded inserts; the encoder stream fed a byte at a time and in random pieces.", "Check proven_qpack_dec_feed, qp_enc_instr, qp_required and the dynamic branches of proven_qpack_decode_dyn in src/proven/qpack.c.");
+    PROVEN_TEST_SECTION("The dynamic table, as a decoder (RFC-0032)", "RFC 9204 appendix B against a table of 220 bytes: a section that waits for its inserts, B.2 to B.5 decoded, the decoder's instructions as the appendix writes them, an evicted entry refused; a capacity over the maximum, an entry larger than the table, a count above what the section needs, a reference past it; Huffman-coded inserts; the encoder stream fed a byte at a time and in random pieces.", "Check proven_qpack_dec_feed, qp_enc_instr, qp_required and the dynamic branches of proven_qpack_decode_dyn in net/src/qpack.c.");
     {
         static proven_byte_t enc_b2[64], enc_b3[64], enc_b4[8], enc_b5[64], sec_b2[8], sec_b4[8];
         const proven_size_t n_eb2 = unhex(qpack_examples[1].hex, enc_b2, sizeof enc_b2), n_sb2 = unhex(qpack_examples[2].hex, sec_b2, sizeof sec_b2);
@@ -391,7 +391,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(same_all, "five hundred random splittings of B.2 to B.4's encoder stream build the same table", "");
     }
 
-    PROVEN_TEST_SECTION("The dynamic table, as an encoder (RFC-0032)", "Lists encoded with a table of 4,096 bytes and decoded by this side's decoder, each instruction carried across and every acknowledgement and increment back: the same lists, references only to acknowledged entries, a repeated list a fraction of its first size; a table of 256 bytes under many fields, a section held unacknowledged keeping its entries from eviction; secrets never inserted; the decoder-stream instructions refused.", "Check proven_qpack_encode_dyn, qe_room, qe_find and proven_qpack_enc_feed in src/proven/qpack.c.");
+    PROVEN_TEST_SECTION("The dynamic table, as an encoder (RFC-0032)", "Lists encoded with a table of 4,096 bytes and decoded by this side's decoder, each instruction carried across and every acknowledgement and increment back: the same lists, references only to acknowledged entries, a repeated list a fraction of its first size; a table of 256 bytes under many fields, a section held unacknowledged keeping its entries from eviction; secrets never inserted; the decoder-stream instructions refused.", "Check proven_qpack_encode_dyn, qe_room, qe_find and proven_qpack_enc_feed in net/src/qpack.c.");
     {
         static proven_byte_t sec[8192], ins[8192], back[64];
         proven_qpack_enc_t *e = NULL;

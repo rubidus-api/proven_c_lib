@@ -1,6 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_quic.h"
+#include "../net/src/proven_internal_quic.h"
 #include "test_unit_tls_pki.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -426,7 +426,7 @@ static proven_size_t unhex(const char *hex, proven_byte_t *out, proven_size_t ca
 int main(void) {
     PROVEN_TEST_SUITE("QUIC connections",
         "Two QUIC engines over a simulated network: the handshake, streams under loss, flow control and caps, every rule's code, closes and resets, and changed packets refused.",
-        "Inspect src/proven/quic_conn.c; the network is this test's, seeded, with a virtual clock.");
+        "Inspect net/src/quic_conn.c; the network is this test's, seeded, with a virtual clock.");
 
     g_alloc = proven_heap_allocator();
     PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "");
@@ -1588,7 +1588,7 @@ int main(void) {
         net_free(n);
     }
 
-    PROVEN_TEST_SECTION("ECN (RFC-0035)", "RFC 9000 section 13.4 on the simulated network: a path that carries the marks is validated by both sides and every packet goes marked; one that bleaches them, rewrites ECT(0) to ECT(1) or drops what is marked fails validation and the connection goes on unmarked; a side that reads no marks reports no counts and the other stops marking; CE marks are counted, acknowledged and answered as congestion with nothing lost; a new path is tested again.", "Check ecn_mark, ecn_on_ack, ecn_path_new and the counting in read_packet (src/proven/quic_conn.c), and the ACK_ECN writer in quic_frame.c.");
+    PROVEN_TEST_SECTION("ECN (RFC-0035)", "RFC 9000 section 13.4 on the simulated network: a path that carries the marks is validated by both sides and every packet goes marked; one that bleaches them, rewrites ECT(0) to ECT(1) or drops what is marked fails validation and the connection goes on unmarked; a side that reads no marks reports no counts and the other stops marking; CE marks are counted, acknowledged and answered as congestion with nothing lost; a new path is tested again.", "Check ecn_mark, ecn_on_ack, ecn_path_new and the counting in read_packet (net/src/quic_conn.c), and the ACK_ECN writer in quic_frame.c.");
     {
         enum { TESTING, UNKNOWN, CAPABLE, FAILED };
         /* A clean path: both validate, and marked packets are counted on arrival. */
@@ -1709,7 +1709,7 @@ int main(void) {
     proven_tls_config_destroy(g_tls_client);
     proven_tls_config_destroy(g_tls_server);
     proven_cert_store_destroy(g_anchors);
-    PROVEN_TEST_SECTION("congestion control (RFC-0033)", "CUBIC (RFC 9438) against RFC 9002's NewReno on a model of the path, both from congestion avoidance at a window with one loss: the reduction (0.7 against 0.5), the time back to the window - at 100 ms and 300 ms a fraction of NewReno's, near RFC 9438's K; at 1 ms the Reno-friendly region, close to NewReno - fast convergence, and NewReno's own growth above the square of a datagram.", "Check cu_reduce, cu_avoid, cu_cbrt, cu_term and cc_share in src/proven/quic_conn.c.");
+    PROVEN_TEST_SECTION("congestion control (RFC-0033)", "CUBIC (RFC 9438) against RFC 9002's NewReno on a model of the path, both from congestion avoidance at a window with one loss: the reduction (0.7 against 0.5), the time back to the window - at 100 ms and 300 ms a fraction of NewReno's, near RFC 9438's K; at 1 ms the Reno-friendly region, close to NewReno - fast convergence, and NewReno's own growth above the square of a datagram.", "Check cu_reduce, cu_avoid, cu_cbrt, cu_term and cc_share in net/src/quic_conn.c.");
     {
         proven_u64 a = 0, ra = 0, b = 0, rb = 0;
         proven_quic_cc_model_(false, 1200, 100000, 1250000, &a, &ra);

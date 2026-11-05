@@ -846,7 +846,7 @@ Failure tip: inspect `src/proven/cert.c`. The chains are in `tests/test_unit_cer
 
 ### `tests/test_unit_tls_keys` - TLS 1.3 key schedule and records against RFC 8448
 
-Intent: verify the parts of TLS 1.3 below the state machine - the transcript hash, the key schedule, record protection - against the published example handshakes, value by value. Internal code, reached through `src/proven/proven_internal_tls.h`.
+Intent: verify the parts of TLS 1.3 below the state machine - the transcript hash, the key schedule, record protection - against the published example handshakes, value by value. Internal code, reached through `net/src/proven_internal_tls.h`.
 
 Sub-checks:
 
@@ -855,11 +855,11 @@ Sub-checks:
 - Section 5 (HelloRetryRequest): the first ClientHello replaced in the transcript by a `message_hash` message. Section 6 (client authentication): the client's Certificate and CertificateVerify before its Finished. Section 7 (compatibility mode): ChangeCipherSpec records outside the transcript.
 - Beyond the traces: `TLS_AES_256_GCM_SHA384` and `TLS_CHACHA20_POLY1305_SHA256` seal and open records from empty to 2^14 bytes; padding is stripped; a record of only zeros, a body shorter than a tag and a type, and one over the limit are refused.
 
-Failure tip: inspect `src/proven/tls_keys.c`. The step letter printed on failure names the operation (the test's header comment lists them). `tests/test_unit_tls_vectors.h` is written by a private generator from the RFC's text. Not covered: the traces are all `TLS_AES_128_GCM_SHA256`, so no published value checks the SHA-384 schedule; and this is not a handshake - no state machine is exercised.
+Failure tip: inspect `net/src/tls_keys.c`. The step letter printed on failure names the operation (the test's header comment lists them). `tests/test_unit_tls_vectors.h` is written by a private generator from the RFC's text. Not covered: the traces are all `TLS_AES_128_GCM_SHA256`, so no published value checks the SHA-384 schedule; and this is not a handshake - no state machine is exercised.
 
 ### `tests/test_unit_quic_crypto` - QUIC packet protection and transport parameters
 
-Intent: verify QUIC versions 1 and 2 below the transport (RFC-0017 Q-1, RFC-0036) - variable-length integers, packet numbers, packet protection, the Retry integrity tag and the transport parameters - against the published examples, byte for byte, and refuse every change. Internal code, reached through `src/proven/proven_internal_quic.h`.
+Intent: verify QUIC versions 1 and 2 below the transport (RFC-0017 Q-1, RFC-0036) - variable-length integers, packet numbers, packet protection, the Retry integrity tag and the transport parameters - against the published examples, byte for byte, and refuse every change. Internal code, reached through `net/src/proven_internal_quic.h`.
 
 Sub-checks:
 
@@ -875,11 +875,11 @@ The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 - QUIC version 2 (RFC 9369 appendix A; RFC-0036): the Initial secrets from version 2's salt, each side's key, IV and header protection key under the "quicv2" labels, the client's and the server's Initial protected as printed, the Retry's tag under version 2's key and nonce (chosen by the packet's Version field), the ChaCha20 short header packet and "quicv2 ku"; version 2's header types written and read; every change of the two Initials refused, and version 1's keys do not make version 2's packet.
 - version_information (RFC 9368 section 3): read from a client and a server (a server's list may be empty), written and read back; refused with TRANSPORT_PARAMETER_ERROR when not a whole number of versions, a version is zero, more than eight are listed, or a client's chosen version is missing from its list.
 
-Failure tip: inspect `src/proven/quic_crypto.c`. `tests/test_unit_quic_vectors.h` and `tests/test_unit_quic_vectors_v2.h` are the RFCs' text, written by a private generator. Not covered here: a real peer - the private check drives aioquic's TLS engine against this library's in QUIC mode; the connection that uses these packets (`tests/test_unit_quic_conn`).
+Failure tip: inspect `net/src/quic_crypto.c`. `tests/test_unit_quic_vectors.h` and `tests/test_unit_quic_vectors_v2.h` are the RFCs' text, written by a private generator. Not covered here: a real peer - the private check drives aioquic's TLS engine against this library's in QUIC mode; the connection that uses these packets (`tests/test_unit_quic_conn`).
 
 ### `tests/test_unit_quic_frame` - QUIC packet headers and frames
 
-Intent: verify the reading and writing of RFC 9000's packet headers and frames (RFC-0017 Q-2) - the codec under the connection. Internal code, reached through `src/proven/proven_internal_quic.h`.
+Intent: verify the reading and writing of RFC 9000's packet headers and frames (RFC-0017 Q-2) - the codec under the connection. Internal code, reached through `net/src/proven_internal_quic.h`.
 
 Sub-checks:
 
@@ -894,11 +894,11 @@ Sub-checks:
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 - Version negotiation lists versions 1 and 2 (RFC-0036).
 
-Failure tip: inspect `src/proven/quic_frame.c`.
+Failure tip: inspect `net/src/quic_frame.c`.
 
 ### `tests/test_unit_quic_conn` - QUIC connections
 
-Intent: verify the QUIC connection (RFC 9000, RFC 9002; RFC-0017 Q-2): no socket and no clock of its own, so two engines run over this test's simulated network - a virtual clock, and a seeded network that delays, loses, duplicates and reorders datagrams and can capture them all. Internal code, reached through `src/proven/proven_internal_quic.h`.
+Intent: verify the QUIC connection (RFC 9000, RFC 9002; RFC-0017 Q-2): no socket and no clock of its own, so two engines run over this test's simulated network - a virtual clock, and a seeded network that delays, loses, duplicates and reorders datagrams and can capture them all. Internal code, reached through `net/src/proven_internal_quic.h`.
 
 Sub-checks:
 
@@ -929,11 +929,11 @@ The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 - ECN (RFC-0035; RFC 9000 section 13.4): on a network that carries the marks both sides validate the path and every packet goes marked ECT(0), counted on arrival; a path that bleaches the marks, rewrites ECT(0) to ECT(1), drops what is marked, or starts bleaching after it was validated ends ECN on both sides and the transfer completes unmarked; a peer that reads no marks reports no counts and this side stops marking; CE marks are counted, acknowledged and answered as congestion with nothing lost, the window ending below that of the same transfer without them; after the server's path moves, ECN is tested and validated again there.
 - QUIC version 2 (RFC-0036): a client starting in 2 is answered in it with no Version Negotiation, every long header of both sides in 2; a server allowed to move a version-1 client that lists 2 does, and the connection carries on in 2 (without the switch it stays in 1); the ticket of such a connection makes the next start in 2, resume and send early data, while a connection in 1 neither offers it nor writes early; a version-1 ticket's early data is taken by a server that moves to 2, every 0-RTT packet - those sent after the client followed the server - in version 1; a client restarted in 2 by a Version Negotiation refuses a server that lists 1; a client in 1 that says it chose 2, and a server that says it chose a version never offered, are refused with VERSION_NEGOTIATION_ERROR; a Version Negotiation listing only 2 ends the attempt with 2 to start again in, one listing the version started in is ignored; a Retry of another version is dropped; a version-1 NEW_TOKEN token presented in 2 validates nothing.
 
-Failure tip: inspect `src/proven/quic_conn.c` (for the datagram size: `pm_next`, `pm_passed`, `pm_lost`, the probe in `proven_quic_conn_send`, and the fallbacks in `detect_lost` and `on_loss_timeout`). The network and the clock are the test's own, so a failure repeats with the same seed. Not covered here: another implementation over real UDP - the private check runs aioquic against this library through a lossy relay, in both roles.
+Failure tip: inspect `net/src/quic_conn.c` (for the datagram size: `pm_next`, `pm_passed`, `pm_lost`, the probe in `proven_quic_conn_send`, and the fallbacks in `detect_lost` and `on_loss_timeout`). The network and the clock are the test's own, so a failure repeats with the same seed. Not covered here: another implementation over real UDP - the private check runs aioquic against this library through a lossy relay, in both roles.
 
 ### `tests/test_unit_qpack` - QPACK: header compression for HTTP/3
 
-Intent: verify QPACK (RFC 9204; RFC-0017 Q-3) with a dynamic table of capacity 0, where nothing is kept from one field section to the next, and the decoder and the encoder with a dynamic table (RFC-0032). Internal code, reached through `src/proven/proven_internal_h3.h`.
+Intent: verify QPACK (RFC 9204; RFC-0017 Q-3) with a dynamic table of capacity 0, where nothing is kept from one field section to the next, and the decoder and the encoder with a dynamic table (RFC-0032). Internal code, reached through `net/src/proven_internal_h3.h`.
 
 Sub-checks:
 
@@ -950,11 +950,11 @@ Sub-checks:
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
-Failure tip: inspect `src/proven/qpack.c`. The table (`src/proven/qpack_static.h`) and the vectors (`tests/test_unit_qpack_vectors.h`) are generated from the RFC's text by a private program: regenerate, do not edit. Not covered here: another implementation - the private check runs every header list of the HPACK corpus through pylsqpack (aioquic's) and this library both ways.
+Failure tip: inspect `net/src/qpack.c`. The table (`net/src/qpack_static.h`) and the vectors (`tests/test_unit_qpack_vectors.h`) are generated from the RFC's text by a private program: regenerate, do not edit. Not covered here: another implementation - the private check runs every header list of the HPACK corpus through pylsqpack (aioquic's) and this library both ways.
 
 ### `tests/test_unit_h3_conn` - HTTP/3 connections
 
-Intent: verify the HTTP/3 connection (RFC 9114; RFC-0017 Q-3) over two QUIC engines on this test's simulated network, and every code of RFC 9114 section 8.1 and RFC 9204 section 6 that this side acts on, produced by the input that should produce it. Internal code, reached through `src/proven/proven_internal_h3.h`; it borrows the QUIC connection and does no I/O of its own.
+Intent: verify the HTTP/3 connection (RFC 9114; RFC-0017 Q-3) over two QUIC engines on this test's simulated network, and every code of RFC 9114 section 8.1 and RFC 9204 section 6 that this side acts on, produced by the input that should produce it. Internal code, reached through `net/src/proven_internal_h3.h`; it borrows the QUIC connection and does no I/O of its own.
 
 Sub-checks:
 
@@ -973,11 +973,11 @@ Sub-checks:
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
-Failure tip: inspect `src/proven/h3_conn.c`: `req_step` and `req_headers` for request streams, `ctl_step` and `ctl_frame` for the control stream, `uni_step` for stream types, `h3_quic_event` for what QUIC reports, `proven_h3_conn_poll` for the order of work and the close after GOAWAY. The network and the clock are the test's own, so a failure repeats with the same seed. Not covered here: another implementation over real UDP - the private check runs aioquic's HTTP/3 against this library in both roles. H3_GENERAL_PROTOCOL_ERROR (sent when the peer allows this side no unidirectional stream) cannot be produced here: QUIC's configuration has no limit of 0.
+Failure tip: inspect `net/src/h3_conn.c`: `req_step` and `req_headers` for request streams, `ctl_step` and `ctl_frame` for the control stream, `uni_step` for stream types, `h3_quic_event` for what QUIC reports, `proven_h3_conn_poll` for the order of work and the close after GOAWAY. The network and the clock are the test's own, so a failure repeats with the same seed. Not covered here: another implementation over real UDP - the private check runs aioquic's HTTP/3 against this library in both roles. H3_GENERAL_PROTOCOL_ERROR (sent when the peer allows this side no unidirectional stream) cannot be produced here: QUIC's configuration has no limit of 0.
 
 ### `tests/test_unit_tls12_keys` - TLS 1.2 PRF, key block and records against known answers
 
-Intent: verify the parts of TLS 1.2 below the state machine - the PRF, the extended master secret, Finished, the key block, record protection for the six AEAD suites - against a script of known answers. Internal code, reached through `src/proven/proven_internal_tls.h`.
+Intent: verify the parts of TLS 1.2 below the state machine - the PRF, the extended master secret, Finished, the key block, record protection for the six AEAD suites - against a script of known answers. Internal code, reached through `net/src/proven_internal_tls.h`.
 
 Sub-checks:
 
@@ -987,11 +987,11 @@ Sub-checks:
 - What record protection refuses, for an AES-128-GCM, an AES-256-GCM and a ChaCha20 suite: a changed tag, a changed content type, a record sealed for the other direction, one cut short by a byte, the same record a second time, and lengths below a tag or above the maximum; a record is its content, a 16-byte tag and, with AES-GCM, an 8-byte explicit nonce.
 - Suite numbers that are no suite here (a TLS 1.3 suite, two 3DES suites) are not found.
 
-Failure tip: inspect `src/proven/tls12_keys.c`. The letter printed on failure names the operation (the test's header comment lists them). `tests/test_unit_tls12_vectors.h` is written by a private generator whose own PRF first reproduced the two published vectors. Not covered: there is no published trace of a whole TLS 1.2 handshake to replay, as RFC 8448 is for 1.3 - agreement of the handshake with other implementations is checked in a private interoperability run; and this is not a handshake.
+Failure tip: inspect `net/src/tls12_keys.c`. The letter printed on failure names the operation (the test's header comment lists them). `tests/test_unit_tls12_vectors.h` is written by a private generator whose own PRF first reproduced the two published vectors. Not covered: there is no published trace of a whole TLS 1.2 handshake to replay, as RFC 8448 is for 1.3 - agreement of the handshake with other implementations is checked in a private interoperability run; and this is not a handshake.
 
 ### `tests/test_unit_tls_legacy` - the legacy TLS set below the state machine
 
-Intent: verify the pieces under the legacy TLS set - what CBC suites, key exchange by RSA (the client's encryption) and by finite-field Diffie-Hellman, and TLS 1.0 and 1.1 are built from - against values computed outside the library, and what each must refuse. Internal code, reached through `src/proven/proven_internal_tls.h`.
+Intent: verify the pieces under the legacy TLS set - what CBC suites, key exchange by RSA (the client's encryption) and by finite-field Diffie-Hellman, and TLS 1.0 and 1.1 are built from - against values computed outside the library, and what each must refuse. Internal code, reached through `net/src/proven_internal_tls.h`.
 
 Sub-checks:
 
@@ -1002,7 +1002,7 @@ Sub-checks:
 - The signature of TLS 1.0 and 1.1: 36 bytes signed without a DigestInfo verify as such, not with a bit changed, not as 35 bytes; a signature with a DigestInfo is not accepted as one without.
 - Key block layout: for five CBC suites in every version they exist in, the two directions have different keys and each side opens what the other seals and not its own; the suite table holds twenty-seven suites, the twenty-one legacy ones last, and no 3DES or RC4 suite.
 
-Failure tip: inspect `src/proven/tls_legacy.c`, `src/proven/dh.c`, the CBC functions of `src/proven/crypto_aes.c`, and the key-exchange functions of `src/proven/crypto_rsa.c`. `tests/test_unit_tls_legacy_vectors.h` is written by a private generator with Python's `hashlib` and `hmac` and another library's AES; the Diffie-Hellman primes in it are read from the library's source, so that part checks the arithmetic and not the constants (those were checked against two other implementations when they were added). Not covered: that opening a CBC record takes the same time whatever its padding - no test here can see that; a private check runs the code under a tool that reports any branch or index that depends on the decrypted bytes.
+Failure tip: inspect `net/src/tls_legacy.c`, `src/proven/dh.c`, the CBC functions of `src/proven/crypto_aes.c`, and the key-exchange functions of `src/proven/crypto_rsa.c`. `tests/test_unit_tls_legacy_vectors.h` is written by a private generator with Python's `hashlib` and `hmac` and another library's AES; the Diffie-Hellman primes in it are read from the library's source, so that part checks the arithmetic and not the constants (those were checked against two other implementations when they were added). Not covered: that opening a CBC record takes the same time whatever its padding - no test here can see that; a private check runs the code under a tool that reports any branch or index that depends on the decrypted bytes.
 
 ### `tests/test_unit_tls` - the TLS engine
 
@@ -1029,7 +1029,7 @@ Sub-checks:
 - TLS 1.2 at its record limit, for an AES-GCM and a ChaCha20 suite, the count of records put at 2^31 - 2 on both sides by an internal call: two more records are written and read, the next write is `PROVEN_ERR_OVERFLOW` with nothing queued, and the other direction goes on.
 - The renewal of an RSA key's blinding pair, the count of uses put at 65,533 by an internal call: five handshakes across the renewal all complete, and the count begins again at it.
 
-Failure tip: inspect `src/proven/tls13.c`, `src/proven/tls_config.c` and `src/proven/cert_issue.c`. No key is stored in the tree: `tests/test_unit_tls_pki.h` derives keys from a fixed pattern and issues the certificates when the test starts, with the library's internal certificate writer. The RFC's records are in `tests/test_unit_tls_vectors.h`, written by a private generator. Not covered here: the server role against a published trace (RFC 8448's server key is RSA, which this version cannot sign with) - that is checked against OpenSSL and GnuTLS in a private interoperability run, as are both roles for every suite and group in both versions; `record_size_limit` from a peer; a ServerKeyExchange or CertificateVerify actually signed with SHA-1 (no SHA-1 scheme is offered or accepted, and no peer at hand will send one unasked).
+Failure tip: inspect `net/src/tls13.c`, `net/src/tls_config.c` and `src/proven/cert_issue.c`. No key is stored in the tree: `tests/test_unit_tls_pki.h` derives keys from a fixed pattern and issues the certificates when the test starts, with the library's internal certificate writer. The RFC's records are in `tests/test_unit_tls_vectors.h`, written by a private generator. Not covered here: the server role against a published trace (RFC 8448's server key is RSA, which this version cannot sign with) - that is checked against OpenSSL and GnuTLS in a private interoperability run, as are both roles for every suite and group in both versions; `record_size_limit` from a peer; a ServerKeyExchange or CertificateVerify actually signed with SHA-1 (no SHA-1 scheme is offered or accepted, and no peer at hand will send one unasked).
 
 ### `tests/test_unit_crypto_rsa` - RSA signing
 
@@ -1049,7 +1049,7 @@ Failure tip: inspect `src/proven/crypto_rsa.c` (`rsa_private`, `rsa_garner`, `pr
 
 ### `tests/test_unit_tls_quic` - TLS 1.3 in QUIC mode
 
-Intent: verify the TLS engine's QUIC mode (RFC 9001 sections 4 and 8): handshake bytes handed in and out one encryption level at a time, each level's traffic secrets handed out, the transport parameters exchanged, and QUIC's rules kept. Two engines back to back with no network; internal code, reached through `src/proven/proven_internal_quic.h`.
+Intent: verify the TLS engine's QUIC mode (RFC 9001 sections 4 and 8): handshake bytes handed in and out one encryption level at a time, each level's traffic secrets handed out, the transport parameters exchanged, and QUIC's rules kept. Two engines back to back with no network; internal code, reached through `net/src/proven_internal_quic.h`.
 
 Sub-checks:
 
@@ -1066,7 +1066,7 @@ Sub-checks:
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
-Failure tip: inspect the QUIC-mode parts of `src/proven/tls13.c` (`quic_emit`, `keys_read`, `keys_write`, `proven_tls_quic_*`). A changed handshake that completes means some byte reaches neither the transcript nor a check. Not covered here: an independent peer (the private check runs aioquic's TLS engine against this one in both roles, secret by secret); packet protection of these bytes and the QUIC transport (RFC-0017 Q-2).
+Failure tip: inspect the QUIC-mode parts of `net/src/tls13.c` (`quic_emit`, `keys_read`, `keys_write`, `proven_tls_quic_*`). A changed handshake that completes means some byte reaches neither the transcript nor a check. Not covered here: an independent peer (the private check runs aioquic's TLS engine against this one in both roles, secret by secret); packet protection of these bytes and the QUIC transport (RFC-0017 Q-2).
 
 ### `tests/test_unit_tls_net` - TLS over sockets: the transport, HTTPS and WebSocket
 
@@ -1082,7 +1082,7 @@ Sub-checks:
 - TLS 1.2 over sockets: the transport-wrapper cases and the HTTPS and `wss` cases (handlers on workers) once more, with a client configuration limited to TLS 1.2.
 - An RSA key signing on several threads: twenty-four in-memory handshakes against one server configuration with a 2048-bit RSA key, from four threads at once, all complete and are verified by their clients - the key's blinding pair is shared and replaced by every signature; and a page is fetched over HTTPS from a server with that key.
 
-Failure tip: inspect `src/proven/tls_transport.c` and the `tls` branches of `src/proven/http_server.c`. This test uses the wall clock (its certificates, issued at start by `tests/test_unit_tls_pki.h`, are valid 2026 to 2036) and the operating system's random source. Not covered: client certificates through the HTTP server, and resumption through the transport wrapper (both are engine paths `test_unit_tls` covers).
+Failure tip: inspect `net/src/tls_transport.c` and the `tls` branches of `net/src/http_server.c`. This test uses the wall clock (its certificates, issued at start by `tests/test_unit_tls_pki.h`, are valid 2026 to 2036) and the operating system's random source. Not covered: client certificates through the HTTP server, and resumption through the transport wrapper (both are engine paths `test_unit_tls` covers).
 
 ### `tests/test_unit_loop` - the event loop
 
@@ -1098,7 +1098,7 @@ Sub-checks:
 - `proven_loop_destroy` with a due timer set and an accept in flight calls neither; null is accepted.
 - "After this round", an internal hook: asked for between rounds it runs first in the next poll, before a timer that was due, in the order asked and once however often asked; one asked for from inside another runs in the same poll; one cancelled by another before its turn does not run; one that asks for itself each time does not keep a poll, and a poll that could sleep does not while one waits; one left waiting when its loop is destroyed is not run.
 
-Failure tip: inspect `src/proven/loop.c` - `loop_timers_advance` for the wheel, `loop_run_tasks` for posts, `proven_loop_poll` for the order of one round. A timer that fires early is a defect; one that fires late on a loaded machine is not.
+Failure tip: inspect `net/src/loop.c` - `loop_timers_advance` for the wheel, `loop_run_tasks` for posts, `proven_loop_poll` for the order of one round. A timer that fires early is a defect; one that fires late on a loaded machine is not.
 
 ### `tests/test_unit_loop_ops` - the event loop's operations
 
@@ -1119,7 +1119,7 @@ Sub-checks:
 - A loop destroyed with a receive and bytes in flight calls nothing (and the sanitizer runs find no leak).
 - ECN (RFC-0035): batches sent marked none, ECT(0) and ECT(1) in turn reach `received` with the mark sent or none, never another; on Linux, where loopback keeps the mark, the loop's receives report it, in both the platform's way and the one-at-a-time way.
 
-Failure tip: inspect `src/proven/loop.c` - `loop_run_done` and `sock_deliver` for delivery, `sock_flush` for sends, `sock_event` and `acc_event` for what the selector reports. The completion port - Windows', and io_uring's on Linux - is `loop_report` and the functions it calls (`sock_ms_done` for the multishot receive; the pool is `proven_sys_net_port_pool` and `proven_sys_net_ov_read` in `platform/proven_sys_net.c`); io_uring runs only where the kernel allows it (5.19 or later, not refused by a seccomp filter or `io_uring_disabled`), and a build with `-DPROVEN_LOOP_AUTO_URING_` makes every default loop of the suite a ring, which is how the event servers' and clients' tests are run on it. Not covered here: the kqueue path.
+Failure tip: inspect `net/src/loop.c` - `loop_run_done` and `sock_deliver` for delivery, `sock_flush` for sends, `sock_event` and `acc_event` for what the selector reports. The completion port - Windows', and io_uring's on Linux - is `loop_report` and the functions it calls (`sock_ms_done` for the multishot receive; the pool is `proven_sys_net_port_pool` and `proven_sys_net_ov_read` in `net/platform/proven_sys_net.c`); io_uring runs only where the kernel allows it (5.19 or later, not refused by a seccomp filter or `io_uring_disabled`), and a build with `-DPROVEN_LOOP_AUTO_URING_` makes every default loop of the suite a ring, which is how the event servers' and clients' tests are run on it. Not covered here: the kqueue path.
 
 ### `tests/test_unit_http_event` - the event-driven HTTP server
 
@@ -1141,7 +1141,7 @@ Sub-checks:
 - The graceful end (`proven_http_event_server_shutdown`, 1.5 s): with four connections open - answered and idle, a request answered after 300 ms, half a request head, a request nobody answers - the idle one is closed at once, a new connection is refused, a second shutdown and listening again are `PROVEN_ERR_INVALID_STATE`, the request in progress and the one whose head was arriving are answered in full with `Connection: close`, and at the deadline the unanswered one is ended without an answer; `on_drained` once with `PROVEN_ERR_TIMEOUT`, three exchanges ending well and one cut. With nothing open, `on_drained` is called on the next round with `PROVEN_OK`, not inside the call; a slow request that finishes in time ends it with `PROVEN_OK`; a response whose head went out before the shutdown, keeping the connection, and whose body ends after it, ends its connection rather than keeping it, and the shutdown is over with `PROVEN_OK` well before its 10 s deadline. After `proven_http_event_server_stop_listening` alone, an HTTP/1.1 response on an open connection says `Connection: close` and the connection ends.
 - A handler that answers another connection (since v0.109.0): B sends two requests at once and the first is held; A's handler answers it. A's own `X-Who` reads `A` before and after, B's second request is read and handled after A's handler has returned - not inside it - and B has both answers. Up to v0.108.0 A read `B-second` after answering.
 
-Failure tip: inspect `src/proven/http_event.c` - `ev_process` for input, `ev_flush` and `ev_progress` for output and what follows it, `ev_arm` for which timer is running, `ev_finish` for the end of an exchange. The backpressure case waits for a refusal rather than for a fixed time; a failure there that prints `download: got N of M` is a stalled response, which is a lost wake-up in `proven_http_stream_write` or `ev_progress`.
+Failure tip: inspect `net/src/http_event.c` - `ev_process` for input, `ev_flush` and `ev_progress` for output and what follows it, `ev_arm` for which timer is running, `ev_finish` for the end of an exchange. The backpressure case waits for a refusal rather than for a fixed time; a failure there that prints `download: got N of M` is a stalled response, which is a lost wake-up in `proven_http_stream_write` or `ev_progress`.
 
 ### `tests/test_unit_http_event_h2` - the event-driven HTTP server, speaking HTTP/2
 
@@ -1167,11 +1167,11 @@ Sub-checks:
 - The graceful end over HTTP/2: a 300,000-byte response under way and a request nobody answers; the response arrives whole, the client is told goodbye, and at the 1.5 s deadline the connection is ended - `on_drained` once with `PROVEN_ERR_TIMEOUT`, one exchange done and one cut. With only the response, the connection ends with `NO_ERROR` when its stream has and `on_drained` says `PROVEN_OK`. An HTTP/2 connection with nothing open is told goodbye and ends with `NO_ERROR` at once; `on_drained` says `PROVEN_OK`, not at its 10 s deadline.
 - WebSocket over HTTP/2 (RFC 8441), the test as an HTTP/2 client writing masked frames on a stream: a server without `http2_websocket` refuses the stream with PROTOCOL_ERROR; with it the handler that accepts WebSocket over HTTP/1.1 answers 200, is shown no `transfer-encoding`, and the stream outlives a 300 ms body timeout; text, binary and a 200,000-byte message (through windows of 16 KiB and 64 KiB) come back; the close handshake with 1000, then END_STREAM from each side and `on_closed` once; `permessage-deflate` agreed and a compressed answer that inflates to the message, then the same message again, compressed against the first (takeover over HTTP/2, read with one kept decompressor); a reset is 1006 and `PROVEN_ERR_RESET`; four tunnels a handler refuses with 404, each with 20,000 bytes sent before the answer, end as requests do (RST_STREAM with NO_ERROR after the answer) and give their bytes back to the connection; a client that ends its side with no close frame is 1006 and `PROVEN_ERR_RESET`, and the server ends its side; a server that pushes 200 messages faster than the client reads is refused and resumed through `on_writable`, all in order; WebSocket over HTTP/1.1 to the same server and handler; a shutdown closes an HTTP/2 WebSocket with 1001, the connection ends and `on_drained` says `PROVEN_OK`.
 
-Failure tip: inspect `src/proven/http_event_h2.c` - `d_request` and `d_body` for what arrives, `s_head` and `s_push` for what leaves, `d_pump` for the round and for when `on_writable` may be called, `d_arm` and `h2_on_timer` for time. Which protocol a connection speaks is decided in `ev_process` in `src/proven/http_event.c`; `proven_http_event_raw_offer_` there is what writes.
+Failure tip: inspect `net/src/http_event_h2.c` - `d_request` and `d_body` for what arrives, `s_head` and `s_push` for what leaves, `d_pump` for the round and for when `on_writable` may be called, `d_arm` and `h2_on_timer` for time. Which protocol a connection speaks is decided in `ev_process` in `net/src/http_event.c`; `proven_http_event_raw_offer_` there is what writes.
 
 ### `tests/test_unit_http_event_h3` - the event-driven HTTP server, speaking HTTP/3
 
-Intent: verify that the event-driven server with `http3` on serves HTTP/3 (RFC 9114, over QUIC) through the callbacks and stream calls an HTTP/1.1 handler uses, unchanged, on a UDP socket beside each TCP listener; that each limit and timeout means on HTTP/3 what the configuration says; and that the TCP side says where HTTP/3 is. The client is this library's QUIC and HTTP/3 engines (`src/proven/proven_internal_quic.h`, `proven_internal_h3.h`) on a UDP socket of the test's over real loopback; the server runs on a loop thread.
+Intent: verify that the event-driven server with `http3` on serves HTTP/3 (RFC 9114, over QUIC) through the callbacks and stream calls an HTTP/1.1 handler uses, unchanged, on a UDP socket beside each TCP listener; that each limit and timeout means on HTTP/3 what the configuration says; and that the TCP side says where HTTP/3 is. The client is this library's QUIC and HTTP/3 engines (`net/src/proven_internal_quic.h`, `proven_internal_h3.h`) on a UDP socket of the test's over real loopback; the server runs on a loop thread.
 
 Sub-checks:
 
@@ -1190,7 +1190,7 @@ Sub-checks:
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
-Failure tip: inspect `src/proven/http_event_h3.c`: `x_datagram` for what arrives, `d_request` and `d_body` for requests, `s_head` and `s_push` for what leaves, `d_service` for a round, `d_arm` and `d_check_time` for time, `d_bye` for goodbye. `Alt-Svc` is added in `ev_build_head` (`src/proven/http_event.c`) and `s_head` (`src/proven/http_event_h2.c`). Not covered here: other implementations - the private check runs curl and aioquic's client against this server, and h3spec.
+Failure tip: inspect `net/src/http_event_h3.c`: `x_datagram` for what arrives, `d_request` and `d_body` for requests, `s_head` and `s_push` for what leaves, `d_service` for a round, `d_arm` and `d_check_time` for time, `d_bye` for goodbye. `Alt-Svc` is added in `ev_build_head` (`net/src/http_event.c`) and `s_head` (`net/src/http_event_h2.c`). Not covered here: other implementations - the private check runs curl and aioquic's client against this server, and h3spec.
 
 ### `tests/test_unit_http_event_h3_fallback` - the event-driven HTTP server, speaking HTTP/3, one datagram a call
 
@@ -1209,7 +1209,7 @@ Sub-checks:
 - The same over TLS, each connection's handshake done by the loop it was dealt to.
 - Taking it apart: the acceptor is stopped and joined first, then the loops, then - after one last round of each loop - the servers.
 
-Failure tip: inspect `proven_http_event_server_adopt` and `ev_take` in `src/proven/http_event.c`. Run it under ThreadSanitizer: a report there means something of a connection was touched from the accepting thread. A count that is not thirty each means connections were not dealt in the order they were accepted.
+Failure tip: inspect `proven_http_event_server_adopt` and `ev_take` in `net/src/http_event.c`. Run it under ThreadSanitizer: a report there means something of a connection was touched from the accepting thread. A count that is not thirty each means connections were not dealt in the order they were accepted.
 
 ### `tests/test_unit_ws_event` - WebSocket on the event-driven server
 
@@ -1228,7 +1228,7 @@ Sub-checks:
 - The client's takeover forbidden (`compress_peer_no_takeover`, v0.82.0): a hundred idle compressed connections that have received and sent a message each hold between 24 and 32 KiB (30,338 bytes measured on x86-64 Linux, against 66,218 with takeover both ways): the compressor alone; the answer carries `client_no_context_takeover` exactly when this side keeps no decompressor. A raw client told not to take over that sends RFC 7692's second `Hello` referring into the first is closed with 1007.
 - The graceful end with WebSocket connections open: a client gets a close with 1001 and "going away" and answers it; a raw client that does not answer is ended at the 800 ms deadline; `on_closed` once for each and `on_drained` once with `PROVEN_ERR_TIMEOUT` - or `PROVEN_OK` when the only client answers.
 
-Failure tip: inspect `src/proven/ws_event.c` - `ws_on_input` for what arrives, `ws_on_timer` for liveness and the close timeout, `ws_end` and `ws_finish` for the end. The connection underneath is `src/proven/http_event.c` in its `EV_RAW` state, reached through `src/proven/proven_internal_http_event.h`. The cases wait for the handler's own counters rather than for a fixed time: a client has its 101 before the handler's next line has run.
+Failure tip: inspect `net/src/ws_event.c` - `ws_on_input` for what arrives, `ws_on_timer` for liveness and the close timeout, `ws_end` and `ws_finish` for the end. The connection underneath is `net/src/http_event.c` in its `EV_RAW` state, reached through `net/src/proven_internal_http_event.h`. The cases wait for the handler's own counters rather than for a fixed time: a client has its 101 before the handler's next line has run.
 
 ### `tests/test_unit_ws_event_client` - a WebSocket client on the loop
 
@@ -1245,7 +1245,7 @@ Sub-checks:
 - An answer of 200 instead of 101: no `on_open`, `on_closed` once with code 0 and `PROVEN_ERR_REFUSED`.
 - Connections that do not become WebSockets, each ending in one `on_closed` with code 0: nothing listening (`PROVEN_ERR_REFUSED`, from the call or from `on_closed`); a server that takes the request and says nothing (`PROVEN_ERR_TIMEOUT` when `connect_timeout_ms` is over); one that hangs up (`PROVEN_ERR_RESET`); one that answers in another protocol (`PROVEN_ERR_INVALID_FORMAT`); a redirect, which is not followed (`PROVEN_ERR_REFUSED`); a 101 whose `Sec-WebSocket-Accept` answers another key (`PROVEN_ERR_INVALID_FORMAT`). A 101 whose head arrives in two writes is waited for and opens the connection. The request each of them received is checked: its line, `Host` with the port, `Upgrade`, the version and a key. Aborted, and closed, before it was open: ended inside the call, once.
 
-Failure tip: inspect `src/proven/ws_event_client.c` - `wsc_on_io` and `wsc_readable` for the states, `wsc_answer` for the upgrade, `wsc_gone` for the one report of a failure, the `wsc_tr_` functions for what the protocol asks of the connection - and, in `src/proven/ws_event.c`, `proven_ws_event_client_new_` and `ws_frame` for a client's masked frames. Run it under AddressSanitizer: every connection here ends, and nothing may be left.
+Failure tip: inspect `net/src/ws_event_client.c` - `wsc_on_io` and `wsc_readable` for the states, `wsc_answer` for the upgrade, `wsc_gone` for the one report of a failure, the `wsc_tr_` functions for what the protocol asks of the connection - and, in `net/src/ws_event.c`, `proven_ws_event_client_new_` and `ws_frame` for a client's masked frames. Run it under AddressSanitizer: every connection here ends, and nothing may be left.
 
 Note: the peer in every case is this library's own server or the test itself; that Node's `ws` package agrees is checked by a private program.
 
@@ -1272,7 +1272,7 @@ Sub-checks:
 
 - `expect_continue` (v0.106.0): against this library's server, which says `100 Continue`, a 100,000-byte body held and sent then (well before the 5 s wait), one written afterwards in pieces, and a chunked one, each received whole; an `Expect` of the caller's with the flag refused. Against servers the test plays: the head asks to go on and no body follows it within 150 ms; one that answers 413 at once is not sent the body, written by the caller at the start - not even after the expect time - and the client closes the connection; one that says nothing gets the body after `expect_timeout_ms` (1 s) and its answer is the response. Clean under ASan and TSan. Breaks: see RFC-0041.
 
-Failure tip: inspect `src/proven/http_event_client.c` - `cl_process` for the response and the end-of-stream branch after its loop, `cl_flush` and `cl_progress` for the request, `cl_arm` for the time limits, `cl_kill` for the end. A request that never ends after the server closed is that branch: it once waited for the stash to be empty, which a half-received head never is.
+Failure tip: inspect `net/src/http_event_client.c` - `cl_process` for the response and the end-of-stream branch after its loop, `cl_flush` and `cl_progress` for the request, `cl_arm` for the time limits, `cl_kill` for the end. A request that never ends after the server closed is that branch: it once waited for the stash to be empty, which a half-received head never is.
 
 
 ### `tests/test_unit_http_event_alloc_fail` - the event-driven drivers when an allocation fails
@@ -1304,7 +1304,7 @@ Sub-checks, over HTTP/1.1 (TLS without ALPN), HTTP/2 and HTTP/3, this library at
 
 Not covered here: a received field that may not be a trailer over HTTP/2 and HTTP/3 (this library will not send one; the HTTP/1.1 decoder's dropping is in `test_unit_http_body`, and the shared copy drops by the same function).
 
-Failure tip: inspect `ev_end` in `src/proven/http_event.c`, `s_push` and `proven_http_event_h2_end_` in `http_event_h2.c` (and the HTTP/3 one), `cl_end` in `http_event_client.c`, `r_push` and `proven_http_event_client_h2_end_` in `http_event_client_h2.c` (and the HTTP/3 one), and the `trailers_` helpers in `http_coding.c`.
+Failure tip: inspect `ev_end` in `net/src/http_event.c`, `s_push` and `proven_http_event_h2_end_` in `http_event_h2.c` (and the HTTP/3 one), `cl_end` in `http_event_client.c`, `r_push` and `proven_http_event_client_h2_end_` in `http_event_client_h2.c` (and the HTTP/3 one), and the `trailers_` helpers in `http_coding.c`.
 
 ### `tests/test_unit_http_event_client_h2` - the event-driven HTTP client, speaking HTTP/2
 
@@ -1331,7 +1331,7 @@ Sub-checks:
 - Waiting for the client-wide limit (v0.43.0): with one connection allowed and in use, a request to a second origin is taken and waits on no connection; a second waits behind it and a third is `PROVEN_ERR_BUSY` (`max_waiting_requests` 2); one aborted while it waits ends once; when the first connection has nothing on it, it is closed and the request that waited is put to its origin; with no place in `connect_timeout_ms` a waiting request ends with `PROVEN_ERR_TIMEOUT` and the request in flight is undisturbed; a body written in pieces for a request that waits - a write takes nothing, an end with nothing written makes it bodiless, an end short of a promised length is `PROVEN_ERR_INVALID_FORMAT`; the client destroyed while two wait ends each once with `PROVEN_ERR_RESET`. A request whose wait before another try ends with no place free waits for one and is then put to its origin on a new connection; so does a request a goodbye left out while its connection finishes another. And across protocols: an HTTP/2 request waits for the place an HTTP/1.1 connection has, and gets it when that exchange is over.
 - `retry_delay_max_ms`: 150, 300 and then the bound of 500 however many tries there were; a bound below the first wait is `PROVEN_ERR_INVALID_ARG`; a request refused twice waits its doubled wait, and one refused for the first time meanwhile is put again alone when its own shorter wait is over - the list is kept in the order they are due; with no bound the wait is the same before every try.
 
-Failure tip: inspect `src/proven/http_event_client_h2.c` - `proven_http_event_client_h2_start_` for the connection a request joins, `r_submit` and `c_submit_waiting` for what is sent and when, `c_response` and `c_body` for what arrives, `c_fall_back` for an HTTP/1.1 origin, `c_pump` for the round. A forwarded request's `face` is in `src/proven/http_event_client.c`.
+Failure tip: inspect `net/src/http_event_client_h2.c` - `proven_http_event_client_h2_start_` for the connection a request joins, `r_submit` and `c_submit_waiting` for what is sent and when, `c_response` and `c_body` for what arrives, `c_fall_back` for an HTTP/1.1 origin, `c_pump` for the round. A forwarded request's `face` is in `net/src/http_event_client.c`.
 
 ### `tests/test_unit_http_event_client_h3` - the event-driven HTTP client, speaking HTTP/3
 
@@ -1351,7 +1351,7 @@ Sub-checks:
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
-Failure tip: inspect `src/proven/http_event_client_h3.c`: `r_submit` and `r_push` for what leaves, `c_event` for what arrives, `c_round` for a round and for when `on_writable` is called, `c_check_time` and `c_arm` for time, `c_open` for a connection, `c_close_reason` for what a failed handshake means, `r_unsent` and `r_place` for a request sent again after a GOAWAY. The choice of protocol is the `http3` branch in `proven_http_event_client_start_h1_` (`src/proven/http_event_client.c`). Not covered here: other implementations - the private check runs this client against aioquic's server and public servers; a request refused with `H3_REQUEST_REJECTED` after the second GOAWAY, which is bound to timing.
+Failure tip: inspect `net/src/http_event_client_h3.c`: `r_submit` and `r_push` for what leaves, `c_event` for what arrives, `c_round` for a round and for when `on_writable` is called, `c_check_time` and `c_arm` for time, `c_open` for a connection, `c_close_reason` for what a failed handshake means, `r_unsent` and `r_place` for a request sent again after a GOAWAY. The choice of protocol is the `http3` branch in `proven_http_event_client_start_h1_` (`net/src/http_event_client.c`). Not covered here: other implementations - the private check runs this client against aioquic's server and public servers; a request refused with `H3_REQUEST_REJECTED` after the second GOAWAY, which is bound to timing.
 
 ### `tests/test_unit_http_event_client_h3_fallback` - the event-driven HTTP client, speaking HTTP/3, one datagram a call
 
@@ -1372,7 +1372,7 @@ Sub-checks:
 - Connections at once: after one request has learned a ticket, three started together, each a connection of its own, all resume it, and the next connection still resumes - a connection stores what it learned, never what it merely carried.
 - The cache's bound, through the internal calls: 65 origins over TCP, the oldest used again before the 65th - the least recently used (the second) is given up, the one used again kept, the newest there; a host name is matched without regard to case; QUIC's session for an origin is kept apart and untouched, an origin known only over TCP gives QUIC nothing, and another port is another origin.
 
-Failure tip: inspect `proven_http_event_client_session_start_` and `_keep_` in `src/proven/http_event_client.c`, and where each path calls them: `cl_conn_open`, `cl_conn_keep` and `cl_conn_close`; `c_open` and `c_close_socket` in `http_event_client_h2.c`; `c_open`, `r_finish` and `c_kill` in `http_event_client_h3.c`. Not covered here: another server implementation's tickets.
+Failure tip: inspect `proven_http_event_client_session_start_` and `_keep_` in `net/src/http_event_client.c`, and where each path calls them: `cl_conn_open`, `cl_conn_keep` and `cl_conn_close`; `c_open` and `c_close_socket` in `http_event_client_h2.c`; `c_open`, `r_finish` and `c_kill` in `http_event_client_h3.c`. Not covered here: another server implementation's tickets.
 
 ### `tests/test_unit_http_event_early` - 0-RTT over HTTP/3, client and server
 
@@ -1388,7 +1388,7 @@ Sub-checks:
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
-Failure tip: inspect `r_early_ok`, `c_submit_waiting`, the 425 in `c_response` and `r_again` in `src/proven/http_event_client_h3.c`; the early branch of `d_request` in `src/proven/http_event_h3.c`. The QUIC side is `test_unit_quic_conn`'s 0-RTT section, the TLS side `test_unit_tls_quic`'s early data section.
+Failure tip: inspect `r_early_ok`, `c_submit_waiting`, the 425 in `c_response` and `r_again` in `net/src/http_event_client_h3.c`; the early branch of `d_request` in `net/src/http_event_h3.c`. The QUIC side is `test_unit_quic_conn`'s 0-RTT section, the TLS side `test_unit_tls_quic`'s early data section.
 
 ### `tests/test_unit_http_event_early_tcp` - 0-RTT over TCP, client and server
 
@@ -1404,7 +1404,7 @@ Sub-checks, in each protocol:
 - A client without `early_data` sends nothing early; a server without it issues tickets that allow none.
 - Six planted breaks (the server never marking early, no 425 from the server in either protocol, the HTTP/1.1 client not rewinding a refused request, the HTTP/2 client not writing its early copy again, the HTTP/2 client picking an unsafe request for early data) each fail one of these.
 
-Failure tip: inspect `cl_flush` and `cl_settle_early` in `src/proven/http_event_client.c`; `c_settle_early`, `c_submit_waiting` and `c_response` in `src/proven/http_event_client_h2.c`; the early branches of `ev_process` in `src/proven/http_event.c` and `d_request` in `src/proven/http_event_h2.c`; the engine is `test_unit_tls`'s "early data over TCP, taken".
+Failure tip: inspect `cl_flush` and `cl_settle_early` in `net/src/http_event_client.c`; `c_settle_early`, `c_submit_waiting` and `c_response` in `net/src/http_event_client_h2.c`; the early branches of `ev_process` in `net/src/http_event.c` and `d_request` in `net/src/http_event_h2.c`; the engine is `test_unit_tls`'s "early data over TCP, taken".
 
 ### `tests/test_unit_http_coding` - http: content codings
 
@@ -1427,7 +1427,7 @@ Sub-checks:
 - A flush: a compressed response of which 3,000 bytes are written and flushed, the handler then holding the rest back until the test says go - the 3,000 reach the event-driven client decoded while the response is still open, from the blocking server and from the event-driven server plain and over TLS, and the rest follows as one gzip stream. A flush before a response or after its end is `PROVEN_ERR_INVALID_STATE`; one with nothing held back does nothing, successfully.
 - Raw sockets, to both servers: an HTTP/1.0 request gets gzip with no chunks and no length, ended by the close, and it is one whole gzip stream; seven `Accept-Encoding` forms decide compression as the table says, in one piece and streamed; HEAD for a streamed response has no body.
 
-Failure tip: inspect `src/proven/http_coding.c` for the rules; `sv_zip` and the respond function in `src/proven/http_server.c`; `ev_zip` and the write function in `src/proven/http_event.c`; `cl_read_decoded` in `src/proven/http_client.c`; `cl_decode` in `src/proven/http_event_client.c`. The vectors are in `tests/test_unit_http_coding_vectors.h`, written by a private generator from zlib's output, with zlib's own verdict asserted for every row.
+Failure tip: inspect `net/src/http_coding.c` for the rules; `sv_zip` and the respond function in `net/src/http_server.c`; `ev_zip` and the write function in `net/src/http_event.c`; `cl_read_decoded` in `net/src/http_client.c`; `cl_decode` in `net/src/http_event_client.c`. The vectors are in `tests/test_unit_http_coding_vectors.h`, written by a private generator from zlib's output, with zlib's own verdict asserted for every row.
 
 Note: the blocking client is not run against the event-driven server here; that pair, and curl and Python against both servers, are checked by a private program.
 
@@ -1447,7 +1447,7 @@ Sub-checks:
 - Both ways: messages of ten sizes from one byte to 300,000, whole and in two and seven parts, at varying levels and windows, compressed through buffers of 16 and 4,096 bytes and read back byte for byte; a whole message does not end in the four closing bytes; a flushed part keeps them; an empty last part is the single byte `00`.
 - Refusals: 200,000 of one letter pass a limit of exactly their size and are `PROVEN_ERR_OUT_OF_BOUNDS` one byte under it; text that inflates to invalid UTF-8, or ends inside a character, is `PROVEN_ERR_INVALID_ENCODING` (and fine as binary); a character split across one-byte pieces of output is one character; a block type that does not exist and a stored block with a wrong length are `PROVEN_ERR_INVALID_FORMAT`.
 
-Failure tip: inspect `proven_ws_frame_parse`, `proven_ws_decoder_feed`, `ws_deflate_element`, `proven_ws_deflate_accept` and `ws_check_response` in `src/proven/ws.c`, and `src/proven/ws_deflate.c`. The byte sequences marked RFC are copied from the published text of RFC 7692: they are another implementation's output.
+Failure tip: inspect `proven_ws_frame_parse`, `proven_ws_decoder_feed`, `ws_deflate_element`, `proven_ws_deflate_accept` and `ws_check_response` in `net/src/ws.c`, and `net/src/ws_deflate.c`. The byte sequences marked RFC are copied from the published text of RFC 7692: they are another implementation's output.
 
 ### `tests/test_unit_ws_compress` - ws: compressed messages in the drivers
 
@@ -1466,7 +1466,7 @@ Sub-checks:
 - Twenty thousand compressed messages pushed by the event-driven server through a 16 KiB output limit to a client that reads nothing until the first send has been refused: all arrive in order, with sends refused and resumed through `on_writable`.
 - Over TLS, a second pair of servers: compression agreed over `wss`, and text and binary messages of 0 to 70,000 bytes, whole and in three parts, back unchanged through both servers.
 
-Failure tip: inspect `proven_ws_conn_send_part`, `wc_message_inflate` and the two handshakes in `src/proven/ws_conn.c`; `ws_rx_run`, `ws_rx_hold`, `proven_ws_stream_send_piece` and `proven_ws_stream_resume` in `src/proven/ws_event.c`. A wrong count from `/count` is the pause path: what was set aside in `ws_rx_hold` and how far `held_at` has moved.
+Failure tip: inspect `proven_ws_conn_send_part`, `wc_message_inflate` and the two handshakes in `net/src/ws_conn.c`; `ws_rx_run`, `ws_rx_hold`, `proven_ws_stream_send_piece` and `proven_ws_stream_resume` in `net/src/ws_event.c`. A wrong count from `/count` is the pause path: what was set aside in `ws_rx_hold` and how far `held_at` has moved.
 
 Note: that Node's `ws` package and built-in client agree with both drivers is checked by a private program.
 
@@ -1489,7 +1489,7 @@ Sub-checks:
 - Every proper prefix of the sixteen RFC blocks (from an exact-size allocation) is a shorter list or `PROVEN_ERR_INVALID_FORMAT`; every single-bit change is other fields or an error.
 - What the encoder does not remember, and how a string is written: six hundred fields of the six seldom-repeated names (`content-length`, `content-range`, `etag`, `age`, `if-none-match`, `if-modified-since`) are each sent without indexing by the name's static index, the same field again is as long, and a field that was in the table is still one byte to send; a secret whose name is in the dynamic table is sent by that index. Strings of 0 to 300 bytes of four kinds (shorter coded, longer coded, exactly as long, and 127 bytes for 128): Huffman-coded exactly when that is shorter, the length in the form its size needs, read back whole.
 
-Failure tip: inspect `src/proven/hpack.c` - `proven_hpack_decode` for the representations and each refusal, `hp_table_add` and `hp_table_reserve` for the table, `proven_hpack_encode` for the encoder's choices, `proven_hpack_huffman_decode` for the padding rules. `src/proven/hpack_tables.h` and `tests/test_unit_hpack_vectors.h` are generated from the RFC's text by a private program: a wrong table is regenerated, never edited.
+Failure tip: inspect `net/src/hpack.c` - `proven_hpack_decode` for the representations and each refusal, `hp_table_add` and `hp_table_reserve` for the table, `proven_hpack_encode` for the encoder's choices, `proven_hpack_huffman_decode` for the padding rules. `net/src/hpack_tables.h` and `tests/test_unit_hpack_vectors.h` are generated from the RFC's text by a private program: a wrong table is regenerated, never edited.
 
 Note: that other implementations agree - fourteen encoders' output read by this decoder, this encoder's output read by nghttp2 - and a run of millions of damaged blocks are a private program's.
 
@@ -1508,7 +1508,7 @@ Sub-checks:
 - Responses and trailers: a response's status and fields; twelve malformed responses; trailers with a pseudo-header field or a connection-specific one refused.
 - Extended CONNECT (RFC 8441): `:protocol` with CONNECT and scheme, authority and path is taken, with `protocol` read back; a plain CONNECT names none; `:protocol` with another method, empty, twice, or with any of scheme, authority or path missing is malformed; ENABLE_CONNECT_PROTOCOL of 2 is a PROTOCOL_ERROR.
 
-Failure tip: inspect `src/proven/h2.c` - `proven_h2_frame_check` for the per-type rules, `proven_h2_frame_content` for padding, `proven_h2_settings_next` for the ranges, `h2_field_ok` and `h2_ordinary_ok` for the header rules. A malformed list accepted here is a request that can be smuggled through a translation to HTTP/1.1.
+Failure tip: inspect `net/src/h2.c` - `proven_h2_frame_check` for the per-type rules, `proven_h2_frame_content` for padding, `proven_h2_settings_next` for the ranges, `h2_field_ok` and `h2_ordinary_ok` for the header rules. A malformed list accepted here is a request that can be smuggled through a translation to HTTP/1.1.
 
 ### `tests/test_unit_h2_conn` - h2_conn: an HTTP/2 connection without a socket
 
@@ -1534,7 +1534,7 @@ Sub-checks:
 - Two responses at once through the connection's one window, a long one and a short one, the application writing when it is told it may: the short one arrives whole while the long one is under way, and the long one has by then sent about as much - the window is given to the streams that wait in turn (`sweep_at` in `h2c_due`).
 - RFC 8441: a server with `enable_connect_protocol` says ENABLE_CONNECT_PROTOCOL of 1 in its first SETTINGS, one without and a client never; a server's 1 may be said again but not taken back (1 then 0 is PROTOCOL_ERROR for the connection); an extended CONNECT to a server that did not offer it is PROTOCOL_ERROR for its stream, to one that did it is taken and data follows, and without `:path` it is refused.
 
-Failure tip: inspect `src/proven/h2_conn.c` - `h2c_on_header` and `h2c_on_fixed` for the per-frame rules, `h2c_on_block` for what a header list is taken to be, `h2c_closed_frame` for frames that arrive after a stream ended, `h2c_stream_fault` and `h2c_fail` for the two kinds of error, `h2c_debt` and `h2c_ctl` for the bounds, `h2c_conn_credit` and `h2c_stream_credit` for the windows.
+Failure tip: inspect `net/src/h2_conn.c` - `h2c_on_header` and `h2c_on_fixed` for the per-frame rules, `h2c_on_block` for what a header list is taken to be, `h2c_closed_frame` for frames that arrive after a stream ended, `h2c_stream_fault` and `h2c_fail` for the two kinds of error, `h2c_debt` and `h2c_ctl` for the bounds, `h2c_conn_credit` and `h2c_stream_credit` for the windows.
 
 ### `tests/test_unit_hash_legacy` - legacy digests: SHA-1 and MD5
 
@@ -1931,7 +1931,7 @@ Sub-checks:
 - Unix-domain paths: kept as given; empty, one byte too long, or holding a NUL are refused.
 - `proven_net_resolve` answers a literal itself and refuses an empty name, a NUL in the name and a zero capacity.
 
-Failure tip: inspect `internal_parse_ipv4`, `internal_parse_ipv6` and `internal_put_ipv6` in `src/proven/net.c`.
+Failure tip: inspect `internal_parse_ipv4`, `internal_parse_ipv6` and `internal_put_ipv6` in `net/src/net.c`.
 
 ### `tests/test_unit_net_tcp` - net: TCP on the loopback interface
 
@@ -1953,7 +1953,7 @@ Sub-checks:
 
 Where the environment refuses to open a listening socket at all, the test reports SKIP and passes.
 
-Failure tip: inspect the deadline loop (`internal_wait_one`) in `src/proven/net.c` and the reason mapping in `platform/proven_sys_net.c`. A run that dies with no failure message was killed by `SIGPIPE`.
+Failure tip: inspect the deadline loop (`internal_wait_one`) in `net/src/net.c` and the reason mapping in `net/platform/proven_sys_net.c`. A run that dies with no failure message was killed by `SIGPIPE`.
 
 ### `tests/test_unit_net_udp` - net: UDP on the loopback interface
 
@@ -1966,7 +1966,7 @@ Sub-checks:
 - An empty socket times out after its deadline; a datagram sent to a port nobody holds does not break a later receive on the sending socket (one deferred refusal report is tolerated, as Linux gives).
 - Close resets the value; calls on a closed socket are `PROVEN_ERR_INVALID_STATE`; a Unix-domain address is `PROVEN_ERR_UNSUPPORTED`.
 
-Failure tip: inspect `proven_sys_net_recv_from` in `platform/proven_sys_net.c` - the truncation report and, on Windows, `SIO_UDP_CONNRESET`.
+Failure tip: inspect `proven_sys_net_recv_from` in `net/platform/proven_sys_net.c` - the truncation report and, on Windows, `SIO_UDP_CONNRESET`.
 
 ### `tests/test_unit_net_udp_segments` - net: batched datagrams
 
@@ -1980,7 +1980,7 @@ Sub-checks:
 - How many receives held several datagrams is printed, never asserted: it depends on the kernel and the interface (0 off Linux).
 - ECN (RFC-0035): over IPv4 and IPv6 loopback, a datagram alone and a batch of three, marked ECT(0) and ECT(1), are received with the mark sent or none; on Linux with the mark.
 
-Failure tip: inspect `proven_sys_net_send_segments` and `proven_sys_net_recv_segments` in `platform/proven_sys_net.c` and their wrappers in `src/proven/net.c`.
+Failure tip: inspect `proven_sys_net_send_segments` and `proven_sys_net_recv_segments` in `net/platform/proven_sys_net.c` and their wrappers in `net/src/net.c`.
 
 ### `tests/test_unit_net_unix` - net: Unix-domain stream sockets
 
@@ -1994,7 +1994,7 @@ Sub-checks:
 
 The file's presence is observed through the sockets, not through `proven_fs_stat`, which does not open a socket file on Windows. SKIP where the address family is absent.
 
-Failure tip: inspect `to_native` and `from_native` in `platform/proven_sys_net.c`.
+Failure tip: inspect `to_native` and `from_native` in `net/platform/proven_sys_net.c`.
 
 ### `tests/test_unit_net_poll_transport` - net: readiness and the transport interface
 
@@ -2007,7 +2007,7 @@ Sub-checks:
 - 65 items are `PROVEN_ERR_OUT_OF_BOUNDS` for `proven_net_poll` and accepted by `proven_net_poll_with`; scratch one byte short is refused; an impossible count has no scratch size; a closed socket's handle is invalid; a poll of nothing waits until its deadline.
 - A connection as a transport: two formatted lines out, two lines in through the line reader, a 60 ms reader timeout, shutdown read as `PROVEN_ERR_EOF`, and close closing the connection.
 
-Failure tip: inspect `proven_net_poll_with` and the transport functions at the end of `src/proven/net.c`.
+Failure tip: inspect `proven_net_poll_with` and the transport functions at the end of `net/src/net.c`.
 
 ### `tests/test_unit_net_selector` - net: the selector
 
@@ -2023,7 +2023,7 @@ Sub-checks, each run for both kinds:
 - A socket of which nothing is asked, and whose connection is reset, in both kinds of selector: reported at most once in twenty waits, each of which waits its 20 ms; asked about reading it is reported for as long as it asks; nothing asked again, once more and then not.
 - A datagram socket, on a selector of its own: registered for reading, it is not reported with nothing waiting; a datagram waiting is reported, again while unread, and not once read - three times over; two waiting are reported until both are read; changed to writing it is reported writable with the new tag; removed, a datagram is not reported, and registered again the one that waited is. On Windows a datagram socket is not the completion port's: this is the selector's notice path (`WSAEventSelect`).
 
-Failure tip: inspect the Selector section of `src/proven/net.c` - `proven_net_selector_remove` is where the portable kind repairs its hash - and of `platform/proven_sys_net.c` for the system's kind; on Windows the IOCP kind is `sel_wait_iocp`, `sel_look` and `sel_arm` in `net.c` and `proven_sys_net_evt_*` in the platform file, run only where the suite runs on Windows. The `kqueue` path is compiled and run by nothing this project has. The test opens 600 sockets per kind.
+Failure tip: inspect the Selector section of `net/src/net.c` - `proven_net_selector_remove` is where the portable kind repairs its hash - and of `net/platform/proven_sys_net.c` for the system's kind; on Windows the IOCP kind is `sel_wait_iocp`, `sel_look` and `sel_arm` in `net.c` and `proven_sys_net_evt_*` in the platform file, run only where the suite runs on Windows. The `kqueue` path is compiled and run by nothing this project has. The test opens 600 sockets per kind.
 
 ### `tests/test_unit_url` - url: parsing, percent-coding, and a path that stays inside its root
 
@@ -2056,7 +2056,7 @@ Sub-checks:
 
 A separate differential program (RFC-0010, `rfc-0010-http-diff.py`) compared 20,000 generated heads with Python's `http.server`: every head this parser accepted, Python read identically.
 
-Failure tip: inspect `http_fields` and the two parse functions in `src/proven/http.c`.
+Failure tip: inspect `http_fields` and the two parse functions in `net/src/http.c`.
 
 ### `tests/test_unit_http_body` - http: framing, the body decoder, writers and dates
 
@@ -2073,7 +2073,7 @@ Sub-checks:
 - Dates: the RFC 9110 example and five other moments format as expected; the three accepted forms parse to the same instant; the two-digit-year rule; twenty-six invalid texts refused (wrong weekday, 30 February, lowercase, a missing zero, ISO 8601); a leap second accepted; 200,000 random moments across the whole range of `proven_time_t` round-trip; a date past April 2262 is `PROVEN_ERR_OVERFLOW`.
 - Trailers (v0.106.0): a chunked body's trailer section kept with `proven_http_body_keep_trailers` in every piece size and read back to its three fields (`PROVEN_ERR_INVALID_STATE` before the end, `PROVEN_ERR_OUT_OF_BOUNDS` with room for two); a section larger than its buffer fails the body; none for an empty section or a body with a length; received `Content-Length`, `Set-Cookie` and `Trailer` dropped and taking no room; `proven_http_trailer_allowed` refusing fourteen framing, routing, control, authentication, content and pseudo-fields; `proven_http_write_trailers` byte for byte and read back, a refused name, a CR in a value and no room leaving nothing written.
 
-Failure tip: inspect `http_framing_headers`, `proven_http_body_feed`, the writers and the date functions in `src/proven/http.c`.
+Failure tip: inspect `http_framing_headers`, `proven_http_body_feed`, the writers and the date functions in `net/src/http.c`.
 
 ### `tests/test_unit_http_helpers` - http: URL references, forms, ranges, multipart and authentication
 
@@ -2089,7 +2089,7 @@ Sub-checks:
 - Digest: challenges parsed from one header value holding several schemes; the strongest algorithm chosen; the answers of RFC 7616 section 3.9.1 (SHA-256 and MD5) and RFC 2617 section 3.5 reproduced exactly; the session variants; a challenge without `qop=auth` or with only unknown algorithms is `PROVEN_ERR_UNSUPPORTED`.
 - Digest since v0.105.0: RFC 7616 section 3.9.2's inputs (SHA-512-256, `userhash`, `charset=UTF-8`) answered with SHA-512/256 as FIPS 180-4 defines it - the user name hash and the response as Python's `hashlib` computes them, and `-sess`; the RFC's printed values are of SHA-512 cut to 256 bits and are not used; `username*` for a name with a quote under `charset=UTF-8`, refused without it; `auth-int` with a body and without one (an empty one), and with `auth,auth-int` offered: `auth` without a body, `auth-int` with one.
 
-Failure tip: inspect `proven_url_resolve` and `proven_url_form_append` in `src/proven/url.c`, the range and multipart functions in `src/proven/http.c`, and `src/proven/http_auth.c`. A Digest mismatch means the answer disagrees with the RFC's own worked example.
+Failure tip: inspect `proven_url_resolve` and `proven_url_form_append` in `src/proven/url.c`, the range and multipart functions in `net/src/http.c`, and `net/src/http_auth.c`. A Digest mismatch means the answer disagrees with the RFC's own worked example.
 
 ### `tests/test_unit_http_multipart` - http: reading multipart bodies, Content-Disposition, several ranges
 
@@ -2104,7 +2104,7 @@ Sub-checks:
 - `Content-Disposition`: a browser's file part, `filename*` undecoded, an unknown parameter passed over, a type alone; a backslash escape `PROVEN_ERR_UNSUPPORTED`; nothing, no semicolon, an open quote, a name twice, no name `PROVEN_ERR_INVALID_FORMAT`.
 - Range lists: two ranges; sorted, touching ones merged, a suffix resolved; overlapping ranges that ask for more than the resource, more ranges than room, another unit `PROVEN_ERR_UNSUPPORTED`; empty list elements; none satisfiable `PROVEN_ERR_OUT_OF_BOUNDS`; malformed ones `PROVEN_ERR_INVALID_FORMAT`; a suffix of nothing and an empty resource unsatisfiable, a suffix longer than the resource all of it.
 
-Failure tip: inspect the multipart reader (`proven_http_multipart_feed`'s held bytes and its head), `proven_http_content_disposition_parse` and `proven_http_range_parse_list` in `src/proven/http.c`. Not covered here: bodies from other writers - the private check `docs/checks/http-multipart` reads 300 bodies that Python's email parser agreed with, in eight piece sizes.
+Failure tip: inspect the multipart reader (`proven_http_multipart_feed`'s held bytes and its head), `proven_http_content_disposition_parse` and `proven_http_range_parse_list` in `net/src/http.c`. Not covered here: bodies from other writers - the private check `docs/checks/http-multipart` reads 300 bodies that Python's email parser agreed with, in eight piece sizes.
 
 ### `tests/test_unit_http_cookie` - http: the cookie jar
 
@@ -2121,7 +2121,7 @@ Sub-checks:
 - Replacement by name and path; the count limit evicts the oldest; clear empties the jar.
 - Malformed values (no `=`, an empty name, a control byte) are `PROVEN_ERR_INVALID_FORMAT`; an oversized one is `PROVEN_ERR_OUT_OF_BOUNDS`; an output buffer too small is `PROVEN_ERR_OUT_OF_BOUNDS`. The jar is unchanged after each.
 
-Failure tip: inspect `src/proven/http_cookie.c`. A cookie returned for a host that did not set it is a leak; the jar is host-only by design.
+Failure tip: inspect `net/src/http_cookie.c`. A cookie returned for a host that did not set it is a leak; the jar is host-only by design.
 
 ### `tests/test_unit_sse` - sse: the event-stream parser
 
@@ -2134,7 +2134,7 @@ Sub-checks:
 - Every split of a sample stream into two feeds, and a byte-by-byte feed, give the same events as one feed.
 - A line or an event larger than the work memory is `PROVEN_ERR_OUT_OF_BOUNDS`, and every later feed is `PROVEN_ERR_INVALID_STATE`; work memory under 64 bytes is refused.
 
-Failure tip: inspect `proven_sse_feed` in `src/proven/sse.c`. A difference between split and whole feeds is state lost between calls.
+Failure tip: inspect `proven_sse_feed` in `net/src/sse.c`. A difference between split and whole feeds is state lost between calls.
 
 ### `tests/test_unit_http_server` - http: the server
 
@@ -2158,7 +2158,7 @@ Sub-checks:
 - A full job queue: eight held requests against one worker and a queue of two - those that do not fit are answered `503` with a close, the rest are served once the worker is free, and every one is answered.
 - The graceful end (`proven_http_server_shutdown`). From a handler on the loop's thread: its answer goes out with `Connection: close`, `run` returns `PROVEN_OK`, `proven_http_server_drained` says so, and a second shutdown is `PROVEN_ERR_INVALID_STATE`. With workers and four connections - answered and idle, a 150 ms handler, half a request head, a handler that outlives the 600 ms deadline: the idle one is closed at once, a new connection is refused, the other requests are answered with `Connection: close`, and at the deadline the shutdown is over with `PROVEN_ERR_TIMEOUT` while the running handler keeps its connection; its answer still arrives, and `destroy` waits for it.
 
-Failure tip: inspect `src/proven/http_server.c`: `sv_service` for the refusal ladder, `sv_run` for what follows a handler, `proven_http_server_poll` for readiness and deadlines, `sv_job` and `sv_collect_done` for the hand-back between threads. Run under ThreadSanitizer when the job-system half fails alone. Responses are read with this library's own codec, so this test does not show agreement with another implementation.
+Failure tip: inspect `net/src/http_server.c`: `sv_service` for the refusal ladder, `sv_run` for what follows a handler, `proven_http_server_poll` for readiness and deadlines, `sv_job` and `sv_collect_done` for the hand-back between threads. Run under ThreadSanitizer when the job-system half fails alone. Responses are read with this library's own codec, so this test does not show agreement with another implementation.
 
 ### `tests/test_unit_http_client` - http: the client
 
@@ -2182,7 +2182,7 @@ Sub-checks:
 - An answer before the body is all sent: a peer that answers `413` and closes with 8 MiB still coming - on Linux the call returns that `413` and its body, elsewhere that or an error; a peer that closes the same way without a word is an error, and not a timeout.
 - Trailers (v0.106.0): a PUT from a stream with an `X-Sum` trailer, read by the blocking server after the body with `proven_http_exchange_trailers` and answered chunked with `proven_http_exchange_end_trailers` (after a refused `Content-Type` trailer was turned away without ending the response); the response's trailers not there before its end and read with `proven_http_client_trailers` after it; trailers with a body in memory and a field that may not be a trailer `PROVEN_ERR_INVALID_ARG`; a response with a length has none.
 
-Failure tip: inspect `src/proven/http_client.c`: `proven_http_client_send` for redirects and challenges, `cl_exchange` for what is written, `cl_connect`, `cl_http_tunnel` and `cl_socks5` for proxies. The proxy targets are under `.invalid`, so `PROVEN_ERR_NOT_FOUND` means the client resolved a name it should have handed to the proxy.
+Failure tip: inspect `net/src/http_client.c`: `proven_http_client_send` for redirects and challenges, `cl_exchange` for what is written, `cl_connect`, `cl_http_tunnel` and `cl_socks5` for proxies. The proxy targets are under `.invalid`, so `PROVEN_ERR_NOT_FOUND` means the client resolved a name it should have handed to the proxy.
 
 ### `tests/test_unit_http_client_h3` - http: the client, speaking HTTP/3
 
@@ -2195,7 +2195,7 @@ Sub-checks:
 - Above the exchange: a redirect within the origin followed over HTTP/3; a redirect to another origin followed there over TCP (HTTP/1.1 through `tls_wrap`); a Basic challenge answered; a cookie set and sent back; a gzip body decoded.
 - Every request above on one QUIC connection; to a server that lets an idle connection go after 300 ms, a second request 1.5 s later is answered on a new one; an answer that does not come is `PROVEN_ERR_TIMEOUT` after `io_timeout_ms` and within `connect_timeout_ms` and `io_timeout_ms` together.
 
-Failure tip: inspect the HTTP/3 part of `src/proven/http_client.c`: `cl_exchange_h3`, `cl_h3_next`, `cl_h3_pump`, and the `use_h3` choice and redirect branch of `proven_http_client_send`.
+Failure tip: inspect the HTTP/3 part of `net/src/http_client.c`: `cl_exchange_h3`, `cl_h3_next`, `cl_h3_pump`, and the `use_h3` choice and redirect branch of `proven_http_client_send`.
 
 The suite is a skip in a build with `PROVEN_NO_HTTP3`.
 
@@ -2214,7 +2214,7 @@ Sub-checks:
 - 3000 generated conversations: random messages, fragmented at random with pings between fragments, masked or not, decoded from random pieces - every byte, every message end and every ping accounted for, and no call that consumes nothing and reports nothing.
 - Over HTTP/2: a request as the event-driven server presents an extended CONNECT (CONNECT, `:protocol` first) for `websocket` in any case and version 13 is a WebSocket request with an empty key; another protocol is not one; version 8 is unsupported; no version is malformed; `:protocol` anywhere but first is an ordinary CONNECT.
 
-Failure tip: inspect `src/proven/ws.c`: `proven_ws_frame_parse` for header rows, the checks after the header in `proven_ws_decoder_feed` for stream rows, `ws_text_feed` for UTF-8 across pieces. The refusal tables follow the categories of the Autobahn test suite; the suite itself was not run.
+Failure tip: inspect `net/src/ws.c`: `proven_ws_frame_parse` for header rows, the checks after the header in `proven_ws_decoder_feed` for stream rows, `ws_text_feed` for UTF-8 across pieces. The refusal tables follow the categories of the Autobahn test suite; the suite itself was not run.
 
 ### `tests/test_unit_ws_conn` - ws: connections
 
@@ -2234,7 +2234,7 @@ Sub-checks:
 - Pings on silence (v0.104.0), over a socket pair whose other end is read and written by hand, with a 150 ms interval and a 300 ms timeout: a receive of 250 ms times out as asked and a masked empty ping arrived during it, after at least 140 ms; a pong is counted and the next receive times out as asked with a second ping; a message between pings is delivered; then a peer that answers nothing is given up after 400 to 2,000 ms - `PROVEN_ERR_RESET`, 1006 - long before the caller's 5 s.
 - A cap on upgraded connections (v0.104.0): a server with `max_upgraded` 2 takes two WebSockets that its handler keeps, refuses a third with `503` while the handler sees `PROVEN_ERR_BUSY`, takes the next once the server's end of one is closed, and the two left are closed after the server is destroyed (clean under ASan and TSan).
 
-Failure tip: inspect `src/proven/ws_conn.c`: `wc_pump` for receiving, `wc_send_frame` for sending, `wc_fail` for the close sent on a violation; and `proven_http_exchange_upgrade` and `proven_http_client_upgrade` for the hand-over. Both ends share one codec, so this test does not show agreement with another implementation. Run under ThreadSanitizer when only the job-system half fails.
+Failure tip: inspect `net/src/ws_conn.c`: `wc_pump` for receiving, `wc_send_frame` for sending, `wc_fail` for the close sent on a violation; and `proven_http_exchange_upgrade` and `proven_http_client_upgrade` for the hand-over. Both ends share one codec, so this test does not show agreement with another implementation. Run under ThreadSanitizer when only the job-system half fails.
 
 ### `tests/test_unit_u16str` - U16 strings
 
@@ -3028,7 +3028,7 @@ Sub-checks:
 
 The fixture runs the host compiler through `/bin/sh` and is skipped on Windows.
 
-Failure tip: inspect the `PROVEN_NO_BROTLI` guards in `include/proven.h`, `src/proven/brotli.c` and `src/proven/http_coding.c`.
+Failure tip: inspect the `PROVEN_NO_BROTLI` guards in `include/proven.h`, `src/proven/brotli.c` and `net/src/http_coding.c`.
 
 ### `tests/test_portability_compile_nohttp3` - PROVEN_NO_HTTP3 leaves QUIC and HTTP/3 out
 
@@ -3042,7 +3042,7 @@ Sub-checks:
 
 The fixture runs the host compiler through `/bin/sh` and is skipped on Windows.
 
-Failure tip: inspect the `PROVEN_NO_HTTP3` guards in `src/proven/quic_crypto.c`, `quic_frame.c`, `quic_conn.c`, `qpack.c`, `h3_conn.c`, `http_event_h3.c`, `http_event.c`, `http_event_h2.c`, `http_event_client_h3.c`, `http_event_client.c`, `proven_internal_quic.h`, `proven_internal_h3.h`, `proven_internal_http_event.h` and `tls13.c`.
+Failure tip: inspect the `PROVEN_NO_HTTP3` guards in `net/src/quic_crypto.c`, `quic_frame.c`, `quic_conn.c`, `qpack.c`, `h3_conn.c`, `http_event_h3.c`, `http_event.c`, `http_event_h2.c`, `http_event_client_h3.c`, `http_event_client.c`, `proven_internal_quic.h`, `proven_internal_h3.h`, `proven_internal_http_event.h` and `tls13.c`.
 
 ### `tests/test_portability_compile_nonet` - PROVEN_NO_NET leaves the socket layer out
 
@@ -3056,7 +3056,7 @@ Sub-checks:
 
 The fixture runs the host compiler through `/bin/sh` and is skipped on Windows.
 
-Failure tip: inspect the `PROVEN_NO_NET` guards in `include/proven.h`, `src/proven/net.c` and `platform/proven_sys_net.c`.
+Failure tip: inspect the `PROVEN_NO_NET` guards in `include/proven.h`, `net/src/net.c` and `net/platform/proven_sys_net.c`.
 
 ### `tests/test_portability_nob_clean` - build driver clean
 

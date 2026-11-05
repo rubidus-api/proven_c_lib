@@ -88,7 +88,7 @@ static proven_size_t put(proven_byte_t *buf, proven_size_t len, bool fin, proven
 int main(void) {
     PROVEN_TEST_SUITE("ws: the WebSocket codec",
         "The handshake values, the frame header, and the decoder's rules, against RFC 6455.",
-        "Inspect src/proven/ws.c.");
+        "Inspect net/src/ws.c.");
 
     static proven_byte_t buf[8192];
     static char text[8192];
@@ -136,7 +136,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_ws_check_origin(&req, served, 3) == PROVEN_OK, "the request's Origin is one of those served", "");
         PROVEN_TEST_ASSERT(proven_ws_check_origin(&req, shouted, 1) == PROVEN_OK, "letter case aside", "");
         PROVEN_TEST_ASSERT(proven_ws_check_origin(&req, others, 5) == PROVEN_ERR_PERMISSION,
-            "another port, a shorter or longer name, a part of it: PROVEN_ERR_PERMISSION", "Inspect proven_ws_check_origin in src/proven/ws.c: an origin is compared whole.");
+            "another port, a shorter or longer name, a part of it: PROVEN_ERR_PERMISSION", "Inspect proven_ws_check_origin in net/src/ws.c: an origin is compared whole.");
         PROVEN_TEST_ASSERT(proven_ws_check_origin(&req, served, 1) == PROVEN_ERR_PERMISSION && proven_ws_check_origin(&req, NULL, 0) == PROVEN_ERR_PERMISSION,
             "an origin further down the list than the count, and an empty list", "");
         PROVEN_TEST_ASSERT(proven_ws_check_origin(NULL, served, 3) == PROVEN_ERR_INVALID_ARG && proven_ws_check_origin(&req, NULL, 1) == PROVEN_ERR_INVALID_ARG,
@@ -153,7 +153,7 @@ int main(void) {
         for (proven_size_t i = 0; i < sizeof origins / sizeof origins[0]; ++i) {
             proven_http_request_t r;
             PROVEN_TEST_ASSERT(proven_http_parse_request((proven_mem_view_t){ (const proven_byte_t *)origins[i].request, strlen(origins[i].request) }, h, 16, 0, &r, &head) == PROVEN_OK, "a request parses", "");
-            PROVEN_TEST_ASSERT(proven_ws_check_origin(&r, served, 3) == origins[i].want, origins[i].why, "Inspect proven_ws_check_origin in src/proven/ws.c.");
+            PROVEN_TEST_ASSERT(proven_ws_check_origin(&r, served, 3) == origins[i].want, origins[i].why, "Inspect proven_ws_check_origin in net/src/ws.c.");
         }
 
         static const struct { const char *request; proven_err_t want; const char *why; } rows[] = {

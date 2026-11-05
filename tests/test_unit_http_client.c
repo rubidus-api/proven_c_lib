@@ -582,7 +582,7 @@ static proven_err_t take_body(proven_http_client_response_t *resp) {
     for (;;) {
         proven_result_size_t r = proven_http_client_read(resp, (proven_mem_mut_t){ .ptr = g_body + g_body_len, .size = sizeof g_body - 1 - g_body_len });
         if (r.err != PROVEN_OK) { g_body[g_body_len] = '\0'; return r.err; }
-        PROVEN_TEST_ASSERT(r.value > 0, "a successful body read is never zero bytes", "Inspect cl_read_body in src/proven/http_client.c.");
+        PROVEN_TEST_ASSERT(r.value > 0, "a successful body read is never zero bytes", "Inspect cl_read_body in net/src/http_client.c.");
         g_body_len += r.value;
     }
 }
@@ -635,7 +635,7 @@ static proven_err_t passthrough_tls(void *ctx, proven_transport_t plain, proven_
 int main(void) {
     PROVEN_TEST_SUITE("http: the client",
         "Requests out, responses in, against this library's server and against scripted peers on loopback.",
-        "Inspect src/proven/http_client.c.");
+        "Inspect net/src/http_client.c.");
 
     {
         proven_net_listener_t probe;
@@ -873,7 +873,7 @@ int main(void) {
         req = (proven_http_client_request_t){ .method = sv("POST"), .url = url_at(o.port, "/echo"), .body = { .ptr = huge, .size = sizeof huge } };
         e = proven_http_client_send(client, &req, &resp);
         PROVEN_TEST_ASSERT(e == PROVEN_OK && resp.status == 413, "a body the server refuses by its length is answered 413, and the client receives it",
-            "A PROVEN_ERR_RESET here means the server closed with the upload unread and the reset destroyed its own response: inspect sv_linger in src/proven/http_server.c.");
+            "A PROVEN_ERR_RESET here means the server closed with the upload unread and the reset destroyed its own response: inspect sv_linger in net/src/http_server.c.");
         proven_http_client_finish(&resp);
 
         req = (proven_http_client_request_t){ .method = sv("HEAD"), .url = url_at(o.port, "/hello") };
@@ -1079,7 +1079,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("cookies, ranges and event streams",
         "A jar is filled from Set-Cookie and read for the next request; a range request gets its part; an event stream parses as it arrives.",
-        "Inspect the cookie handling in cl_exchange; src/proven/http_cookie.c; src/proven/sse.c.");
+        "Inspect the cookie handling in cl_exchange; net/src/http_cookie.c; net/src/sse.c.");
     // ---------------------------------------------------------------
     {
         proven_http_cookie_jar_t jar;
@@ -1200,7 +1200,7 @@ int main(void) {
         peer_finish(&p);
         PROVEN_TEST_ASSERT(strstr(p.first, "GET http://origin.invalid:8080/a/b?c=d HTTP/1.1\r\n") == p.first && strstr(p.first, "osecret") == NULL,
             "the proxy was asked for the absolute URL, without the fragment and without the URL's user and password (RFC 9110 section 4.2.4)",
-            "Check cl_absolute_target in src/proven/http_client.c: the userinfo of the URL is never written into a request.");
+            "Check cl_absolute_target in net/src/http_client.c: the userinfo of the URL is never written into a request.");
         PROVEN_TEST_ASSERT(strstr(p.first, "\r\nHost: origin.invalid:8080\r\n") != NULL, "with the origin as Host", "");
         PROVEN_TEST_ASSERT(strstr(p.first, "\r\nProxy-Authorization: Basic cHVzZXI6cHBhc3M=\r\n") != NULL, "and the proxy's credentials from its URL", "");
 

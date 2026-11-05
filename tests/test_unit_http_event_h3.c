@@ -1,7 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_h3.h"
-#include "../src/proven/proven_internal_quic_net.h"
+#include "../net/src/proven_internal_h3.h"
+#include "../net/src/proven_internal_quic_net.h"
 #include "test_unit_tls_pki.h"
 #include <stdatomic.h>
 #include <stdio.h>
@@ -864,7 +864,7 @@ static void case_port(void) {
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP server, speaking HTTP/3",
         "The handlers of an HTTP/1.1 server, unchanged, answering this library's HTTP/3 client over real UDP: requests and bodies both ways under flow control, compression, pause, resets, limits, time, the two goodbyes, Retry, stateless resets, Alt-Svc on the TCP side, and what a server must refuse to be made with.",
-        "Inspect src/proven/http_event_h3.c: x_datagram for what arrives, d_request and d_body for requests, s_head and s_push for what leaves, d_service for a round, d_arm and d_on_timer for time.");
+        "Inspect net/src/http_event_h3.c: x_datagram for what arrives, d_request and d_body for requests, s_head and s_push for what leaves, d_service for a round, d_arm and d_on_timer for time.");
 
     g_heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "");
@@ -1047,7 +1047,7 @@ int main(void) {
         server_stop();
     }
 
-    PROVEN_TEST_SECTION("the protocol agreed is h3", "A QUIC client that offers h2 before h3, to a server whose TLS lists h2 first: HTTP/3 agrees h3 alone (RFC 9114 section 3.1), and the request is answered.", "Check the .alpn of x->qc in src/proven/http_event_h3.c, and alpn_allowed in tls13.c.");
+    PROVEN_TEST_SECTION("the protocol agreed is h3", "A QUIC client that offers h2 before h3, to a server whose TLS lists h2 first: HTTP/3 agrees h3 alone (RFC 9114 section 3.1), and the request is answered.", "Check the .alpn of x->qc in net/src/http_event_h3.c, and alpn_allowed in tls13.c.");
     {
         const proven_u16 port = server_start((proven_http_event_server_config_t){ 0 });
         proven_tls_config_t *only_h3 = g_client_tls;

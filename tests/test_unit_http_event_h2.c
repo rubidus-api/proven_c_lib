@@ -1,7 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "test_unit_tls_pki.h"
-#include "../src/proven/proven_internal_tls.h"
+#include "../net/src/proven_internal_tls.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -976,7 +976,7 @@ static void memory_case(bool no_tables) {
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP server, speaking HTTP/2",
         "The handlers of an HTTP/1.1 server, unchanged, answering an HTTP/2 client: requests, bodies both ways under flow control, compression, pause, resets from either side, limits, time, goodbye - in the clear by prior knowledge and over TLS with ALPN - and both protocols on one listener.",
-        "Inspect src/proven/http_event_h2.c: d_request and d_body for what arrives, s_head and s_push for what leaves, d_pump for the round, d_arm and h2_on_timer for time. The choice of protocol is in ev_process (http_event.c).");
+        "Inspect net/src/http_event_h2.c: d_request and d_body for what arrives, s_head and s_push for what leaves, d_pump for the round, d_arm and h2_on_timer for time. The choice of protocol is in ev_process (http_event.c).");
 
     g_heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "");
@@ -1224,7 +1224,7 @@ int main(void) {
          * reading cannot make the server hold an answer for everything it sends. */
         const int taken = atomic_load(&g_requests) - asked_before;
         if (!(taken > 0 && taken < 100)) PROVEN_TEST_INFO("{} of a hundred taken", PROVEN_ARG(taken));
-        PROVEN_TEST_ASSERT(taken > 0 && taken < 100, "while the client reads nothing, the server stops taking requests when its output is full", "Check d_full and the loop of h2_on_input in src/proven/http_event_h2.c.");
+        PROVEN_TEST_ASSERT(taken > 0 && taken < 100, "while the client reads nothing, the server stops taking requests when its output is full", "Check d_full and the loop of h2_on_input in net/src/http_event_h2.c.");
         good = 0; resets = 0;
         for (int i = 0; i < 100; i++) {
             (void)cl_wait(&c, ids[i], 120000u * PROVEN_TEST_BULK_SCALE);     /* forty megabytes: under ThreadSanitizer on a busy machine that took more than thirty seconds, and the streams end together, so the first wait is the long one */
@@ -1234,7 +1234,7 @@ int main(void) {
         }
         if (!(good == 100 && resets == 0 && !c.closed)) PROVEN_TEST_INFO("of a hundred: {} whole, {} reset; the connection closed {}, gone {}", PROVEN_ARG(good), PROVEN_ARG(resets), PROVEN_ARG((int)c.closed), PROVEN_ARG((int)c.gone));
         PROVEN_TEST_ASSERT(good == 100 && resets == 0 && !c.closed, "with the socket full all hundred are still answered whole: a head waits for room, it is not a reason to reset",
-            "Check s_head in src/proven/http_event_h2.c and the engine's bound in proven_h2_conn_submit_response: a response head is not refused for the output bound.");
+            "Check s_head in net/src/http_event_h2.c and the engine's bound in proven_h2_conn_submit_response: a response head is not refused for the output bound.");
         cl_close(&c);
 
         /* And responses that begin later, when the output is already full: sixty handlers
@@ -1359,7 +1359,7 @@ int main(void) {
         proven_tls_config_destroy(server_old); proven_tls_config_destroy(client_old);
     }
 
-    PROVEN_TEST_SECTION("turns", "Two responses streamed at once to a client whose windows hold them both: what bounds them is this server's own output bound.", "Check `turn` and `sharing` in d_pump and d_room in src/proven/http_event_h2.c: the round goes on behind the stream that had the last turn, and a turn moves H2_TURN_BYTES.");
+    PROVEN_TEST_SECTION("turns", "Two responses streamed at once to a client whose windows hold them both: what bounds them is this server's own output bound.", "Check `turn` and `sharing` in d_pump and d_room in net/src/http_event_h2.c: the round goes on behind the stream that had the last turn, and a turn moves H2_TURN_BYTES.");
     {
         proven_http_event_server_config_t cfg = { 0 };
         proven_u16 port = server_start(cfg);

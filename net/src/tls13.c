@@ -1,6 +1,6 @@
 #include "proven_internal_tls.h"
 #include "proven_internal_quic.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 
 /* The TLS 1.3 state machine (RFC 8446), both roles. Bytes in, bytes out: no I/O, no clock and
  * no random source of its own - those come from the config.

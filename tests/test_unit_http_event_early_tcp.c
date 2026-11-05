@@ -1,7 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "test_unit_tls_pki.h"
-#include "../src/proven/proven_internal_http_event_client.h"
+#include "../net/src/proven_internal_http_event_client.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -200,7 +200,7 @@ static void cases(bool h2, proven_tls_config_t *c_early, proven_tls_config_t *c_
 int main(void) {
     PROVEN_TEST_SUITE("0-RTT over TCP, client and server",
         "In HTTP/1.1 and HTTP/2: a GET on a second connection goes as early data and is answered, its handler told; a POST never goes early; a 425 is sent again after the handshake; the server answers 425 itself to what is not safe to repeat; a refused attempt is sent again; without early_data on either side, nothing goes early.",
-        "Inspect cl_flush and cl_settle_early in src/proven/http_event_client.c, c_settle_early and c_submit_waiting in http_event_client_h2.c; the early branches in http_event.c and d_request in http_event_h2.c; the engine is test_unit_tls's \"early data over TCP, taken\".");
+        "Inspect cl_flush and cl_settle_early in net/src/http_event_client.c, c_settle_early and c_submit_waiting in http_event_client_h2.c; the early branches in http_event.c and d_request in http_event_h2.c; the engine is test_unit_tls's \"early data over TCP, taken\".");
 
     g_heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(proven_loop_create(g_heap, &g_loop) == PROVEN_OK, "a loop", "");

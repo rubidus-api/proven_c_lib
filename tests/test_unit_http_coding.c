@@ -2,7 +2,7 @@
 #include "proven_test.h"
 #include "test_unit_tls_pki.h"
 #include "test_unit_http_coding_vectors.h"
-#include "../src/proven/proven_internal_http_coding.h"
+#include "../net/src/proven_internal_http_coding.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -320,7 +320,7 @@ static void bfetch(proven_http_client_t *c, const char *method, proven_u16 port,
             proven_result_size_t r = proven_http_client_read(&res, (proven_mem_mut_t){ .ptr = g_got + g->size, .size = room });
             if (r.err == PROVEN_ERR_EOF) break;
             if (r.err != PROVEN_OK) { g->err = r.err; break; }
-            PROVEN_TEST_ASSERT(r.value > 0 && r.value <= room, "a successful read is never zero bytes and never more than asked", "Check cl_read_decoded in src/proven/http_client.c.");
+            PROVEN_TEST_ASSERT(r.value > 0 && r.value <= room, "a successful read is never zero bytes and never more than asked", "Check cl_read_decoded in net/src/http_client.c.");
             g->size += r.value;
         }
     }
@@ -395,7 +395,7 @@ static void efetch(proven_http_event_client_t *c, const char *method, bool tls, 
     proven_err_t e = proven_http_event_client_start(c, &o, &g->request);
     PROVEN_TEST_ASSERT(e == PROVEN_OK, "a request starts", "");
     if (!spin_until(&g->done, 60000u * PROVEN_TEST_BULK_SCALE)) PROVEN_TEST_INFO("no end after {} s: {} with {} bytes in {} pieces", PROVEN_ARG(60u * PROVEN_TEST_BULK_SCALE), PROVEN_ARG(path), PROVEN_ARG((unsigned)g->size), PROVEN_ARG(g->pieces));
-    PROVEN_TEST_ASSERT(g->done && g->dones == 1, "and ends, once", "Check cl_decode and cl_process in src/proven/http_event_client.c.");
+    PROVEN_TEST_ASSERT(g->done && g->dones == 1, "and ends, once", "Check cl_decode and cl_process in net/src/http_event_client.c.");
 }
 static void eget(proven_http_event_client_t *c, bool tls, proven_u16 port, const char *path, got_t *g) { efetch(c, "GET", tls, port, path, NULL, 0, false, g); }
 
@@ -620,12 +620,12 @@ static void decoded_vectors(fetch_fn fetch, void *client, proven_u16 port) {
 int main(void) {
     PROVEN_TEST_SUITE("http: content codings",
         "Responses compressed when a handler asks and the client accepts, and compressed bodies decoded by the clients that ask - in all four drivers, against bodies zlib made.",
-        "Inspect src/proven/http_coding.c for the rules, and the respond, begin, write and end functions of the two servers and the body paths of the two clients for their use.");
+        "Inspect net/src/http_coding.c for the rules, and the respond, begin, write and end functions of the two servers and the body paths of the two clients for their use.");
 
     g_heap = proven_heap_allocator();
     fill_bodies();
 
-    PROVEN_TEST_SECTION("Accept-Encoding and Content-Encoding", "The two helpers of http.h, against tables.", "Check proven_http_accepts_coding and proven_http_content_coding in src/proven/http.c.");
+    PROVEN_TEST_SECTION("Accept-Encoding and Content-Encoding", "The two helpers of http.h, against tables.", "Check proven_http_accepts_coding and proven_http_content_coding in net/src/http.c.");
     {
         static const struct { const char *value; bool gzip, deflate, identity; } rows[] = {
             { NULL, false, false, true },                          /* no field: nothing but identity */
@@ -705,7 +705,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_http_content_coding(twice, 2) == PROVEN_HTTP_CODING_OTHER, "two fields are more than one coding", "");
     }
 
-    PROVEN_TEST_SECTION("the decoder", "What the two clients share, against bodies zlib made: whole, and a byte in and a byte out at a time.", "Check proven_http_decoder_step_ and proven_http_decoder_end_ in src/proven/http_coding.c.");
+    PROVEN_TEST_SECTION("the decoder", "What the two clients share, against bodies zlib made: whole, and a byte in and a byte out at a time.", "Check proven_http_decoder_step_ and proven_http_decoder_end_ in net/src/http_coding.c.");
     {
         for (proven_size_t i = 0; i < VECTOR_COUNT; ++i) {
             const coding_vector_t *v = &coding_vectors[i];
@@ -910,7 +910,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(true, "the two calls accept null", "");
     }
 
-    PROVEN_TEST_SECTION("the blocking client and the blocking server", "A server that compresses and a client that decodes, each also seen without the other.", "Check src/proven/http_client.c (cl_read_decoded) and src/proven/http_server.c (sv_zip, the respond function).");
+    PROVEN_TEST_SECTION("the blocking client and the blocking server", "A server that compresses and a client that decodes, each also seen without the other.", "Check net/src/http_client.c (cl_read_decoded) and net/src/http_server.c (sv_zip, the respond function).");
     {
         compressed_responses(fetch_blocking, bdecoding, false, bat.port, "gzip");
         decoded_vectors(fetch_blocking, bdecoding, bat.port);
@@ -930,12 +930,12 @@ int main(void) {
         snprintf(zpath, sizeof zpath, "/v/%u", (unsigned)ZSTD_VECTOR);
         bget(bgzip, bat.port, zpath, &g);
         PROVEN_TEST_ASSERT(g.err == PROVEN_OK && strcmp(g.encoding, "zstd") == 0 && g.size == coding_vectors[ZSTD_VECTOR].size && memcmp(g_got, coding_vectors[ZSTD_VECTOR].bytes, g.size) == 0,
-            "and is given a zstd body that comes anyway as it was sent", "Check the decompress_zstd argument of proven_http_decoder_wanted_ in src/proven/http_client.c.");
+            "and is given a zstd body that comes anyway as it was sent", "Check the decompress_zstd argument of proven_http_decoder_wanted_ in net/src/http_client.c.");
         PROVEN_TEST_ASSERT(strcmp(coding_vectors[BROTLI_VECTOR].name, "br") == 0, "the Brotli vector", "");
         snprintf(zpath, sizeof zpath, "/v/%u", (unsigned)BROTLI_VECTOR);
         bget(bgzip, bat.port, zpath, &g);
         PROVEN_TEST_ASSERT(g.err == PROVEN_OK && strcmp(g.encoding, "br") == 0 && g.size == coding_vectors[BROTLI_VECTOR].size && memcmp(g_got, coding_vectors[BROTLI_VECTOR].bytes, g.size) == 0,
-            "and a br body as it was sent", "Check the decompress_brotli argument of proven_http_decoder_wanted_ in src/proven/http_client.c.");
+            "and a br body as it was sent", "Check the decompress_brotli argument of proven_http_decoder_wanted_ in net/src/http_client.c.");
 
         proven_http_header_t own = { PROVEN_LIT("Accept-Encoding"), PROVEN_LIT("identity") };
         bfetch(bdecoding, "GET", bat.port, "/r/3000", &own, 1, 4096, &g);
@@ -967,7 +967,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(g.err == PROVEN_OK && strcmp(first, g.peer) == 0, "and the next, after two gzip members", "");
     }
 
-    PROVEN_TEST_SECTION("the event-driven client and the blocking server", "The same server, and the client that is given pieces.", "Check cl_decode in src/proven/http_event_client.c.");
+    PROVEN_TEST_SECTION("the event-driven client and the blocking server", "The same server, and the client that is given pieces.", "Check cl_decode in net/src/http_event_client.c.");
     {
         compressed_responses(fetch_event, edecoding, false, bat.port, "gzip");
         decoded_vectors(fetch_event, edecoding, bat.port);
@@ -980,11 +980,11 @@ int main(void) {
         eget(egzip, false, bat.port, zpath, &g);
         PROVEN_TEST_ASSERT(g.err == PROVEN_OK && strcmp(g.accept, "gzip") == 0 && strcmp(g.encoding, "zstd") == 0 && g.size == coding_vectors[ZSTD_VECTOR].size &&
                            memcmp(g_got, coding_vectors[ZSTD_VECTOR].bytes, g.size) == 0,
-            "a client that decodes without decompress_zstd asks for gzip alone, and is given a zstd body as it was sent", "Check the decompress_zstd argument of proven_http_decoder_wanted_ in src/proven/http_event_client.c.");
+            "a client that decodes without decompress_zstd asks for gzip alone, and is given a zstd body as it was sent", "Check the decompress_zstd argument of proven_http_decoder_wanted_ in net/src/http_event_client.c.");
         snprintf(zpath, sizeof zpath, "/v/%u", (unsigned)BROTLI_VECTOR);
         eget(egzip, false, bat.port, zpath, &g);
         PROVEN_TEST_ASSERT(g.err == PROVEN_OK && strcmp(g.encoding, "br") == 0 && g.size == coding_vectors[BROTLI_VECTOR].size && memcmp(g_got, coding_vectors[BROTLI_VECTOR].bytes, g.size) == 0,
-            "and a br body as it was sent", "Check the decompress_brotli argument of proven_http_decoder_wanted_ in src/proven/http_event_client.c.");
+            "and a br body as it was sent", "Check the decompress_brotli argument of proven_http_decoder_wanted_ in net/src/http_event_client.c.");
         eget(eplain, false, bat.port, "/v/0", &g);
         PROVEN_TEST_ASSERT(g.err == PROVEN_OK && strcmp(g.accept, "(none)") == 0 && g.size == coding_vectors[0].size && memcmp(g_got, coding_vectors[0].bytes, g.size) == 0,
             "a client that sets nothing sends no Accept-Encoding and is given the gzip as it is", "");
@@ -1014,7 +1014,7 @@ int main(void) {
 
     for (int tls = 0; tls < 2; ++tls) {
         PROVEN_TEST_SECTION(tls ? "the event-driven server and client, over TLS" : "the event-driven server and client",
-            "The server on the loop, compressing into its bounded output queue.", "Check ev_zip and the write function in src/proven/http_event.c.");
+            "The server on the loop, compressing into its bounded output queue.", "Check ev_zip and the write function in net/src/http_event.c.");
         proven_http_event_server_t *eserver = NULL;
         proven_http_event_server_config_t ecfg = { .on = { event_request, NULL, event_writable, event_done }, .tls = tls ? server_tls : NULL };
         proven_net_addr_t eat;
@@ -1040,7 +1040,7 @@ int main(void) {
         /* Compressed, this is a few dozen kilobytes: the server has sent it all and closed
          * while the client is still paused over the second piece. */
         PROVEN_TEST_ASSERT(text_is(&g, MIB) && !g.while_paused, "and so does a megabyte of text, which the server has finished sending long before the client has finished reading",
-            "Check cl_readable in src/proven/http_event_client.c: a hang-up reported after the end was seen is not a cut connection.");
+            "Check cl_readable in net/src/http_event_client.c: a hang-up reported after the end was seen is not a cut connection.");
 
         if (!tls) {
             PROVEN_TEST_SECTION("raw sockets", "What a client of this library never sends, to both servers.", "");
@@ -1075,7 +1075,7 @@ int main(void) {
     }
 
     PROVEN_TEST_SECTION("servers that offer zstd", "The blocking server at the zstd defaults and the event-driven one at level 6 with a 1 KiB window, to the clients that ask for zstd, to those that ask for gzip, and to raw sockets with weights.",
-        "Check proven_http_compress_choose_ and the compressor in src/proven/http_coding.c, and where the servers call them.");
+        "Check proven_http_compress_choose_ and the compressor in net/src/http_coding.c, and where the servers call them.");
     {
         proven_job_sys_t *zjobs = NULL;
         proven_http_server_t *zserver = NULL;

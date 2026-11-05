@@ -1,6 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_http_event.h"
+#include "../net/src/proven_internal_http_event.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -601,7 +601,7 @@ static void put_data(buf_t *b, proven_u32 id, proven_size_t n) {
 int main(void) {
     PROVEN_TEST_SUITE("h2_conn: an HTTP/2 connection without a socket",
         "Two connections wired together in memory carry requests, bodies, trailers, resets and goodbyes at every delivery size; a scripted peer breaks each rule of RFC 9113 and the connection answers with the verdict the RFC names; and every bound on what a peer may make a connection hold or do is driven to its edge.",
-        "Inspect src/proven/h2_conn.c: h2c_on_header and h2c_on_fixed for the per-frame rules, h2c_on_block for what a header list is taken to be, h2c_stream_fault and h2c_fail for the two kinds of error, h2c_conn_credit and h2c_stream_credit for the windows.");
+        "Inspect net/src/h2_conn.c: h2c_on_header and h2c_on_fixed for the per-frame rules, h2c_on_block for what a header list is taken to be, h2c_stream_fault and h2c_fail for the two kinds of error, h2c_conn_credit and h2c_stream_credit for the windows.");
 
     PROVEN_TEST_ASSERT(proven_hpack_encoder_create(g_alloc, 0, &g_enc) == PROVEN_OK, "an encoder with no table for the scripts", "");
     const proven_h2_config_t base = { .alloc = g_alloc };
@@ -1910,7 +1910,7 @@ int main(void) {
         const proven_result_size_t w = proven_h2_conn_send_data(p.client, d, (proven_mem_view_t){ (const proven_byte_t *)"hello", 5 }, true);
         PROVEN_TEST_ASSERT(ok && w.err == PROVEN_OK && w.value == 5 && proven_h2_conn_stream_user(p.client, d) == &tag,
             "after the first ends and the table moves, the next request takes the refused one's number: it is found, and its body goes",
-            "Check the failure path of proven_h2_conn_submit_request in src/proven/h2_conn.c: a stream taken back must leave the map as h2c_remove leaves it.");
+            "Check the failure path of proven_h2_conn_submit_request in net/src/h2_conn.c: a stream taken back must leave the map as h2c_remove leaves it.");
         carry(&p, p.client, p.server);
         ok = proven_h2_conn_submit_response(p.server, d, OK200, 2, true) == PROVEN_OK && proven_h2_conn_submit_response(p.server, b, OK200, 2, true) == PROVEN_OK;
         carry(&p, p.server, p.client);
@@ -1919,7 +1919,7 @@ int main(void) {
         pair_close(&p);
     }
 
-    PROVEN_TEST_SECTION("windows that grow", "With growth turned on (an internal call the event-driven drivers make), a stream's window doubles when its reader takes half of it within two round trips of its last move, up to the cap, and the connection's follows; a slow reader, an unread stream, a connection without the call and one whose SETTINGS were never acknowledged keep the window they started with (RFC-0019 section 10).", "Check h2c_stream_credit, h2c_conn_follow and proven_h2_conn_grow_ in src/proven/h2_conn.c.");
+    PROVEN_TEST_SECTION("windows that grow", "With growth turned on (an internal call the event-driven drivers make), a stream's window doubles when its reader takes half of it within two round trips of its last move, up to the cap, and the connection's follows; a slow reader, an unread stream, a connection without the call and one whose SETTINGS were never acknowledged keep the window they started with (RFC-0019 section 10).", "Check h2c_stream_credit, h2c_conn_follow and proven_h2_conn_grow_ in net/src/h2_conn.c.");
     {
         proven_size_t sent = 0;
         proven_h2_conn_t *c = grow_run(true, 10000, 10, (proven_size_t)40 << 20, false, &sent);
@@ -1947,7 +1947,7 @@ int main(void) {
         proven_h2_conn_destroy(c);
     }
 
-    PROVEN_TEST_SECTION("a ceiling on credit", "RFC-0026's internal call (proven_http_event_server_set_window): room given back - what the peer may still send and what is held - never passes the ceiling, growth stops at it, and a ceiling below the initial window is said as one.", "Check proven_h2_conn_cap_window_, h2c_stream_credit and h2c_conn_credit in src/proven/h2_conn.c.");
+    PROVEN_TEST_SECTION("a ceiling on credit", "RFC-0026's internal call (proven_http_event_server_set_window): room given back - what the peer may still send and what is held - never passes the ceiling, growth stops at it, and a ceiling below the initial window is said as one.", "Check proven_h2_conn_cap_window_, h2c_stream_credit and h2c_conn_credit in net/src/h2_conn.c.");
     {
         proven_size_t sent = 0;
         g_cap = 1u << 20;

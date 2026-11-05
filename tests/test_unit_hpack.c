@@ -1,6 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/hpack_tables.h"
+#include "../net/src/hpack_tables.h"
 #include "test_unit_hpack_vectors.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -81,10 +81,10 @@ static proven_u32 rnd(void) { g_seed ^= g_seed << 13; g_seed ^= g_seed >> 17; g_
 int main(void) {
     PROVEN_TEST_SUITE("hpack: header compression for HTTP/2",
         "The tables against what any correct copy must satisfy, every example of RFC 7541 Appendix C with the dynamic table compared after each step, the encoder against the examples whose choices it shares, each malformed block refused, each limit held, and blocks cut short or changed.",
-        "Inspect src/proven/hpack.c: proven_hpack_decode for the representations and their refusals, hp_table_add for eviction, proven_hpack_encode for the encoder's choices, proven_hpack_huffman_decode for the padding rules.");
+        "Inspect net/src/hpack.c: proven_hpack_decode for the representations and their refusals, hp_table_add for eviction, proven_hpack_encode for the encoder's choices, proven_hpack_huffman_decode for the padding rules.");
     g_heap = proven_heap_allocator();
 
-    PROVEN_TEST_SECTION("the tables", "The static table and the Huffman code this build is linked with.", "Regenerate src/proven/hpack_tables.h from the RFC's text; do not edit it.");
+    PROVEN_TEST_SECTION("the tables", "The static table and the Huffman code this build is linked with.", "Regenerate net/src/hpack_tables.h from the RFC's text; do not edit it.");
     {
         PROVEN_TEST_ASSERT(sizeof hpack_static / sizeof hpack_static[0] == 61, "the static table has 61 entries", "");
         PROVEN_TEST_ASSERT(strcmp(hpack_static[0].name, ":authority") == 0 && hpack_static[0].value_len == 0 && strcmp(hpack_static[1].name, ":method") == 0 && strcmp(hpack_static[1].value, "GET") == 0 &&
@@ -201,7 +201,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_hpack_huffman_decode((proven_mem_view_t){ padded, 0 }, (proven_mem_mut_t){ g_text, 8 }, &out) == PROVEN_OK && out == 0, "and nothing decodes to nothing", "");
     }
 
-    PROVEN_TEST_SECTION("the examples of RFC 7541 Appendix C", "Every block the RFC prints, decoded, with the dynamic table compared after each.", "Check proven_hpack_decode and hp_table_add in src/proven/hpack.c.");
+    PROVEN_TEST_SECTION("the examples of RFC 7541 Appendix C", "Every block the RFC prints, decoded, with the dynamic table compared after each.", "Check proven_hpack_decode and hp_table_add in net/src/hpack.c.");
     {
         PROVEN_TEST_ASSERT(sizeof hpack_examples / sizeof hpack_examples[0] == 16, "the vector header carries the sixteen examples of C.2 to C.6", "");
         static const char *single[] = { "C.2.1.", "C.2.2.", "C.2.3.", "C.2.4." };

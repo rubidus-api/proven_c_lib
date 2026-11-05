@@ -26,7 +26,7 @@ static proven_err_t check(proven_u8 type, proven_u8 flags, proven_u32 stream, pr
 int main(void) {
     PROVEN_TEST_SUITE("h2: HTTP/2 frames and header lists",
         "Frame headers read and written, each frame type's rules on both sides of their edges, padding, settings and their ranges, the frames this side writes read back, and the checks a header list must pass to be a request, a response or trailers.",
-        "Inspect src/proven/h2.c: proven_h2_frame_check for the per-type rules, proven_h2_frame_content for padding, proven_h2_settings_next for the ranges, h2_field_ok and h2_ordinary_ok for the header rules.");
+        "Inspect net/src/h2.c: proven_h2_frame_check for the per-type rules, proven_h2_frame_content for padding, proven_h2_settings_next for the ranges, h2_field_ok and h2_ordinary_ok for the header rules.");
 
     PROVEN_TEST_SECTION("frame headers", "Nine bytes, both ways.", "Check proven_h2_frame_parse and proven_h2_frame_write.");
     {

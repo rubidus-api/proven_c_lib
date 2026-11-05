@@ -100,7 +100,7 @@ static bool body_is(proven_http_client_response_t *r, const proven_byte_t *want,
 int main(void) {
     PROVEN_TEST_SUITE("the blocking HTTP client, speaking HTTP/3",
         "The blocking client asked for HTTP/3 (RFC-0034) against the event-driven server over real UDP: what it is refused for, requests and bodies both ways, redirects within the origin and out of it, a challenge, cookies, decoding, a kept connection and one remade after the server let it go, io_timeout_ms.",
-        "Inspect the HTTP/3 part of src/proven/http_client.c: cl_exchange_h3 for the request and head, cl_h3_next for the body, the use_h3 choice in proven_http_client_send.");
+        "Inspect the HTTP/3 part of net/src/http_client.c: cl_exchange_h3 for the request and head, cl_h3_next for the body, the use_h3 choice in proven_http_client_send.");
 
     g_heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "");

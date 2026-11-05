@@ -1,6 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_loop.h"
+#include "../net/src/proven_internal_loop.h"
 #include <stdatomic.h>
 #include <string.h>
 
@@ -88,7 +88,7 @@ static void stopper(void *arg) { (void)arg; proven_time_sleep(60); proven_loop_s
 int main(void) {
     PROVEN_TEST_SUITE("the event loop",
         "Timers that fire in order and survive being cancelled from each other's callbacks, and work posted from other threads. (The operations on sockets: test_unit_loop_ops.)",
-        "Inspect src/proven/loop.c: loop_timers_advance for timers, proven_loop_post and loop_run_tasks for posting.");
+        "Inspect net/src/loop.c: loop_timers_advance for timers, proven_loop_post and loop_run_tasks for posting.");
 
     proven_allocator_t heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(proven_loop_create(heap, &g_loop) == PROVEN_OK && g_loop != NULL, "a loop", "");
@@ -102,7 +102,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("backends",
         "proven_loop_create_ex makes the loop with the backend asked for, or says PROVEN_ERR_UNSUPPORTED; AUTO is the port on Windows and a working backend elsewhere.",
-        "Check loop_create and loop_pick in src/proven/loop.c.");
+        "Check loop_create and loop_pick in net/src/loop.c.");
     {
         const proven_loop_backend_t got = proven_loop_backend(g_loop);
 #if defined(_WIN32) || defined(_WIN64)
@@ -383,7 +383,7 @@ int main(void) {
 
     PROVEN_TEST_SECTION("after this round",
         "An internal hook for a connection that wants a round from the loop: no post, no change of a socket's watch.",
-        "Check proven_loop_after_, proven_loop_after_cancel_ and loop_run_after in src/proven/loop.c, and where proven_loop_poll calls it.");
+        "Check proven_loop_after_, proven_loop_after_cancel_ and loop_run_after in net/src/loop.c, and where proven_loop_poll calls it.");
     {
         /* Asked for between rounds: they run at the next poll, in the order asked, once each -
          * and a poll that would have slept for ever does not sleep on them. */

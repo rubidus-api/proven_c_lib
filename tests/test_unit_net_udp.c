@@ -17,7 +17,7 @@ static proven_mem_view_t mv(const char *s) {
 int main(void) {
     PROVEN_TEST_SUITE("net: UDP on the loopback interface",
         "Datagrams keep their boundaries; a cut one says so; a wait ends at its deadline.",
-        "Inspect proven_net_udp_recv_from in src/proven/net.c and proven_sys_net_recv_from in platform/proven_sys_net.c.");
+        "Inspect proven_net_udp_recv_from in net/src/net.c and proven_sys_net_recv_from in net/platform/proven_sys_net.c.");
 
     proven_net_udp_t a, b;
     proven_net_addr_t a_at, b_at;

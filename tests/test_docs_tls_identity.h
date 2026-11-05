@@ -7,7 +7,7 @@
  * with the library's internal issuer and written to two files in the test's own directory. The
  * repository holds no key; this is how the examples stay run by the suite.
  */
-#include "../src/proven/proven_internal_tls.h"
+#include "../net/src/proven_internal_tls.h"
 #include "../src/proven/proven_internal_cert_issue.h"
 
 static bool tls_identity_files(const char *cert_path, const char *key_path) {

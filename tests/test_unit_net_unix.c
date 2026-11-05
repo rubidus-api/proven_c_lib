@@ -20,7 +20,7 @@ static proven_mem_view_t mv(const char *s) {
 int main(void) {
     PROVEN_TEST_SUITE("net: Unix-domain stream sockets",
         "Listen, connect and exchange over a path; the failures that are particular to paths.",
-        "Inspect to_native and from_native in platform/proven_sys_net.c for the path handling.");
+        "Inspect to_native and from_native in net/platform/proven_sys_net.c for the path handling.");
 
     proven_u8str_view_t path = PROVEN_LIT("proven_test_unix.sock");
     proven_allocator_t heap = proven_heap_allocator();

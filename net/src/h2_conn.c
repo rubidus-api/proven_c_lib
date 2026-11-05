@@ -1,6 +1,6 @@
 #include "proven/h2.h"
 #include "proven/hpack.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 
 /*
  * HTTP/2 (RFC 9113): one connection, either end. Bytes in, events and bytes out; no socket

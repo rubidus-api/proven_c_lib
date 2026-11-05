@@ -348,7 +348,7 @@ int main(void) {
             "every path in the dependency manifest exists");
     int missing_headers = 0;
     static const char *header_dirs[] = {
-        "include/proven", "src/proven", "platform", "tests", "manual/examples"
+        "include/proven", "src/proven", "platform", "net/include/proven", "net/src", "net/platform", "tests", "manual/examples"
     };
     for (size_t i = 0; i < sizeof header_dirs / sizeof header_dirs[0]; ++i) {
         missing_headers += require_header_dir_in_manifest(header_dirs[i]);

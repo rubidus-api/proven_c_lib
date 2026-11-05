@@ -1,6 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_tls.h"
+#include "../net/src/proven_internal_tls.h"
 #include "../src/proven/proven_internal_cert_issue.h"
 
 /* sign.c's test hook: the uses of an RSA key's blinding pair, put where the test says. */
@@ -372,7 +372,7 @@ static bool replay(const char *const *steps, proven_size_t count) {
 int main(void) {
     PROVEN_TEST_SUITE("the TLS 1.3 engine",
         "A client and a server connection wired together in memory: every suite and key type, retries, ALPN, each way verification fails, client certificates, resumption, tampering, and RFC 8448 replayed.",
-        "Inspect src/proven/tls13.c (the state machine) and src/proven/tls_config.c (identity, tickets). The clock and the random source are the test's, so a failure repeats exactly.");
+        "Inspect net/src/tls13.c (the state machine) and net/src/tls_config.c (identity, tickets). The clock and the random source are the test's, so a failure repeats exactly.");
 
     g_count.heap = proven_heap_allocator();
     g_alloc = (proven_allocator_t){ .ctx = &g_count, .alloc_fn = count_alloc, .realloc_fn = count_realloc, .free_fn = count_free };
@@ -492,7 +492,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a handshake, and data both ways",
         "Each of the three suites with each kind of server key; then data from one byte to several records, in both directions.",
-        "Check client_message and server_message in src/proven/tls13.c.");
+        "Check client_message and server_message in net/src/tls13.c.");
     {
         static const proven_u16 suites[3] = { PROVEN_TLS_AES_128_GCM_SHA256, PROVEN_TLS_AES_256_GCM_SHA384, PROVEN_TLS_CHACHA20_POLY1305_SHA256 };
         proven_tls_config_t *cc = client_config(NULL);
@@ -718,7 +718,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("RSA keys for this side",
         "A server with an RSA key, in both of its file forms; a client certificate with one; a chain signed with one; and the keys that are refused.",
-        "Check cfg_rsa and cfg_match_key in src/proven/tls_config.c, and the RSA branch of cv_build in src/proven/tls13.c. The signing itself is test_unit_crypto_rsa's business.");
+        "Check cfg_rsa and cfg_match_key in net/src/tls_config.c, and the RSA branch of cv_build in net/src/tls13.c. The signing itself is test_unit_crypto_rsa's business.");
     {
         proven_tls_config_t *bad = NULL;
         PROVEN_TEST_ASSERT(tp_build_rsa(), "RSA identities are made", "");
@@ -811,7 +811,7 @@ int main(void) {
 
     PROVEN_TEST_SECTION("TLS 1.2",
         "The six suites with each kind of server key; which version two configurations agree on; the extended master secret, the downgrade mark and ChangeCipherSpec, each refused where it must be; renegotiation declined; client certificates; tickets.",
-        "Check the TLS 1.2 part of src/proven/tls13.c: client12_server_hello, server12_client_hello, record_process12. Its key derivation and records are test_unit_tls12_keys's business.");
+        "Check the TLS 1.2 part of net/src/tls13.c: client12_server_hello, server12_client_hello, record_process12. Its key derivation and records are test_unit_tls12_keys's business.");
     {
         proven_tls_options_t o12 = base_options(), o13 = base_options();
         o12.max_version = PROVEN_TLS_VERSION_1_2;
@@ -1085,7 +1085,7 @@ int main(void) {
 
     PROVEN_TEST_SECTION("the legacy set",
         "What a configuration must ask for by name: CBC suites, key exchange by RSA and by finite-field Diffie-Hellman, TLS 1.0 and 1.1, and a peer without the extended master secret. Each works when asked for, is refused when not, and fails the way it should.",
-        "Check the legacy branches of client12_server_hello, server12_client_hello, client12_flight and record_process12 in src/proven/tls13.c. The pieces underneath are test_unit_tls_legacy's business.");
+        "Check the legacy branches of client12_server_hello, server12_client_hello, client12_flight and record_process12 in net/src/tls13.c. The pieces underneath are test_unit_tls_legacy's business.");
     {
         const proven_u32 ALL = PROVEN_TLS_LEGACY_CBC | PROVEN_TLS_LEGACY_RSA_KEY_EXCHANGE | PROVEN_TLS_LEGACY_DHE;
         static const proven_u16 VERS[3] = { PROVEN_TLS_VERSION_1_2, PROVEN_TLS_VERSION_1_1, PROVEN_TLS_VERSION_1_0 };
@@ -1809,7 +1809,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a quiet connection gives its keys back",
         "RFC-0025 step 3: proven_tls_compact_ wipes and frees the expanded record keys and keeps what remakes them; the next call that needs them remakes them, for every AEAD suite of both versions.",
-        "Check proven_tls_compact_, keys_live, seed_take and seed_give in src/proven/tls13.c.");
+        "Check proven_tls_compact_, keys_live, seed_take and seed_give in net/src/tls13.c.");
     {
         proven_tls_options_t o12 = base_options(), o13 = base_options();
         o12.max_version = PROVEN_TLS_VERSION_1_2;
@@ -1961,7 +1961,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("RFC 8448, through the client",
         "Two published handshakes replayed record for record: given the trace's ClientHello and key, the client must accept the server's records and send exactly the client's.",
-        "Check the client path of src/proven/tls13.c; the records are in tests/test_unit_tls_vectors.h.");
+        "Check the client path of net/src/tls13.c; the records are in tests/test_unit_tls_vectors.h.");
     {
         PROVEN_TEST_ASSERT(replay(TLSV_REPLAY_SIMPLE, COUNT(TLSV_REPLAY_SIMPLE)), "section 3: the simple 1-RTT handshake, its application data and both closes", "");
         PROVEN_TEST_ASSERT(replay(TLSV_REPLAY_COMPAT, COUNT(TLSV_REPLAY_COMPAT)), "section 7: compatibility mode, ChangeCipherSpec records included", "");

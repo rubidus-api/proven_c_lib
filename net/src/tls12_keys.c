@@ -1,5 +1,5 @@
 #include "proven_internal_tls.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 
 /* TLS 1.2 below the state machine (RFC 5246): the suites, the PRF and what is derived with
  * it, and record protection for the AEAD suites (RFC 5288, RFC 7905). */

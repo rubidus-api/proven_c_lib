@@ -6,7 +6,7 @@
 #include "proven/time.h"
 #include "proven_internal_net.h"
 #include "proven_internal_quic_net.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 #include <stdatomic.h>
 
 #if defined(_WIN32) || defined(_WIN64)

@@ -41,6 +41,16 @@ written; their tags still exist.
 
 ### Changed
 
+- **The network code is a library of its own, proven_net, under `net/`** (RFC-0043): sockets, the
+  event loop, TLS, QUIC, HTTP/1.1, 2 and 3, WebSocket and server-sent events moved from
+  `src/proven/`, `include/proven/` and `platform/` to `net/src/`, `net/include/proven/` and
+  `net/platform/`. The rest is proven_base, unchanged in place. Header and symbol names did not
+  change; a program that uses the network adds `-Inet/include` and compiles `net/src/*.c` and
+  `net/platform/*.c`, and `proven.h` includes the network headers when `net/include` is on the
+  path (`net/include/proven_net.h` is the network library's own entry point). A program without
+  networking changes nothing. `src/proven/tls_dh.c` is `src/proven/dh.c` and
+  `src/proven/tls_issue.c` is `src/proven/cert_issue.c`, both in the base. Step by step, for a
+  person or an agent: `docs/migrating-to-proven-net.md`.
 - RFC-0043 phase 1: the network code (TLS, QUIC, HTTP/1.1, 2 and 3, WebSocket, SSE, sockets, the
   loop) uses only the public headers of the rest of the library - the functions above, `der.h` for
   key files, and `proven_pkey_t` for a TLS configuration's RSA key - so that it can become a

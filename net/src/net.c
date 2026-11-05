@@ -2,14 +2,14 @@
 
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
-#include "../../platform/proven_sys_net.h"
+#include "../platform/proven_sys_net.h"
 #include "proven_internal_quic_net.h"
 #include "proven_internal_net.h"
 #include <stddef.h>
 
 /*
  * The portable half of the socket layer. Everything the operating system does is in
- * platform/proven_sys_net.c; what is here is the part that is the same everywhere: address
+ * net/platform/proven_sys_net.c; what is here is the part that is the same everywhere: address
  * text, the mapping of reasons to proven_err_t, and the loop that turns a non-blocking socket
  * and a deadline into a call that waits exactly as long as it was told to.
  */

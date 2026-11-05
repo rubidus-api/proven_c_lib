@@ -1,5 +1,5 @@
 #include "proven/sse.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 
 /* The event-stream parsing rules of the HTML standard ("9.2.6 Interpreting an event stream"),
  * one byte at a time, so that input may be cut anywhere. */

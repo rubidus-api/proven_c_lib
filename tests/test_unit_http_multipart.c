@@ -82,7 +82,7 @@ static proven_err_t read_err(const char *boundary, const char *body, proven_size
 int main(void) {
     PROVEN_TEST_SUITE("http multipart: reading bodies, Content-Disposition, several ranges",
         "Multipart bodies read in pieces of every size to the parts they hold; a part's head and Content-Disposition read to their fields; Range lists resolved, merged and bounded as RFC 9110 section 14.2 suggests.",
-        "Inspect the multipart reader, proven_http_content_disposition_parse and proven_http_range_parse_list in src/proven/http.c.");
+        "Inspect the multipart reader, proven_http_content_disposition_parse and proven_http_range_parse_list in net/src/http.c.");
 
     PROVEN_TEST_SECTION("the boundary from a Content-Type", "Any multipart subtype, a token or a quoted boundary, parameters in any order; what is not multipart, has no boundary or a bad one.", "");
     {

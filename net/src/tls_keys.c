@@ -1,5 +1,5 @@
 #include "proven_internal_tls.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 
 /* TLS 1.3 below the state machine: suites, transcript, key schedule, record protection. */
 

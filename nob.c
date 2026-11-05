@@ -156,7 +156,7 @@ static void append_mode_cflags(Nob_Cmd *cmd, const char *mode, const char *stand
     else nob_cmd_append(cmd, "-g", "-O0");
     if (standard_flag) nob_cmd_append(cmd, standard_flag);
     if (sysroot && *sysroot) nob_cmd_append(cmd, "--sysroot", sysroot);
-    nob_cmd_append(cmd, "-I./include", "-I./platform", "-I./manual/examples");
+    nob_cmd_append(cmd, "-I./include", "-I./platform", "-I./net/include", "-I./net/platform", "-I./manual/examples");
 }
 
 /* The one place a library object's compile command is built: the cache hash and the compile use
@@ -276,7 +276,7 @@ static void build_test_link_cmd(Nob_Cmd *cmd, const char *compiler, const char *
     if (target_windows) {
         /* The Windows CSPRNG (BCryptGenRandom): mingw-w64 ignores the #pragma comment that
          * names the import library for MSVC, as in the cross smoke link. */
-        /* -lws2_32: Winsock, for the socket layer (platform/proven_sys_net.c).
+        /* -lws2_32: Winsock, for the socket layer (net/platform/proven_sys_net.c).
          * -lcrypt32: the system certificate store (platform/proven_sys_trust.c). */
         if (strcmp(mode, "freestanding") != 0) nob_cmd_append(cmd, "-lbcrypt", "-lws2_32", "-lcrypt32");
     } else if (strcmp(mode, "freestanding") != 0 && test_source_needs_libdl(src)) {
@@ -934,11 +934,11 @@ static void append_cross_cflags(Nob_Cmd *cmd, const Proven_Cross_Target *target,
         nob_cmd_append(cmd,
                        standard_flag, "-ffreestanding", "-nostdlib",
                        "-DPROVEN_FREESTANDING", "-DPROVEN_FMT_NO_FLOAT", "-DPROVEN_NO_U16STR",
-                       "-Wall", "-Wextra", "-Werror", "-I./include", "-I./platform");
+                       "-Wall", "-Wextra", "-Werror", "-I./include", "-I./platform", "-I./net/include", "-I./net/platform");
     } else {
         nob_cmd_append(cmd,
                        standard_flag, "-D_DEFAULT_SOURCE", "-D_POSIX_C_SOURCE=200809L",
-                       "-Wall", "-Wextra", "-Werror", "-I./include", "-I./platform");
+                       "-Wall", "-Wextra", "-Werror", "-I./include", "-I./platform", "-I./net/include", "-I./net/platform");
     }
     if (sysroot && *sysroot) nob_cmd_append(cmd, "--sysroot", sysroot);
     if (target->arch_flag_1) nob_cmd_append(cmd, target->arch_flag_1);
@@ -1117,7 +1117,7 @@ static bool check_manual_code_blocks(const char *compiler, const char *standard_
         nob_cmd_append(&cmd, compiler);
         if (standard_flag) nob_cmd_append(&cmd, standard_flag);
         nob_cmd_append(&cmd, "-Wall", "-Wextra", "-D_DEFAULT_SOURCE", "-D_POSIX_C_SOURCE=200809L",
-                       "-I./include", "-I./platform", "-fsyntax-only", out_path);
+                       "-I./include", "-I./platform", "-I./net/include", "-I./net/platform", "-fsyntax-only", out_path);
         bool ok = nob_cmd_run_sync(cmd);
         nob_cmd_free(cmd);
 
@@ -1610,7 +1610,7 @@ int main(int argc, char **argv)
     if (archiver_exe) nob_sb_append_cstr(&hash_src, archiver_exe);
     nob_sb_append_cstr(&hash_src, build_mode);
     nob_sb_append_cstr(&hash_src, standard_flag);
-    nob_sb_append_cstr(&hash_src, "-I./include-D_DEFAULT_SOURCE-D_POSIX_C_SOURCE=200809L");
+    nob_sb_append_cstr(&hash_src, "-I./include-I./net/include-D_DEFAULT_SOURCE-D_POSIX_C_SOURCE=200809L");
     if (sysroot) nob_sb_append_cstr(&hash_src, sysroot);
     if (user_cflags) nob_sb_append_cstr(&hash_src, user_cflags);
     if (user_ldflags) nob_sb_append_cstr(&hash_src, user_ldflags);
@@ -1639,7 +1639,7 @@ int main(int argc, char **argv)
     if (!mkdir_p_safe(build_dir)) return 1;
 
     // Subdirs
-    static const char *subdirs[] = {"src", "src/proven", "platform", "tests", "manual", "manual/examples",
+    static const char *subdirs[] = {"src", "src/proven", "platform", "net", "net/src", "net/platform", "tests", "manual", "manual/examples",
                                     "manual/examples/en", "manual/examples/ko"};
     for (size_t i = 0; i < NOB_ARRAY_LEN(subdirs); ++i) {
         char buf[256];

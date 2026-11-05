@@ -50,7 +50,7 @@ def in_scope(path: str) -> bool:
         return False
     if path.startswith("manual/") and path.endswith((".md", ".c", ".h")):
         return True
-    if path.startswith(("include/", "src/", "platform/", "tests/")) and path.endswith((".c", ".h", ".inc")):
+    if path.startswith(("include/", "src/", "platform/", "net/", "tests/")) and path.endswith((".c", ".h", ".inc")):
         return True
     return False
 

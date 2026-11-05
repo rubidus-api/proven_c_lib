@@ -11,7 +11,7 @@
  */
 
 #include "proven.h"
-#include "../src/proven/proven_internal_tls.h"
+#include "../net/src/proven_internal_tls.h"
 #include "../src/proven/proven_internal_cert_issue.h"
 #include <string.h>
 

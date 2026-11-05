@@ -3,7 +3,7 @@
 #ifndef PROVEN_NO_HTTP3
 
 #include "qpack_static.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 
 /*
  * QPACK (RFC 9204). This side's encoder uses no dynamic table: a field section it writes is its

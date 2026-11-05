@@ -1,5 +1,5 @@
 #include "proven/http.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 
 /*
  * An HTTP/1.1 message codec written from RFC 9110 and RFC 9112. Plain byte code: no C library

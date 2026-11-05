@@ -1,5 +1,5 @@
 #include "proven/http_event_client.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 #include "proven_internal_http_event_client.h"
 #include "proven_internal_loop.h"
 

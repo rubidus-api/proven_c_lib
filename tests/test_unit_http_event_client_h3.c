@@ -2,9 +2,9 @@
 #include "proven_test.h"
 #include "test_unit_tls_pki.h"
 #include "test_unit_http_coding_vectors.h"
-#include "../src/proven/proven_internal_quic_net.h"
-#include "../src/proven/proven_internal_h3.h"
-#include "../src/proven/proven_internal_http_event_client.h"
+#include "../net/src/proven_internal_quic_net.h"
+#include "../net/src/proven_internal_h3.h"
+#include "../net/src/proven_internal_http_event_client.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -543,7 +543,7 @@ static void cases(void) {
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP client, speaking HTTP/3",
         "The event-driven client asked for HTTP/3, against the event-driven server on the same loop over real UDP: requests and bodies both ways, compression, pause, abort, idle, destroy; the client's checks; no fallback to TCP, and with http3_fallback a fallback; an untrusted server; time. Against a scripted server: responses that break the rules, and a server that refuses h3. max_connections across protocols.",
-        "Inspect src/proven/http_event_client_h3.c: r_submit and r_push for what leaves, c_event for what arrives, c_round for a round, c_check_time and c_arm for time, c_open for a connection.");
+        "Inspect net/src/http_event_client_h3.c: r_submit and r_push for what leaves, c_event for what arrives, c_round for a round, c_check_time and c_arm for time, c_open for a connection.");
 
     g_heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(proven_loop_create(g_heap, &g_loop) == PROVEN_OK, "a loop", "");
@@ -677,7 +677,7 @@ int main(void) {
         proven_http_event_server_destroy(server);
     }
 
-    PROVEN_TEST_SECTION("a server that breaks the rules", "A scripted server writes HTTP/3 by hand: an interim response before the answer, and one with nothing after it; a field name in capitals; no :status; a head larger than max_head_bytes; a body shorter and longer than its Content-Length; a reset after part of a body; a request refused as not acted on, sent again; trailers; a br body. Each request ends as RFC 9114 section 4.1.2 asks, and the connection serves the next.", "Check c_response, the STREAM_RESET case of c_event and r_deliver in src/proven/http_event_client_h3.c, and the response checks of h3_conn.c (st_fault).");
+    PROVEN_TEST_SECTION("a server that breaks the rules", "A scripted server writes HTTP/3 by hand: an interim response before the answer, and one with nothing after it; a field name in capitals; no :status; a head larger than max_head_bytes; a body shorter and longer than its Content-Length; a reset after part of a body; a request refused as not acted on, sent again; trailers; a br body. Each request ends as RFC 9114 section 4.1.2 asks, and the connection serves the next.", "Check c_response, the STREAM_RESET case of c_event and r_deliver in net/src/http_event_client_h3.c, and the response checks of h3_conn.c (st_fault).");
     {
         static raw_t x;
         raw_start(&x, g_server_tls);
@@ -743,7 +743,7 @@ int main(void) {
         raw_stop(&x);
     }
 
-    PROVEN_TEST_SECTION("a server that refuses h3", "A QUIC server whose TLS offers only h2 ends the handshake with no_application_protocol (alert 120): the request ends with PROVEN_ERR_UNSUPPORTED, never sent.", "Check c_close_reason in src/proven/http_event_client_h3.c.");
+    PROVEN_TEST_SECTION("a server that refuses h3", "A QUIC server whose TLS offers only h2 ends the handshake with no_application_protocol (alert 120): the request ends with PROVEN_ERR_UNSUPPORTED, never sent.", "Check c_close_reason in net/src/http_event_client_h3.c.");
     {
         static const proven_u8str_view_t h2only[] = { { (const proven_byte_t *)"h2", 2 } };
         proven_tls_options_t o = { .alloc = g_heap, .certificate_pem = { (const proven_byte_t *)TP_SERVER_P256, strlen(TP_SERVER_P256) },
@@ -765,7 +765,7 @@ int main(void) {
         proven_tls_config_destroy(tls);
     }
 
-    PROVEN_TEST_SECTION("fallback to TCP", "With http3_fallback (RFC-0031): a server that speaks only TCP is reached over TCP, in HTTP/2, on the object the caller holds - after http3_fallback_ms or, where the system says the port is closed, at once; the origin is then spoken to over TCP from the start until it is forgotten; a body refused before the switch is written after it; a server that refuses h3 sends the request to TCP at once; an untrusted server does not.", "Check c_falls_back, r_fallback and the x_* relay in src/proven/http_event_client_h3.c, and the http3_fallback_ms check in c_check_time.");
+    PROVEN_TEST_SECTION("fallback to TCP", "With http3_fallback (RFC-0031): a server that speaks only TCP is reached over TCP, in HTTP/2, on the object the caller holds - after http3_fallback_ms or, where the system says the port is closed, at once; the origin is then spoken to over TCP from the start until it is forgotten; a body refused before the switch is written after it; a server that refuses h3 sends the request to TCP at once; an untrusted server does not.", "Check c_falls_back, r_fallback and the x_* relay in net/src/http_event_client_h3.c, and the http3_fallback_ms check in c_check_time.");
     {
         static const proven_u8str_view_t tcp_only[] = { { (const proven_byte_t *)"h2", 2 }, { (const proven_byte_t *)"http/1.1", 8 } };
         proven_tls_options_t o = { .alloc = g_heap, .certificate_pem = { (const proven_byte_t *)TP_SERVER_P256, strlen(TP_SERVER_P256) },
@@ -847,7 +847,7 @@ int main(void) {
         proven_tls_config_destroy(tls);
     }
 
-    PROVEN_TEST_SECTION("max_connections across protocols", "A client of one connection: an HTTP/2 request waits while an HTTP/3 request is on the only one, and has it when that is done; the same the other way round.", "Check proven_http_event_client_room_ and proven_http_event_client_freed_ in src/proven/http_event_client.c, r_place and c_round's call to proven_http_event_client_freed_ in http_event_client_h3.c.");
+    PROVEN_TEST_SECTION("max_connections across protocols", "A client of one connection: an HTTP/2 request waits while an HTTP/3 request is on the only one, and has it when that is done; the same the other way round.", "Check proven_http_event_client_room_ and proven_http_event_client_freed_ in net/src/http_event_client.c, r_place and c_round's call to proven_http_event_client_freed_ in http_event_client_h3.c.");
     for (int first3 = 1; first3 >= 0; --first3) {
         proven_http_event_server_t *server = server_on();
         proven_http_event_client_config_t cfg = { .alloc = g_heap, .tls = g_client_tls, .http2 = true, .http3 = true, .max_connections = 1 };

@@ -1,5 +1,5 @@
 #include "proven/tls.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 

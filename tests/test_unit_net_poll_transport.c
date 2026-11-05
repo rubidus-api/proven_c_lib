@@ -69,7 +69,7 @@ static proven_transport_t mem_transport(mem_transport_t *m) {
 int main(void) {
     PROVEN_TEST_SUITE("net: readiness and the transport interface",
         "proven_net_poll predicts which call will not wait; a transport carries the same code over a socket or over memory.",
-        "Inspect proven_net_poll_with and the transport functions at the end of src/proven/net.c.");
+        "Inspect proven_net_poll_with and the transport functions at the end of net/src/net.c.");
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a transport made of memory",

@@ -1,7 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "test_unit_tls_pki.h"
-#include "../src/proven/proven_internal_http_event_client.h"
+#include "../net/src/proven_internal_http_event_client.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,7 +89,7 @@ static proven_http_event_client_t *client_of(proven_tls_config_t *tls, bool h2, 
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP client, resuming TLS sessions",
         "A second connection to an origin resumes the session the first learned, over HTTP/1.1, HTTP/2 and HTTP/3, unless no_resumption; TCP's sessions stay off QUIC; a changed server is answered by a full handshake; 64 origins per transport are kept.",
-        "Inspect proven_http_event_client_session_start_ and _keep_ in src/proven/http_event_client.c, and where each path calls them: cl_conn_open, cl_conn_keep and cl_conn_close; c_open and c_close_socket in http_event_client_h2.c; c_open, r_finish and c_kill in http_event_client_h3.c.");
+        "Inspect proven_http_event_client_session_start_ and _keep_ in net/src/http_event_client.c, and where each path calls them: cl_conn_open, cl_conn_keep and cl_conn_close; c_open and c_close_socket in http_event_client_h2.c; c_open, r_finish and c_kill in http_event_client_h3.c.");
 
     g_heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(proven_loop_create(g_heap, &g_loop) == PROVEN_OK, "a loop", "");

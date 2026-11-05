@@ -1,7 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "test_unit_tls_pki.h"
-#include "../src/proven/proven_internal_http_event_client.h"
+#include "../net/src/proven_internal_http_event_client.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -98,7 +98,7 @@ static proven_http_event_client_t *client_of(proven_tls_config_t *tls) {
 int main(void) {
     PROVEN_TEST_SUITE("0-RTT over HTTP/3, client and server",
         "A GET on a second connection goes as early data and is answered, its handler told; a POST never goes early; a 425 is sent again once after the handshake; the server answers 425 itself to what is not safe to repeat; without early_data on either side, nothing goes early.",
-        "Inspect r_early_ok, c_submit_waiting, c_response's 425 and r_again in src/proven/http_event_client_h3.c; d_request's early branch in src/proven/http_event_h3.c; proven_http_stream_early in http_event.c.");
+        "Inspect r_early_ok, c_submit_waiting, c_response's 425 and r_again in net/src/http_event_client_h3.c; d_request's early branch in net/src/http_event_h3.c; proven_http_stream_early in http_event.c.");
 
     g_heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(proven_loop_create(g_heap, &g_loop) == PROVEN_OK, "a loop", "");

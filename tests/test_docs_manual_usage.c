@@ -104,8 +104,8 @@ static void scan_identifiers(const char *text, void (*sink)(const char *)) {
 
 /* The public API: every `proven_x(` a header declares, minus the ones that are macros, plus a
  * record of what each macro expands to. */
-static void collect_headers(void) {
-    DIR *d = opendir("include/proven");
+static void collect_headers_from(const char *dir) {
+    DIR *d = opendir(dir);
     if (!d) return;
     struct dirent *e;
     while ((e = readdir(d)) != NULL) {
@@ -114,7 +114,7 @@ static void collect_headers(void) {
         if (len < 3 || strcmp(n + len - 2, ".h") != 0) continue;
 
         char path[512];
-        snprintf(path, sizeof path, "include/proven/%s", n);
+        snprintf(path, sizeof path, "%s/%s", dir, n);
         char *s = read_text_file(path);
         if (!s) continue;
 
@@ -172,6 +172,12 @@ static void collect_headers(void) {
         free(s);
     }
     closedir(d);
+}
+
+/* The base library's headers and the network library's (RFC-0043). */
+static void collect_headers(void) {
+    collect_headers_from("include/proven");
+    collect_headers_from("net/include/proven");
 }
 
 /* Everything the examples use. */

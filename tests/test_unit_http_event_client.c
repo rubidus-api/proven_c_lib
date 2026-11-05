@@ -1185,7 +1185,7 @@ static void delay_and_limit(void) {
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP client",
         "Requests started and answered through callbacks on one thread: bodies down and up in pieces with backpressure, the address apart from the name, time limits, abort, many at once - plain and over TLS - and servers that answer badly.",
-        "Inspect src/proven/http_event_client.c: cl_process for the response, cl_flush and cl_progress for the request, cl_arm for the time limits, cl_kill for the end.");
+        "Inspect net/src/http_event_client.c: cl_process for the response, cl_flush and cl_progress for the request, cl_arm for the time limits, cl_kill for the end.");
 
     g_heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "");

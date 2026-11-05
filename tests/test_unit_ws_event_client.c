@@ -305,7 +305,7 @@ static void cases(bool tls) {
     PROVEN_TEST_ASSERT(turn_until(&c.opens, 1, 5000) && c.opens == 1 && c.protocol[0] == '\0' && !c.compressed_at_open && !proven_ws_stream_compressed(c.ws), "on_open, once: no subprotocol, no compression - none was asked for", how);
     proven_net_addr_t peer = proven_ws_stream_peer(c.ws);
     PROVEN_TEST_ASSERT(peer.port == at.port, "the peer is the server", how);
-    PROVEN_TEST_ASSERT(echoed(&c, true, (const proven_byte_t *)"hello", 5), "a text message goes and comes back: this side's frames were masked, or the server would have refused them", "Check ws_frame in src/proven/ws_event.c: a client's frames carry a key and their payload is masked on its way.");
+    PROVEN_TEST_ASSERT(echoed(&c, true, (const proven_byte_t *)"hello", 5), "a text message goes and comes back: this side's frames were masked, or the server would have refused them", "Check ws_frame in net/src/ws_event.c: a client's frames carry a key and their payload is masked on its way.");
     static const proven_size_t sizes[] = { 0, 1, 125, 126, 127, 4095, 4096, 4097, 65535, 65536, 300000 };
     bool all = true;
     for (proven_size_t i = 0; i < sizeof sizes / sizeof sizes[0]; ++i) all = all && echoed(&c, i % 2 == 0, g_msg, sizes[i]);
@@ -383,7 +383,7 @@ static void cases(bool tls) {
         "a server that closes at once with 4001: on_open, then on_closed with that code", how);
     c.pause_at = 7;
     PROVEN_TEST_ASSERT(dial(&c, tls, at.port, "/push", plain) == PROVEN_OK && turn_until(&c.messages, 50, 8000) && c.messages == 50 && c.out_of_order == 0 && c.while_paused == 0,
-        "fifty messages pushed by the server, this side pausing at the seventh for 60 ms: all fifty in order, none while paused", "Check wsc_tr_pause and wsc_deliver in src/proven/ws_event_client.c: what arrived meanwhile is kept and delivered first.");
+        "fifty messages pushed by the server, this side pausing at the seventh for 60 ms: all fifty in order, none while paused", "Check wsc_tr_pause and wsc_deliver in net/src/ws_event_client.c: what arrived meanwhile is kept and delivered first.");
     c.pause_at = 0;
     proven_ws_stream_abort(c.ws);
 
@@ -392,7 +392,7 @@ static void cases(bool tls) {
     turn(500 * SLOW);
     const int srv_messages_before = g_srv_messages;
     PROVEN_TEST_ASSERT(c.closes == 0 && proven_ws_stream_send(c.ws, true, mv("still here")) == PROVEN_OK && turn_until(&g_srv_messages, srv_messages_before + 1, 5000) && c.closes == 0,
-        "half a second of silence later it is still open, and a message still reaches the server: its pings were answered", "Check ws_on_input in src/proven/ws_event.c: a ping is answered with a pong whichever side this is.");
+        "half a second of silence later it is still open, and a message still reaches the server: its pings were answered", "Check ws_on_input in net/src/ws_event.c: a ping is answered with a pong whichever side this is.");
     proven_ws_stream_abort(c.ws);
 
     /* An answer that is not 101. */
@@ -406,7 +406,7 @@ static void cases(bool tls) {
 int main(void) {
     PROVEN_TEST_SUITE("a WebSocket client on the loop",
         "proven_ws_event_connect against this library's event-driven server on the same loop - messages both ways at many sizes, compression agreed and not, subprotocols, pause, pings, closes from either side - plain and over TLS, and every way a connection can fail to become a WebSocket, each ending in exactly one on_closed.",
-        "Inspect src/proven/ws_event_client.c - wsc_on_io and wsc_readable for the states, wsc_answer for the upgrade, the wsc_tr_ functions for what the protocol asks of the connection - and, in src/proven/ws_event.c, proven_ws_event_client_new_ and ws_frame for a client's masked frames.");
+        "Inspect net/src/ws_event_client.c - wsc_on_io and wsc_readable for the states, wsc_answer for the upgrade, the wsc_tr_ functions for what the protocol asks of the connection - and, in net/src/ws_event.c, proven_ws_event_client_new_ and ws_frame for a client's masked frames.");
 
     g_heap = proven_heap_allocator();
     {
@@ -475,7 +475,7 @@ int main(void) {
     PROVEN_TEST_SECTION("over TLS", "The same cases with the TLS engine between the socket and the frames.", "Check the TLS branches of wsc_readable and wsc_flush.");
     cases(true);
 
-    PROVEN_TEST_SECTION("connections that do not become WebSockets", "Nothing listening, a server that says nothing, that hangs up, that answers something else, that grants what was not asked: each ends in one on_closed with code 0 and the reason.", "Check wsc_gone and wsc_answer in src/proven/ws_event_client.c.");
+    PROVEN_TEST_SECTION("connections that do not become WebSockets", "Nothing listening, a server that says nothing, that hangs up, that answers something else, that grants what was not asked: each ends in one on_closed with code 0 and the reason.", "Check wsc_gone and wsc_answer in net/src/ws_event_client.c.");
     {
         static cli_t c;
         proven_net_listener_t l;
@@ -518,7 +518,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(dial(&c, false, at.port, "/x", watchful) == PROVEN_OK && granted_then_silent(&l, &x) && turn_until(&c.opens, 1, 5000) && turn_until(&c.closes, 1, 5000) &&
                            c.opens == 1 && c.closes == 1 && c.code == 1006 && c.why == PROVEN_ERR_TIMEOUT && proven_time_monotonic_now() - t0 > (proven_time_t)SLOW * 120000000,
             "a server that goes silent after granting: this side pings, is not answered, and ends the connection with 1006 and PROVEN_ERR_TIMEOUT",
-            "Check wsc_on_timer in src/proven/ws_event_client.c: once the connection is open the timer is the protocol's (ws_on_timer).");
+            "Check wsc_on_timer in net/src/ws_event_client.c: once the connection is open the timer is the protocol's (ws_on_timer).");
         (void)proven_net_close(&x);
         PROVEN_TEST_ASSERT(dial(&c, false, at.port, "/x", watchful) == PROVEN_OK && granted_then_silent(&l, &x) && turn_until(&c.opens, 1, 5000), "another such connection, open", "");
         proven_ws_stream_close(c.ws, 1000, sv("anyone?"));
@@ -528,7 +528,7 @@ int main(void) {
         /* A head that arrives in pieces is waited for: the parser's "need more" is not a failure. */
         PROVEN_TEST_ASSERT(dial(&c, false, at.port, "/x", plain) == PROVEN_OK && granted(&l, &x, true) && turn_until(&c.opens, 1, 5000) && c.opens == 1 && c.closes == 0,
             "a 101 whose head comes in two pieces: the first is kept, the second completes it, and the connection opens",
-            "Check wsc_answer in src/proven/ws_event_client.c: proven_http_parse_response says PROVEN_ERR_NEED_MORE for a head that is not all here.");
+            "Check wsc_answer in net/src/ws_event_client.c: proven_http_parse_response says PROVEN_ERR_NEED_MORE for a head that is not all here.");
         proven_ws_stream_abort(c.ws);
         (void)proven_net_close(&x);
         /* Aborted, and closed, while it is still being made. */

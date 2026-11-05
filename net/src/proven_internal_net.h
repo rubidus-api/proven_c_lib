@@ -24,7 +24,7 @@ void proven_net_write_cap_for_test_(proven_size_t cap);
 /* For the loop's completion port (RFC-0025 step 6; io_uring on Linux, RFC-0029), which talks to the platform layer itself:
  * a reason as an error, addresses both ways, and the milliseconds left until a deadline (-1:
  * none; 0: passed; rounded up). */
-#include "../../platform/proven_sys_net.h"
+#include "../platform/proven_sys_net.h"
 proven_err_t proven_net_err_from_sys_(proven_sys_net_result_t r);
 void proven_net_addr_to_sys_(const proven_net_addr_t *a, proven_sys_net_addr_t *s);
 void proven_net_addr_from_sys_(const proven_sys_net_addr_t *s, proven_net_addr_t *a);

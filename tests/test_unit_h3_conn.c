@@ -1,6 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_h3.h"
+#include "../net/src/proven_internal_h3.h"
 #include "test_unit_tls_pki.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -566,7 +566,7 @@ static void run_script(net_t *n, const script_t *s, unsigned seed) {
 int main(void) {
     PROVEN_TEST_SUITE("HTTP/3 connections",
         "HTTP/3 over two QUIC engines on a simulated network: requests and responses of every shape, flow control and pausing, goodbye, and every code of RFC 9114 and RFC 9204 that this side acts on, from the input that should produce it.",
-        "Inspect src/proven/h3_conn.c; the network is this test's, seeded, with a virtual clock.");
+        "Inspect net/src/h3_conn.c; the network is this test's, seeded, with a virtual clock.");
 
     g_alloc = proven_heap_allocator();
     PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "");
@@ -841,7 +841,7 @@ int main(void) {
         PROVEN_TEST_INFO("{} scripts", PROVEN_ARG((long long)(sizeof cases / sizeof cases[0])));
     }
 
-    PROVEN_TEST_SECTION("the QPACK dynamic table (RFC-0032)", "A server whose decoder has a table of 220 bytes, and a raw client: a request whose head needs two inserts waits for them and is then taken; the server's decoder stream counts the inserts and acknowledges the section; a waiting stream reset is cancelled on it; more waiting streams than allowed, and an insert larger than the table, end the connection with their codes.", "Check st_qblock, the qwait branch of req_step, qpack_step and dec_put in src/proven/h3_conn.c.");
+    PROVEN_TEST_SECTION("the QPACK dynamic table (RFC-0032)", "A server whose decoder has a table of 220 bytes, and a raw client: a request whose head needs two inserts waits for them and is then taken; the server's decoder stream counts the inserts and acknowledges the section; a waiting stream reset is cancelled on it; more waiting streams than allowed, and an insert larger than the table, end the connection with their codes.", "Check st_qblock, the qwait branch of req_step, qpack_step and dec_put in net/src/h3_conn.c.");
     {
         static proven_byte_t b[256];
         /* RFC 9204 B.2's inserts, and a request head of :method GET, :scheme https (static), then

@@ -1,7 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "../src/proven/proven_internal_crypto.h"
-#include "../src/proven/proven_internal_tls.h"
+#include "../net/src/proven_internal_tls.h"
 #include "../src/proven/proven_internal_cert_issue.h"
 #include "test_unit_tls_pki.h"
 #include <string.h>

@@ -1,6 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_tls.h"
+#include "../net/src/proven_internal_tls.h"
 #include "../src/proven/proven_internal_crypto.h"
 #include "test_unit_tls_vectors.h"
 #include <stdio.h>
@@ -183,7 +183,7 @@ static proven_size_t replay(const char *const *steps, proven_size_t count, tally
 int main(void) {
     PROVEN_TEST_SUITE("TLS 1.3: transcript, key schedule and records against RFC 8448",
         "Five handshakes replayed step by step; every secret, key, MAC and protected record must be the one the RFC prints.",
-        "Inspect src/proven/tls_keys.c. The failing step's letter says which function; the vector header carries the RFC's values.");
+        "Inspect net/src/tls_keys.c. The failing step's letter says which function; the vector header carries the RFC's values.");
 
     tally_t t = { 0 };
 

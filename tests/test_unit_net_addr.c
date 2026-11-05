@@ -39,7 +39,7 @@ static bool refused(const char *text) {
 int main(void) {
     PROVEN_TEST_SUITE("net: addresses as text",
         "Literal IPv4 and IPv6 addresses parse to the bytes they name and print in one canonical form.",
-        "Inspect internal_parse_ipv4, internal_parse_ipv6 and internal_put_ipv6 in src/proven/net.c.");
+        "Inspect internal_parse_ipv4, internal_parse_ipv6 and internal_put_ipv6 in net/src/net.c.");
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("IPv4: four decimal numbers, nothing else",

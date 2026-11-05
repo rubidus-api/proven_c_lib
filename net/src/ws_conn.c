@@ -6,7 +6,7 @@
 #include "proven/utf.h"
 #include "proven/url.h"
 #include "proven_internal_ws.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 
 /*
  * The WebSocket connection driver. The frames are ws.c's business and the opening handshake's

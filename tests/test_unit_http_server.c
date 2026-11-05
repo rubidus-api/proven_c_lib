@@ -190,7 +190,7 @@ static bool client_reply(client_t *c, proven_http_method_t method, reply_t *out)
             continue;
         }
         if (e == PROVEN_OK) break;
-        PROVEN_TEST_ASSERT(e == PROVEN_ERR_NEED_MORE, "what the server sent parses as a response head", "Inspect sv_build_head in src/proven/http_server.c.");
+        PROVEN_TEST_ASSERT(e == PROVEN_ERR_NEED_MORE, "what the server sent parses as a response head", "Inspect sv_build_head in net/src/http_server.c.");
         if (c->eof) return false;
         if ((proven_time_monotonic_now() - start) / 1000000 > 10000) return false;
         pump(c);
@@ -228,7 +228,7 @@ static bool client_reply(client_t *c, proven_http_method_t method, reply_t *out)
         proven_size_t used = 0;
         proven_mem_view_t payload;
         e = proven_http_body_feed(&body, (proven_mem_view_t){ .ptr = c->buf + pos, .size = c->len - pos }, &used, &payload, &done);
-        PROVEN_TEST_ASSERT(e == PROVEN_OK, "the response body's framing is well formed", "Inspect proven_http_exchange_write in src/proven/http_server.c.");
+        PROVEN_TEST_ASSERT(e == PROVEN_OK, "the response body's framing is well formed", "Inspect proven_http_exchange_write in net/src/http_server.c.");
         memcpy(out->body + out->body_len, payload.ptr, payload.size);
         out->body_len += payload.size;
         pos += used;
@@ -286,7 +286,7 @@ static void run_cases(proven_job_sys_t *jobs) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a request, a response, and the connection stays open",
         "The response carries Date and Content-Length written by the server; a second request on the same connection is served.",
-        "Inspect sv_service and sv_build_head in src/proven/http_server.c.");
+        "Inspect sv_service and sv_build_head in net/src/http_server.c.");
     // ---------------------------------------------------------------
     {
         client_open(&ca, at);
@@ -687,7 +687,7 @@ static void run_timeouts(proven_job_sys_t *jobs) {
         while (proven_http_server_connection_count(g_server) != 0 && (proven_time_monotonic_now() - start) / 1000000 < 8000) pump(NULL);
         took = (proven_time_monotonic_now() - start) / 1000000;
         PROVEN_TEST_ASSERT(proven_http_server_connection_count(g_server) == 0, "and is let go", "");
-        PROVEN_TEST_ASSERT(took >= 1200, "after linger_ms, not after the second it would be by default", "Inspect sv_linger in src/proven/http_server.c.");
+        PROVEN_TEST_ASSERT(took >= 1200, "after linger_ms, not after the second it would be by default", "Inspect sv_linger in net/src/http_server.c.");
         (void)proven_net_close(&ca.conn);
 
         client_open(&ca, at);
@@ -874,7 +874,7 @@ static void run_overload(void) {
 int main(void) {
     PROVEN_TEST_SUITE("http: the server",
         "Requests in, responses out, over loopback sockets, with handlers on the loop thread and on workers.",
-        "Inspect src/proven/http_server.c.");
+        "Inspect net/src/http_server.c.");
 
     {
         proven_net_listener_t probe;
@@ -898,7 +898,7 @@ int main(void) {
     }
 
     PROVEN_TEST_INFO("model: handlers on the loop thread");
-    PROVEN_TEST_SECTION("the graceful end, from a handler", "proven_http_server_shutdown called inside a handler that runs on the loop's thread.", "Check proven_http_server_shutdown, sv_drain_step and proven_http_server_run in src/proven/http_server.c.");
+    PROVEN_TEST_SECTION("the graceful end, from a handler", "proven_http_server_shutdown called inside a handler that runs on the loop's thread.", "Check proven_http_server_shutdown, sv_drain_step and proven_http_server_run in net/src/http_server.c.");
     run_drain(NULL);
     run_cases(NULL);
     run_timeouts(NULL);
@@ -908,7 +908,7 @@ int main(void) {
     proven_err_t e = proven_job_system_init(proven_heap_allocator(), 4, 64, &jobs);
     PROVEN_TEST_ASSERT(e == PROVEN_OK, "a job system with four workers starts", "");
     PROVEN_TEST_INFO("model: handlers on a job system");
-    PROVEN_TEST_SECTION("the graceful end", "proven_http_server_shutdown with an idle connection, a handler that finishes, half a request head, and a handler still running at the deadline.", "Check sv_drain_step, sv_close_held and the `close` and `keep` decisions in src/proven/http_server.c.");
+    PROVEN_TEST_SECTION("the graceful end", "proven_http_server_shutdown with an idle connection, a handler that finishes, half a request head, and a handler still running at the deadline.", "Check sv_drain_step, sv_close_held and the `close` and `keep` decisions in net/src/http_server.c.");
     run_drain(jobs);
     run_cases(jobs);
     run_timeouts(jobs);

@@ -99,7 +99,7 @@ static proven_err_t chunked_err(const char *wire, proven_u64 max_body) {
 int main(void) {
     PROVEN_TEST_SUITE("http: framing, the body decoder, writers and dates",
         "How long a body is cannot be a matter of opinion; a body decodes the same however it arrives; a writer cannot be made to write a line it was not asked for.",
-        "Inspect http_framing_headers, proven_http_body_feed and the writers in src/proven/http.c.");
+        "Inspect http_framing_headers, proven_http_body_feed and the writers in net/src/http.c.");
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("request framing",
@@ -295,7 +295,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("trailers kept, read and written (v0.106.0)",
         "proven_http_body_keep_trailers: the section of a chunked body kept as it arrives in every piece size, read back to its fields; none for a body that is not chunked; a buffer too small refused; the fields a trailer may not be refused when written; what is written reads back.",
-        "Check the trailer copy at the top of proven_http_body_feed's loop, proven_http_body_trailers and proven_http_write_trailers in src/proven/http.c.");
+        "Check the trailer copy at the top of proven_http_body_feed's loop, proven_http_body_trailers and proven_http_write_trailers in net/src/http.c.");
     // ---------------------------------------------------------------
     {
         const char *wire = "3\r\nabc\r\n0\r\nX-Checksum: sha256=47DEQpj8\r\ngrpc-status:\t0\r\nGrpc-Message: \r\n\r\nNEXT";

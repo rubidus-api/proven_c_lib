@@ -1,8 +1,8 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_loop.h"
-#include "../src/proven/proven_internal_net.h"
-#include "../src/proven/proven_internal_quic_net.h"
+#include "../net/src/proven_internal_loop.h"
+#include "../net/src/proven_internal_net.h"
+#include "../net/src/proven_internal_quic_net.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -1008,7 +1008,7 @@ static void run_all(proven_allocator_t heap, int on) {
 int main(void) {
     PROVEN_TEST_SUITE("the event loop's operations",
         "Receives, sends, accepts and connects that complete (RFC-0025): each answered exactly once, from the loop, never inside the call that started it; on the system's default, on the poll kind of selector, and on io_uring where the system has it.",
-        "Inspect src/proven/loop.c: loop_run_done for delivery, sock_flush for sends, sock_event and acc_event for the selector's reports.");
+        "Inspect net/src/loop.c: loop_run_done for delivery, sock_flush for sends, sock_event and acc_event for the selector's reports.");
 
     /* RFC-0025 section 12: the socket holds what the loop needs per connection. */
 #if defined(_WIN32) || defined(_WIN64)

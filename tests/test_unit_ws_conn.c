@@ -280,7 +280,7 @@ static void run_cases(proven_job_sys_t *server_jobs, proven_job_sys_t *loop_thre
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a conversation",
         "Connect, agree a subprotocol, exchange text and binary messages of every size, fragments, a ping, and close.",
-        "Inspect src/proven/ws_conn.c: wc_send_frame for what is sent, wc_pump for what is received.");
+        "Inspect net/src/ws_conn.c: wc_send_frame for what is sent, wc_pump for what is received.");
     // ---------------------------------------------------------------
     {
         e = proven_ws_conn_connect(client, ws_url(at.port, "/echo"), NULL, 0, sv("chat, echo"), &wcfg, &ws, &status);
@@ -387,7 +387,7 @@ static void run_cases(proven_job_sys_t *server_jobs, proven_job_sys_t *loop_thre
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a connection handed off, and the server left free",
         "The handler gives the connection to another thread and returns; ordinary requests are served while the WebSocket is open.",
-        "Inspect proven_http_exchange_upgrade and the detached branches of sv_run and sv_linger in src/proven/http_server.c.");
+        "Inspect proven_http_exchange_upgrade and the detached branches of sv_run and sv_linger in net/src/http_server.c.");
     // ---------------------------------------------------------------
     {
         proven_job_group_init(&g_group);
@@ -441,7 +441,7 @@ static void run_cases(proven_job_sys_t *server_jobs, proven_job_sys_t *loop_thre
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a client that breaks the rules",
         "A raw socket does the handshake by hand and then misbehaves; the server's end answers with the close code that says how.",
-        "Inspect wc_fail and the decoder's checks in src/proven/ws.c. The expected bytes are a close frame: 88, a length of 2, and the code.");
+        "Inspect wc_fail and the decoder's checks in net/src/ws.c. The expected bytes are a close frame: 88, a length of 2, and the code.");
     // ---------------------------------------------------------------
     {
         proven_net_conn_t raw;
@@ -644,7 +644,7 @@ static void run_client_side(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("pings on silence",
         "ping_interval_ms and pong_timeout_ms (v0.104.0), over a socket pair whose other end is read and written by hand: a ping goes out after the interval of silence while a receive waits, a pong (any byte) holds the connection open and the next ping follows the next silence, and a peer that answers nothing ends the connection with PROVEN_ERR_RESET and 1006 after the interval and the timeout.",
-        "Inspect wc_pump in src/proven/ws_conn.c: the read's deadline is the earlier of the caller's and the ping's.");
+        "Inspect wc_pump in net/src/ws_conn.c: the read's deadline is the earlier of the caller's and the ping's.");
     // ---------------------------------------------------------------
     {
         proven_net_conn_t a, b;
@@ -687,7 +687,7 @@ static void run_client_side(void) {
 static void run_cap(proven_job_sys_t *loop_thread) {
     PROVEN_TEST_SECTION("a cap on upgraded connections",
         "max_upgraded (v0.104.0): with 2, a third WebSocket is refused with 503 and Retry-After while two are open - the handler sees PROVEN_ERR_BUSY - and is taken once one of the two is closed; the two left are closed after the server is gone.",
-        "Inspect the place taken in proven_http_exchange_upgrade and given back in sv_owned_close, src/proven/http_server.c.");
+        "Inspect the place taken in proven_http_exchange_upgrade and given back in sv_owned_close, net/src/http_server.c.");
     proven_allocator_t heap = proven_heap_allocator();
     proven_http_server_config_t scfg = { .alloc = heap, .handler = handler, .max_upgraded = 2 };
     PROVEN_TEST_ASSERT(proven_http_server_create(&scfg, &g_server) == PROVEN_OK, "a server", "");
@@ -734,7 +734,7 @@ static void run_cap(proven_job_sys_t *loop_thread) {
 int main(void) {
     PROVEN_TEST_SUITE("ws: connections",
         "WebSocket connections over loopback: this library's two ends with each other, and each with a peer that breaks the rules.",
-        "Inspect src/proven/ws_conn.c.");
+        "Inspect net/src/ws_conn.c.");
 
     {
         proven_net_listener_t probe;

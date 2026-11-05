@@ -125,11 +125,14 @@ int main(void) {
     static char names[1024][96];
     int count = 0;
 
-    DIR *d = opendir("include/proven");
-    PROVEN_TEST_ASSERT(d != NULL, "could not open include/proven", "");
+    /* The base library's headers and the network library's (RFC-0043): one alias layer for both. */
+    static const char *const dirs[] = { "include/proven", "net/include/proven" };
+    int headers = 0;
+    for (size_t di = 0; di < sizeof dirs / sizeof dirs[0]; ++di) {
+    DIR *d = opendir(dirs[di]);
+    PROVEN_TEST_ASSERT(d != NULL, "could not open a public header directory", dirs[di]);
 
     struct dirent *e;
-    int headers = 0;
     while ((e = readdir(d)) != NULL) {
         const char *n = e->d_name;
         size_t len = strlen(n);
@@ -137,7 +140,7 @@ int main(void) {
         if (strcmp(n, "alias_xcv.h") == 0) continue;   /* the alias header itself */
 
         char path[512];
-        snprintf(path, sizeof path, "include/proven/%s", n);
+        snprintf(path, sizeof path, "%s/%s", dirs[di], n);
         char *src = read_text_file(path);
         PROVEN_TEST_ASSERT(src != NULL, "could not read a public header", "");
         count = collect_public_fns(src, names, 1024, count);
@@ -145,6 +148,7 @@ int main(void) {
         ++headers;
     }
     closedir(d);
+    }
 
     PROVEN_TEST_ASSERT(headers > 20,
         "found suspiciously few public headers",

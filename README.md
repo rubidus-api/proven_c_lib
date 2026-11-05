@@ -494,6 +494,15 @@ cc -std=c23 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L \
   -pthread -o app
 ```
 
+A program that uses the network library (sockets, TLS, HTTP, WebSocket) adds its directory:
+
+```sh
+cc -std=c23 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L \
+  -Iinclude -Iplatform -Inet/include \
+  app.c src/proven/*.c platform/proven_sys_*.c net/src/*.c net/platform/*.c \
+  -pthread -o app
+```
+
 ## Containers without hidden ownership
 
 `proven_array_t` is a growable contiguous array. It stores the allocator trait used for growth and destruction, so the call site stays honest about memory ownership.
@@ -674,6 +683,22 @@ This split keeps the core library easier to audit and gives ports a clear place 
 
 Cross compilation shows that headers, source visibility, ABI assumptions, and compile-time platform branches line up. It does not replace runtime tests on the target machine.
 
+## Two libraries: proven_base and proven_net
+
+The tree holds two libraries under one version. **proven_base** - `include/proven/`, `src/proven/`,
+`platform/` - is everything a program needs that does not talk to a network: memory, strings,
+containers, text, numbers, files, time, jobs, compression, hashes, certificates, signatures and
+the ciphers. **proven_net** - `net/include/proven/`, `net/src/`, `net/platform/` - is sockets, the
+event loop, TLS, HTTP/1.1, HTTP/2, HTTP/3 over QUIC, WebSocket and server-sent events. It uses
+nothing of proven_base but its public headers (a test holds that line), and proven_base knows
+nothing of it.
+
+A program that does not use the network vendors and compiles proven_base alone, as before. One
+that does adds `-Inet/include` and the `net/` sources. Header names did not change -
+`#include "proven/http.h"` - and `proven.h` includes the network headers too when `net/include` is
+on the path. Moving an existing project across the split, step by step and checkable, is
+[docs/migrating-to-proven-net.md](docs/migrating-to-proven-net.md).
+
 ## The modules
 
 - Foundation: `types`, `error`, `memory`, `align`, `version`, `config`.
@@ -683,9 +708,10 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- Hashing and encoding: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC, HKDF and PBKDF2), `deflate` (DEFLATE compression both ways, bare or as zlib or gzip, streaming, with the caller bounding what a decompression may produce), `zstd` (Zstandard both ways - nineteen levels to write it, level 6 at gzip 6's size and three times its speed, 19 within about 1 % of libzstd's size; long-distance matching; dictionaries, raw or formatted (as `zstd --train` writes them), both ways -, with the caller bounding the output and the window), `brotli` (Brotli decompression, with the caller bounding the output and the window; `PROVEN_NO_BROTLI` leaves it and its 122,784-byte dictionary out), `cert` (X.509 certificates: reading, names, trust anchors, chain verification, code-signing and time-stamping uses), `sign` (private keys - RSA, P-256, P-384 - from PEM, DER or parts; deterministic signatures over a digest, PSS, verification), `der` (a strict DER reader and a writer), `aes` (AES-CBC and PKCS #7, for encrypted key files), `hash_legacy` (SHA-1 and MD5, for formats that fix them), `encode` (hex, Base64, Base64URL), `utf` (strict UTF-8 <-> UTF-16).
+- Hashing and encoding: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC, HKDF and PBKDF2), `deflate` (DEFLATE compression both ways, bare or as zlib or gzip, streaming, with the caller bounding what a decompression may produce), `zstd` (Zstandard both ways - nineteen levels to write it, level 6 at gzip 6's size and three times its speed, 19 within about 1 % of libzstd's size; long-distance matching; dictionaries, raw or formatted (as `zstd --train` writes them), both ways -, with the caller bounding the output and the window), `brotli` (Brotli decompression, with the caller bounding the output and the window; `PROVEN_NO_BROTLI` leaves it and its 122,784-byte dictionary out), `cert` (X.509 certificates: reading, names, trust anchors, chain verification, code-signing and time-stamping uses), `sign` (private keys - RSA, P-256, P-384 - from PEM, DER or parts; deterministic signatures over a digest, PSS, verification), `der` (a strict DER reader and a writer), `aes` (AES-CBC and PKCS #7, for encrypted key files), `aead` (AES-GCM and ChaCha20-Poly1305), `kex` (X25519, ECDH over P-256 and P-384, finite-field Diffie-Hellman over fixed groups), `hash_legacy` (SHA-1 and MD5, for formats that fix them), `encode` (hex, Base64, Base64URL), `utf` (strict UTF-8 <-> UTF-16).
 - Randomness: `random` (xoshiro256** reproducible, ChaCha20 cryptographic, unbiased range/shuffle helpers, and a pluggable entropy source - the OS CSPRNG by default, a board's hardware TRNG on bare metal).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
+- The network library, proven_net (`net/`), is the networking entries that follow - `net`, `http` and the codecs beside it (`http_auth`, `http_cookie`, `sse`, `hpack`, `h2`), the HTTP servers and clients, the event modules, WebSocket and `tls`. Everything else in this list, `url` included, is proven_base.
 - Networking: `net` (TCP, UDP and Unix-domain sockets with a deadline on every wait, readiness on many sockets, and a transport interface). Hosted only; `PROVEN_NO_NET` leaves it out.
 - URLs and HTTP: `url` (parsing, percent-coding, and a request path resolved so it cannot leave its root), `http` (an HTTP/1.1 message codec - head parser, body framing and decoder, writers, dates - that refuses the ambiguities request smuggling is made of). Around the codec, `http_auth` (Basic and Digest), `http_cookie` (a host-only cookie jar) and `sse` (server-sent events), plus ranges, multipart bodies and reference resolution. Pure text, freestanding-available. For HTTP/2, the protocol without a socket: `hpack` (RFC 7541 header compression, with its tables generated from the RFC's text) and `h2` (frames, each type's rules, the checks a decoded header list must pass to be a request, and a connection - streams, flow control in both directions, and a bound on everything a peer can make it hold - that is given bytes and gives bytes back). The event-driven server speaks it when asked, beside HTTP/1.1 on the same port and for the same handlers - and HTTP/3 too (RFC 9114, over this library's own QUIC on a UDP socket beside each listener, found by clients through `Alt-Svc`; 0-RTT when the TLS configuration has `early_data`, for requests that are safe to repeat). Of the servers and clients below, the event-driven server and the event-driven client speak HTTP/2 and HTTP/3 when asked - the client HTTP/3 only for a request that asks, falling back to TCP when `http3_fallback` is set; the blocking server speaks HTTP/1.1, and the blocking client HTTP/1.1, or HTTP/3 for a request that asks.
 - HTTP over sockets: `http_server` (a handler and a loop with every wait bounded, on one thread or a job system) and `http_client` (redirects, challenges, cookies, HTTP and SOCKS5 proxies, connection reuse). Hosted-only. Both speak HTTPS when given a TLS configuration (one field each); without one the server is plain HTTP and the client refuses an `https` URL rather than fetching it in the clear. Compressed responses (`Content-Encoding: gzip`, and `zstd` or `br` to a client that asks for them too) are off until asked for: a handler asks per response, a client by one setting, and what a client may be made to decode is bounded by the caller. The event-driven server and client below do the same.
@@ -702,7 +728,7 @@ Cross compilation shows that headers, source visibility, ABI assumptions, and co
 
 It is also worth saying where the platform boundary **stops**, because otherwise you find out by running into it. The PAL covers memory, the filesystem, time, memory mapping, environment variables, console I/O, threads and sockets. It does **not** cover process control (`fork` / `exec` / pipes) or terminal control (raw mode, job control) - a program whose substance is one of those will reach for POSIX or Win32 directly, and the "no platform `#ifdef`s" property does not extend to it. The socket layer is the first step of a networking stack that is being built in stages: sockets (with an `epoll`/`kqueue`/IOCP selector), the HTTP/1.1 message codec, an HTTP client and server, WebSocket, certificates, TLS (1.3 and a cut-down 1.2) and the DEFLATE codec are here, and so, since, are HTTP content coding, `permessage-deflate`, HTTP/2 and HTTP/3.
 
-The `hash` and `hmac` modules do provide cryptographic and non-cryptographic hashes (the SHA-2 family alongside FNV, SipHash, and CRC-32), HMAC, HKDF and PBKDF2, `cert` reads and verifies X.509 certificates, `sign` signs and verifies with RSA and ECDSA keys, `tls` is TLS 1.3 and 1.2, and `random` provides OS-strength bytes, but `proven` is not a general cryptography library: the other primitives under TLS are internal, and it offers no public key exchange, memory-hard password hashing or authenticated encryption, so do not go looking - and a connection made with `net` is not encrypted. Also absent, and not planned: path manipulation, argument parsing, and a logging framework.
+The `hash` and `hmac` modules do provide cryptographic and non-cryptographic hashes (the SHA-2 family alongside FNV, SipHash, and CRC-32), HMAC, HKDF and PBKDF2, `cert` reads and verifies X.509 certificates, `sign` signs and verifies with RSA and ECDSA keys, `tls` is TLS 1.3 and 1.2, and `random` provides OS-strength bytes, and since v0.111.0 `aead` and `kex` are the authenticated encryption and key exchange TLS is built from; but `proven` is not a general cryptography library: there is no memory-hard password hashing, no key generation for long-lived keys, and nothing here has had an external audit - and a connection made with `net` is not encrypted. Also absent, and not planned: path manipulation, argument parsing, and a logging framework.
 
 ## Using it in a real project
 

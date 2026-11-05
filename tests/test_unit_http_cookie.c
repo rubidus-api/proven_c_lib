@@ -35,7 +35,7 @@ static const char *header(proven_http_cookie_jar_t *jar, const char *host, const
 int main(void) {
     PROVEN_TEST_SUITE("http: the cookie jar",
         "Cookies are stored per host and path, expire, are replaced and evicted - and never cross to another host.",
-        "Inspect src/proven/http_cookie.c.");
+        "Inspect net/src/http_cookie.c.");
 
     proven_allocator_t heap = proven_heap_allocator();
     proven_http_cookie_jar_t jar;

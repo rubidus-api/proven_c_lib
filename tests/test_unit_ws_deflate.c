@@ -1,6 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_ws.h"
+#include "../net/src/proven_internal_ws.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -74,7 +74,7 @@ static proven_size_t deflate_parts(proven_size_t n, int parts, proven_size_t roo
             proven_size_t space = room < sizeof buf ? room : sizeof buf;
             proven_err_t e = proven_ws_deflate_step_(z, (proven_mem_view_t){ .ptr = g_plain + at, .size = end - at }, &used, true, p == parts - 1,
                                                      (proven_mem_mut_t){ .ptr = buf, .size = space }, &made, tail, &tail_len, &done);
-            PROVEN_TEST_ASSERT(e == PROVEN_OK && made <= space, "a step of the compressor", "Check proven_ws_deflate_step_ in src/proven/ws_deflate.c.");
+            PROVEN_TEST_ASSERT(e == PROVEN_OK && made <= space, "a step of the compressor", "Check proven_ws_deflate_step_ in net/src/ws_deflate.c.");
             PROVEN_TEST_ASSERT(wire + made <= sizeof g_wire, "the output fits the test's buffer", "");
             memcpy(g_wire + wire, buf, made);
             wire += made;
@@ -97,7 +97,7 @@ static proven_size_t deflate_kept(proven_deflate_t *z, const proven_byte_t *msg,
         proven_byte_t buf[512];
         proven_err_t e = proven_ws_deflate_step_(z, (proven_mem_view_t){ .ptr = msg + at, .size = n - at }, &used, true, true,
                                                  (proven_mem_mut_t){ .ptr = buf, .size = sizeof buf }, &made, tail, &tail_len, &done);
-        PROVEN_TEST_ASSERT(e == PROVEN_OK && out + made <= cap, "a step of a kept compressor", "Check proven_ws_deflate_step_ in src/proven/ws_deflate.c.");
+        PROVEN_TEST_ASSERT(e == PROVEN_OK && out + made <= cap, "a step of a kept compressor", "Check proven_ws_deflate_step_ in net/src/ws_deflate.c.");
         memcpy(wire + out, buf, made);
         out += made;
         at += used;
@@ -128,7 +128,7 @@ static proven_err_t inflate_kept(proven_inflate_t **kept, const proven_byte_t *b
 int main(void) {
     PROVEN_TEST_SUITE("ws: permessage-deflate below the drivers",
         "The reserved bit that marks a compressed message, the decoder's rules for it, the negotiation of the extension, and the transform of one message - against the examples of RFC 7692.",
-        "Inspect src/proven/ws.c (proven_ws_frame_parse, proven_ws_decoder_feed, proven_ws_deflate_accept, ws_check_response) and src/proven/ws_deflate.c.");
+        "Inspect net/src/ws.c (proven_ws_frame_parse, proven_ws_decoder_feed, proven_ws_deflate_accept, ws_check_response) and net/src/ws_deflate.c.");
     g_heap = proven_heap_allocator();
 
     PROVEN_TEST_SECTION("the frame bit", "RSV1 is parsed and written where a message begins, and refused everywhere else.", "Check proven_ws_frame_parse and proven_ws_frame_write.");
@@ -210,7 +210,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_ws_decoder_feed(&d, (proven_mem_mut_t){ limited, sizeof limited }, &used, &ev) == PROVEN_ERR_OUT_OF_BOUNDS, "seven compressed bytes pass no limit of six", "");
     }
 
-    PROVEN_TEST_SECTION("the negotiation", "What a server answers to each offer, and what a client makes of each answer.", "Check ws_deflate_element, proven_ws_deflate_accept and ws_check_response in src/proven/ws.c.");
+    PROVEN_TEST_SECTION("the negotiation", "What a server answers to each offer, and what a client makes of each answer.", "Check ws_deflate_element, proven_ws_deflate_accept and ws_check_response in net/src/ws.c.");
     {
         #define BOTH "permessage-deflate; server_no_context_takeover; client_no_context_takeover"
         static const struct { const char *offer; const char *answer; int bits; } rows[] = {
@@ -305,7 +305,7 @@ int main(void) {
         #undef BOTH
     }
 
-    PROVEN_TEST_SECTION("the negotiation with takeover", "What a server that keeps its window answers, what it agreed, and what a client that offered takeover accepts.", "Check ws_deflate_answer, proven_ws_deflate_accept_takeover and ws_check_response in src/proven/ws.c.");
+    PROVEN_TEST_SECTION("the negotiation with takeover", "What a server that keeps its window answers, what it agreed, and what a client that offered takeover accepts.", "Check ws_deflate_answer, proven_ws_deflate_accept_takeover and ws_check_response in net/src/ws.c.");
     {
         static const struct { const char *offer; const char *answer; bool server_takeover, client_takeover; int server_bits; } rows[] = {
             { "permessage-deflate", "permessage-deflate", true, true, 15 },
@@ -390,7 +390,7 @@ int main(void) {
             "no place for the terms is PROVEN_ERR_INVALID_ARG", "");
     }
 
-    PROVEN_TEST_SECTION("the negotiation without the peer's takeover", "A server that keeps its own window and forbids the client's, and a client that asks the server not to keep one.", "Check ws_deflate_answer, proven_ws_deflate_accept_peer_no_takeover and ws_check_response in src/proven/ws.c.");
+    PROVEN_TEST_SECTION("the negotiation without the peer's takeover", "A server that keeps its own window and forbids the client's, and a client that asks the server not to keep one.", "Check ws_deflate_answer, proven_ws_deflate_accept_peer_no_takeover and ws_check_response in net/src/ws.c.");
     {
         static const struct { const char *offer; const char *answer; bool server_takeover; int server_bits; } rows[] = {
             { "permessage-deflate", "permessage-deflate; client_no_context_takeover", true, 15 },
@@ -465,7 +465,7 @@ int main(void) {
             "no place for the terms is PROVEN_ERR_INVALID_ARG", "");
     }
 
-    PROVEN_TEST_SECTION("the examples of RFC 7692", "Messages somebody else compressed, read at every step size.", "Check proven_ws_inflate_step_ in src/proven/ws_deflate.c.");
+    PROVEN_TEST_SECTION("the examples of RFC 7692", "Messages somebody else compressed, read at every step size.", "Check proven_ws_inflate_step_ in net/src/ws_deflate.c.");
     {
         static const proven_byte_t hello[] = { 0xf2, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00 };                     /* 7.2.3.1 */
         static const proven_byte_t stored[] = { 0x00, 0x05, 0x00, 0xfa, 0xff, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x00 };   /* 7.2.3.3: a block with no compression */

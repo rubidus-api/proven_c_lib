@@ -335,6 +335,19 @@ system - the **PAL**, or platform abstraction layer. Everything that makes a sys
 and nowhere else, which is why the rest of the library can be compiled for a target with no
 operating system at all.
 
+That is the base library, **proven_base**. The network library, **proven_net** - sockets, the event
+loop, TLS, HTTP/1.1, 2 and 3, WebSocket, server-sent events (chapters 9 to 12, 14, 15 and 17) -
+lives under `net/` and is compiled with it when a program uses the network (since v0.111.0):
+
+```text
+gcc -std=c2x -Iinclude -Iplatform -Inet/include your_program.c src/proven/*.c platform/*.c net/src/*.c net/platform/*.c -o your_program
+```
+
+Its header names are the same (`#include "proven/http.h"`), and `proven.h` includes them when
+`net/include` is on the path. proven_net uses nothing of proven_base but its public headers, so a
+program without networking leaves `net/` out entirely. A project moving across the split follows
+`docs/migrating-to-proven-net.md`.
+
 The repository builds itself with a C program rather than a build system:
 
 ```text

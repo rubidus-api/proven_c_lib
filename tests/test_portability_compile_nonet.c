@@ -30,7 +30,7 @@ static int run(const char *cmd) {
 int main(void) {
     PROVEN_TEST_SUITE("test_portability_compile_nonet",
         "A hosted build with -DPROVEN_NO_NET compiles every source, links, and contains no socket code.",
-        "Inspect the PROVEN_NO_NET guards in include/proven.h, src/proven/net.c and platform/proven_sys_net.c.");
+        "Inspect the PROVEN_NO_NET guards in include/proven.h, net/src/net.c and net/platform/proven_sys_net.c.");
 
     const char *dir = "build/test_portability_compile_nonet";
     char cmd[4096];
@@ -44,7 +44,7 @@ int main(void) {
         "std=-std=c23; ${CC:-cc} $std -fsyntax-only -x c /dev/null 2>/dev/null || std=-std=c2x; "
         "for f in $(sed -n 's/^PROVEN_BUILD_SOURCE(\"\\([^\"]*\\)\".*/\\1/p' build_sources.inc); do "
         "  ${CC:-cc} $std -Wall -Wextra -Werror -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L -DPROVEN_NO_NET "
-        "    -I./include -I./platform -c \"$f\" -o %s/$(echo \"$f\" | tr '/' '_').o || exit 1; "
+        "    -I./include -I./platform -I./net/include -I./net/platform -c \"$f\" -o %s/$(echo \"$f\" | tr '/' '_').o || exit 1; "
         "done; echo $std > %s/std.txt", dir, dir);
     PROVEN_TEST_ASSERT(run(cmd) == 0,
         "every library source compiles with -DPROVEN_NO_NET",
@@ -54,7 +54,7 @@ int main(void) {
         "printf '%%s\\n' '#include \"proven.h\"' '#include \"proven/alias_xcv.h\"' "
         "'#ifdef PROVEN_NET_H' '#error \"net.h must not be included under PROVEN_NO_NET\"' '#endif' "
         "'int main(void) { return proven_time_monotonic_now() >= 0 ? 0 : 1; }' > %s/main.c && "
-        "${CC:-cc} $(cat %s/std.txt) -Wall -Wextra -Werror -D_DEFAULT_SOURCE -DPROVEN_NO_NET -I./include -I./platform "
+        "${CC:-cc} $(cat %s/std.txt) -Wall -Wextra -Werror -D_DEFAULT_SOURCE -DPROVEN_NO_NET -I./include -I./platform -I./net/include -I./net/platform "
         "  %s/main.c %s/*.o -pthread -o %s/nonet && %s/nonet",
         dir, dir, dir, dir, dir, dir);
     PROVEN_TEST_ASSERT(run(cmd) == 0,

@@ -1,6 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_quic.h"
+#include "../net/src/proven_internal_quic.h"
 #include "test_unit_quic_vectors.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,7 +66,7 @@ static bool frame_eq(const proven_quic_frame_t *a, const proven_quic_frame_t *b)
 int main(void) {
     PROVEN_TEST_SUITE("QUIC packet headers and frames",
         "RFC 9000's headers and frames read and written: RFC 9001 appendix A's headers byte for byte, every frame type both ways, and every malformed one refused with its code.",
-        "Inspect src/proven/quic_frame.c.");
+        "Inspect net/src/quic_frame.c.");
 
     static proven_byte_t pkt[2048], buf[2048];
     proven_quic_hdr_t h;

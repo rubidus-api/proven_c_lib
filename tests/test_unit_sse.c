@@ -77,7 +77,7 @@ static run_t every_way(const char *stream, bool *consistent) {
 int main(void) {
     PROVEN_TEST_SUITE("sse: the event-stream parser",
         "Events come out as the HTML standard says they should, however the stream is cut.",
-        "Inspect src/proven/sse.c.");
+        "Inspect net/src/sse.c.");
 
     bool consistent = false;
 
@@ -154,7 +154,7 @@ int main(void) {
         r = every_way("retry: 5000\n\ndata: x\n\ndata: y\n\n", &consistent);
         PROVEN_TEST_ASSERT(consistent && r.count == 2 && r.ev[0].has_retry && r.ev[0].retry == 5000 && !r.ev[1].has_retry,
             "a retry sent alone, in an event with no data, is remembered too: it comes with the next event delivered, once",
-            "Check the empty-line case of sse_line in src/proven/sse.c: a dataless event forgets its type, not a retry.");
+            "Check the empty-line case of sse_line in net/src/sse.c: a dataless event forgets its type, not a retry.");
 
         const proven_byte_t with_nul[] = "id: a\0b\ndata: x\n\n";
         run_t n = run(with_nul, sizeof with_nul - 1, 0, 0);

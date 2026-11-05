@@ -6,7 +6,7 @@
 #define main proven_test_main_with_batches_
 #include "test_unit_http_event_client_h3.c"
 #undef main
-#include "../src/proven/proven_internal_quic_net.h"
+#include "../net/src/proven_internal_quic_net.h"
 
 int main(void) {
     proven_net_udp_segments_off_for_test_(true);

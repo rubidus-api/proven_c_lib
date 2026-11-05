@@ -120,11 +120,11 @@ src/proven/hash_legacy.c
 src/proven/hmac.c
 src/proven/utf.c
 src/proven/url.c
-src/proven/http.c
-src/proven/http_auth.c
-src/proven/http_cookie.c
-src/proven/sse.c
-src/proven/ws.c
+net/src/http.c
+net/src/http_auth.c
+net/src/http_cookie.c
+net/src/sse.c
+net/src/ws.c
 src/proven/encode.c
 src/proven/random.c
 src/proven/float_decimal.c

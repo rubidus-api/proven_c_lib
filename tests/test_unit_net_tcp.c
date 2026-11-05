@@ -57,7 +57,7 @@ static void pair_close(pair_t *p) {
 int main(void) {
     PROVEN_TEST_SUITE("net: TCP on the loopback interface",
         "Listen, connect, accept, read, write, half-close, deadlines, and the named failures.",
-        "Inspect src/proven/net.c for the deadline loop and platform/proven_sys_net.c for the reason a system call was mapped to.");
+        "Inspect net/src/net.c for the deadline loop and net/platform/proven_sys_net.c for the reason a system call was mapped to.");
 
     {
         proven_net_listener_t probe;
@@ -231,7 +231,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a connect in two halves",
         "proven_net_connect_start returns at once; proven_net_connect_finish says how it ended once the socket is ready.",
-        "Inspect proven_net_connect_start and proven_net_connect_finish in src/proven/net.c; the blocking connect is the same pair with a wait between.");
+        "Inspect proven_net_connect_start and proven_net_connect_finish in net/src/net.c; the blocking connect is the same pair with a wait between.");
     // ---------------------------------------------------------------
     {
         proven_net_listener_t l;
@@ -387,7 +387,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("out of descriptors is PROVEN_ERR_BUSY, and nothing leaks",
         "With the process's descriptor limit lowered, opening sockets ends in BUSY - not IO, not a crash - and works again once some are closed.",
-        "POSIX only: the limit is set with setrlimit. EMFILE must map to the LIMIT reason in platform/proven_sys_net.c.");
+        "POSIX only: the limit is set with setrlimit. EMFILE must map to the LIMIT reason in net/platform/proven_sys_net.c.");
     // ---------------------------------------------------------------
     {
         struct rlimit old, low;

@@ -1,6 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_quic_net.h"
+#include "../net/src/proven_internal_quic_net.h"
 #include <stdio.h>
 #include <string.h>
 #if defined(__linux__)
@@ -51,7 +51,7 @@ static bool receive_all(proven_net_udp_t *r, proven_byte_t *buf, proven_size_t w
 int main(void) {
     PROVEN_TEST_SUITE("net: batched datagrams",
         "Datagrams of one size sent in one call where the platform can, and one at a time where it cannot or is told not to; received whole, in order and byte for byte whether or not the kernel coalesced them.",
-        "Inspect proven_sys_net_send_segments and proven_sys_net_recv_segments in platform/proven_sys_net.c, and their wrappers in src/proven/net.c.");
+        "Inspect proven_sys_net_send_segments and proven_sys_net_recv_segments in net/platform/proven_sys_net.c, and their wrappers in net/src/net.c.");
 
     proven_net_udp_t s, r;
     proven_net_addr_t r_at;

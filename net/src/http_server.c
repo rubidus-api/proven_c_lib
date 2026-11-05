@@ -5,7 +5,7 @@
 #include "proven/time.h"
 #include "proven_internal_tls.h"
 #include "proven_internal_http_coding.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 #include <stdatomic.h>
 
 /*

@@ -1,5 +1,5 @@
 #include "proven/ws_event.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 #include "proven_internal_http_event.h"
 #include "proven_internal_ws.h"
 

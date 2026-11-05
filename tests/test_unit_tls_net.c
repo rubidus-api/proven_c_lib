@@ -1,7 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "test_unit_tls_pki.h"
-#include "../src/proven/proven_internal_tls.h"
+#include "../net/src/proven_internal_tls.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -80,7 +80,7 @@ static void transport_cases(void) {
 
     PROVEN_TEST_SECTION("the transport wrapper",
         "A handshake over a socket, data in both directions, a proper close seen as an end of stream and a cut connection seen as a reset.",
-        "Check src/proven/tls_transport.c.");
+        "Check net/src/tls_transport.c.");
     peer_start(&peer, 0);
     proven_net_conn_t sock;
     proven_transport_t tls = { 0 };
@@ -508,7 +508,7 @@ static void rsa_threads_case(void) {
 int main(void) {
     PROVEN_TEST_SUITE("TLS over sockets: the transport, HTTPS and WebSocket",
         "The engine carried by real connections: the wrapper by itself, then through the HTTP client and server with handlers on the loop thread and on workers.",
-        "Inspect src/proven/tls_transport.c and the TLS branches of src/proven/http_server.c. The engine itself is test_unit_tls's business.");
+        "Inspect net/src/tls_transport.c and the TLS branches of net/src/http_server.c. The engine itself is test_unit_tls's business.");
 
     g_heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "Check src/proven/cert_issue.c.");
@@ -543,7 +543,7 @@ int main(void) {
     }
     PROVEN_TEST_SECTION("0-RTT over HTTPS, the blocking client and server",
         "With early_data on both sides a GET on a second connection goes with the ClientHello and is answered before the client's Finished; a POST waits for the handshake; a handler's 425 sends the GET again; without early_data on either side nothing goes early.",
-        "Check tt_write, tt_settle and the session cache in src/proven/tls_transport.c and tls_config.c, the early branch of sv_service in http_server.c, and the 425 and no_early_now in http_client.c.");
+        "Check tt_write, tt_settle and the session cache in net/src/tls_transport.c and tls_config.c, the early branch of sv_service in http_server.c, and the 425 and no_early_now in http_client.c.");
     {
         proven_tls_options_t ce = co, se = so;
         ce.early_data = true; se.early_data = true;
@@ -554,9 +554,9 @@ int main(void) {
     }
     PROVEN_TEST_SECTION("the client's session cache on several threads",
         "Four threads keep and read sessions in one configuration at once, as a blocking client used from several threads does.",
-        "Check proven_tls_client_cache_store_ and _load_ in src/proven/tls_config.c: the entries, and whether they exist, are read and written under the flag. Run under ThreadSanitizer.");
+        "Check proven_tls_client_cache_store_ and _load_ in net/src/tls_config.c: the entries, and whether they exist, are read and written under the flag. Run under ThreadSanitizer.");
     cache_threads_case();
-    PROVEN_TEST_SECTION("an RSA key, signing on several threads", "Four threads completing handshakes against one configuration: the key's blinding pair is shared and changes with every signature.", "Check proven_tls_config_rsa_sign_ in src/proven/tls_config.c: the pair is copied and replaced under the flag, and the signature is made outside it. Run under ThreadSanitizer.");
+    PROVEN_TEST_SECTION("an RSA key, signing on several threads", "Four threads completing handshakes against one configuration: the key's blinding pair is shared and changes with every signature.", "Check proven_tls_config_rsa_sign_ in net/src/tls_config.c: the pair is copied and replaced under the flag, and the signature is made outside it. Run under ThreadSanitizer.");
     rsa_threads_case();
 
     proven_tls_config_destroy(g_client_tls); proven_tls_config_destroy(g_server_tls); proven_tls_config_destroy(g_stranger_tls);

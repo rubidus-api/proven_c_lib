@@ -1,36 +1,27 @@
 #include "proven.h"
 #include "proven_test.h"
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /*
- * RFC-0043: the network stack is to become a library of its own, proven_net, that uses nothing of
- * the base library but its public headers. This gate holds the line inside one tree: every
- * network source and every header private to the network code includes only public headers
- * ("proven/...") and the network code's own internal headers - never one of the base library's
- * (proven_internal_crypto.h, proven_internal_der.h, ...) and never the base library's platform
- * layer (proven_sys_mem.h, ...). And every source in the build's list is classified, so a new
- * network file cannot slip in unchecked.
+ * RFC-0043: the tree holds two libraries. proven_base - include/proven, src/proven, platform - and
+ * proven_net - net/include/proven, net/src, net/platform - which stands on the base library's
+ * public headers alone. This gate holds the line both ways:
+ *
+ *   - a network file includes "proven/..." public headers (the base library's or its own), the
+ *     network code's own private headers (net/src) and its own platform headers (net/platform) -
+ *     never a header private to the base library (proven_internal_crypto.h, proven_sys_mem.h, ...);
+ *   - a base file includes nothing of the network library: none of its public headers, none of
+ *     its private ones. proven.h's optional include of proven_net.h is the one exception.
  */
 
-static const char *const NET_SOURCES[] = {
-    "tls13", "tls_keys", "tls12_keys", "tls_legacy", "tls_config", "tls_transport",
-    "quic_crypto", "quic_frame", "quic_conn", "qpack", "h3_conn", "hpack", "h2", "h2_conn",
-    "http", "http_auth", "http_cookie", "http_coding", "http_client", "http_server",
-    "http_event", "http_event_h2", "http_event_h3", "http_event_client", "http_event_client_h2", "http_event_client_h3",
-    "ws", "ws_conn", "ws_deflate", "ws_event", "ws_event_client", "sse", "net", "loop",
-};
-
-/* The network code's own headers: what it may include besides "proven/...". */
-static const char *const NET_OWN[] = {
-    "proven_internal_tls.h", "proven_internal_quic.h", "proven_internal_quic_net.h", "proven_internal_h3.h",
-    "proven_internal_net.h", "proven_internal_loop.h", "proven_internal_http_event.h", "proven_internal_http_event_client.h",
-    "proven_internal_http_coding.h", "proven_internal_ws.h", "qpack_static.h", "hpack_tables.h",
-    "../../platform/proven_sys_net.h", "../../platform/proven_sys_net_mem.h",
-};
-
-#define COUNT(a) (sizeof(a) / sizeof((a)[0]))
+#define MAX_NAMES 128
+static char g_net_public[MAX_NAMES][300];   /* "proven/http.h", ... */
+static int g_net_public_n;
+static char g_net_own[MAX_NAMES][300];      /* "proven_internal_tls.h", ... (net/src headers) */
+static int g_net_own_n;
 
 static char *slurp(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -46,84 +37,132 @@ static char *slurp(const char *path) {
     return buf;
 }
 
-static bool in_list(const char *name, size_t len, const char *const *list, size_t count) {
-    for (size_t i = 0; i < count; ++i) if (strlen(list[i]) == len && memcmp(list[i], name, len) == 0) return true;
+static bool ends_with(const char *s, const char *suffix) {
+    size_t a = strlen(s), b = strlen(suffix);
+    return a >= b && strcmp(s + a - b, suffix) == 0;
+}
+
+static bool listed(const char *name, size_t len, char (*list)[300], int n) {
+    for (int i = 0; i < n; ++i) if (strlen(list[i]) == len && memcmp(list[i], name, len) == 0) return true;
     return false;
 }
 
-/* Every quoted #include of `path` that is neither public nor the network code's own: reported,
- * and counted. */
-static int stray_includes(const char *path) {
-    char *text = slurp(path);
-    if (!text) { PROVEN_TEST_INFO("cannot read {}", PROVEN_ARG(path)); return 1; }
-    int stray = 0;
-    for (char *p = strstr(text, "#include \""); p; p = strstr(p + 1, "#include \"")) {
-        const char *name = p + 10;
-        const char *end = strchr(name, '"');
-        if (!end) break;
-        const size_t len = (size_t)(end - name);
-        if (len > 7 && memcmp(name, "proven/", 7) == 0) continue;
-        if (in_list(name, len, NET_OWN, COUNT(NET_OWN))) continue;
-        char shown[160];
-        snprintf(shown, sizeof shown, "%s: %.*s", path, (int)len, name);
-        PROVEN_TEST_INFO("network code includes the base library's {}", PROVEN_ARG(shown));
-        ++stray;
+/* The header names of a directory, with a prefix, into a list. */
+static void names_of(const char *dir, const char *prefix, char (*list)[300], int *n) {
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL && *n < MAX_NAMES) {
+        if (!ends_with(e->d_name, ".h")) continue;
+        snprintf(list[*n], 300, "%s%s", prefix, e->d_name);
+        ++*n;
     }
-    free(text);
+    closedir(d);
+}
+
+typedef bool (*allow_fn)(const char *name, size_t len, const char *file);
+
+static bool net_may_include(const char *name, size_t len, const char *file) {
+    (void)file;
+    if (len > 7 && memcmp(name, "proven/", 7) == 0) return true;                  /* public: base or net */
+    if (listed(name, len, g_net_own, g_net_own_n)) return true;                   /* net/src's own */
+    static const char *const pal[] = { "../platform/proven_sys_net.h", "../platform/proven_sys_net_mem.h", "proven_sys_net.h" };
+    for (size_t i = 0; i < sizeof pal / sizeof pal[0]; ++i) if (strlen(pal[i]) == len && memcmp(pal[i], name, len) == 0) return true;
+    return (len == 8 && memcmp(name, "proven.h", 8) == 0) || (len == 12 && memcmp(name, "proven_net.h", 12) == 0);   /* the umbrellas */
+}
+
+static bool base_may_include(const char *name, size_t len, const char *file) {
+    if (listed(name, len, g_net_public, g_net_public_n)) return false;
+    if (listed(name, len, g_net_own, g_net_own_n)) return false;
+    if (strstr(name, "proven_sys_net") != NULL && (size_t)(strstr(name, "proven_sys_net") - name) < len) return false;
+    if (len == 12 && memcmp(name, "proven_net.h", 12) == 0) return strcmp(file, "include/proven.h") == 0;
+    return true;
+}
+
+/* Every quoted #include of every .c and .h file in `dir` that `allow` refuses: reported, counted. */
+static int stray_in(const char *dir, allow_fn allow, const char *what, int *files) {
+    DIR *d = opendir(dir);
+    if (!d) { PROVEN_TEST_INFO("cannot open {}", PROVEN_ARG(dir)); return 1; }
+    int stray = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (!ends_with(e->d_name, ".c") && !ends_with(e->d_name, ".h")) continue;
+        char path[512];
+        snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+        char *text = slurp(path);
+        if (!text) continue;
+        ++*files;
+        for (char *p = strstr(text, "#include \""); p; p = strstr(p + 1, "#include \"")) {
+            const char *name = p + 10;
+            const char *end = strchr(name, '"');
+            if (!end) break;
+            const size_t len = (size_t)(end - name);
+            if (allow(name, len, path)) continue;
+            char shown[600];
+            snprintf(shown, sizeof shown, "%s: %.*s", path, (int)len, name);
+            PROVEN_TEST_INFO("{} {}", PROVEN_ARG(what), PROVEN_ARG(shown));
+            ++stray;
+        }
+        free(text);
+    }
+    closedir(d);
     return stray;
 }
 
 int main(void) {
-    PROVEN_TEST_SUITE("the network code uses only the base library's public headers",
-        "RFC-0043 phase 1: every network source and the network code's private headers include \"proven/...\" headers and their own, nothing else of the base library - no proven_internal_crypto.h, no base platform header - so that the network code can be built as a library of its own.",
-        "A failure names the file and the header. Use the public API instead (aead.h, kex.h, sign.h, der.h, ...); if it lacks something, the base library must publish it first.");
+    PROVEN_TEST_SUITE("proven_net on the base library's public headers; the base on nothing of proven_net",
+        "RFC-0043: the network library includes \"proven/...\" public headers and its own, nothing private to the base library; the base library includes nothing of the network library, so that either can be taken without the other's insides and the base without the network at all.",
+        "A failure names the file and the header. Network code: use the public API (aead.h, kex.h, sign.h, der.h, ...); if it lacks something, the base library publishes it first. Base code: the dependency runs the other way - move the code, or the base must not need it.");
 
-    PROVEN_TEST_SECTION("every network file's includes", "Sources and the network code's own headers.", "Named above.");
+    names_of("net/include/proven", "proven/", g_net_public, &g_net_public_n);
+    names_of("net/src", "", g_net_own, &g_net_own_n);
+    PROVEN_TEST_ASSERT(g_net_public_n >= 16 && g_net_own_n >= 12, "the network library's headers are found", "Run from the repository root.");
+
+    PROVEN_TEST_SECTION("the network library's includes", "net/src, net/include/proven and net/platform.", "Named above.");
     {
-        int stray = 0;
-        char path[128];
-        for (size_t i = 0; i < COUNT(NET_SOURCES); ++i) {
-            snprintf(path, sizeof path, "src/proven/%s.c", NET_SOURCES[i]);
-            stray += stray_includes(path);
-        }
-        for (size_t i = 0; i < COUNT(NET_OWN); ++i) {
-            if (strncmp(NET_OWN[i], "../../platform/", 15) == 0) snprintf(path, sizeof path, "platform/%s", NET_OWN[i] + 15);
-            else snprintf(path, sizeof path, "src/proven/%s", NET_OWN[i]);
-            stray += stray_includes(path);
-        }
+        int files = 0;
+        int stray = stray_in("net/src", net_may_include, "network code includes the base library's", &files) +
+                    stray_in("net/include/proven", net_may_include, "network code includes the base library's", &files) +
+                    stray_in("net/platform", net_may_include, "network code includes the base library's", &files);
+        PROVEN_TEST_ASSERT(files >= 50, "the network files are read", "");
         PROVEN_TEST_ASSERT(stray == 0, "no network file includes a header private to the base library", "");
     }
 
-    PROVEN_TEST_SECTION("every source is classified", "A source in build_sources.inc named like a network unit is in this test's list.",
-        "A new network source: add it to NET_SOURCES here, and keep it on public headers.");
+    PROVEN_TEST_SECTION("the base library's includes", "src/proven, include/proven, include and platform.", "Named above.");
     {
-        char *list = slurp("build_sources.inc");
-        PROVEN_TEST_ASSERT(list != NULL, "build_sources.inc is read", "Run from the repository root.");
-        static const char *const prefixes[] = { "tls", "quic", "h2", "h3", "qpack", "hpack", "http", "ws", "sse", "net", "loop" };
-        int unlisted = 0, seen = 0;
-        for (char *p = strstr(list, "\"src/proven/"); p; p = strstr(p + 1, "\"src/proven/")) {
-            const char *name = p + 12;
-            const char *dot = strstr(name, ".c\"");
-            if (!dot) continue;
-            const size_t len = (size_t)(dot - name);
-            bool netlike = false;
-            for (size_t k = 0; k < COUNT(prefixes); ++k) {
-                const size_t pl = strlen(prefixes[k]);
-                if (len >= pl && memcmp(name, prefixes[k], pl) == 0 && (len == pl || name[pl] == '_' || (name[pl] >= '0' && name[pl] <= '9'))) netlike = true;
-            }
-            if (!netlike) continue;
-            ++seen;
-            if (!in_list(name, len, NET_SOURCES, COUNT(NET_SOURCES))) {
-                char shown[96];
-                snprintf(shown, sizeof shown, "%.*s", (int)len, name);
-                PROVEN_TEST_INFO("{}.c looks like a network source and is not in NET_SOURCES", PROVEN_ARG(shown));
-                ++unlisted;
-            }
-        }
-        free(list);
-        PROVEN_TEST_ASSERT(seen >= (int)COUNT(NET_SOURCES) - 2 && unlisted == 0, "every network-named source is checked", "");
+        int files = 0;
+        int stray = stray_in("src/proven", base_may_include, "the base library includes the network library's", &files) +
+                    stray_in("include/proven", base_may_include, "the base library includes the network library's", &files) +
+                    stray_in("include", base_may_include, "the base library includes the network library's", &files) +
+                    stray_in("platform", base_may_include, "the base library includes the network library's", &files);
+        PROVEN_TEST_ASSERT(files >= 100, "the base files are read", "");
+        PROVEN_TEST_ASSERT(stray == 0, "no base file includes anything of the network library", "");
     }
 
-    PROVEN_TEST_PASS("The network code stands on the base library's public headers alone.");
+    PROVEN_TEST_SECTION("no network source left in the base", "A file in src/proven named like a network unit means a move was missed.",
+        "Move it under net/src, or rename it if it is not network code.");
+    {
+        static const char *const prefixes[] = { "tls", "quic", "h2", "h3", "qpack", "hpack", "http", "ws", "sse", "net", "loop" };
+        DIR *d = opendir("src/proven");
+        int left = 0;
+        struct dirent *e;
+        while (d && (e = readdir(d)) != NULL) {
+            const char *n = e->d_name;
+            if (!ends_with(n, ".c")) continue;
+            const size_t len = strlen(n) - 2;
+            for (size_t k = 0; k < sizeof prefixes / sizeof prefixes[0]; ++k) {
+                const size_t pl = strlen(prefixes[k]);
+                if (len >= pl && memcmp(n, prefixes[k], pl) == 0 && (len == pl || n[pl] == '_')) {
+                    PROVEN_TEST_INFO("src/proven/{} looks like network code", PROVEN_ARG(n));
+                    ++left;
+                    break;
+                }
+            }
+        }
+        if (d) closedir(d);
+        PROVEN_TEST_ASSERT(left == 0, "every network source is under net/", "");
+    }
+
+    PROVEN_TEST_PASS("proven_net stands on the base library's public headers alone, and the base on nothing of it.");
     return 0;
 }

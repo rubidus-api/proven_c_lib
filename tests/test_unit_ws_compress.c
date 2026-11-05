@@ -366,7 +366,7 @@ static unsigned raw_verdict(proven_u16 port, const char *path, const char *exten
 int main(void) {
     PROVEN_TEST_SUITE("ws: compressed messages in the drivers",
         "permessage-deflate over loopback: negotiated or not, messages of every size both ways through both servers, the limit on what a message may inflate to, pause in the middle of one, and what a peer that breaks the rules is told.",
-        "Inspect proven_ws_conn_send_part, wc_message_inflate and the handshakes in src/proven/ws_conn.c; ws_rx_run, ws_rx_hold, proven_ws_stream_send_piece and proven_ws_stream_resume in src/proven/ws_event.c.");
+        "Inspect proven_ws_conn_send_part, wc_message_inflate and the handshakes in net/src/ws_conn.c; ws_rx_run, ws_rx_hold, proven_ws_stream_send_piece and proven_ws_stream_resume in net/src/ws_event.c.");
 
     g_heap = proven_heap_allocator();
     {
@@ -657,7 +657,7 @@ int main(void) {
         }
     }
 
-    PROVEN_TEST_SECTION("pieces and pauses", "The event-driven server hands a compressed message on in pieces, and stops between them when told.", "Check ws_rx_run, ws_rx_hold and proven_ws_stream_resume in src/proven/ws_event.c.");
+    PROVEN_TEST_SECTION("pieces and pauses", "The event-driven server hands a compressed message on in pieces, and stops between them when told.", "Check ws_rx_run, ws_rx_hold and proven_ws_stream_resume in net/src/ws_event.c.");
     {
         proven_ws_conn_t *c = dial(eat.port, "/count", true);
         static const proven_size_t sizes[] = { 300000, 16384, 100, 0, 1000000 };

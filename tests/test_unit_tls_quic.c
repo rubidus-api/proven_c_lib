@@ -1,7 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_quic.h"
-#include "../src/proven/proven_internal_tls.h"
+#include "../net/src/proven_internal_quic.h"
+#include "../net/src/proven_internal_tls.h"
 #include "test_unit_tls_pki.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -434,7 +434,7 @@ static void early_data_section(void) {
 int main(void) {
     PROVEN_TEST_SUITE("TLS 1.3 in QUIC mode",
         "Two engines in QUIC mode, handshake bytes per encryption level: the same secrets on both sides at every level, the transport parameters, QUIC's rules, and every change refused.",
-        "Inspect the QUIC-mode parts of src/proven/tls13.c (quic_emit, keys_read, keys_write, proven_tls_quic_*) and src/proven/quic_crypto.c for the parameters.");
+        "Inspect the QUIC-mode parts of net/src/tls13.c (quic_emit, keys_read, keys_write, proven_tls_quic_*) and net/src/quic_crypto.c for the parameters.");
 
     g_alloc = proven_heap_allocator();
     PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "");
@@ -594,7 +594,7 @@ int main(void) {
         proven_tls_config_destroy(no_alpn); proven_tls_config_destroy(old); proven_tls_config_destroy(s_no_alpn);
     }
 
-    PROVEN_TEST_SECTION("held to one protocol", "A connection held to one protocol of its configuration's list, as HTTP/3 holds its own to h3 (RFC 9114 section 3.1): a client offers it alone, a server agrees it alone, and either ends the handshake with no_application_protocol when the other has not got it. One the list lacks is refused.", "Check alpn_allowed and quic_attach in src/proven/tls13.c.");
+    PROVEN_TEST_SECTION("held to one protocol", "A connection held to one protocol of its configuration's list, as HTTP/3 holds its own to h3 (RFC 9114 section 3.1): a client offers it alone, a server agrees it alone, and either ends the handshake with no_application_protocol when the other has not got it. One the list lacks is refused.", "Check alpn_allowed and quic_attach in net/src/tls13.c.");
     {
         static const proven_u8str_view_t L23[2] = { { (const proven_byte_t *)"h2", 2 }, { (const proven_byte_t *)"h3", 2 } }, L2[1] = { { (const proven_byte_t *)"h2", 2 } };
         const proven_u8str_view_t only = sv("h3");

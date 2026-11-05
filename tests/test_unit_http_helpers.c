@@ -35,7 +35,7 @@ static bool buf_is(const proven_byte_t *buf, proven_size_t n, const char *want) 
 int main(void) {
     PROVEN_TEST_SUITE("http helpers: references, forms, ranges, multipart, authentication",
         "Each is pure text handling with a published answer to compare against.",
-        "Inspect proven_url_resolve in src/proven/url.c, the range and multipart writers in src/proven/http.c, and src/proven/http_auth.c.");
+        "Inspect proven_url_resolve in src/proven/url.c, the range and multipart writers in net/src/http.c, and net/src/http_auth.c.");
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("resolving a reference: the examples of RFC 3986 section 5.4",
@@ -287,7 +287,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("Digest: SHA-512-256, userhash, username*, auth-int (v0.105.0)",
         "RFC 7616 section 3.9.2's inputs - SHA-512-256 with userhash - answered with SHA-512/256 as FIPS 180-4 defines it; the RFC's printed values are of SHA-512 cut to 256 bits (their own initial values), not of SHA-512/256, and are not what this library, curl or Python's hashlib compute. The values here are Python's hashlib.",
-        "Check auth_hash_init's SHA-512/256 initial values and auth_digest in src/proven/http_auth.c.");
+        "Check auth_hash_init's SHA-512/256 initial values and auth_digest in net/src/http_auth.c.");
     // ---------------------------------------------------------------
     {
         proven_http_digest_challenge_t ch;

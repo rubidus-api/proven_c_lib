@@ -1,6 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_quic.h"
+#include "../net/src/proven_internal_quic.h"
 #include "../src/proven/proven_internal_crypto.h"
 #include "test_unit_quic_vectors.h"
 #include "test_unit_quic_vectors_v2.h"
@@ -110,7 +110,7 @@ static proven_u64 tp_decode_hex(const char *hex, bool from_server, proven_quic_t
 int main(void) {
     PROVEN_TEST_SUITE("QUIC packet protection and transport parameters",
         "RFC 9000 appendix A and section 18, RFC 9001 appendix A, byte for byte; then every change refused.",
-        "Inspect src/proven/quic_crypto.c. The section names the RFC part.");
+        "Inspect net/src/quic_crypto.c. The section names the RFC part.");
 
     PROVEN_TEST_SECTION("variable-length integers (RFC 9000 section 16, appendix A.1)", "The four examples, every boundary, and short input.", "");
     {

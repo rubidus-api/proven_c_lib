@@ -95,7 +95,7 @@ static const char *const valid_responses[] = {
 int main(void) {
     PROVEN_TEST_SUITE("http: the head parser",
         "Requests and responses parse into views of the bytes given; malformed and ambiguous heads are refused; a prefix is always NEED_MORE.",
-        "Inspect http_fields and the two parse functions in src/proven/http.c.");
+        "Inspect http_fields and the two parse functions in net/src/http.c.");
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a request head, field by field",

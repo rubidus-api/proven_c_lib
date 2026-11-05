@@ -691,7 +691,7 @@ static void linger_case(void) {
     }
     PROVEN_TEST_ASSERT(answered != 0 && memcmp(text, "HTTP/1.1 200", 12) == 0 && strstr(text, "\r\nConnection: close\r\n") != NULL, "it is answered, and told the connection ends", "");
     PROVEN_TEST_ASSERT(closed != 0 && closed - answered >= 1200000000, "the server lets go of it after linger_ms, not after the second it would be by default",
-        "Inspect ev_linger and ev_arm in src/proven/http_event.c.");
+        "Inspect ev_linger and ev_arm in net/src/http_event.c.");
     (void)proven_net_close(&sock);
     proven_http_event_server_destroy(server);
     proven_loop_destroy(loop);
@@ -748,7 +748,7 @@ static void nested_case(void) {
     until = proven_net_deadline_in(5000);
     while (!g_nest_second[0] && proven_time_monotonic_now() < until) (void)proven_loop_poll(loop, proven_net_deadline_in(5));
     PROVEN_TEST_ASSERT(strcmp(g_nest_before, "A") == 0 && strcmp(g_nest_after, "A") == 0,
-        "A's head is A's for all of its handler, after answering B too", "Check ev_defer and proven_http_event_request_end_ in src/proven/http_event.c.");
+        "A's head is A's for all of its handler, after answering B too", "Check ev_defer and proven_http_event_request_end_ in net/src/http_event.c.");
     PROVEN_TEST_ASSERT(strcmp(g_nest_second, "B-second") == 0 && g_nest_second_depth == 0,
         "B's second request is read, and handled, once A's handler has returned", "");
     char text[512] = { 0 };
@@ -938,7 +938,7 @@ static void drain_case(void) {
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP server",
         "Requests answered at once and later, bodies in pieces with backpressure both ways, pipelining, refusals, time limits and disappearing clients - plain and over TLS - and what an idle connection holds.",
-        "Inspect src/proven/http_event.c: ev_process for input, ev_flush/ev_progress for output and what follows it, ev_finish for the end of an exchange.");
+        "Inspect net/src/http_event.c: ev_process for input, ev_flush/ev_progress for output and what follows it, ev_finish for the end of an exchange.");
 
     g_heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "");
@@ -994,7 +994,7 @@ int main(void) {
     linger_case();
     PROVEN_TEST_SECTION("a handler that answers another connection", "A held request answered from another's handler, with its connection's next request already here.", "Check ev_defer and proven_http_event_request_end_: no head is read while an on_request runs.");
     nested_case();
-    PROVEN_TEST_SECTION("the graceful end", "proven_http_event_server_shutdown with an idle connection, a request in progress, half a request head and a request nobody answers; with nothing open; finishing in time; and stop_listening alone.", "Check proven_http_event_server_shutdown, ev_drain_check and ev_drain_deadline in src/proven/http_event.c, and the `close` decision for HTTP/1.1 responses.");
+    PROVEN_TEST_SECTION("the graceful end", "proven_http_event_server_shutdown with an idle connection, a request in progress, half a request head and a request nobody answers; with nothing open; finishing in time; and stop_listening alone.", "Check proven_http_event_server_shutdown, ev_drain_check and ev_drain_deadline in net/src/http_event.c, and the `close` decision for HTTP/1.1 responses.");
     drain_case();
 
     proven_tls_config_destroy(g_client_tls); proven_tls_config_destroy(g_server_tls); proven_cert_store_destroy(anchors);

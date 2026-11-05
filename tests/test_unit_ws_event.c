@@ -736,7 +736,7 @@ static void memory_case(void) {
 int main(void) {
     PROVEN_TEST_SUITE("WebSocket on the event-driven server",
         "Messages both ways in pieces, sends refused and resumed, pings, closes from either side, clients that break the protocol or vanish - plain and over TLS - and what an idle connection holds.",
-        "Inspect src/proven/ws_event.c: ws_on_input for what arrives, ws_on_timer for liveness, ws_end and ws_finish for the end. The connection underneath is src/proven/http_event.c in its EV_RAW state.");
+        "Inspect net/src/ws_event.c: ws_on_input for what arrives, ws_on_timer for liveness, ws_end and ws_finish for the end. The connection underneath is net/src/http_event.c in its EV_RAW state.");
 
     g_heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "");

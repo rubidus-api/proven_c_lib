@@ -1,8 +1,8 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "test_unit_tls_pki.h"
-#include "../src/proven/proven_internal_http_event_client.h"
-#include "../src/proven/proven_internal_http_event.h"
+#include "../net/src/proven_internal_http_event_client.h"
+#include "../net/src/proven_internal_http_event.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -901,7 +901,7 @@ static void delay_and_limit(void) {
         PROVEN_TEST_ASSERT(proven_http_event_client_retry_delay_(client, 0) == GROW_MS && proven_http_event_client_retry_delay_(client, 1) == 2 * GROW_MS && proven_http_event_client_retry_delay_(client, 2) == GROW_MS * 3 + GROW_MS / 3 &&
                            proven_http_event_client_retry_delay_(client, 3) == GROW_MS * 3 + GROW_MS / 3 && proven_http_event_client_retry_delay_(client, 40) == GROW_MS * 3 + GROW_MS / 3 &&
                            proven_http_event_client_retry_delay_(client, 0xffffffffu) == GROW_MS * 3 + GROW_MS / 3,
-            "the first wait, twice it, and then the bound, however many tries there have been", "Check proven_http_event_client_retry_delay_ in src/proven/http_event_client.c.");
+            "the first wait, twice it, and then the bound, however many tries there have been", "Check proven_http_event_client_retry_delay_ in net/src/http_event_client.c.");
         g_port = at.port;
         memset(many, 0, sizeof many); many[0].plain = many[1].plain = true;
         PROVEN_TEST_ASSERT(start(client, &many[0], "GET", "/p", mv(""), 0) == PROVEN_OK && h2peer_accept(&l, &a, 8, 400) && h2peer_has(&a, 1) && h2peer_refuse(&a, 0), "a request, refused", "");
@@ -1072,7 +1072,7 @@ static void mixed_limit(void) {
     spin_until(&one.done, 5000);
     spin_until(&two.done, 5000);
     PROVEN_TEST_ASSERT(call_ok(&one) && two.done && two.why == PROVEN_OK && two.protocol == 2, "and its connection, kept with nothing on it, is closed for the HTTP/2 request, which is answered",
-        "Check cl_conn_keep and cl_conn_close in src/proven/http_event_client.c: with no HTTP/1.1 request waiting they ask proven_http_event_client_h2_waiting_ and call proven_http_event_client_h2_freed_.");
+        "Check cl_conn_keep and cl_conn_close in net/src/http_event_client.c: with no HTTP/1.1 request waiting they ask proven_http_event_client_h2_waiting_ and call proven_http_event_client_h2_freed_.");
     (void)proven_net_close(&x);
     g_https = false; g_port = at.port;
     proven_http_event_client_destroy(client);
@@ -1224,7 +1224,7 @@ static void numbers_run_out(void) {
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP client, speaking HTTP/2",
         "Requests that share one connection kept by the client, in the clear and over TLS: bodies both ways, compression, pause, abort, the server's limit on streams, time, and an origin that turns out to speak only HTTP/1.1.",
-        "Inspect src/proven/http_event_client_h2.c: proven_http_event_client_h2_start_ for the connection a request joins, r_submit for what is sent, c_response and c_body for what arrives, c_fall_back for an HTTP/1.1 origin, c_pump for the round.");
+        "Inspect net/src/http_event_client_h2.c: proven_http_event_client_h2_start_ for the connection a request joins, r_submit for what is sent, c_response and c_body for what arrives, c_fall_back for an HTTP/1.1 origin, c_pump for the round.");
 
     g_heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "");
@@ -1567,7 +1567,7 @@ int main(void) {
 
     PROVEN_TEST_SECTION("time, for a body and for output", "A response body that stops coming, and a server that stops reading.", "Check r_expect for a request's own deadline (body_timeout_ms once the head has come) and c_arm for the connection's (write_timeout_ms while output is queued).");
     time_limits();
-    PROVEN_TEST_SECTION("turns", "Two request bodies at once to a server whose windows hold them both: what bounds them is the client's own output bound.", "Check `turn` and `sharing` in c_pump and c_room in src/proven/http_event_client_h2.c: the round goes on behind the request that had the last turn, and a turn moves C2_TURN_BYTES.");
+    PROVEN_TEST_SECTION("turns", "Two request bodies at once to a server whose windows hold them both: what bounds them is the client's own output bound.", "Check `turn` and `sharing` in c_pump and c_room in net/src/http_event_client_h2.c: the round goes on behind the request that had the last turn, and a turn moves C2_TURN_BYTES.");
     turns();
     PROVEN_TEST_SECTION("retry_delay_ms and max_connections", "The wait before a try, and a limit on the connections of the whole client.", "Check r_delay, c_on_delay and r_undelay in http_event_client_h2.c; proven_http_event_client_room_ in c_open, proven_http_event_client_h2_close_idle_.");
     delay_and_limit();

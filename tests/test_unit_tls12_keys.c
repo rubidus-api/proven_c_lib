@@ -1,6 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_tls.h"
+#include "../net/src/proven_internal_tls.h"
 #include "test_unit_tls12_vectors.h"
 #include <stdio.h>
 #include <string.h>
@@ -46,7 +46,7 @@ static proven_hmac_hash_t hash_of(const char *name, proven_size_t n) { return n 
 int main(void) {
     PROVEN_TEST_SUITE("TLS 1.2 key derivation and records",
         "The PRF against the test vectors published on the IETF TLS list, then the extended master secret, Finished, the key block and AEAD records against values computed outside the library.",
-        "Inspect src/proven/tls12_keys.c. The failing line's letter names the function; tests/test_unit_tls12_vectors.h carries the values, written by a private generator.");
+        "Inspect net/src/tls12_keys.c. The failing line's letter names the function; tests/test_unit_tls12_vectors.h carries the values, written by a private generator.");
 
     static proven_byte_t a[4096], b[4096], c[4096], out[4096], record[4096];
     static proven_tls_keys_t write_keys[2], read_keys[2];        /* [0] the client's direction, [1] the server's */

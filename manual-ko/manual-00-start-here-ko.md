@@ -332,6 +332,19 @@ gcc -std=c2x -Iinclude -Iplatform your_program.c src/proven/*.c platform/*.c -o 
 전부 거기에 있고 다른 어디에도 없으며, 그래서 나머지 라이브러리를 운영체제가 전혀 없는 대상용으로
 컴파일할 수 있습니다.
 
+이것이 기본 라이브러리 **proven_base**입니다. 네트워크 라이브러리 **proven_net** - 소켓, 이벤트 루프,
+TLS, HTTP/1.1·2·3, WebSocket, server-sent events(9~12장, 14장, 15장, 17장) - 는 `net/` 아래에 있고,
+프로그램이 네트워크를 쓸 때 함께 컴파일합니다(v0.111.0부터).
+
+```text
+gcc -std=c2x -Iinclude -Iplatform -Inet/include your_program.c src/proven/*.c platform/*.c net/src/*.c net/platform/*.c -o your_program
+```
+
+헤더 이름은 같고(`#include "proven/http.h"`), `net/include`가 경로에 있으면 `proven.h`가 그것들도
+포함합니다. proven_net은 proven_base의 공개 헤더 말고는 아무것도 쓰지 않으므로, 네트워크를 쓰지 않는
+프로그램은 `net/`을 통째로 뺍니다. 기존 프로젝트를 이 분리에 맞춰 옮길 때는
+`docs/migrating-to-proven-net.md`를 따릅니다.
+
 이 저장소는 빌드 시스템 대신 C 프로그램으로 스스로를 빌드합니다:
 
 ```text

@@ -9,7 +9,7 @@
  *
  * This is the ONLY place a socket header is included. Every call answers with a reason from
  * proven_sys_net_result_t - never errno, never a Winsock code - and the portable layer
- * (src/proven/net.c) turns reasons into proven_err_t in one function.
+ * (net/src/net.c) turns reasons into proven_err_t in one function.
  *
  * What the unit takes care of, so that nothing above it has to know:
  *

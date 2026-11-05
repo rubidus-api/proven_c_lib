@@ -466,6 +466,15 @@ cc -std=c23 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L \
   -pthread -o app
 ```
 
+네트워크 라이브러리(소켓, TLS, HTTP, WebSocket)를 쓰는 프로그램은 그 디렉터리를 더합니다.
+
+```sh
+cc -std=c23 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L \
+  -Iinclude -Iplatform -Inet/include \
+  app.c src/proven/*.c platform/proven_sys_*.c net/src/*.c net/platform/*.c \
+  -pthread -o app
+```
+
 ## 숨겨진 ownership이 없는 컨테이너
 
 `proven_array_t`는 커질 수 있는 연속 배열입니다. 성장과 해제에 사용할 allocator trait를 저장하므로, 호출부가 memory ownership을 분명히 드러내게 됩니다.
@@ -645,6 +654,20 @@ portable implementation 파일은 `src/proven/`에 있습니다. OS와 C runtime
 
 Cross compilation은 header, source visibility, ABI assumption, target별 compile-time branch가 함께 맞는지 확인하는 용도입니다. 대상 머신에서의 runtime test를 대신하지는 않습니다.
 
+## 두 라이브러리: proven_base와 proven_net
+
+이 트리에는 버전 하나 아래 라이브러리 두 개가 있습니다. **proven_base** - `include/proven/`,
+`src/proven/`, `platform/` - 는 네트워크와 말하지 않는 프로그램에 필요한 모든 것입니다: 메모리,
+문자열, 컨테이너, 텍스트, 숫자, 파일, 시간, job, 압축, 해시, 인증서, 서명, 암호. **proven_net** -
+`net/include/proven/`, `net/src/`, `net/platform/` - 은 소켓, 이벤트 루프, TLS, HTTP/1.1, HTTP/2, QUIC
+위의 HTTP/3, WebSocket, server-sent events입니다. proven_net은 proven_base의 공개 헤더 말고는 아무것도
+쓰지 않으며(테스트가 그 선을 지킵니다), proven_base는 proven_net을 전혀 모릅니다.
+
+네트워크를 쓰지 않는 프로그램은 예전처럼 proven_base만 가져와 컴파일합니다. 쓰는 프로그램은
+`-Inet/include`와 `net/` 소스를 더합니다. 헤더 이름은 바뀌지 않았고(`#include "proven/http.h"`),
+`net/include`가 경로에 있으면 `proven.h`가 네트워크 헤더도 포함합니다. 기존 프로젝트를 이 분리에 맞춰
+옮기는 단계별 절차는 [docs/migrating-to-proven-net.md](docs/migrating-to-proven-net.md)에 있습니다.
+
 ## 주요 모듈
 
 - Foundation: `types`, `error`, `memory`, `align`, `version`, `config`.
@@ -654,9 +677,10 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
-- 해싱과 인코딩: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC, HKDF, PBKDF2), `deflate` (DEFLATE 압축과 풀기, 그대로 또는 zlib·gzip으로, 스트리밍, 풀 때 나올 양은 호출자가 한정), `zstd` (Zstandard 압축과 풀기 - 쓰는 쪽은 레벨 열아홉 개, 레벨 6은 gzip 6 크기에 세 배 속도, 19는 libzstd 크기의 약 1 % 안; 장거리 일치; 원시 사전과 형식 있는 사전(`zstd --train`이 쓰는 것)을 양쪽에서 -, 출력과 윈도는 호출자가 한정), `brotli` (Brotli 풀기, 출력과 윈도는 호출자가 한정; `PROVEN_NO_BROTLI`는 이것과 122,784바이트 사전을 뺍니다), `cert` (X.509 인증서: 읽기, 이름, 신뢰 앵커, 체인 검증, 코드 서명·타임스탬프 용도), `sign` (PEM, DER, 부품에서 만드는 개인 키 - RSA, P-256, P-384 -, 다이제스트에 대한 결정적 서명, PSS, 검증), `der` (엄격한 DER 읽개와 쓰개), `aes` (암호화된 키 파일을 위한 AES-CBC와 PKCS #7), `hash_legacy` (SHA-1과 MD5, 그것을 못 박은 형식용), `encode` (hex, Base64, Base64URL), `utf` (엄격한 UTF-8 <-> UTF-16).
+- 해싱과 인코딩: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC, HKDF, PBKDF2), `deflate` (DEFLATE 압축과 풀기, 그대로 또는 zlib·gzip으로, 스트리밍, 풀 때 나올 양은 호출자가 한정), `zstd` (Zstandard 압축과 풀기 - 쓰는 쪽은 레벨 열아홉 개, 레벨 6은 gzip 6 크기에 세 배 속도, 19는 libzstd 크기의 약 1 % 안; 장거리 일치; 원시 사전과 형식 있는 사전(`zstd --train`이 쓰는 것)을 양쪽에서 -, 출력과 윈도는 호출자가 한정), `brotli` (Brotli 풀기, 출력과 윈도는 호출자가 한정; `PROVEN_NO_BROTLI`는 이것과 122,784바이트 사전을 뺍니다), `cert` (X.509 인증서: 읽기, 이름, 신뢰 앵커, 체인 검증, 코드 서명·타임스탬프 용도), `sign` (PEM, DER, 부품에서 만드는 개인 키 - RSA, P-256, P-384 -, 다이제스트에 대한 결정적 서명, PSS, 검증), `der` (엄격한 DER 읽개와 쓰개), `aes` (암호화된 키 파일을 위한 AES-CBC와 PKCS #7), `aead` (AES-GCM과 ChaCha20-Poly1305), `kex` (X25519, P-256·P-384 위의 ECDH, 고정 그룹 위의 유한체 Diffie-Hellman), `hash_legacy` (SHA-1과 MD5, 그것을 못 박은 형식용), `encode` (hex, Base64, Base64URL), `utf` (엄격한 UTF-8 <-> UTF-16).
 - 난수: `random` (xoshiro256** 재현 가능, ChaCha20 암호학적, 무편향 범위/셔플 헬퍼, 교체 가능한 엔트로피 소스 — 기본은 OS CSPRNG, 베어메탈은 보드의 하드웨어 TRNG).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
+- 네트워크 라이브러리 proven_net(`net/`)은 이어지는 네트워킹 항목입니다 - `net`, `http`와 그 곁의 코덱(`http_auth`, `http_cookie`, `sse`, `hpack`, `h2`), HTTP 서버와 클라이언트, 이벤트 모듈, WebSocket, `tls`. 이 목록의 나머지는 `url`을 포함해 모두 proven_base입니다.
 - 네트워킹: `net` (기다리는 모든 호출에 기한이 있는 TCP·UDP·유닉스 도메인 소켓, 여러 소켓의 준비 상태, 전송 인터페이스). Hosted 전용이며 `PROVEN_NO_NET`으로 뺄 수 있습니다.
 - URL과 HTTP: `url` (파싱, 퍼센트 코딩, 루트를 벗어날 수 없게 해소한 요청 경로), `http` (HTTP/1.1 메시지 코덱 — 헤드 파서, 본문 프레이밍과 디코더, 쓰기 함수, 날짜 — 요청 밀반입의 재료가 되는 모호함을 거절합니다). 코덱 둘레에는 `http_auth` (Basic과 Digest), `http_cookie` (호스트 전용 쿠키 보관함), `sse` (서버 전송 이벤트)가 있고, 범위·multipart 본문·참조 해소도 있습니다. 순수 텍스트 처리이고 freestanding에서 쓸 수 있습니다. HTTP/2는 소켓 없는 프로토콜까지입니다: `hpack` (RFC 7541 헤더 압축. 테이블은 RFC 본문에서 생성했습니다)와 `h2` (프레임, 종류별 규칙, 디코딩된 헤더 목록이 요청이 되려면 통과해야 하는 검사, 그리고 연결 - 스트림, 양방향 흐름 제어, 상대가 쥐게 할 수 있는 모든 것의 한계 - 바이트를 받고 바이트를 돌려줍니다). 이벤트 구동 서버는 요청받으면 같은 포트에서, 같은 처리기로, HTTP/1.1과 나란히 HTTP/2로 말하고, HTTP/3으로도 말합니다(RFC 9114. 리스너마다 곁의 UDP 소켓에서 이 라이브러리의 QUIC으로, 클라이언트는 `Alt-Svc`로 찾습니다. TLS 설정에 `early_data`가 있으면 반복해도 안전한 요청은 0-RTT로). 아래의 서버와 클라이언트 가운데 이벤트 구동 서버와 이벤트 구동 클라이언트는 요청하면 HTTP/2와 HTTP/3으로 말하고(클라이언트의 HTTP/3은 그것을 청한 요청에만, `http3_fallback`이면 TCP로 대체), 블로킹 서버는 HTTP/1.1로, 블로킹 클라이언트는 HTTP/1.1로 또는 청한 요청은 HTTP/3으로 말합니다.
 - 소켓 위의 HTTP: `http_server` (핸들러 하나와, 모든 기다림에 한도가 있는 루프. 스레드 하나 또는 job system에서 돕니다)와 `http_client` (리다이렉트, 인증 요구, 쿠키, HTTP·SOCKS5 프록시, 연결 재사용). hosted 전용입니다. TLS 설정을 주면(각각 필드 하나) 둘 다 HTTPS를 말하고, 주지 않으면 서버는 평문 HTTP이고 클라이언트는 `https` URL을 평문으로 가져오는 대신 거절합니다. 압축된 응답(`Content-Encoding: gzip`, 그리고 함께 청한 클라이언트에는 `zstd`나 `br`)은 요청하기 전에는 꺼져 있습니다: 핸들러는 응답마다 요청하고, 클라이언트는 설정 하나로 요청하며, 클라이언트가 풀게 되는 양은 호출자가 한도를 정합니다. 아래의 이벤트 구동 서버와 클라이언트도 같습니다.
@@ -673,7 +697,7 @@ Cross compilation은 header, source visibility, ABI assumption, target별 compil
 
 플랫폼 경계가 **어디서 끝나는지**도 적어 둘 가치가 있습니다. 적어 두지 않으면 부딪혀 봐야 알게 되기 때문입니다. PAL이 덮는 범위는 메모리, 파일시스템, 시간, 메모리 매핑, 환경 변수, 콘솔 I/O, 스레드, 소켓입니다. 프로세스 제어(`fork` / `exec` / 파이프)와 터미널 제어(raw 모드, job control)는 **덮지 않습니다**. 프로그램의 본질이 그 중 하나라면 POSIX나 Win32를 직접 부르게 되고, "플랫폼 `#ifdef` 없음"이라는 성질은 거기까지 확장되지 않습니다. 소켓 계층은 단계적으로 짓고 있는 네트워킹 스택의 첫 걸음입니다. 소켓(`epoll`/`kqueue`/IOCP selector 포함), HTTP/1.1 메시지 코덱, HTTP 클라이언트와 서버, WebSocket, 인증서, TLS(1.3과 줄인 1.2), DEFLATE 코덱이 들어왔고, 그 뒤로 HTTP 콘텐츠 코딩·`permessage-deflate`·HTTP/2·HTTP/3도 들어왔습니다.
 
-`hash`와 `hmac` 모듈은 암호학적·비암호학적 해시(FNV·SipHash·CRC-32와 함께 SHA-2 계열)와 HMAC·HKDF·PBKDF2를, `cert`는 X.509 인증서 읽기와 검증을, `sign`은 RSA·ECDSA 키로 서명과 검증을, `tls`는 TLS 1.3과 1.2를, `random`은 OS 강도 바이트를 실제로 제공합니다. 다만 `proven`은 범용 암호 라이브러리가 아닙니다. TLS 밑의 다른 기본 연산은 내부용이고, 공개된 키 교환, 메모리를 많이 쓰는 비밀번호 해싱, 인증 암호화(AEAD)는 없으니 찾아 헤매지 않으셔도 됩니다. `net`으로 만든 연결은 `tls`로 감싸지 않으면 암호화되지 않습니다. 경로 조작, 인자 파싱, 로깅 프레임워크도 없으며 이것들은 계획에도 없습니다.
+`hash`와 `hmac` 모듈은 암호학적·비암호학적 해시(FNV·SipHash·CRC-32와 함께 SHA-2 계열)와 HMAC·HKDF·PBKDF2를, `cert`는 X.509 인증서 읽기와 검증을, `sign`은 RSA·ECDSA 키로 서명과 검증을, `tls`는 TLS 1.3과 1.2를, `random`은 OS 강도 바이트를 실제로 제공합니다. v0.111.0부터는 `aead`와 `kex`가 TLS를 이루는 인증 암호화와 키 교환을 제공합니다. 다만 `proven`은 범용 암호 라이브러리가 아닙니다. 메모리를 많이 쓰는 비밀번호 해싱도, 오래 쓸 키의 생성도 없고, 외부 감사를 받은 것도 없습니다. `net`으로 만든 연결은 `tls`로 감싸지 않으면 암호화되지 않습니다. 경로 조작, 인자 파싱, 로깅 프레임워크도 없으며 이것들은 계획에도 없습니다.
 
 ## 실제로 프로젝트에 적용했을 때의 효용성
 

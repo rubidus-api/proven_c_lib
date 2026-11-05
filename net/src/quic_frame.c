@@ -1,5 +1,5 @@
 #include "proven_internal_quic.h"
-#include "../../platform/proven_sys_net_mem.h"
+#include "../platform/proven_sys_net_mem.h"
 
 #ifndef PROVEN_NO_HTTP3
 

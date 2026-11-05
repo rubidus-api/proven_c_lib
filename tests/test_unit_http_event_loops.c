@@ -159,7 +159,7 @@ static void quiet(void *ctx, proven_http_stream_t *s, const proven_http_request_
 int main(void) {
     PROVEN_TEST_SUITE("several loops behind one port",
         "Connections accepted on one thread and dealt to event-driven servers on three others with proven_http_event_server_adopt, plain and over TLS; and what adopt refuses.",
-        "Inspect proven_http_event_server_adopt and ev_take in src/proven/http_event.c. Run under ThreadSanitizer: the point of the design is that no connection is touched by two threads.");
+        "Inspect proven_http_event_server_adopt and ev_take in net/src/http_event.c. Run under ThreadSanitizer: the point of the design is that no connection is touched by two threads.");
 
     g_heap = proven_heap_allocator();
     PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "");
