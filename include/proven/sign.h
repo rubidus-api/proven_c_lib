@@ -42,13 +42,16 @@ typedef enum {
     PROVEN_SIGN_RSA_PKCS1 = 1,  /**< RSASSA-PKCS1-v1_5: the DigestInfo of the hash, then the digest. */
     PROVEN_SIGN_RSA_PSS,        /**< RSASSA-PSS, MGF1 with the same hash, a salt as long as the digest. */
     PROVEN_SIGN_ECDSA,          /**< ECDSA, DER: SEQUENCE { INTEGER r, INTEGER s } (X.509, CMS). */
-    PROVEN_SIGN_ECDSA_RAW       /**< ECDSA, r then s, each the curve's size (JOSE, raw). */
+    PROVEN_SIGN_ECDSA_RAW,      /**< ECDSA, r then s, each the curve's size (JOSE, raw). */
+    PROVEN_SIGN_RSA_PKCS1_RAW   /**< v1.5 padding over the bytes given, no DigestInfo: TLS 1.0 and 1.1's MD5 | SHA-1 (36 bytes). For nothing else (v0.111.0). */
 } proven_sign_scheme_t;
 
 /** @brief Bytes that hold any signature made here: a 4096-bit RSA one. */
 #define PROVEN_SIGN_MAX_SIZE ((proven_size_t)512)
 
-/** @brief A private key. Made by proven_pkey_parse or proven_pkey_from_*; one thread at a time. */
+/** @brief A private key. Made by proven_pkey_parse or proven_pkey_from_*. Signing may run on
+ *         several threads at once (since v0.111.0; an RSA key's blinding pair moves under a
+ *         flag held for one squaring); destroying it may not. */
 typedef struct proven_pkey proven_pkey_t;
 
 /** @brief The parts of an RSA private key, each an unsigned big-endian integer (leading zeros
@@ -121,7 +124,9 @@ proven_err_t proven_pkey_spki(const proven_pkey_t *key, proven_mem_mut_t out, pr
  * @brief Sign a digest.
  *
  * @param hash the hash that made `digest`; `digest.size` must be its size. SHA-1 is accepted
- *        for RSA v1.5 and ECDSA, for formats that still ask for it.
+ *        for RSA v1.5 and ECDSA, for formats that still ask for it. Ignored by
+ *        PROVEN_SIGN_RSA_PKCS1_RAW, whose `digest` is the bytes to pad (at most the modulus's
+ *        size less 11).
  * @param rng only PROVEN_SIGN_RSA_PSS uses it (the salt); otherwise it may be zero.
  * @param out at least the signature's size: RSA the modulus's bytes, ECDSA raw twice the
  *        curve's, ECDSA DER up to twice the curve's plus 9. PROVEN_SIGN_MAX_SIZE always does.
@@ -137,7 +142,8 @@ proven_err_t proven_pkey_sign(proven_pkey_t *key, proven_sign_scheme_t scheme, p
 /**
  * @brief Verify an RSA signature (v1.5, or PSS with a salt of `salt_len` bytes) under (n, e).
  * @param salt_len PSS only: the salt's length, usually the digest's (RFC 4055 default 20 is
- *        SHA-1's); ignored for v1.5.
+ *        SHA-1's); ignored for v1.5. PROVEN_SIGN_RSA_PKCS1_RAW ignores `hash` too and takes
+ *        `digest` as the padded bytes themselves.
  * @return PROVEN_OK; PROVEN_ERR_UNTRUSTED when it does not verify; PROVEN_ERR_UNSUPPORTED for a
  *         modulus outside 2048..8192 bits; PROVEN_ERR_INVALID_ARG.
  */
@@ -163,5 +169,54 @@ proven_err_t proven_verify_ecdsa(proven_pkey_kind_t curve, proven_mem_view_t poi
 [[nodiscard]]
 proven_err_t proven_verify_spki(proven_mem_view_t spki, proven_sign_scheme_t scheme, proven_hmac_hash_t hash,
                                 proven_mem_view_t digest, proven_mem_view_t sig);
+
+// -------------------------------------------------------------
+// Keys held by the caller (since v0.111.0)
+// -------------------------------------------------------------
+
+/**
+ * The functions below take the private value itself, for a caller that already keeps it - a
+ * protocol engine with a key in its own configuration, or a key made for one exchange. The same
+ * SECRET rules hold: wipe the value with proven_mem_wipe when done.
+ */
+
+/** @brief The Ed25519 public key (RFC 8032) of a 32-byte seed. */
+void proven_ed25519_public(proven_byte_t pub[32], const proven_byte_t seed[32]);
+
+/** @brief An Ed25519 signature of `msg` (the message itself, not a digest). `pub` is the seed's
+ *         public key, as proven_ed25519_public made it. Deterministic. */
+void proven_ed25519_sign(proven_byte_t sig[64], const proven_byte_t seed[32], const proven_byte_t pub[32], proven_mem_view_t msg);
+
+/**
+ * @brief Verify an Ed25519 signature. S not below the group's order, and a public key or R that
+ *        is not the canonical encoding of a point, are refused.
+ * @return PROVEN_OK; PROVEN_ERR_UNTRUSTED; PROVEN_ERR_INVALID_ARG.
+ */
+[[nodiscard]]
+proven_err_t proven_ed25519_verify(const proven_byte_t pub[32], proven_mem_view_t msg, const proven_byte_t sig[64]);
+
+/**
+ * @brief ECDSA with a private scalar (big-endian, the curve's size), r then s into `rs`
+ *        (twice the curve's size). The nonce is RFC 6979's, made with HMAC over `nonce_hash`;
+ *        `digest` may be of any length (TLS 1.0 signs a SHA-1 digest with SHA-256's nonce).
+ * @return PROVEN_ERR_INVALID_FORMAT for a scalar of zero or not below the order;
+ *         PROVEN_ERR_INVALID_ARG.
+ */
+[[nodiscard]]
+proven_err_t proven_ecdsa_sign_scalar(proven_pkey_kind_t curve, proven_hmac_hash_t nonce_hash, proven_mem_view_t scalar,
+                                      proven_mem_view_t digest, proven_byte_t *rs);
+
+/**
+ * @brief RSAES-PKCS1-v1_5 encryption (RFC 8017 section 7.2) of `msg` under (n, e): TLS 1.2's RSA
+ *        key exchange. Not for new designs.
+ * @param random as many unpredictable bytes as the modulus has, from a cryptographic generator;
+ *        the padding is made from them.
+ * @param out the modulus's size or more; `*len` receives it.
+ * @return PROVEN_ERR_INVALID_ARG for a message longer than the modulus less 11, a short `random`
+ *         or a modulus outside 2048..8192 bits; PROVEN_ERR_OUT_OF_BOUNDS.
+ */
+[[nodiscard]]
+proven_err_t proven_rsa_encrypt_pkcs1(proven_mem_view_t n, proven_mem_view_t e, proven_mem_view_t msg, proven_mem_view_t random,
+                                      proven_mem_mut_t out, proven_size_t *len);
 
 #endif /* PROVEN_SIGN_H */

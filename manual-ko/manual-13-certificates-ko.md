@@ -32,6 +32,7 @@
 9. [개인 키와 서명](#9-개인-키와-서명)
 10. [DER 읽기와 쓰기](#10-der-읽기와-쓰기)
 11. [암호화된 키 파일: PBKDF2와 AES-CBC](#11-암호화된-키-파일-pbkdf2와-aes-cbc)
+12. [암호화와 키 교환: aead.h와 kex.h](#12-암호화와-키-교환-aeadh와-kexh)
 
 ## 1. 인증서가 무엇인지, 한 쪽으로
 
@@ -488,7 +489,9 @@ if (proven_pkey_sign(key, PROVEN_SIGN_RSA_PKCS1, PROVEN_HMAC_SHA256, (proven_mem
 proven_pkey_destroy(key);                               /* wipes it */
 ```
 
-키는 한 번에 한 스레드가 쓴다(블라인딩이 서명마다 다음으로 넘어간다). 부품은 키 안을 가리키는
+v0.111.0부터 키 하나로 여러 스레드가 동시에 서명할 수 있다. 블라인딩 쌍은 제곱 한 번 동안만 잡는 플래그
+아래에서 다음으로 넘어가고, 서명 자체는 그 밖에서 만든다. 다른 스레드가 서명하는 동안 키를 없애는
+것은 여전히 경쟁(race)이다. 부품은 키 안을 가리키는
 뷰로 다시 읽을 수 있고 - `proven_pkey_rsa_components`, `proven_pkey_ec_scalar`,
 `proven_pkey_ec_point` - `proven_pkey_spki`는 인증서 요청이나 CMS 구조에 필요한
 SubjectPublicKeyInfo로 공개 절반을 쓴다.
@@ -499,6 +502,39 @@ SubjectPublicKeyInfo로 공개 절반을 쓴다.
 없는 말단은 거부하고 - 없으면 무엇이든 되는 서버와 다르다 - keyUsage가 있으면 digitalSignature를
 허용해야 한다. `proven_cert_t`에는 `subject_key_id`, `authority_key_id`, `ext_key_usage_critical`,
 `ext_key_usage_count`도 있다.
+
+**호출자가 쥔 키**(v0.111.0). 프로토콜 엔진은 키를 자기 설정 안에 두거나 교환 한 번을 위해 만든다.
+그런 쪽을 위해 `sign.h`는 비밀 값 그 자체로도 서명한다: `proven_ed25519_public`,
+`proven_ed25519_sign`, `proven_ed25519_verify`(RFC 8032. 다이제스트가 아니라 메시지 자체에 서명한다)와
+`proven_ecdsa_sign_scalar`(r 다음 s. 다이제스트 길이는 무엇이든 된다 - TLS 1.0은 SHA-1 다이제스트에
+서명한다). `PROVEN_SIGN_RSA_PKCS1_RAW`는 DigestInfo 없이 주어진 바이트에 v1.5 패딩을 하는 방식으로 -
+TLS 1.0과 1.1의 MD5와 SHA-1을 합친 36바이트 - `proven_pkey_sign`과 `proven_verify_rsa`에 쓴다.
+`proven_rsa_encrypt_pkcs1`은 TLS 1.2의 RSA 키 교환이다. 둘 다 오래된 상대를 위한 것이지 새 설계를
+위한 것이 아니다.
+
+```c
+/* Ed25519 from a 32-byte seed: the message itself is signed. */
+proven_byte_t seed[32] = { 9 }, pub[32], sig[64];
+const proven_mem_view_t msg = { (const proven_byte_t *)"a message", 9 };
+proven_ed25519_public(pub, seed);
+proven_ed25519_sign(sig, seed, pub, msg);
+if (proven_ed25519_verify(pub, msg, sig) != PROVEN_OK) return;
+
+/* ECDSA from a P-256 scalar: r then s, 64 bytes, deterministic (RFC 6979). */
+proven_byte_t scalar[32] = { 1 }, digest[32], rs[64];
+proven_sha256(msg, digest);
+if (proven_ecdsa_sign_scalar(PROVEN_PKEY_P256, PROVEN_HMAC_SHA256, (proven_mem_view_t){ scalar, 32 },
+                             (proven_mem_view_t){ digest, 32 }, rs) != PROVEN_OK) return;
+
+/* TLS 1.2's RSA key exchange: 48 secret bytes under the server's (n, e), padded from random
+ * bytes as many as the modulus has. n and e stand for a certificate's rsa_n and rsa_e. */
+proven_mem_view_t n = { 0 }, e = { 0 };
+proven_byte_t secret[48] = { 3 }, random[PROVEN_SIGN_MAX_SIZE], sealed[PROVEN_SIGN_MAX_SIZE];
+proven_size_t sealed_len = 0;
+if (!proven_random_bytes(random, sizeof random)) return;
+if (proven_rsa_encrypt_pkcs1(n, e, (proven_mem_view_t){ secret, 48 }, (proven_mem_view_t){ random, sizeof random },
+                             (proven_mem_mut_t){ sealed, sizeof sealed }, &sealed_len) != PROVEN_OK) return;
+```
 
 ## 10. DER 읽기와 쓰기
 
@@ -516,7 +552,19 @@ SubjectPublicKeyInfo로 공개 절반을 쓴다.
 암호에서 키를 얻고, AES-CBC(`proven_aes_cbc_decrypt`, `aes.h`, 128·192·256비트 키)로 복호하고,
 PKCS #7 패딩을 떼어(`proven_pkcs7_unpad`) 연다. 솔트, 반복 수, 암호, IV는 `der.h`로 파일에서 읽는다.
 복호한 바이트가 `proven_pkey_parse`가 읽는 PKCS #8이다. CBC는 인증되지 않는다. 다른 도구가 쓴 것을
-읽기 위해 있는 것이지 새 설계를 위한 것이 아니다.
+읽기 위해 있는 것이지 새 설계를 위한 것이 아니다. 키 하나로 여러 번 부를 때 - 레거시 TLS 스위트의
+레코드처럼 - `proven_aes_cbc_key_init`이 키를 한 번 준비하고 `proven_aes_cbc_encrypt_with`와
+`proven_aes_cbc_decrypt_with`가 그것을 쓴다(v0.111.0).
+
+```c
+/* One key, many records: prepared once, each call whole blocks, the IV carried along. */
+proven_byte_t key[16] = { 7 }, iv[16] = { 0 }, record[32] = { 0 };
+proven_aes_cbc_key_t k;
+if (proven_aes_cbc_key_init(&k, (proven_mem_view_t){ key, 16 }) != PROVEN_OK) return;
+if (proven_aes_cbc_encrypt_with(&k, iv, (proven_mem_mut_t){ record, 32 }) != PROVEN_OK) return;
+if (proven_aes_cbc_decrypt_with(&k, iv, (proven_mem_mut_t){ record, 32 }) != PROVEN_OK) return;
+proven_mem_wipe((proven_mem_mut_t){ (proven_byte_t *)&k, sizeof k });
+```
 
 테스트 스위트가 컴파일하고 실행한다:
 
@@ -657,3 +705,76 @@ int main(void) {
     return EXAMPLE_OK();
 }
 ```
+
+## 12. 암호화와 키 교환: aead.h와 kex.h
+
+v0.111.0부터 TLS와 QUIC 엔진이 쓰는 암호와 키 교환이 공개되었다. 네트워크 라이브러리가 이
+라이브러리에서 헤더 말고는 아무것도 필요로 하지 않게 하려는 것이고, 프로그램이 자기 프로토콜이나 파일
+형식에 쓸 수 있게 하려는 것이기도 하다.
+
+`aead.h`는 인증 암호화(authenticated encryption)다: AES-GCM(16바이트나 32바이트 키,
+`proven_aes_gcm_t`에 한 번 준비한다)과 ChaCha20-Poly1305(32바이트 키). 봉인(seal)은 암호문과
+16바이트 태그를 쓴다. 열기(open)는 태그부터 확인하고, 바뀐 것이 있으면 `PROVEN_ERR_UNTRUSTED`를
+준다 - 인증하지 못한 텍스트는 절대 남기지 않고 0으로 채운다. **논스(nonce)는 한 키 아래에서 두 번
+쓰지 않는다:** 그러면 GCM은 인증 키를 내주고, 둘 다 두 평문의 XOR을 내준다. 프로토콜이 논스를
+순번으로 만드는 까닭이다. `proven_chacha20`(날 스트림)과 `proven_aes_encrypt_block`(블록 하나)은
+QUIC의 헤더 보호를 이루는 조각이며, 아무것도 인증하지 않는다.
+
+`kex.h`는 키 교환이다: X25519(RFC 7748), P-256과 P-384 위의 ECDH, 그리고 고정된 여섯 그룹 위의
+유한체 Diffie-Hellman - ffdhe2048, 3072, 4096(RFC 7919)과 같은 크기의 MODP 그룹(RFC 3526). 상대가
+이름 댄 소수는 살펴보지 않고 그 여섯과 비교만 한다: `proven_dh_known`. 각 쪽의 비밀 값은 암호학적
+생성기에서 얻은 무작위 바이트이고 교환 한 번에만 쓴다. 나오는 것은 공유 비밀이지 키가 아니다 -
+`proven_hkdf_extract`에 넣는다. 누구나 알 수 있는 비밀을 낳는 상대 값은 거부한다: 모두 0인 X25519
+결과(`PROVEN_ERR_UNTRUSTED`), 곡선 위에 없는 점, 2부터 p - 2 밖의 DH 값(`PROVEN_ERR_INVALID_FORMAT`).
+
+```c
+/* Sealing and opening a record: a key, and a nonce never used twice under it. */
+proven_byte_t key[32] = { 1 }, nonce[PROVEN_AEAD_NONCE_SIZE] = { 0 }, tag[PROVEN_AEAD_TAG_SIZE];
+proven_byte_t text[5] = { 'h', 'e', 'l', 'l', 'o' };
+const proven_mem_view_t header = { (const proven_byte_t *)"hdr", 3 };
+proven_aes_gcm_t gcm;
+if (proven_aes_gcm_init(&gcm, (proven_mem_view_t){ key, 32 }) != PROVEN_OK) return;
+proven_aes_gcm_seal(&gcm, nonce, header, (proven_mem_view_t){ text, 5 }, text, tag);          /* in place */
+if (proven_aes_gcm_open(&gcm, nonce, header, (proven_mem_view_t){ text, 5 }, tag, text) != PROVEN_OK) return;
+proven_mem_wipe((proven_mem_mut_t){ (proven_byte_t *)&gcm, sizeof gcm });
+proven_chacha20_poly1305_seal(key, nonce, header, (proven_mem_view_t){ text, 5 }, text, tag);
+if (proven_chacha20_poly1305_open(key, nonce, header, (proven_mem_view_t){ text, 5 }, tag, text) != PROVEN_OK) return;
+
+/* X25519: each side's 32 random bytes; the public values cross; both reach one secret. */
+proven_byte_t a[32] = { 2 }, b[32] = { 3 }, pa[32], pb[32], sa[32], sb[32];
+proven_x25519_public(pa, a);
+proven_x25519_public(pb, b);
+if (proven_x25519(sa, a, pb) != PROVEN_OK || proven_x25519(sb, b, pa) != PROVEN_OK) return;   /* sa == sb */
+
+/* The same over P-256: points of 65 bytes, a shared X of 32. */
+proven_byte_t ka[32] = { 4 }, kb[32] = { 5 }, qa[65], qb[65], za[32];
+if (proven_ec_public(PROVEN_PKEY_P256, (proven_mem_view_t){ ka, 32 }, (proven_mem_mut_t){ qa, 65 }) != PROVEN_OK ||
+    proven_ec_public(PROVEN_PKEY_P256, (proven_mem_view_t){ kb, 32 }, (proven_mem_mut_t){ qb, 65 }) != PROVEN_OK ||
+    proven_ecdh(PROVEN_PKEY_P256, (proven_mem_view_t){ ka, 32 }, (proven_mem_view_t){ qb, 65 }, (proven_mem_mut_t){ za, 32 }) != PROVEN_OK) return;
+
+/* Finite-field DH over ffdhe2048, for a peer that names that group. */
+const proven_mem_view_t p = proven_dh_ffdhe2048();
+static const proven_byte_t g = 2;
+proven_byte_t x[PROVEN_DH_EXP_MAX_BYTES] = { 6 }, gx[PROVEN_DH_MAX_BYTES], z[PROVEN_DH_MAX_BYTES];
+proven_size_t z_len = 0;
+if (!proven_dh_known(p, (proven_mem_view_t){ &g, 1 })) return;
+const proven_mem_view_t xv = { x, proven_dh_exponent_len(p.size) };
+if (proven_dh_public(p, xv, gx) != PROVEN_OK || proven_dh_shared(p, xv, (proven_mem_view_t){ gx, p.size }, z, &z_len) != PROVEN_OK) return;
+```
+
+The raw pieces, for constructions that authenticate elsewhere:
+
+```c
+void proven_chacha20(const proven_byte_t key[32], proven_u32 counter, const proven_byte_t nonce[12],
+                     const proven_byte_t *in, proven_byte_t *out, proven_size_t len);
+proven_err_t proven_aes_init(proven_aes_t *ctx, proven_mem_view_t key);                 /* 16 or 32 bytes */
+void proven_aes_encrypt_block(const proven_aes_t *ctx, const proven_byte_t in[16], proven_byte_t out[16]);
+bool proven_aes_hw_available(void);
+void proven_sha256_compress(proven_u32 state[8], const proven_byte_t block[64]);        /* hash.h */
+void proven_sha512_compress(proven_u64 state[8], const proven_byte_t block[128]);
+void proven_sha1_compress(proven_u32 state[5], const proven_byte_t block[64]);          /* hash_legacy.h */
+void proven_md5_compress(proven_u32 state[4], const proven_byte_t block[64]);
+```
+
+해시의 압축 함수(블록 하나, 패딩도 길이도 없음)는 비밀의 길이가 무엇이든 같은 시간이 걸려야 하는
+MAC을 만드는 재료다 - 레거시 TLS 레코드가 "Lucky Thirteen"을 막는 방법이다. 그 자체로는 해시가 아니다.

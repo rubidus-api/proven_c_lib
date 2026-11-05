@@ -31,6 +31,8 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 
 | Alias macro | Expands to |
 |---|---|
+| `XCV_AEAD_NONCE_SIZE` | `PROVEN_AEAD_NONCE_SIZE` |
+| `XCV_AEAD_TAG_SIZE` | `PROVEN_AEAD_TAG_SIZE` |
 | `XCV_ARG` | `PROVEN_ARG` |
 | `XCV_ARG_CSTR` | `proven_arg_cstr` |
 | `XCV_ARG_DATETIME` | `proven_arg_datetime` |
@@ -131,6 +133,8 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `XCV_DER_SET` | `PROVEN_DER_SET` |
 | `XCV_DER_UTC_TIME` | `PROVEN_DER_UTC_TIME` |
 | `XCV_DER_UTF8_STRING` | `PROVEN_DER_UTF8_STRING` |
+| `XCV_DH_EXP_MAX_BYTES` | `PROVEN_DH_EXP_MAX_BYTES` |
+| `XCV_DH_MAX_BYTES` | `PROVEN_DH_MAX_BYTES` |
 | `XCV_ERR_AGAIN` | `PROVEN_ERR_AGAIN` |
 | `XCV_ERR_BUSY` | `PROVEN_ERR_BUSY` |
 | `XCV_ERR_CANCELLED` | `PROVEN_ERR_CANCELLED` |
@@ -361,6 +365,7 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `XCV_SIGN_ECDSA_RAW` | `PROVEN_SIGN_ECDSA_RAW` |
 | `XCV_SIGN_MAX_SIZE` | `PROVEN_SIGN_MAX_SIZE` |
 | `XCV_SIGN_RSA_PKCS1` | `PROVEN_SIGN_RSA_PKCS1` |
+| `XCV_SIGN_RSA_PKCS1_RAW` | `PROVEN_SIGN_RSA_PKCS1_RAW` |
 | `XCV_SIGN_RSA_PSS` | `PROVEN_SIGN_RSA_PSS` |
 | `XCV_TLS_CLIENT_AUTH_NONE` | `PROVEN_TLS_CLIENT_AUTH_NONE` |
 | `XCV_TLS_CLIENT_AUTH_REQUEST` | `PROVEN_TLS_CLIENT_AUTH_REQUEST` |
@@ -417,7 +422,19 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `XCV_ZSTD_FLUSH_NONE` | `PROVEN_ZSTD_FLUSH_NONE` |
 | `XCV_ZSTD_WINDOW_DEFAULT` | `PROVEN_ZSTD_WINDOW_DEFAULT` |
 | `xcv_aes_cbc_decrypt` | `proven_aes_cbc_decrypt` |
+| `xcv_aes_cbc_decrypt_with` | `proven_aes_cbc_decrypt_with` |
 | `xcv_aes_cbc_encrypt` | `proven_aes_cbc_encrypt` |
+| `xcv_aes_cbc_encrypt_with` | `proven_aes_cbc_encrypt_with` |
+| `xcv_aes_cbc_key_init` | `proven_aes_cbc_key_init` |
+| `xcv_aes_cbc_key_t` | `proven_aes_cbc_key_t` |
+| `xcv_aes_encrypt_block` | `proven_aes_encrypt_block` |
+| `xcv_aes_gcm_init` | `proven_aes_gcm_init` |
+| `xcv_aes_gcm_open` | `proven_aes_gcm_open` |
+| `xcv_aes_gcm_seal` | `proven_aes_gcm_seal` |
+| `xcv_aes_gcm_t` | `proven_aes_gcm_t` |
+| `xcv_aes_hw_available` | `proven_aes_hw_available` |
+| `xcv_aes_init` | `proven_aes_init` |
+| `xcv_aes_t` | `proven_aes_t` |
 | `xcv_alloc_check_entry_t` | `proven_alloc_check_entry_t` |
 | `xcv_alloc_check_live` | `proven_alloc_check_live` |
 | `xcv_alloc_check_owns` | `proven_alloc_check_owns` |
@@ -517,6 +534,9 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_cert_verify` | `proven_cert_verify` |
 | `xcv_cert_verify_options_t` | `proven_cert_verify_options_t` |
 | `xcv_cert_verify_result_t` | `proven_cert_verify_result_t` |
+| `xcv_chacha20` | `proven_chacha20` |
+| `xcv_chacha20_poly1305_open` | `proven_chacha20_poly1305_open` |
+| `xcv_chacha20_poly1305_seal` | `proven_chacha20_poly1305_seal` |
 | `xcv_chacha_rng` | `proven_chacha_rng` |
 | `xcv_chacha_rng_fill` | `proven_chacha_rng_fill` |
 | `xcv_chacha_rng_next` | `proven_chacha_rng_next` |
@@ -556,6 +576,17 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_der_writer_finish` | `proven_der_writer_finish` |
 | `xcv_der_writer_init` | `proven_der_writer_init` |
 | `xcv_der_writer_t` | `proven_der_writer_t` |
+| `xcv_dh_exponent_len` | `proven_dh_exponent_len` |
+| `xcv_dh_ffdhe2048` | `proven_dh_ffdhe2048` |
+| `xcv_dh_known` | `proven_dh_known` |
+| `xcv_dh_public` | `proven_dh_public` |
+| `xcv_dh_shared` | `proven_dh_shared` |
+| `xcv_ec_public` | `proven_ec_public` |
+| `xcv_ecdh` | `proven_ecdh` |
+| `xcv_ecdsa_sign_scalar` | `proven_ecdsa_sign_scalar` |
+| `xcv_ed25519_public` | `proven_ed25519_public` |
+| `xcv_ed25519_sign` | `proven_ed25519_sign` |
+| `xcv_ed25519_verify` | `proven_ed25519_verify` |
 | `xcv_entropy_fn` | `proven_entropy_fn` |
 | `xcv_env_get` | `proven_env_get` |
 | `xcv_eprint` | `proven_eprint` |
@@ -969,6 +1000,7 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_map_set_with_scratch` | `proven_map_set_with_scratch` |
 | `xcv_map_t` | `proven_map_t` |
 | `xcv_md5` | `proven_md5` |
+| `xcv_md5_compress` | `proven_md5_compress` |
 | `xcv_md5_final` | `proven_md5_final` |
 | `xcv_md5_init` | `proven_md5_init` |
 | `xcv_md5_to_hex` | `proven_md5_to_hex` |
@@ -1133,6 +1165,7 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_rng_shuffle` | `proven_rng_shuffle` |
 | `xcv_rng_u64` | `proven_rng_u64` |
 | `xcv_rsa_components_t` | `proven_rsa_components_t` |
+| `xcv_rsa_encrypt_pkcs1` | `proven_rsa_encrypt_pkcs1` |
 | `xcv_scan_arg_f64` | `proven_scan_arg_f64` |
 | `xcv_scan_arg_i32` | `proven_scan_arg_i32` |
 | `xcv_scan_arg_i64` | `proven_scan_arg_i64` |
@@ -1170,11 +1203,13 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_scan_u64_hex` | `proven_scan_u64_hex` |
 | `xcv_set_panic_handler` | `proven_set_panic_handler` |
 | `xcv_sha1` | `proven_sha1` |
+| `xcv_sha1_compress` | `proven_sha1_compress` |
 | `xcv_sha1_final` | `proven_sha1_final` |
 | `xcv_sha1_init` | `proven_sha1_init` |
 | `xcv_sha1_to_hex` | `proven_sha1_to_hex` |
 | `xcv_sha1_update` | `proven_sha1_update` |
 | `xcv_sha256` | `proven_sha256` |
+| `xcv_sha256_compress` | `proven_sha256_compress` |
 | `xcv_sha256_final` | `proven_sha256_final` |
 | `xcv_sha256_init` | `proven_sha256_init` |
 | `xcv_sha256_t` | `proven_sha256_t` |
@@ -1186,6 +1221,7 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_sha384_t` | `proven_sha384_t` |
 | `xcv_sha384_update` | `proven_sha384_update` |
 | `xcv_sha512` | `proven_sha512` |
+| `xcv_sha512_compress` | `proven_sha512_compress` |
 | `xcv_sha512_final` | `proven_sha512_final` |
 | `xcv_sha512_init` | `proven_sha512_init` |
 | `xcv_sha512_t` | `proven_sha512_t` |
@@ -1459,6 +1495,8 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_ws_stream_set_user` | `proven_ws_stream_set_user` |
 | `xcv_ws_stream_t` | `proven_ws_stream_t` |
 | `xcv_ws_stream_user` | `proven_ws_stream_user` |
+| `xcv_x25519` | `proven_x25519` |
+| `xcv_x25519_public` | `proven_x25519_public` |
 | `xcv_xoshiro256ss_next` | `proven_xoshiro256ss_next` |
 | `xcv_xoshiro256ss_rng` | `proven_xoshiro256ss_rng` |
 | `xcv_xoshiro256ss_seed` | `proven_xoshiro256ss_seed` |

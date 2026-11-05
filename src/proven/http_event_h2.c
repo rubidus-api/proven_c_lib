@@ -1,5 +1,5 @@
 #include "proven/http_event.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 #include "proven_internal_http_event.h"
 #include "proven_internal_http_coding.h"
 
@@ -118,12 +118,12 @@ static bool h2_append(proven_allocator_t a, proven_byte_t **buf, proven_size_t *
         while (want < *len + n) { if (want > (proven_size_t)-1 / 2) return false; want *= 2; }
         proven_byte_t *q = h2_alloc(a, want);
         if (!q) return false;
-        proven_sys_mem_copy(q, *buf, *len);
+        proven_net_mem_copy(q, *buf, *len);
         if (*buf) a.free_fn(a.ctx, *buf);
         *buf = q;
         *cap = want;
     }
-    proven_sys_mem_copy(*buf + *len, p, n);
+    proven_net_mem_copy(*buf + *len, p, n);
     *len += n;
     return true;
 }

@@ -1,6 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "../src/proven/proven_internal_quic.h"
+#include "../src/proven/proven_internal_crypto.h"
 #include "test_unit_quic_vectors.h"
 #include "test_unit_quic_vectors_v2.h"
 #include <stdio.h>
@@ -251,8 +252,8 @@ int main(void) {
         unhex(QV_CHACHA_SECRET, secret, 32);
         proven_quic_keys_set(&chk, chacha, secret);
         unhex(QV_CHACHA_KEY, key, 32);
-        PROVEN_TEST_ASSERT(chk.chacha && chk.key_len == 32 && memcmp(chk.aead.rk, key, 32) == 0 && equals_hex(chk.iv, 12, QV_CHACHA_IV) &&
-                           equals_hex(chk.hp.rk, 32, QV_CHACHA_HP), "key, IV and header protection key", "");
+        PROVEN_TEST_ASSERT(chk.chacha && chk.key_len == 32 && memcmp(chk.aead_chacha, key, 32) == 0 && equals_hex(chk.iv, 12, QV_CHACHA_IV) &&
+                           equals_hex(chk.hp_chacha, 32, QV_CHACHA_HP), "key, IV and header protection key", "");
         proven_quic_secret_update(chacha, secret);
         PROVEN_TEST_ASSERT(equals_hex(secret, 32, QV_CHACHA_KU), "\"quic ku\": the next key phase's secret", "");
         proven_byte_t sample[16], mask[5], want[5];
@@ -372,7 +373,7 @@ int main(void) {
         unhex(QV2_CHACHA_SECRET, secret, 32);
         proven_quic_keys_set_v(&chk2, chacha, secret, PROVEN_QUIC_VERSION_2);
         unhex(QV2_CHACHA_KEY, key, 32);
-        PROVEN_TEST_ASSERT(memcmp(chk2.aead.rk, key, 32) == 0 && equals_hex(chk2.iv, 12, QV2_CHACHA_IV) && equals_hex(chk2.hp.rk, 32, QV2_CHACHA_HP), "ChaCha20's key, IV and header protection key", "");
+        PROVEN_TEST_ASSERT(memcmp(chk2.aead_chacha, key, 32) == 0 && equals_hex(chk2.iv, 12, QV2_CHACHA_IV) && equals_hex(chk2.hp_chacha, 32, QV2_CHACHA_HP), "ChaCha20's key, IV and header protection key", "");
         proven_quic_secret_update_v(chacha, secret, PROVEN_QUIC_VERSION_2);
         PROVEN_TEST_ASSERT(equals_hex(secret, 32, QV2_CHACHA_KU), "\"quicv2 ku\": the next key phase's secret", "");
         proven_byte_t plain[1];

@@ -1,5 +1,5 @@
 #include "proven_internal_quic.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 
 #ifndef PROVEN_NO_HTTP3
 
@@ -158,7 +158,7 @@ proven_size_t proven_quic_short_header_put(const proven_quic_cid_t *dcid, bool k
 
 void proven_quic_wr_bytes(proven_quic_wr_t *w, const proven_byte_t *p, proven_size_t n) {
     if (!w->ok || w->cap - w->n < n) { w->ok = false; return; }
-    proven_sys_mem_copy(w->p + w->n, p, n);
+    proven_net_mem_copy(w->p + w->n, p, n);
     w->n += n;
 }
 

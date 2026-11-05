@@ -1,6 +1,6 @@
 #include "proven/h2.h"
 #include "proven/hpack.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 
 /*
  * HTTP/2 (RFC 9113): one connection, either end. Bytes in, events and bytes out; no socket
@@ -125,12 +125,12 @@ static proven_u32 h2c_u32(const proven_byte_t *p) {
 /* Through the PAL's block copy: every byte of a DATA frame this side sends passes here, and a
  * loop of single bytes was what the compiler left of it at -O2. */
 static void h2c_copy(proven_byte_t *dst, const proven_byte_t *src, proven_size_t n) {
-    proven_sys_mem_copy(dst, src, n);
+    proven_net_mem_copy(dst, src, n);
 }
 
 /* Overlapping, towards higher addresses or lower. */
 static void h2c_move(proven_byte_t *dst, const proven_byte_t *src, proven_size_t n) {
-    proven_sys_mem_move(dst, src, n);
+    proven_net_mem_move(dst, src, n);
 }
 
 static void h2c_free(proven_h2_conn_t *c, void *p) {

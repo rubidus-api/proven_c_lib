@@ -35,6 +35,7 @@ something audited.
 9. [Private keys and signatures](#9-private-keys-and-signatures)
 10. [DER, read and written](#10-der-read-and-written)
 11. [Encrypted key files: PBKDF2 and AES-CBC](#11-encrypted-key-files-pbkdf2-and-aes-cbc)
+12. [Encryption and key exchange: aead.h and kex.h](#12-encryption-and-key-exchange-aeadh-and-kexh)
 
 ## 1. What a certificate is, in one page
 
@@ -508,7 +509,9 @@ if (proven_pkey_sign(key, PROVEN_SIGN_RSA_PKCS1, PROVEN_HMAC_SHA256, (proven_mem
 proven_pkey_destroy(key);                               /* wipes it */
 ```
 
-A key is used by one thread at a time (the blinding moves on with each signature). Its parts can
+Since v0.111.0 one key may sign on several threads at once: the blinding pair moves on under a
+flag held for one squaring, and the signature is made outside it. Destroying a key while another
+thread signs with it is still a race. Its parts can
 be read back - `proven_pkey_rsa_components`, `proven_pkey_ec_scalar`, `proven_pkey_ec_point` -
 as views into the key, and `proven_pkey_spki` writes the public half as the
 SubjectPublicKeyInfo a certificate request or a CMS structure needs.
@@ -519,6 +522,39 @@ SubjectPublicKeyInfo a certificate request or a CMS structure needs.
 both, a leaf with no extendedKeyUsage is refused - unlike a server's, where none means any - and
 its keyUsage, if present, must allow digitalSignature. `proven_cert_t` also has the
 `subject_key_id`, the `authority_key_id`, `ext_key_usage_critical` and `ext_key_usage_count`.
+
+**Keys the caller holds** (v0.111.0). A protocol engine keeps its key in its own configuration, or
+makes one for a single exchange; for it, `sign.h` also signs with the private value itself:
+`proven_ed25519_public`, `proven_ed25519_sign` and `proven_ed25519_verify` (RFC 8032; the message
+itself is signed, not a digest), and `proven_ecdsa_sign_scalar` (r then s; the digest may be of
+any length - TLS 1.0 signs a SHA-1 one). `PROVEN_SIGN_RSA_PKCS1_RAW` is v1.5 padding over the bytes
+given, with no DigestInfo - TLS 1.0 and 1.1's MD5 and SHA-1 together, 36 bytes - for
+`proven_pkey_sign` and `proven_verify_rsa`; and `proven_rsa_encrypt_pkcs1` is TLS 1.2's RSA key
+exchange. Both are there for old peers, not for new designs.
+
+```c
+/* Ed25519 from a 32-byte seed: the message itself is signed. */
+proven_byte_t seed[32] = { 9 }, pub[32], sig[64];
+const proven_mem_view_t msg = { (const proven_byte_t *)"a message", 9 };
+proven_ed25519_public(pub, seed);
+proven_ed25519_sign(sig, seed, pub, msg);
+if (proven_ed25519_verify(pub, msg, sig) != PROVEN_OK) return;
+
+/* ECDSA from a P-256 scalar: r then s, 64 bytes, deterministic (RFC 6979). */
+proven_byte_t scalar[32] = { 1 }, digest[32], rs[64];
+proven_sha256(msg, digest);
+if (proven_ecdsa_sign_scalar(PROVEN_PKEY_P256, PROVEN_HMAC_SHA256, (proven_mem_view_t){ scalar, 32 },
+                             (proven_mem_view_t){ digest, 32 }, rs) != PROVEN_OK) return;
+
+/* TLS 1.2's RSA key exchange: 48 secret bytes under the server's (n, e), padded from random
+ * bytes as many as the modulus has. n and e stand for a certificate's rsa_n and rsa_e. */
+proven_mem_view_t n = { 0 }, e = { 0 };
+proven_byte_t secret[48] = { 3 }, random[PROVEN_SIGN_MAX_SIZE], sealed[PROVEN_SIGN_MAX_SIZE];
+proven_size_t sealed_len = 0;
+if (!proven_random_bytes(random, sizeof random)) return;
+if (proven_rsa_encrypt_pkcs1(n, e, (proven_mem_view_t){ secret, 48 }, (proven_mem_view_t){ random, sizeof random },
+                             (proven_mem_mut_t){ sealed, sizeof sealed }, &sealed_len) != PROVEN_OK) return;
+```
 
 ## 10. DER, read and written
 
@@ -539,7 +575,19 @@ the password with PBKDF2 (`proven_pbkdf2`, `hmac.h`), decrypting with AES-CBC
 (`proven_aes_cbc_decrypt`, `aes.h`, 128-, 192- or 256-bit keys) and removing the PKCS #7 padding
 (`proven_pkcs7_unpad`); the salt, the iteration count, the cipher and the IV are read from the
 file with `der.h`. The decrypted bytes are the PKCS #8 that `proven_pkey_parse` reads. CBC is not
-authenticated; it is here to read what other tools wrote, not for new designs.
+authenticated; it is here to read what other tools wrote, not for new designs. For many calls
+under one key - the legacy TLS suites' records - `proven_aes_cbc_key_init` prepares it once and
+`proven_aes_cbc_encrypt_with` and `proven_aes_cbc_decrypt_with` use it (v0.111.0).
+
+```c
+/* One key, many records: prepared once, each call whole blocks, the IV carried along. */
+proven_byte_t key[16] = { 7 }, iv[16] = { 0 }, record[32] = { 0 };
+proven_aes_cbc_key_t k;
+if (proven_aes_cbc_key_init(&k, (proven_mem_view_t){ key, 16 }) != PROVEN_OK) return;
+if (proven_aes_cbc_encrypt_with(&k, iv, (proven_mem_mut_t){ record, 32 }) != PROVEN_OK) return;
+if (proven_aes_cbc_decrypt_with(&k, iv, (proven_mem_mut_t){ record, 32 }) != PROVEN_OK) return;
+proven_mem_wipe((proven_mem_mut_t){ (proven_byte_t *)&k, sizeof k });
+```
 
 Compiled and run by the test suite:
 
@@ -681,3 +729,80 @@ int main(void) {
     return EXAMPLE_OK();
 }
 ```
+
+## 12. Encryption and key exchange: aead.h and kex.h
+
+Since v0.111.0 the ciphers and key exchanges the TLS and QUIC engines use are public, so that the
+network library needs nothing of this one but its headers - and so that a program can use them
+for its own protocol or file format.
+
+`aead.h` is authenticated encryption: AES-GCM (keys of 16 or 32 bytes, prepared once in a
+`proven_aes_gcm_t`) and ChaCha20-Poly1305 (a 32-byte key). Seal writes the ciphertext and a 16-byte
+tag; open checks the tag first and gives `PROVEN_ERR_UNTRUSTED` - leaving zeros, never text it
+could not authenticate - for anything changed. **A nonce is never used twice under one key:**
+doing so gives GCM's authentication key away, and the XOR of two plaintexts with either. Protocols
+build the nonce from a sequence number for this reason. `proven_chacha20` (the raw stream) and
+`proven_aes_encrypt_block` (one block) are the pieces QUIC's header protection is made of; they
+authenticate nothing.
+
+`kex.h` is key exchange: X25519 (RFC 7748), ECDH over P-256 and P-384, and finite-field
+Diffie-Hellman over six fixed groups - ffdhe2048, 3072 and 4096 (RFC 7919) and the MODP groups of
+the same sizes (RFC 3526). A prime a peer names is never examined, only compared with those six:
+`proven_dh_known`. Each side's private value is random bytes from a cryptographic generator, used
+for one exchange; what comes out is a shared secret, not a key - put it through
+`proven_hkdf_extract`. Peer values that would give a secret anyone can name are refused: an X25519
+result of all zeros (`PROVEN_ERR_UNTRUSTED`), a point not on the curve, a DH value outside 2 to
+p - 2 (`PROVEN_ERR_INVALID_FORMAT`).
+
+```c
+/* Sealing and opening a record: a key, and a nonce never used twice under it. */
+proven_byte_t key[32] = { 1 }, nonce[PROVEN_AEAD_NONCE_SIZE] = { 0 }, tag[PROVEN_AEAD_TAG_SIZE];
+proven_byte_t text[5] = { 'h', 'e', 'l', 'l', 'o' };
+const proven_mem_view_t header = { (const proven_byte_t *)"hdr", 3 };
+proven_aes_gcm_t gcm;
+if (proven_aes_gcm_init(&gcm, (proven_mem_view_t){ key, 32 }) != PROVEN_OK) return;
+proven_aes_gcm_seal(&gcm, nonce, header, (proven_mem_view_t){ text, 5 }, text, tag);          /* in place */
+if (proven_aes_gcm_open(&gcm, nonce, header, (proven_mem_view_t){ text, 5 }, tag, text) != PROVEN_OK) return;
+proven_mem_wipe((proven_mem_mut_t){ (proven_byte_t *)&gcm, sizeof gcm });
+proven_chacha20_poly1305_seal(key, nonce, header, (proven_mem_view_t){ text, 5 }, text, tag);
+if (proven_chacha20_poly1305_open(key, nonce, header, (proven_mem_view_t){ text, 5 }, tag, text) != PROVEN_OK) return;
+
+/* X25519: each side's 32 random bytes; the public values cross; both reach one secret. */
+proven_byte_t a[32] = { 2 }, b[32] = { 3 }, pa[32], pb[32], sa[32], sb[32];
+proven_x25519_public(pa, a);
+proven_x25519_public(pb, b);
+if (proven_x25519(sa, a, pb) != PROVEN_OK || proven_x25519(sb, b, pa) != PROVEN_OK) return;   /* sa == sb */
+
+/* The same over P-256: points of 65 bytes, a shared X of 32. */
+proven_byte_t ka[32] = { 4 }, kb[32] = { 5 }, qa[65], qb[65], za[32];
+if (proven_ec_public(PROVEN_PKEY_P256, (proven_mem_view_t){ ka, 32 }, (proven_mem_mut_t){ qa, 65 }) != PROVEN_OK ||
+    proven_ec_public(PROVEN_PKEY_P256, (proven_mem_view_t){ kb, 32 }, (proven_mem_mut_t){ qb, 65 }) != PROVEN_OK ||
+    proven_ecdh(PROVEN_PKEY_P256, (proven_mem_view_t){ ka, 32 }, (proven_mem_view_t){ qb, 65 }, (proven_mem_mut_t){ za, 32 }) != PROVEN_OK) return;
+
+/* Finite-field DH over ffdhe2048, for a peer that names that group. */
+const proven_mem_view_t p = proven_dh_ffdhe2048();
+static const proven_byte_t g = 2;
+proven_byte_t x[PROVEN_DH_EXP_MAX_BYTES] = { 6 }, gx[PROVEN_DH_MAX_BYTES], z[PROVEN_DH_MAX_BYTES];
+proven_size_t z_len = 0;
+if (!proven_dh_known(p, (proven_mem_view_t){ &g, 1 })) return;
+const proven_mem_view_t xv = { x, proven_dh_exponent_len(p.size) };
+if (proven_dh_public(p, xv, gx) != PROVEN_OK || proven_dh_shared(p, xv, (proven_mem_view_t){ gx, p.size }, z, &z_len) != PROVEN_OK) return;
+```
+
+The raw pieces, for constructions that authenticate elsewhere:
+
+```c
+void proven_chacha20(const proven_byte_t key[32], proven_u32 counter, const proven_byte_t nonce[12],
+                     const proven_byte_t *in, proven_byte_t *out, proven_size_t len);
+proven_err_t proven_aes_init(proven_aes_t *ctx, proven_mem_view_t key);                 /* 16 or 32 bytes */
+void proven_aes_encrypt_block(const proven_aes_t *ctx, const proven_byte_t in[16], proven_byte_t out[16]);
+bool proven_aes_hw_available(void);
+void proven_sha256_compress(proven_u32 state[8], const proven_byte_t block[64]);        /* hash.h */
+void proven_sha512_compress(proven_u64 state[8], const proven_byte_t block[128]);
+void proven_sha1_compress(proven_u32 state[5], const proven_byte_t block[64]);          /* hash_legacy.h */
+void proven_md5_compress(proven_u32 state[4], const proven_byte_t block[64]);
+```
+
+The hashes' compression functions (one block, no padding, no length) are what a MAC that must
+take the same time whatever the secret length is gets built from - the legacy TLS records'
+defence against "Lucky Thirteen". They are not hashes by themselves.

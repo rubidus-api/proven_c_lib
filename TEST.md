@@ -18,11 +18,11 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 135 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 136 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
-| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 15 |
+| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 16 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
 | `docs` | Are the claims the documentation makes still true? | 14 |
 | `bench` | How fast is it? (Not a correctness gate.) | 5 |
@@ -348,7 +348,7 @@ Last run, 2026-11-03, Windows 11 test VM (v0.110.0): x86-64 388 PASS, 0 FAIL, 10
 ## Test catalog
 
 
-The hosted full run builds and executes 204 registered tests plus the 194 runnable manual examples - 398 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 217 test files: the 204 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 206 registered tests plus the 194 runnable manual examples - 400 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 219 test files: the 206 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -584,11 +584,28 @@ Sub-checks:
 - EC keys: RFC 6979 A.2.5's key gives the RFC's point and signature byte for byte; the DER form and the raw one verify, a changed bit and a short signature do not; the SubjectPublicKeyInfo is 91 bytes and verifies; ECDSA over a SHA-1 digest; a zero scalar, the order, a short scalar and a non-curve refused. The TLS tests' P-256 key from "PRIVATE KEY" and "EC PRIVATE KEY" is one key and verifies under its certificate. A P-384 key written as SEC1 and PKCS #8 with der.h, read from PEM and both DERs, signs the same bytes each way; a SEC1 key whose public point is not its own, an Ed25519 key, an encrypted key and DER that is no key are refused.
 - RSA keys: the TLS tests' 2048-bit key from PKCS #8 and PKCS #1, and the same made from its parts, give the same v1.5 signature (deterministic, blinded); it verifies here, by the TLS engine's code and under the SubjectPublicKeyInfo, which is byte for byte its certificate's; v1.5 over SHA-1; PSS signatures differ by their salt and verify; a wrong qInv refused when the key is made; d optional; no generator, and a 1024-bit key, refused.
 - Certificate purposes: leaves of one CA with codeSigning (with SKI and AKI read back), serverAuth, none, a critical timeStamping, a non-critical one and a critical one with codeSigning too: only the codeSigning leaf may sign code, only the critical timeStamping-alone leaf is a TSA, no purposes still means any for a server.
-- AES-CBC: NIST SP 800-38A F.2 for 128-, 192- and 256-bit keys, encrypted whole and decrypted in two calls, with the processor's AES and with the bitsliced one; a 20-byte key and a partial block refused. PKCS #7: seven last blocks, valid and not.
+- RSA, v0.111.0: `PROVEN_SIGN_RSA_PKCS1_RAW` signs 36 bytes as they stand, verified by the internal code and by `proven_verify_rsa`, other bytes refused, more than the modulus less 11 refused; `proven_rsa_encrypt_pkcs1` gives the modulus's length, the same bytes for the same random bytes and other ones for others, and refuses a long message, short random bytes and too little room.
+- AES-CBC: NIST SP 800-38A F.2 for 128-, 192- and 256-bit keys, encrypted whole and decrypted in two calls, with the processor's AES and with the bitsliced one; with a key prepared once (`proven_aes_cbc_key_t`), both ways in one and two calls; a 20-byte key and a partial block refused. PKCS #7: seven last blocks, valid and not.
 
 OpenSSL 3.5 agreed outside the suite (by hand, 2026-11-03): its 3072-bit RSA, P-256 and P-384 keys in PKCS #8, PKCS #1 and SEC1 were read; v1.5 signatures over SHA-256 and SHA-1 were identical to its own; each side verified the other's PSS and ECDSA signatures.
 
 Failure tip: inspect `src/proven/der.c`, `src/proven/sign.c`, `src/proven/aes.c`, `proven_pbkdf2` in `src/proven/hmac.c` and the EKU and key-identifier code of `src/proven/cert.c`.
+
+### `tests/test_unit_aead_kex` - aead.h, kex.h: the crypto the network library uses
+
+Intent: run the published AEAD, AES, X25519 and Ed25519 vectors through the public functions with their errors, agree ECDH and finite-field DH keys both ways, check ECDSA from a scalar against a key's own signature, and the hashes' compression functions against the hashes.
+
+Sub-checks:
+
+- ChaCha20-Poly1305: every case of test_unit_crypto's set (RFC 8439 section 2.8.2 first) seals to the expected bytes and tag and opens; a changed tag is `PROVEN_ERR_UNTRUSTED` with zeros left; every ChaCha20 keystream case.
+- AES-GCM: every case with a 16- or 32-byte key seals and opens, a changed tag refused leaving zeros; every one-block case (FIPS 197) through `proven_aes_encrypt_block`; a 24-byte key and null pointers `PROVEN_ERR_INVALID_ARG`.
+- X25519 and Ed25519: every case of the set (RFC 7748 section 6.1 and RFC 8032 section 7.1 first); an all-zero peer `PROVEN_ERR_UNTRUSTED`; a changed signature refused.
+- ECDH on P-256 and P-384: two keys agree both ways; a point off the curve `PROVEN_ERR_INVALID_FORMAT`, too little room `PROVEN_ERR_OUT_OF_BOUNDS`, a zero scalar `PROVEN_ERR_INVALID_FORMAT`.
+- ECDSA from a scalar: the same bytes as `proven_pkey_sign` with the same key (RFC 6979), verified; a 20-byte digest signed and verified.
+- Finite-field DH over ffdhe2048: both sides agree; another prime `PROVEN_ERR_UNSUPPORTED`, peer values 1 and p-1 `PROVEN_ERR_INVALID_FORMAT`.
+- Compression functions: one hand-padded block of "abc" from each initial state gives SHA-256's, SHA-512's, SHA-1's and MD5's own digest.
+
+Failure tip: inspect `src/proven/aead.c`, `src/proven/kex.c`, `src/proven/dh.c` and the v0.111.0 functions at the end of `src/proven/sign.c`; the arithmetic itself is `test_unit_crypto`'s business.
 
 ### `tests/test_unit_fmt_to` - fmt: string precision, argument counts, proven_fmt_to
 
@@ -985,7 +1002,7 @@ Sub-checks:
 - The signature of TLS 1.0 and 1.1: 36 bytes signed without a DigestInfo verify as such, not with a bit changed, not as 35 bytes; a signature with a DigestInfo is not accepted as one without.
 - Key block layout: for five CBC suites in every version they exist in, the two directions have different keys and each side opens what the other seals and not its own; the suite table holds twenty-seven suites, the twenty-one legacy ones last, and no 3DES or RC4 suite.
 
-Failure tip: inspect `src/proven/tls_legacy.c`, `src/proven/tls_dh.c`, the CBC functions of `src/proven/crypto_aes.c`, and the key-exchange functions of `src/proven/crypto_rsa.c`. `tests/test_unit_tls_legacy_vectors.h` is written by a private generator with Python's `hashlib` and `hmac` and another library's AES; the Diffie-Hellman primes in it are read from the library's source, so that part checks the arithmetic and not the constants (those were checked against two other implementations when they were added). Not covered: that opening a CBC record takes the same time whatever its padding - no test here can see that; a private check runs the code under a tool that reports any branch or index that depends on the decrypted bytes.
+Failure tip: inspect `src/proven/tls_legacy.c`, `src/proven/dh.c`, the CBC functions of `src/proven/crypto_aes.c`, and the key-exchange functions of `src/proven/crypto_rsa.c`. `tests/test_unit_tls_legacy_vectors.h` is written by a private generator with Python's `hashlib` and `hmac` and another library's AES; the Diffie-Hellman primes in it are read from the library's source, so that part checks the arithmetic and not the constants (those were checked against two other implementations when they were added). Not covered: that opening a CBC record takes the same time whatever its padding - no test here can see that; a private check runs the code under a tool that reports any branch or index that depends on the decrypted bytes.
 
 ### `tests/test_unit_tls` - the TLS engine
 
@@ -1012,7 +1029,7 @@ Sub-checks:
 - TLS 1.2 at its record limit, for an AES-GCM and a ChaCha20 suite, the count of records put at 2^31 - 2 on both sides by an internal call: two more records are written and read, the next write is `PROVEN_ERR_OVERFLOW` with nothing queued, and the other direction goes on.
 - The renewal of an RSA key's blinding pair, the count of uses put at 65,533 by an internal call: five handshakes across the renewal all complete, and the count begins again at it.
 
-Failure tip: inspect `src/proven/tls13.c`, `src/proven/tls_config.c` and `src/proven/tls_issue.c`. No key is stored in the tree: `tests/test_unit_tls_pki.h` derives keys from a fixed pattern and issues the certificates when the test starts, with the library's internal certificate writer. The RFC's records are in `tests/test_unit_tls_vectors.h`, written by a private generator. Not covered here: the server role against a published trace (RFC 8448's server key is RSA, which this version cannot sign with) - that is checked against OpenSSL and GnuTLS in a private interoperability run, as are both roles for every suite and group in both versions; `record_size_limit` from a peer; a ServerKeyExchange or CertificateVerify actually signed with SHA-1 (no SHA-1 scheme is offered or accepted, and no peer at hand will send one unasked).
+Failure tip: inspect `src/proven/tls13.c`, `src/proven/tls_config.c` and `src/proven/cert_issue.c`. No key is stored in the tree: `tests/test_unit_tls_pki.h` derives keys from a fixed pattern and issues the certificates when the test starts, with the library's internal certificate writer. The RFC's records are in `tests/test_unit_tls_vectors.h`, written by a private generator. Not covered here: the server role against a published trace (RFC 8448's server key is RSA, which this version cannot sign with) - that is checked against OpenSSL and GnuTLS in a private interoperability run, as are both roles for every suite and group in both versions; `record_size_limit` from a peer; a ServerKeyExchange or CertificateVerify actually signed with SHA-1 (no SHA-1 scheme is offered or accepted, and no peer at hand will send one unasked).
 
 ### `tests/test_unit_crypto_rsa` - RSA signing
 
@@ -2933,6 +2950,17 @@ Failure tip: each section names one area - `proven_u8str_reserve` in `u8str.c`, 
 ## Portability tests
 
 Freestanding builds, cross-target builds, source-level platform contracts, and the build driver's own standard probe. Most of these cannot be *run* on the host, so they check what can be checked: that the code compiles, links where configured, and keeps its platform branches intact.
+
+### `tests/test_portability_net_boundary` - the network code on public headers only
+
+Intent: verify that the network code - the TLS and QUIC engines, HTTP/1.1, 2 and 3, WebSocket, SSE, sockets and the loop - includes nothing of the rest of the library but its public headers, so that it can be built as a library of its own (RFC-0043).
+
+Sub-checks:
+
+- Every network source and every header private to the network code: each quoted `#include` is a `proven/` header or one of the network code's own (`proven_internal_tls.h` and the like, `proven_sys_net.h`, `proven_sys_net_mem.h`); `proven_internal_crypto.h`, `proven_internal_der.h` and the base platform headers are named as failures.
+- Every source in `build_sources.inc` named like a network unit (`tls`, `quic`, `h2`, `h3`, `qpack`, `hpack`, `http`, `ws`, `sse`, `net`, `loop`) is on the test's list, so a new one is checked too.
+
+Failure tip: use the public API (`aead.h`, `kex.h`, `sign.h`, `der.h`) instead of the internal header named; if the public API lacks something, publish it first.
 
 ### `tests/test_portability_source_contracts` - source portability contracts
 

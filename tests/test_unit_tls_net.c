@@ -511,7 +511,7 @@ int main(void) {
         "Inspect src/proven/tls_transport.c and the TLS branches of src/proven/http_server.c. The engine itself is test_unit_tls's business.");
 
     g_heap = proven_heap_allocator();
-    PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "Check src/proven/tls_issue.c.");
+    PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "Check src/proven/cert_issue.c.");
     proven_job_sys_t *handlers = NULL;
     PROVEN_TEST_ASSERT(proven_job_system_init(g_heap, 1, 4, &g_loop) == PROVEN_OK && proven_job_system_init(g_heap, 2, 8, &g_workers) == PROVEN_OK &&
                        proven_job_system_init(g_heap, 3, 16, &handlers) == PROVEN_OK, "threads", "");

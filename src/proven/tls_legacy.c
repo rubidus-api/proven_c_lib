@@ -30,9 +30,9 @@ static void lh_start(proven_u32 state[8], proven_tls_lh_t kind) {
 }
 
 static void lh_compress(proven_tls_lh_t kind, proven_u32 state[8], const proven_byte_t block[64]) {
-    if (kind == PROVEN_TLS_LH_MD5) proven_md5_compress_(state, block);
-    else if (kind == PROVEN_TLS_LH_SHA1) proven_sha1_compress_(state, block);
-    else proven_sha256_compress_(state, block);
+    if (kind == PROVEN_TLS_LH_MD5) proven_md5_compress(state, block);
+    else if (kind == PROVEN_TLS_LH_SHA1) proven_sha1_compress(state, block);
+    else proven_sha256_compress(state, block);
 }
 
 /* The digest from the state: MD5 writes its words little-endian, the other two big-endian. */
@@ -248,7 +248,7 @@ static void cbc_mac_ct_384(const proven_tls_cbc_t *cbc, const proven_byte_t h[13
     proven_sha384_init(&start);
     for (int i = 0; i < 8; ++i) { state[i] = start.state[i]; result[i] = 0; }
     for (int i = 0; i < 128; ++i) block[i] = (proven_byte_t)((i < cbc->mac_len ? cbc->mac_key[i] : 0) ^ 0x36);
-    proven_sha512_compress_(state, block);
+    proven_sha512_compress(state, block);
 
     const proven_u32 mlen = 13 + len;                                 /* SECRET */
     const proven_u32 sure = (13 + min_len) / 128;
@@ -265,7 +265,7 @@ static void cbc_mac_ct_384(const proven_tls_cbc_t *cbc, const proven_byte_t h[13
             if (j >= 120) byte |= bits[j - 120] & ct_eq(b, final_block);
             block[j] = (proven_byte_t)byte;
         }
-        proven_sha512_compress_(state, block);
+        proven_sha512_compress(state, block);
         const proven_u64 keep = (proven_u64)0 - (proven_u64)(ct_eq(b, final_block) & 1u);
         for (int i = 0; i < 8; ++i) result[i] |= state[i] & keep;
     }
@@ -305,7 +305,7 @@ void proven_tls_cbc_set_keys(proven_tls_keys_t *client_write, proven_tls_keys_t 
         proven_tls_cbc_t *m = &cbc[side];
         proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)k, .size = sizeof *k });
         proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)m, .size = sizeof *m });
-        k->active = proven_crypto_aes_gcm_init(&k->aes, block + 2 * mac_len + (proven_size_t)side * key_len, key_len);
+        k->active = proven_aes_cbc_key_init(&k->cbc_key, (proven_mem_view_t){ .ptr = block + 2 * mac_len + (proven_size_t)side * key_len, .size = key_len }) == PROVEN_OK;
         m->mac = suite->mac; m->mac_len = (proven_u8)mac_len; m->etm = etm; m->chained = chained; m->version = version;
         for (proven_size_t i = 0; i < mac_len; ++i) m->mac_key[i] = block[(proven_size_t)side * mac_len + i];
         if (chained) for (int i = 0; i < 16; ++i) m->iv[i] = block[2 * mac_len + 2 * key_len + (proven_size_t)side * 16 + (proven_size_t)i];
@@ -330,7 +330,7 @@ proven_size_t proven_tls_cbc_seal(proven_tls_keys_t *keys, proven_tls_cbc_t *cbc
     }
     const proven_byte_t pad = (proven_byte_t)(15 - (len & 15));
     for (unsigned i = 0; i <= pad; ++i) text[len++] = pad;
-    proven_crypto_aes_cbc_encrypt(&keys->aes, chain, text, len);
+    (void)proven_aes_cbc_encrypt_with(&keys->cbc_key, chain, (proven_mem_mut_t){ .ptr = text, .size = len });      /* whole blocks */
     if (cbc->chained) for (int i = 0; i < 16; ++i) cbc->iv[i] = chain[i];
     proven_size_t body = iv_len + len;
     if (cbc->etm) {
@@ -361,7 +361,7 @@ bool proven_tls_cbc_open(proven_tls_keys_t *keys, proven_tls_cbc_t *cbc, proven_
         proven_byte_t *text = p + iv_len;
         const proven_size_t len = covered - iv_len;
         for (int i = 0; i < 16; ++i) chain[i] = cbc->chained ? cbc->iv[i] : p[i];
-        proven_crypto_aes_cbc_decrypt(&keys->aes, chain, text, len);
+        (void)proven_aes_cbc_decrypt_with(&keys->cbc_key, chain, (proven_mem_mut_t){ .ptr = text, .size = len });  /* whole blocks */
         if (cbc->chained) for (int i = 0; i < 16; ++i) cbc->iv[i] = chain[i];
         /* The ciphertext was the peer's own, so its padding is not a secret from anyone; it is
          * still checked whole. */
@@ -382,7 +382,7 @@ bool proven_tls_cbc_open(proven_tls_keys_t *keys, proven_tls_cbc_t *cbc, proven_
     if (len < ((mac_len + 1 + 15) & ~(proven_size_t)15)) return false;
     proven_byte_t *text = p + iv_len;
     for (int i = 0; i < 16; ++i) chain[i] = cbc->chained ? cbc->iv[i] : p[i];
-    proven_crypto_aes_cbc_decrypt(&keys->aes, chain, text, len);
+    (void)proven_aes_cbc_decrypt_with(&keys->cbc_key, chain, (proven_mem_mut_t){ .ptr = text, .size = len });      /* whole blocks */
     if (cbc->chained) for (int i = 0; i < 16; ++i) cbc->iv[i] = chain[i];
 
     /* The padding: its length byte and that many bytes before it, all the same value, and room

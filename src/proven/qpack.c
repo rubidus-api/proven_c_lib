@@ -3,7 +3,7 @@
 #ifndef PROVEN_NO_HTTP3
 
 #include "qpack_static.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 
 /*
  * QPACK (RFC 9204). This side's encoder uses no dynamic table: a field section it writes is its
@@ -160,8 +160,8 @@ static const qp_entry_t *qp_entry(const proven_qpack_dec_t *d, proven_u64 abs) {
 /* Bytes of the ring from `at`, wrapping. */
 static void qp_ring_copy(const proven_qpack_dec_t *d, proven_u32 at, proven_u32 n, proven_byte_t *dst) {
     const proven_u32 first = d->max_cap - at < n ? d->max_cap - at : n;
-    proven_sys_mem_copy(dst, d->ring + at, first);
-    if (n > first) proven_sys_mem_copy(dst + first, d->ring, n - first);
+    proven_net_mem_copy(dst, d->ring + at, first);
+    if (n > first) proven_net_mem_copy(dst + first, d->ring, n - first);
 }
 
 static void qp_evict_to(proven_qpack_dec_t *d, proven_u32 limit) {
@@ -212,7 +212,7 @@ static int qp_enc_string(proven_qpack_dec_t *d, proven_mem_view_t in, proven_siz
     }
     if (copy) {
         if (raw.size > d->max_cap - *tmp_at) return 2;
-        proven_sys_mem_copy(d->tmp + *tmp_at, raw.ptr, raw.size);
+        proven_net_mem_copy(d->tmp + *tmp_at, raw.ptr, raw.size);
         *str = d->tmp + *tmp_at; *len = (proven_u32)raw.size; *tmp_at += raw.size;
         return 0;
     }
@@ -290,10 +290,10 @@ proven_u64 proven_qpack_dec_feed(proven_qpack_dec_t *d, proven_mem_view_t in) {
                 if (want > QP_IB_MAX(d)) want = QP_IB_MAX(d);
                 proven_byte_t *n = qp_alloc(d->alloc, want);
                 if (!n) return PROVEN_QPACK_ENCODER_STREAM_ERROR;
-                if (d->ib) { proven_sys_mem_copy(n, d->ib, d->ib_n); d->alloc.free_fn(d->alloc.ctx, d->ib); }
+                if (d->ib) { proven_net_mem_copy(n, d->ib, d->ib_n); d->alloc.free_fn(d->alloc.ctx, d->ib); }
                 d->ib = n; d->ib_cap = want;
             }
-            proven_sys_mem_copy(d->ib + d->ib_n, in.ptr + off, take);
+            proven_net_mem_copy(d->ib + d->ib_n, in.ptr + off, take);
             d->ib_n += take;
             at = (proven_mem_view_t){ .ptr = d->ib, .size = d->ib_n };
         }
@@ -321,11 +321,11 @@ proven_u64 proven_qpack_dec_feed(proven_qpack_dec_t *d, proven_mem_view_t in) {
                 if (d->ib) d->alloc.free_fn(d->alloc.ctx, d->ib);
                 d->ib = n; d->ib_cap = want;
             }
-            proven_sys_mem_copy(d->ib, in.ptr + off, rest);
+            proven_net_mem_copy(d->ib, in.ptr + off, rest);
             d->ib_n = rest;
             off = in.size;
         } else {
-            proven_sys_mem_move(d->ib, d->ib + done, d->ib_n - done);
+            proven_net_mem_move(d->ib, d->ib + done, d->ib_n - done);
             d->ib_n -= done;
             off += take;
             if (d->ib_n >= QP_IB_MAX(d)) return PROVEN_QPACK_ENCODER_STREAM_ERROR;
@@ -835,7 +835,7 @@ bool proven_qpack_enc_sent(proven_qpack_enc_t *e, proven_u64 stream_id, proven_u
         const proven_size_t want = e->outs_cap ? e->outs_cap * 2 : 8;
         qp_out_t *n = qp_alloc(e->alloc, want * sizeof *n);
         if (!n) return false;
-        if (e->outs) { proven_sys_mem_copy(n, e->outs, e->nouts * sizeof *n); e->alloc.free_fn(e->alloc.ctx, e->outs); }
+        if (e->outs) { proven_net_mem_copy(n, e->outs, e->nouts * sizeof *n); e->alloc.free_fn(e->alloc.ctx, e->outs); }
         e->outs = n; e->outs_cap = want;
     }
     e->outs[e->nouts++] = (qp_out_t){ .stream = stream_id, .ric = required, .low = lowest };
@@ -843,7 +843,7 @@ bool proven_qpack_enc_sent(proven_qpack_enc_t *e, proven_u64 stream_id, proven_u
 }
 
 static void qe_drop(proven_qpack_enc_t *e, proven_size_t i) {
-    proven_sys_mem_move(e->outs + i, e->outs + i + 1, (e->nouts - i - 1) * sizeof *e->outs);
+    proven_net_mem_move(e->outs + i, e->outs + i + 1, (e->nouts - i - 1) * sizeof *e->outs);
     e->nouts--;
 }
 

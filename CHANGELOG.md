@@ -18,6 +18,36 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- `aead.h`: AES-GCM (`proven_aes_gcm_t`, `proven_aes_gcm_init`, `_seal`, `_open`) and
+  ChaCha20-Poly1305 (`proven_chacha20_poly1305_seal`, `_open`); the raw ChaCha20 stream
+  (`proven_chacha20`) and one AES block (`proven_aes_t`, `proven_aes_init`,
+  `proven_aes_encrypt_block`); `proven_aes_hw_available`. A failed open is
+  `PROVEN_ERR_UNTRUSTED` and leaves zeros.
+- `kex.h`: X25519 (`proven_x25519`, `proven_x25519_public`), ECDH over P-256 and P-384
+  (`proven_ec_public`, `proven_ecdh`), and finite-field Diffie-Hellman over the six known groups
+  (`proven_dh_ffdhe2048`, `proven_dh_known`, `proven_dh_exponent_len`, `proven_dh_public`,
+  `proven_dh_shared`).
+- `sign.h`: Ed25519 with a seed (`proven_ed25519_public`, `_sign`, `_verify`), ECDSA with a
+  scalar (`proven_ecdsa_sign_scalar`), `PROVEN_SIGN_RSA_PKCS1_RAW` (v1.5 padding with no
+  DigestInfo, TLS 1.0 and 1.1) for `proven_pkey_sign` and `proven_verify_rsa`, and
+  `proven_rsa_encrypt_pkcs1` (TLS 1.2's RSA key exchange).
+- `aes.h`: a CBC key prepared once (`proven_aes_cbc_key_t`, `proven_aes_cbc_key_init`,
+  `proven_aes_cbc_encrypt_with`, `proven_aes_cbc_decrypt_with`).
+- The hashes' compression functions: `proven_sha256_compress`, `proven_sha512_compress`
+  (`hash.h`), `proven_sha1_compress`, `proven_md5_compress` (`hash_legacy.h`).
+- Manual chapter 13, section 12; `tests/test_unit_aead_kex`; `tests/test_portability_net_boundary`.
+
+### Changed
+
+- RFC-0043 phase 1: the network code (TLS, QUIC, HTTP/1.1, 2 and 3, WebSocket, SSE, sockets, the
+  loop) uses only the public headers of the rest of the library - the functions above, `der.h` for
+  key files, and `proven_pkey_t` for a TLS configuration's RSA key - so that it can become a
+  library of its own. `tests/test_portability_net_boundary` holds the line. No change on the wire.
+- `proven_pkey_sign` may run on several threads at once with one key (an RSA key's blinding pair
+  moves under a flag of its own); before, one thread at a time.
+
 ## [0.110.0] - 2026-11-03
 
 ### Added

@@ -1,6 +1,12 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "../src/proven/proven_internal_tls.h"
+#include "../src/proven/proven_internal_cert_issue.h"
+
+/* sign.c's test hook: the uses of an RSA key's blinding pair, put where the test says. */
+proven_u32 proven_pkey_test_rsa_uses_(proven_pkey_t *key, proven_u32 uses);
+/* crypto_rsa.c's: the smallest modulus accepted, lowered for small test keys; 0 restores it. */
+void proven_crypto_rsa_test_min_bits(proven_size_t bits);
 #include "test_unit_tls_pki.h"
 #include "test_unit_tls_vectors.h"
 #include <stdio.h>
@@ -370,7 +376,7 @@ int main(void) {
 
     g_count.heap = proven_heap_allocator();
     g_alloc = (proven_allocator_t){ .ctx = &g_count, .alloc_fn = count_alloc, .realloc_fn = count_realloc, .free_fn = count_free };
-    PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "Check src/proven/tls_issue.c.");
+    PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "Check src/proven/cert_issue.c.");
     PROVEN_TEST_ASSERT(proven_cert_store_create(g_alloc, &g_anchors) == PROVEN_OK && proven_cert_store_add_pem(g_anchors, pem(TP_CA), NULL) == PROVEN_OK &&
                        proven_cert_store_create(g_alloc, &g_other_anchors) == PROVEN_OK && proven_cert_store_add_pem(g_other_anchors, pem(TP_OTHER_CA), NULL) == PROVEN_OK,
         "trust anchors", "");
@@ -431,7 +437,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a self-signed identity",
         "proven_tls_self_signed_ makes a certificate this library's own reader accepts, for the names and the period asked, and a key that matches it.",
-        "Check src/proven/tls_issue.c.");
+        "Check src/proven/cert_issue.c.");
     {
         static proven_byte_t cert_pem[1024], key_pem[256], der[1024];
         proven_size_t cert_len = 0, key_len = 0, pos = 0, der_len = 0;
@@ -728,13 +734,13 @@ int main(void) {
              * signatures the client accepts, and the count begins again. */
             if (form == 0) {
                 bool renewed = true;
-                const proven_u32 before = proven_tls_config_test_rsa_uses_(sc, 65533);
+                const proven_u32 before = proven_pkey_test_rsa_uses_(sc->rsa, 65533);
                 for (int i = 0; i < 5; ++i) {
                     p = connect_pair(cc, sc, "example.test", NULL, NULL, NULL);
                     renewed = renewed && both_up(&p) && transfer(p.c, p.s, 100, 9);
                     close_pair(&p);
                 }
-                const proven_u32 after = proven_tls_config_test_rsa_uses_(sc, 0);
+                const proven_u32 after = proven_pkey_test_rsa_uses_(sc->rsa, 0);
                 PROVEN_TEST_ASSERT(before >= 1 && before < 100 && renewed && after == 2,
                     "five handshakes across the renewal of the blinding pair all complete, and the count of uses begins again at the renewal", "");
             }

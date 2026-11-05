@@ -1,5 +1,6 @@
+#include "proven/heap.h"
 #include "proven_internal_quic.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 
 #ifndef PROVEN_NO_HTTP3
 
@@ -35,15 +36,15 @@ static const proven_u64 Q_STREAM_LIMIT = (((proven_u64)1) << 62) - 1;
 /* Block copies through the platform (RFC-0018 S-1: these were byte loops, 45 % of a
  * receiver's time). */
 static void qcopy(proven_byte_t *dst, const proven_byte_t *src, proven_size_t n) {
-    proven_sys_mem_copy(dst, src, n);
+    proven_net_mem_copy(dst, src, n);
 }
 
 static void qmove(proven_byte_t *dst, const proven_byte_t *src, proven_size_t n) {
-    proven_sys_mem_move(dst, src, n);
+    proven_net_mem_move(dst, src, n);
 }
 
 static void qzero(void *p, proven_size_t n) {
-    proven_sys_mem_zero(p, n);
+    proven_net_mem_zero(p, n);
 }
 
 static bool cid_eq(const proven_quic_cid_t *a, const proven_quic_cid_t *b) {
@@ -2263,11 +2264,11 @@ static bool static_key_set(const proven_quic_config_t *cfg) {
     return false;
 }
 
-static void token_aead(const proven_quic_config_t *cfg, bool retry, proven_crypto_aes_gcm_t *aead) {
+static void token_aead(const proven_quic_config_t *cfg, bool retry, proven_aes_gcm_t *aead) {
     proven_byte_t k[PROVEN_HMAC_MAX_SIZE];
     const char *label = retry ? "proven quic retry" : "proven quic token";
     (void)proven_hmac(PROVEN_HMAC_SHA256, (proven_mem_view_t){ .ptr = cfg->static_key, .size = 32 }, (proven_mem_view_t){ .ptr = (const proven_byte_t *)label, .size = 17 }, k);
-    (void)proven_crypto_aes_gcm_init(aead, k, 16);
+    (void)proven_tls_aes_gcm_init_(aead, k, 16);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = k, .size = sizeof k });
 }
 
@@ -2283,24 +2284,24 @@ static proven_size_t token_bound(const proven_quic_addr_t *a, proven_u32 version
 
 /* kind, nonce, then sealed: the time it was made. */
 static void new_token_make(const proven_quic_config_t *cfg, const proven_quic_addr_t *to, proven_u32 version, proven_u64 now, proven_byte_t tok[QC_NEW_TOKEN_LEN]) {
-    proven_crypto_aes_gcm_t aead;
+    proven_aes_gcm_t aead;
     token_aead(cfg, false, &aead);
     proven_byte_t plain[8], bound[2 + 32];
     for (int i = 0; i < 8; ++i) plain[i] = (proven_byte_t)(now >> (56 - 8 * i));
     tok[0] = QC_TOKEN_NEW;
     proven_tls_config_random(cfg->tls, tok + 1, 12);
     const proven_size_t bn = token_bound(to, version, bound);
-    proven_crypto_aes_gcm_seal(&aead, tok + 1, (proven_mem_view_t){ .ptr = bound, .size = bn }, (proven_mem_view_t){ .ptr = plain, .size = 8 }, tok + 13, tok + 21);
+    proven_aes_gcm_seal(&aead, tok + 1, (proven_mem_view_t){ .ptr = bound, .size = bn }, (proven_mem_view_t){ .ptr = plain, .size = 8 }, tok + 13, tok + 21);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&aead, .size = sizeof aead });
 }
 
 static bool new_token_ok(const proven_quic_config_t *cfg, proven_mem_view_t tok, const proven_quic_addr_t *from, proven_u32 version, proven_u64 now) {
     if (tok.size != QC_NEW_TOKEN_LEN || tok.ptr[0] != QC_TOKEN_NEW || !static_key_set(cfg)) return false;
-    proven_crypto_aes_gcm_t aead;
+    proven_aes_gcm_t aead;
     token_aead(cfg, false, &aead);
     proven_byte_t plain[8], bound[2 + 32];
     const proven_size_t bn = token_bound(from, version, bound);
-    const bool ok = proven_crypto_aes_gcm_open(&aead, tok.ptr + 1, (proven_mem_view_t){ .ptr = bound, .size = bn }, (proven_mem_view_t){ .ptr = tok.ptr + 13, .size = 8 }, tok.ptr + 21, plain);
+    const bool ok = proven_tls_aes_gcm_open_(&aead, tok.ptr + 1, (proven_mem_view_t){ .ptr = bound, .size = bn }, (proven_mem_view_t){ .ptr = tok.ptr + 13, .size = 8 }, tok.ptr + 21, plain);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&aead, .size = sizeof aead });
     if (!ok) return false;
     proven_u64 t = 0;
@@ -2982,23 +2983,27 @@ proven_u8str_view_t proven_quic_conn_alpn_(const proven_quic_conn_t *c) { return
 /* ---- For tests: frames as if a packet carried them, and a key update started here ---- */
 
 proven_u64 proven_quic_cc_fast_convergence_(proven_u32 mss, proven_u64 w1, proven_u64 w2) {
-    proven_quic_conn_t *c = (proven_quic_conn_t *)proven_sys_mem_alloc(sizeof(proven_quic_conn_t), alignof(proven_quic_conn_t));
-    if (!c) return 0;
-    proven_sys_mem_set(c, 0, sizeof *c);
+    const proven_allocator_t heap = proven_heap_allocator();
+    proven_result_mem_mut_t m = heap.alloc_fn(heap.ctx, sizeof(proven_quic_conn_t), alignof(proven_quic_conn_t));
+    if (m.err != PROVEN_OK || !m.value.ptr) return 0;
+    proven_quic_conn_t *c = (proven_quic_conn_t *)(void *)m.value.ptr;
+    proven_net_mem_set(c, 0, sizeof *c);
     c->datagram = mss;
     cc_init(c);
     c->cwnd = w1; cu_reduce(c);
     c->cwnd = w2; cu_reduce(c);
     const proven_u64 w = c->cu_wmax;
-    proven_sys_mem_free(c);
+    heap.free_fn(heap.ctx, c);
     return w;
 }
 
 void proven_quic_cc_model_(bool newreno, proven_u32 mss, proven_u64 rtt_us, proven_u64 w_loss, proven_u64 *after, proven_u64 *recover_us) {
     *after = *recover_us = 0;
-    proven_quic_conn_t *c = (proven_quic_conn_t *)proven_sys_mem_alloc(sizeof(proven_quic_conn_t), alignof(proven_quic_conn_t));
-    if (!c) return;
-    proven_sys_mem_set(c, 0, sizeof *c);
+    const proven_allocator_t heap = proven_heap_allocator();
+    proven_result_mem_mut_t m = heap.alloc_fn(heap.ctx, sizeof(proven_quic_conn_t), alignof(proven_quic_conn_t));
+    if (m.err != PROVEN_OK || !m.value.ptr) return;
+    proven_quic_conn_t *c = (proven_quic_conn_t *)(void *)m.value.ptr;
+    proven_net_mem_set(c, 0, sizeof *c);
     c->cfg.newreno = newreno;
     c->datagram = mss;
     c->srtt = rtt_us;
@@ -3020,7 +3025,7 @@ void proven_quic_cc_model_(bool newreno, proven_u32 mss, proven_u64 rtt_us, prov
         }
         if (c->cwnd >= w_loss) { *recover_us = c->now - lost_at; break; }
     }
-    proven_sys_mem_free(c);
+    heap.free_fn(heap.ctx, c);
 }
 
 proven_u64 proven_quic_conn_test_frames_(proven_quic_conn_t *c, int lvl, proven_mem_view_t payload, proven_u64 now) {
@@ -3201,7 +3206,7 @@ proven_quic_stateless_t proven_quic_server_stateless(const proven_quic_config_t 
         h.token.size = 0;
     }
     if (!require_retry) return PROVEN_QUIC_STATELESS_ACCEPT;
-    proven_crypto_aes_gcm_t aead;
+    proven_aes_gcm_t aead;
     token_aead(cfg, true, &aead);
     /* A Retry token's associated data: the version - a client must not change it under the
      * token (RFC 9369 section 4.1) - and the address. */
@@ -3222,7 +3227,7 @@ proven_quic_stateless_t proven_quic_server_stateless(const proven_quic_config_t 
         for (int i = 7; i >= 0; --i) plain[n++] = (proven_byte_t)(now >> (8 * i));
         plain[n++] = h.dcid.len; qcopy(plain + n, h.dcid.id, h.dcid.len); n += h.dcid.len;
         plain[n++] = scid.len; qcopy(plain + n, scid.id, scid.len); n += scid.len;
-        proven_crypto_aes_gcm_seal(&aead, tok + 1, ad, (proven_mem_view_t){ .ptr = plain, .size = n }, tok + 13, tok + 13 + n);
+        proven_aes_gcm_seal(&aead, tok + 1, ad, (proven_mem_view_t){ .ptr = plain, .size = n }, tok + 13, tok + 13 + n);
         proven_byte_t r;
         proven_tls_config_random(cfg->tls, &r, 1);
         *out_len = proven_quic_retry_build_v(h.version, &h.dcid, &h.scid, &scid, (proven_mem_view_t){ .ptr = tok, .size = 13 + n + 16 }, r, out);
@@ -3234,7 +3239,7 @@ proven_quic_stateless_t proven_quic_server_stateless(const proven_quic_config_t 
     proven_byte_t plain[8 + 1 + 20 + 1 + 20];
     const proven_size_t clen = h.token.size >= 29 ? h.token.size - 29 : 0;
     bool ok = h.token.ptr[0] == QC_TOKEN_RETRY && h.token.size >= 1 + 12 + 16 + 10 && clen <= sizeof plain
-              && proven_crypto_aes_gcm_open(&aead, h.token.ptr + 1, ad,
+              && proven_tls_aes_gcm_open_(&aead, h.token.ptr + 1, ad,
                                             (proven_mem_view_t){ .ptr = h.token.ptr + 13, .size = clen }, h.token.ptr + 13 + clen, plain);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = (proven_byte_t *)&aead, .size = sizeof aead });
     if (!ok) return PROVEN_QUIC_STATELESS_DROP;

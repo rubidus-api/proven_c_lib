@@ -1,5 +1,5 @@
 #include "proven_internal_tls.h"
-#include "proven_internal_der.h"
+#include "proven/der.h"
 #ifndef PROVEN_FREESTANDING
 #include "proven/random.h"
 #include "proven/time.h"
@@ -28,6 +28,18 @@ void proven_tls_config_random(const proven_tls_config_t *config, proven_byte_t *
     config->random(config->random_ctx, out, len);
 }
 
+/* The config's random source as a proven_rng_t, for the RSA key's blinding (sign.h). */
+static void cfg_rng_fill(void *ctx, void *buf, proven_size_t len) { proven_tls_config_random((const proven_tls_config_t *)ctx, (proven_byte_t *)buf, len); }
+static proven_u64 cfg_rng_u64(void *ctx) {
+    proven_byte_t b[8];
+    cfg_rng_fill(ctx, b, 8);
+    proven_u64 v = 0;
+    for (int i = 0; i < 8; ++i) v = v << 8 | b[i];
+    return v;
+}
+static const proven_rng_vtable_t CFG_RNG = { .next_u64 = cfg_rng_u64, .fill = cfg_rng_fill };
+static proven_rng_t cfg_rng(const proven_tls_config_t *c) { return (proven_rng_t){ .vt = &CFG_RNG, .ctx = (void *)(proven_size_t)c }; }
+
 proven_i64 proven_tls_config_now(const proven_tls_config_t *config) {
     return config->now(config->now_ctx);
 }
@@ -45,62 +57,68 @@ proven_u8str_view_t proven_tls_config_alpn(const proven_tls_config_t *config, pr
 #define OID_P256 "\x2a\x86\x48\xce\x3d\x03\x01\x07"
 #define OID_ED25519 "\x2b\x65\x70"
 #define OID_RSA "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01"
+#define CFG_OID_IS(v, lit) proven_der_oid_is((v), (proven_mem_view_t){ .ptr = (const proven_byte_t *)(lit), .size = sizeof(lit) - 1 })
+
+/* der.h's reader in the shape this file's parsing is written in: true when the element is there. */
+static bool cfg_expect(proven_mem_view_t *in, proven_u8 tag, proven_mem_view_t *content) { return proven_der_expect(in, tag, content) == PROVEN_OK; }
+static bool cfg_small_uint(proven_mem_view_t *in, proven_u32 *out) {
+    proven_u64 v = 0;
+    if (proven_der_read_u64(in, &v) != PROVEN_OK || v > 0xffffffffu) return false;
+    *out = (proven_u32)v;
+    return true;
+}
 
 /* ECPrivateKey ::= SEQUENCE { version INTEGER 1, privateKey OCTET STRING, [0] parameters, [1] publicKey } */
-static proven_err_t cfg_sec1(proven_der_t in, bool need_curve, proven_byte_t key[32]) {
-    proven_der_t seq, d, f, curve;
+static proven_err_t cfg_sec1(proven_mem_view_t in, bool need_curve, proven_byte_t key[32]) {
+    proven_mem_view_t seq, d, f, curve;
     proven_u32 version = 0;
-    if (!der_expect(&in, DER_SEQUENCE, &seq, NULL) || in.n != 0) return PROVEN_ERR_INVALID_FORMAT;
-    if (!der_small_uint(&seq, &version) || version != 1 || !der_expect(&seq, DER_OCTETS, &d, NULL)) return PROVEN_ERR_INVALID_FORMAT;
-    bool has_curve = der_expect(&seq, 0xa0, &f, NULL);
+    if (!cfg_expect(&in, PROVEN_DER_SEQUENCE, &seq) || in.size != 0) return PROVEN_ERR_INVALID_FORMAT;
+    if (!cfg_small_uint(&seq, &version) || version != 1 || !cfg_expect(&seq, PROVEN_DER_OCTET_STRING, &d)) return PROVEN_ERR_INVALID_FORMAT;
+    bool has_curve = cfg_expect(&seq, 0xa0, &f);
     if (has_curve) {
-        if (!der_expect(&f, DER_OID, &curve, NULL) || f.n != 0) return PROVEN_ERR_INVALID_FORMAT;
-        if (!DER_IS(&curve, OID_P256)) return PROVEN_ERR_UNSUPPORTED;
+        if (!cfg_expect(&f, PROVEN_DER_OID, &curve) || f.size != 0) return PROVEN_ERR_INVALID_FORMAT;
+        if (!CFG_OID_IS(curve, OID_P256)) return PROVEN_ERR_UNSUPPORTED;
     } else if (need_curve) {
         return PROVEN_ERR_INVALID_FORMAT;
     }
-    if (d.n != 32) return PROVEN_ERR_UNSUPPORTED;
-    for (int i = 0; i < 32; ++i) key[i] = d.p[i];
+    if (d.size != 32) return PROVEN_ERR_UNSUPPORTED;
+    for (int i = 0; i < 32; ++i) key[i] = d.ptr[i];
     return PROVEN_OK;
 }
 
-/* An RSAPrivateKey: the key goes into a block of its own. Only its shape is checked here;
- * cfg_match_key signs with it before the config is given out. */
-static proven_err_t cfg_rsa(proven_tls_config_t *c, proven_der_t in) {
-    proven_allocator_t a = c->alloc;
-    proven_result_mem_mut_t m = a.alloc_fn(a.ctx, sizeof(proven_tls_rsa_t), 16);
-    if (m.err != PROVEN_OK) return m.err;
-    c->rsa = (proven_tls_rsa_t *)(void *)m.value.ptr;
-    for (proven_size_t i = 0; i < sizeof *c->rsa; ++i) ((proven_byte_t *)c->rsa)[i] = 0;
-    atomic_flag_clear(&c->rsa->lock);
-    if (!proven_crypto_rsa_key_parse((proven_mem_view_t){ .ptr = in.p, .size = in.n }, &c->rsa->key)) return PROVEN_ERR_INVALID_FORMAT;
+/* An RSAPrivateKey: a proven_pkey_t of its own (sign.h), which checks its shape and signs once.
+ * cfg_match_key then holds it against the certificate. */
+static proven_err_t cfg_rsa(proven_tls_config_t *c, proven_mem_view_t in) {
+    proven_err_t e = proven_pkey_parse(c->alloc, (proven_mem_view_t){ .ptr = in.ptr, .size = in.size }, cfg_rng(c), &c->rsa);
+    if (e == PROVEN_ERR_NOMEM) return e;
+    if (e != PROVEN_OK || proven_pkey_kind(c->rsa) != PROVEN_PKEY_RSA) { proven_pkey_destroy(c->rsa); c->rsa = NULL; return PROVEN_ERR_INVALID_FORMAT; }
     c->key_kind = PROVEN_TLS_KEY_RSA;
     return PROVEN_OK;
 }
 
 /* PrivateKeyInfo ::= SEQUENCE { version INTEGER, algorithm AlgorithmIdentifier, privateKey OCTET STRING, ... } */
-static proven_err_t cfg_pkcs8(proven_tls_config_t *c, proven_der_t in, proven_tls_key_kind_t *kind, proven_byte_t key[32]) {
-    proven_der_t seq, alg, oid, priv;
+static proven_err_t cfg_pkcs8(proven_tls_config_t *c, proven_mem_view_t in, proven_tls_key_kind_t *kind, proven_byte_t key[32]) {
+    proven_mem_view_t seq, alg, oid, priv;
     proven_u32 version = 9;
-    if (!der_expect(&in, DER_SEQUENCE, &seq, NULL) || in.n != 0) return PROVEN_ERR_INVALID_FORMAT;
-    if (!der_small_uint(&seq, &version) || version > 1) return PROVEN_ERR_INVALID_FORMAT;
-    if (!der_expect(&seq, DER_SEQUENCE, &alg, NULL) || !der_expect(&alg, DER_OID, &oid, NULL)) return PROVEN_ERR_INVALID_FORMAT;
-    if (!der_expect(&seq, DER_OCTETS, &priv, NULL)) return PROVEN_ERR_INVALID_FORMAT;
-    if (DER_IS(&oid, OID_ED25519)) {
-        proven_der_t seed;
-        if (alg.n != 0 || !der_expect(&priv, DER_OCTETS, &seed, NULL) || priv.n != 0 || seed.n != 32) return PROVEN_ERR_INVALID_FORMAT;
-        for (int i = 0; i < 32; ++i) key[i] = seed.p[i];
+    if (!cfg_expect(&in, PROVEN_DER_SEQUENCE, &seq) || in.size != 0) return PROVEN_ERR_INVALID_FORMAT;
+    if (!cfg_small_uint(&seq, &version) || version > 1) return PROVEN_ERR_INVALID_FORMAT;
+    if (!cfg_expect(&seq, PROVEN_DER_SEQUENCE, &alg) || !cfg_expect(&alg, PROVEN_DER_OID, &oid)) return PROVEN_ERR_INVALID_FORMAT;
+    if (!cfg_expect(&seq, PROVEN_DER_OCTET_STRING, &priv)) return PROVEN_ERR_INVALID_FORMAT;
+    if (CFG_OID_IS(oid, OID_ED25519)) {
+        proven_mem_view_t seed;
+        if (alg.size != 0 || !cfg_expect(&priv, PROVEN_DER_OCTET_STRING, &seed) || priv.size != 0 || seed.size != 32) return PROVEN_ERR_INVALID_FORMAT;
+        for (int i = 0; i < 32; ++i) key[i] = seed.ptr[i];
         *kind = PROVEN_TLS_KEY_ED25519;
         return PROVEN_OK;
     }
-    if (DER_IS(&oid, OID_EC_KEY)) {
-        proven_der_t curve;
-        if (!der_expect(&alg, DER_OID, &curve, NULL) || alg.n != 0) return PROVEN_ERR_INVALID_FORMAT;
-        if (!DER_IS(&curve, OID_P256)) return PROVEN_ERR_UNSUPPORTED;
+    if (CFG_OID_IS(oid, OID_EC_KEY)) {
+        proven_mem_view_t curve;
+        if (!cfg_expect(&alg, PROVEN_DER_OID, &curve) || alg.size != 0) return PROVEN_ERR_INVALID_FORMAT;
+        if (!CFG_OID_IS(curve, OID_P256)) return PROVEN_ERR_UNSUPPORTED;
         *kind = PROVEN_TLS_KEY_P256;
         return cfg_sec1(priv, false, key);
     }
-    if (DER_IS(&oid, OID_RSA)) return cfg_rsa(c, priv);
+    if (CFG_OID_IS(oid, OID_RSA)) return cfg_rsa(c, priv);
     return PROVEN_ERR_UNSUPPORTED;                /* everything else */
 }
 
@@ -122,7 +140,7 @@ static proven_err_t cfg_load_key(proven_tls_config_t *c, proven_mem_view_t pem) 
         if (e == PROVEN_ERR_NOT_FOUND) break;
         if (e == PROVEN_ERR_OUT_OF_BOUNDS) { result = PROVEN_ERR_UNSUPPORTED; break; }     /* larger than any key read here */
         if (e != PROVEN_OK) break;
-        proven_der_t in = { der, len };
+        proven_mem_view_t in = { .ptr = der, .size = len };
         if (label_is(label, "PRIVATE KEY")) { result = cfg_pkcs8(c, in, &c->key_kind, c->key); break; }
         if (label_is(label, "EC PRIVATE KEY")) { c->key_kind = PROVEN_TLS_KEY_P256; result = cfg_sec1(in, true, c->key); break; }
         if (label_is(label, "RSA PRIVATE KEY")) { result = cfg_rsa(c, in); break; }
@@ -160,36 +178,32 @@ static proven_err_t cfg_match_key(proven_tls_config_t *c) {
     proven_cert_t leaf;
     if (proven_cert_parse(c->chain[0], &leaf) != PROVEN_OK) return PROVEN_ERR_INVALID_FORMAT;
     if (c->key_kind == PROVEN_TLS_KEY_ED25519) {
-        proven_crypto_ed25519_public(c->key_public, c->key);
+        proven_ed25519_public(c->key_public, c->key);
         if (leaf.key_kind != PROVEN_CERT_KEY_ED25519) return PROVEN_ERR_INVALID_STATE;
         for (int i = 0; i < 32; ++i) if (leaf.key.ptr[i] != c->key_public[i]) return PROVEN_ERR_INVALID_STATE;
         return PROVEN_OK;
     }
     if (c->key_kind == PROVEN_TLS_KEY_RSA) {
-        const proven_crypto_rsa_key_t *k = &c->rsa->key;
+        proven_rsa_components_t k;
         if (leaf.key_kind != PROVEN_CERT_KEY_RSA) return PROVEN_ERR_INVALID_STATE;
-        if (leaf.rsa_n.size != k->n_len || leaf.rsa_e.size != k->e_len) return PROVEN_ERR_INVALID_STATE;
-        for (proven_size_t i = 0; i < k->n_len; ++i) if (leaf.rsa_n.ptr[i] != k->n[i]) return PROVEN_ERR_INVALID_STATE;
-        for (proven_size_t i = 0; i < k->e_len; ++i) if (leaf.rsa_e.ptr[i] != k->e[i]) return PROVEN_ERR_INVALID_STATE;
-        /* The modulus matching says nothing about the private half. Make the blinding pair and
-         * one signature now: a key that cannot sign is refused here, not at the first handshake. */
-        proven_byte_t seed[PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES], digest[32], sig[PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES];
+        if (proven_pkey_rsa_components(c->rsa, &k) != PROVEN_OK) return PROVEN_ERR_INVALID_FORMAT;
+        if (leaf.rsa_n.size != k.n.size || leaf.rsa_e.size != k.e.size) return PROVEN_ERR_INVALID_STATE;
+        for (proven_size_t i = 0; i < k.n.size; ++i) if (leaf.rsa_n.ptr[i] != k.n.ptr[i]) return PROVEN_ERR_INVALID_STATE;
+        for (proven_size_t i = 0; i < k.e.size; ++i) if (leaf.rsa_e.ptr[i] != k.e.ptr[i]) return PROVEN_ERR_INVALID_STATE;
+        /* The modulus matching says nothing about the private half - which the key checked when
+         * it was read, by signing once. One PSS signature more, through the path a handshake takes,
+         * verified under the certificate's key: a key that cannot sign is refused here, not at the
+         * first handshake. */
+        proven_byte_t digest[32], sig[PROVEN_SIGN_MAX_SIZE];
         proven_size_t sig_len = 0;
-        bool made = false;
-        for (int attempt = 0; attempt < 4 && !made; ++attempt) {
-            proven_tls_config_random(c, seed, k->n_len);
-            made = proven_crypto_rsa_blind_make(k, seed, &c->rsa->blind);
-        }
-        cfg_wipe(seed, sizeof seed);
-        if (!made) return PROVEN_ERR_INVALID_FORMAT;
-        proven_sha256((proven_mem_view_t){ .ptr = k->n, .size = k->n_len }, digest);
+        proven_sha256(k.n, digest);
         if (!proven_tls_config_rsa_sign_(c, false, (proven_mem_view_t){ .ptr = digest, .size = 32 }, sig, &sig_len)) return PROVEN_ERR_INVALID_FORMAT;
-        if (!proven_crypto_rsa_verify_pss(leaf.rsa_n, leaf.rsa_e, PROVEN_HMAC_SHA256, 32, (proven_mem_view_t){ .ptr = digest, .size = 32 },
-                                          (proven_mem_view_t){ .ptr = sig, .size = sig_len })) return PROVEN_ERR_INVALID_FORMAT;
+        if (proven_verify_rsa(leaf.rsa_n, leaf.rsa_e, PROVEN_SIGN_RSA_PSS, PROVEN_HMAC_SHA256, 32, (proven_mem_view_t){ .ptr = digest, .size = 32 },
+                              (proven_mem_view_t){ .ptr = sig, .size = sig_len }) != PROVEN_OK) return PROVEN_ERR_INVALID_FORMAT;
         return PROVEN_OK;
     }
     proven_byte_t pub[65];
-    if (!proven_crypto_ec_public(PROVEN_CRYPTO_EC_P256, c->key, pub)) return PROVEN_ERR_INVALID_FORMAT;
+    if (proven_ec_public(PROVEN_PKEY_P256, (proven_mem_view_t){ .ptr = c->key, .size = 32 }, (proven_mem_mut_t){ .ptr = pub, .size = sizeof pub }) != PROVEN_OK) return PROVEN_ERR_INVALID_FORMAT;
     if (leaf.key_kind != PROVEN_CERT_KEY_EC_P256) return PROVEN_ERR_INVALID_STATE;
     for (int i = 0; i < 65; ++i) if (leaf.key.ptr[i] != pub[i]) return PROVEN_ERR_INVALID_STATE;
     return PROVEN_OK;
@@ -323,7 +337,7 @@ void proven_tls_config_destroy(proven_tls_config_t *c) {
     if (c->pins) a.free_fn(a.ctx, c->pins);
     if (c->alpn_wire) a.free_fn(a.ctx, c->alpn_wire);
     if (c->chain_mem) a.free_fn(a.ctx, c->chain_mem);
-    if (c->rsa) { cfg_wipe(c->rsa, sizeof *c->rsa); a.free_fn(a.ctx, c->rsa); }
+    proven_pkey_destroy(c->rsa);
     if (c->early_seen) a.free_fn(a.ctx, c->early_seen);
     if (c->client_cache) {
         if (c->client_cache->e) {
@@ -338,45 +352,18 @@ void proven_tls_config_destroy(proven_tls_config_t *c) {
 
 /* ---- Signing with an RSA key ----
  *
- * Each signature takes the blinding pair as it stands and leaves the next one - the same pair
- * squared - behind, under the flag. The signature itself is made outside it, on a copy. */
+ * The key (sign.h) takes its blinding pair as it stands and leaves the next one behind, under a
+ * flag of its own; the signature is made outside it, so handshakes on several threads sign at
+ * once. */
 bool proven_tls_config_rsa_sign_(const proven_tls_config_t *c, bool pkcs1, proven_mem_view_t digest, proven_byte_t *sig, proven_size_t *len) {
     if (!c || !c->rsa || (digest.size != 32 && digest.size != 36)) return false;      /* 36: TLS 1.0/1.1's MD5 | SHA-1 */
-    proven_tls_rsa_t *r = c->rsa;
-    proven_crypto_rsa_blind_t mine;
-    proven_byte_t salt[32], seed[PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES];
-    proven_tls_config_random(c, salt, sizeof salt);
-    proven_tls_config_random(c, seed, r->key.n_len);                  /* used only when the pair is renewed */
-    while (atomic_flag_test_and_set_explicit(&r->lock, memory_order_acquire)) { }
-    mine = r->blind;
-    if (++r->uses >= 65536u) {
-        proven_crypto_rsa_blind_t fresh;
-        if (proven_crypto_rsa_blind_make(&r->key, seed, &fresh)) { r->blind = fresh; r->uses = 0; }
-        else proven_crypto_rsa_blind_next(&r->key, &r->blind);
-        cfg_wipe(&fresh, sizeof fresh);
-    } else {
-        proven_crypto_rsa_blind_next(&r->key, &r->blind);
-    }
-    atomic_flag_clear_explicit(&r->lock, memory_order_release);
-    bool ok = digest.size == 36 ? proven_crypto_rsa_sign_pkcs1_raw(&r->key, &mine, digest, sig)
-            : pkcs1 ? proven_crypto_rsa_sign_pkcs1(&r->key, &mine, PROVEN_HMAC_SHA256, digest, sig)
-                    : proven_crypto_rsa_sign_pss(&r->key, &mine, PROVEN_HMAC_SHA256, digest, (proven_mem_view_t){ .ptr = salt, .size = sizeof salt }, sig);
-    if (ok && len) *len = r->key.n_len;
-    cfg_wipe(&mine, sizeof mine); cfg_wipe(seed, sizeof seed);
-    return ok;
-}
-
-/* For tests (declared in proven_internal_tls.h): how often the blinding pair has been used, put
- * where a test says - the renewal is 65,536 signatures away otherwise. Returns the count as it
- * was, or 0 for a configuration with no RSA key. */
-proven_u32 proven_tls_config_test_rsa_uses_(const proven_tls_config_t *c, proven_u32 uses) {
-    if (!c || !c->rsa) return 0;
-    proven_tls_rsa_t *r = c->rsa;
-    while (atomic_flag_test_and_set_explicit(&r->lock, memory_order_acquire)) { }
-    const proven_u32 was = r->uses;
-    r->uses = uses;
-    atomic_flag_clear_explicit(&r->lock, memory_order_release);
-    return was;
+    const proven_sign_scheme_t scheme = digest.size == 36 ? PROVEN_SIGN_RSA_PKCS1_RAW : pkcs1 ? PROVEN_SIGN_RSA_PKCS1 : PROVEN_SIGN_RSA_PSS;
+    proven_size_t n = 0;
+    const proven_err_t e = proven_pkey_sign(c->rsa, scheme, PROVEN_HMAC_SHA256, digest, cfg_rng(c),
+                                            (proven_mem_mut_t){ .ptr = sig, .size = PROVEN_SIGN_MAX_SIZE }, &n);
+    if (e != PROVEN_OK) return false;
+    if (len) *len = n;
+    return true;
 }
 
 /* ---- Tickets ----
@@ -481,7 +468,7 @@ proven_size_t proven_tls_ticket_seal(const proven_tls_config_t *config, const pr
     for (int i = 0; i < 8; ++i) plain[n++] = state->limits[i];
     out[0] = (proven_byte_t)(cur_id >> 24); out[1] = (proven_byte_t)(cur_id >> 16); out[2] = (proven_byte_t)(cur_id >> 8); out[3] = (proven_byte_t)cur_id;
     proven_tls_config_random(config, out + 4, 12);
-    proven_crypto_chacha20poly1305_seal(cur, out + 4, (proven_mem_view_t){ .ptr = out, .size = 4 },
+    proven_chacha20_poly1305_seal(cur, out + 4, (proven_mem_view_t){ .ptr = out, .size = 4 },
                                         (proven_mem_view_t){ .ptr = plain, .size = n }, out + 16, out + 16 + n);
     cfg_wipe(cur, sizeof cur); cfg_wipe(prev, sizeof prev); cfg_wipe(plain, sizeof plain);
     return 16 + n + 16;
@@ -495,7 +482,7 @@ bool proven_tls_ticket_open(const proven_tls_config_t *config, proven_mem_view_t
     ticket_keys(config, cur, &cur_id, prev, &prev_id, &have_prev);
     const proven_byte_t *key = id == cur_id ? cur : (have_prev && id == prev_id) ? prev : NULL;
     if (key) {
-        ok = proven_crypto_chacha20poly1305_open(key, ticket.ptr + 4, (proven_mem_view_t){ .ptr = ticket.ptr, .size = 4 },
+        ok = proven_tls_chacha_open_(key, ticket.ptr + 4, (proven_mem_view_t){ .ptr = ticket.ptr, .size = 4 },
                                                  (proven_mem_view_t){ .ptr = ticket.ptr + 16, .size = TICKET_PLAIN },
                                                  ticket.ptr + 16 + TICKET_PLAIN, plain);
     }

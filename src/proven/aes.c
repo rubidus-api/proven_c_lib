@@ -21,6 +21,26 @@ proven_err_t proven_aes_cbc_encrypt(proven_mem_view_t key, proven_byte_t iv[16],
     return aes_cbc(key, iv, data, false);
 }
 
+proven_err_t proven_aes_cbc_key_init(proven_aes_cbc_key_t *ctx, proven_mem_view_t key) {
+    if (!ctx || !key.ptr) return PROVEN_ERR_INVALID_ARG;
+    return proven_crypto_aes_cbc_init(&ctx->k, key.ptr, key.size) ? PROVEN_OK : PROVEN_ERR_INVALID_ARG;
+}
+
+static proven_err_t aes_cbc_with(const proven_aes_cbc_key_t *ctx, proven_byte_t iv[16], proven_mem_mut_t data, bool decrypt) {
+    if (!ctx || !iv || (data.size > 0 && !data.ptr) || data.size % 16 != 0) return PROVEN_ERR_INVALID_ARG;
+    if (decrypt) proven_crypto_aes_cbc_decrypt(&ctx->k, iv, data.ptr, data.size);
+    else proven_crypto_aes_cbc_encrypt(&ctx->k, iv, data.ptr, data.size);
+    return PROVEN_OK;
+}
+
+proven_err_t proven_aes_cbc_decrypt_with(const proven_aes_cbc_key_t *ctx, proven_byte_t iv[16], proven_mem_mut_t data) {
+    return aes_cbc_with(ctx, iv, data, true);
+}
+
+proven_err_t proven_aes_cbc_encrypt_with(const proven_aes_cbc_key_t *ctx, proven_byte_t iv[16], proven_mem_mut_t data) {
+    return aes_cbc_with(ctx, iv, data, false);
+}
+
 proven_err_t proven_pkcs7_unpad(proven_mem_view_t data, proven_size_t block, proven_size_t *len) {
     if (len) *len = 0;
     if (!len || block == 0 || block > 255 || !data.ptr || data.size == 0 || data.size % block != 0) return PROVEN_ERR_INVALID_ARG;

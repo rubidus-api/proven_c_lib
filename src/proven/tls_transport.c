@@ -1,5 +1,5 @@
 #include "proven/tls.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
@@ -72,7 +72,7 @@ static proven_err_t tt_pull(proven_tls_transport_t *t, proven_net_deadline_t unt
         proven_result_mem_mut_t m = t->alloc.alloc_fn(t->alloc.ctx, len - used, 1);
         if (m.err != PROVEN_OK) return m.err;
         t->rbuf = m.value.ptr;
-        proven_sys_mem_copy(t->rbuf, chunk + used, len - used);
+        proven_net_mem_copy(t->rbuf, chunk + used, len - used);
         t->rlen = len - used;
         t->roff = 0;
     }
@@ -167,7 +167,7 @@ static proven_result_size_t tt_write(void *ctx, proven_mem_view_t src, proven_ne
             }
             proven_result_size_t w = proven_tls_write(t->conn, (proven_mem_view_t){ .ptr = src.ptr, .size = n });
             if (w.err != PROVEN_OK) return w;
-            proven_sys_mem_copy(t->early_copy + t->early_len, src.ptr, w.value);
+            proven_net_mem_copy(t->early_copy + t->early_len, src.ptr, w.value);
             t->early_len += w.value;
             done = w.value;
             proven_err_t e = tt_flush(t, until);
@@ -272,7 +272,7 @@ proven_err_t proven_tls_transport_client(proven_transport_t plain, const proven_
         if (m.err != PROVEN_OK) return m.err;
         own = (proven_tls_session_t *)(void *)m.value.ptr;
         proven_tls_client_cache_load_(config, server_name, own);
-        proven_sys_mem_copy((proven_byte_t *)(own + 1), server_name.ptr, server_name.size);
+        proven_net_mem_copy((proven_byte_t *)(own + 1), server_name.ptr, server_name.size);
         session = own;
     }
     if (own && config->early_data && proven_tls_session_allows_early_(own)) {

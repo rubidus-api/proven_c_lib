@@ -1,5 +1,5 @@
 #include "proven/sse.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 
 /* The event-stream parsing rules of the HTML standard ("9.2.6 Interpreting an event stream"),
  * one byte at a time, so that input may be cut anywhere. */
@@ -50,7 +50,7 @@ static proven_err_t sse_line(proven_sse_t *s, bool *dispatch) {
     if (sse_is(field, "data")) {
         /* Each data line is followed by LF; the last one is removed when the event is sent. */
         if (value.size + 1 > s->data_cap - s->data_len) return PROVEN_ERR_OUT_OF_BOUNDS;
-        proven_sys_mem_copy(s->data + s->data_len, value.ptr, value.size);
+        proven_net_mem_copy(s->data + s->data_len, value.ptr, value.size);
         s->data_len += value.size;
         s->data[s->data_len++] = '\n';
         s->has_data = true;

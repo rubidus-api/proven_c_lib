@@ -14,6 +14,7 @@
 static proven_size_t g_rsa_min_bits = PROVEN_CRYPTO_RSA_MIN_BITS;
 void proven_crypto_rsa_test_min_bits(proven_size_t bits);
 void proven_crypto_rsa_test_min_bits(proven_size_t bits) { g_rsa_min_bits = bits ? bits : PROVEN_CRYPTO_RSA_MIN_BITS; }
+proven_size_t proven_crypto_rsa_min_bits(void) { return g_rsa_min_bits; }
 
 #define RSA_E_LIMBS PROVEN_CRYPTO_MP_LIMBS(8)                    /* a public exponent: 64 bits at most */
 

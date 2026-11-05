@@ -84,14 +84,14 @@ void proven_quic_initial_secrets_v(proven_mem_view_t dcid, proven_u32 version, p
     proven_mem_wipe((proven_mem_mut_t){ .ptr = initial, .size = sizeof initial });
 }
 
-static void cipher_init(proven_crypto_aes_gcm_t *ctx, bool chacha, const proven_byte_t *key, proven_size_t key_len) {
-    if (chacha) for (int i = 0; i < 32; ++i) ctx->rk[i] = key[i];
-    else (void)proven_crypto_aes_gcm_init(ctx, key, key_len);                  /* 16 or 32: cannot fail */
+static void cipher_init(proven_quic_keys_t *keys, bool chacha, const proven_byte_t *key, proven_size_t key_len) {
+    if (chacha) for (int i = 0; i < 32; ++i) keys->aead_chacha[i] = key[i];
+    else (void)proven_aes_gcm_init(&keys->aead, (proven_mem_view_t){ .ptr = key, .size = key_len });   /* 16 or 32: cannot fail */
 }
 
-static void hp_init(proven_crypto_aes_t *ctx, bool chacha, const proven_byte_t *key, proven_size_t key_len) {
-    if (chacha) for (int i = 0; i < 32; ++i) ctx->rk[i] = key[i];
-    else (void)proven_crypto_aes_init(ctx, key, key_len);                      /* 16 or 32: cannot fail */
+static void hp_init(proven_quic_keys_t *keys, bool chacha, const proven_byte_t *key, proven_size_t key_len) {
+    if (chacha) for (int i = 0; i < 32; ++i) keys->hp_chacha[i] = key[i];
+    else (void)proven_aes_init(&keys->hp, (proven_mem_view_t){ .ptr = key, .size = key_len });         /* 16 or 32: cannot fail */
 }
 
 void proven_quic_keys_set(proven_quic_keys_t *keys, const proven_tls_suite_t *suite, const proven_byte_t *secret) {
@@ -105,10 +105,10 @@ void proven_quic_keys_set_v(proven_quic_keys_t *keys, const proven_tls_suite_t *
     keys->chacha = suite->chacha;
     keys->key_len = suite->key_len;
     proven_tls13_expand_label(suite->hash, secret, v2 ? "quicv2 key" : "quic key", none, key, suite->key_len);
-    cipher_init(&keys->aead, suite->chacha, key, suite->key_len);
+    cipher_init(keys, suite->chacha, key, suite->key_len);
     proven_tls13_expand_label(suite->hash, secret, v2 ? "quicv2 iv" : "quic iv", none, keys->iv, 12);
     proven_tls13_expand_label(suite->hash, secret, v2 ? "quicv2 hp" : "quic hp", none, key, suite->key_len);
-    hp_init(&keys->hp, suite->chacha, key, suite->key_len);
+    hp_init(keys, suite->chacha, key, suite->key_len);
     proven_mem_wipe((proven_mem_mut_t){ .ptr = key, .size = sizeof key });
 }
 
@@ -129,10 +129,10 @@ void proven_quic_hp_mask(const proven_quic_keys_t *keys, const proven_byte_t sam
          * endian, and the other twelve the nonce; the mask is the keystream over five zeros. */
         proven_u32 counter = (proven_u32)sample[0] | (proven_u32)sample[1] << 8 | (proven_u32)sample[2] << 16 | (proven_u32)sample[3] << 24;
         static const proven_byte_t zeros[5] = { 0 };
-        proven_crypto_chacha20(keys->hp.rk, counter, sample + 4, zeros, mask, 5);
+        proven_chacha20(keys->hp_chacha, counter, sample + 4, zeros, mask, 5);
     } else {
         proven_byte_t block[16];
-        proven_crypto_aes_block(&keys->hp, sample, block);
+        proven_aes_encrypt_block(&keys->hp, sample, block);
         for (int i = 0; i < 5; ++i) mask[i] = block[i];
     }
 }
@@ -154,8 +154,8 @@ proven_size_t proven_quic_protect(const proven_quic_keys_t *keys, proven_byte_t 
     packet_nonce(keys, pn, nonce);
     proven_byte_t *payload = packet + header_len;
     proven_mem_view_t aad = { .ptr = packet, .size = header_len }, plain = { .ptr = payload, .size = payload_len };
-    if (keys->chacha) proven_crypto_chacha20poly1305_seal(keys->aead.rk, nonce, aad, plain, payload, payload + payload_len);
-    else proven_crypto_aes_gcm_seal(&keys->aead, nonce, aad, plain, payload, payload + payload_len);
+    if (keys->chacha) proven_chacha20_poly1305_seal(keys->aead_chacha, nonce, aad, plain, payload, payload + payload_len);
+    else proven_aes_gcm_seal(&keys->aead, nonce, aad, plain, payload, payload + payload_len);
     const proven_size_t pn_offset = header_len - pn_len;
     proven_byte_t mask[5];
     proven_quic_hp_mask(keys, packet + pn_offset + 4, mask);
@@ -196,8 +196,8 @@ bool proven_quic_unprotect_masked(const proven_quic_keys_t *keys, proven_byte_t 
     proven_byte_t *body = packet + hlen;
     const proven_size_t clen = packet_len - hlen - 16;
     proven_mem_view_t aad = { .ptr = packet, .size = hlen }, cipher = { .ptr = body, .size = clen };
-    bool ok = keys->chacha ? proven_crypto_chacha20poly1305_open(keys->aead.rk, nonce, aad, cipher, body + clen, body)
-                           : proven_crypto_aes_gcm_open(&keys->aead, nonce, aad, cipher, body + clen, body);
+    bool ok = keys->chacha ? proven_tls_chacha_open_(keys->aead_chacha, nonce, aad, cipher, body + clen, body)
+                           : proven_tls_aes_gcm_open_(&keys->aead, nonce, aad, cipher, body + clen, body);
     if (!ok) return false;
     /* What opened is data for the layer above, which parses it as any parser does. */
     PROVEN_CT_PUBLIC(body, clen);
@@ -231,9 +231,9 @@ void proven_quic_retry_tag(proven_mem_view_t odcid, proven_mem_view_t retry, pro
     for (proven_size_t i = 0; i < retry.size; ++i) pseudo[n++] = retry.ptr[i];
     /* The version from the packet's own Version field (bytes 1 to 4). */
     const bool v2 = retry.size >= 5 && retry.ptr[1] == 0x6b && retry.ptr[2] == 0x33 && retry.ptr[3] == 0x43 && retry.ptr[4] == 0xcf;
-    proven_crypto_aes_gcm_t ctx;
-    (void)proven_crypto_aes_gcm_init(&ctx, v2 ? RETRY_KEY_V2 : RETRY_KEY_V1, 16);
-    proven_crypto_aes_gcm_seal(&ctx, v2 ? RETRY_NONCE_V2 : RETRY_NONCE_V1, (proven_mem_view_t){ .ptr = pseudo, .size = n },
+    proven_aes_gcm_t ctx;
+    (void)proven_tls_aes_gcm_init_(&ctx, v2 ? RETRY_KEY_V2 : RETRY_KEY_V1, 16);
+    proven_aes_gcm_seal(&ctx, v2 ? RETRY_NONCE_V2 : RETRY_NONCE_V1, (proven_mem_view_t){ .ptr = pseudo, .size = n },
                                (proven_mem_view_t){ .ptr = pseudo, .size = 0 }, pseudo, tag);
 }
 

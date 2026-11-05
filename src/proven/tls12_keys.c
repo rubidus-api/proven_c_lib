@@ -1,5 +1,5 @@
 #include "proven_internal_tls.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 
 /* TLS 1.2 below the state machine (RFC 5246): the suites, the PRF and what is derived with
  * it, and record protection for the AEAD suites (RFC 5288, RFC 7905). */
@@ -95,9 +95,9 @@ static void tls12_install(proven_tls_keys_t *keys, const proven_tls12_suite_t *s
     for (proven_size_t i = 0; i < 12; ++i) keys->iv[i] = i < iv_len ? iv[i] : 0;
     keys->chacha = suite->chacha;
     if (suite->chacha) {
-        for (int i = 0; i < 32; ++i) keys->aes.rk[i] = key[i];
+        for (int i = 0; i < 32; ++i) keys->chacha_key[i] = key[i];
     } else {
-        (void)proven_crypto_aes_gcm_init(&keys->aes, key, suite->key_len);       /* 16 or 32: cannot fail */
+        (void)proven_tls_aes_gcm_init_(&keys->aes, key, suite->key_len);       /* 16 or 32: cannot fail */
     }
     keys->seq = 0;
     keys->active = true;
@@ -148,10 +148,10 @@ proven_size_t proven_tls12_seal(proven_tls_keys_t *keys, proven_byte_t type, pro
     tls12_aad(keys, type, content.size, aad);
     for (proven_size_t i = 0; i < explicit_len; ++i) p[i] = nonce[4 + i];
     p += explicit_len;
-    proven_sys_mem_copy(p, content.ptr, content.size);
+    proven_net_mem_copy(p, content.ptr, content.size);
     proven_mem_view_t ad = { .ptr = aad, .size = sizeof aad }, plain = { .ptr = p, .size = content.size };
-    if (keys->chacha) proven_crypto_chacha20poly1305_seal(keys->aes.rk, nonce, ad, plain, p, p + content.size);
-    else proven_crypto_aes_gcm_seal(&keys->aes, nonce, ad, plain, p, p + content.size);
+    if (keys->chacha) proven_chacha20_poly1305_seal(keys->chacha_key, nonce, ad, plain, p, p + content.size);
+    else proven_aes_gcm_seal(&keys->aes, nonce, ad, plain, p, p + content.size);
     keys->seq++;
     return PROVEN_TLS_RECORD_HEADER + body;
 }
@@ -170,8 +170,8 @@ bool proven_tls12_open(proven_tls_keys_t *keys, proven_byte_t *record, proven_si
     tls12_aad(keys, record[0], plain_len, aad);
     p += explicit_len;
     proven_mem_view_t ad = { .ptr = aad, .size = sizeof aad }, cipher = { .ptr = p, .size = plain_len };
-    bool ok = keys->chacha ? proven_crypto_chacha20poly1305_open(keys->aes.rk, nonce, ad, cipher, p + plain_len, p)
-                           : proven_crypto_aes_gcm_open(&keys->aes, nonce, ad, cipher, p + plain_len, p);
+    bool ok = keys->chacha ? proven_tls_chacha_open_(keys->chacha_key, nonce, ad, cipher, p + plain_len, p)
+                           : proven_tls_aes_gcm_open_(&keys->aes, nonce, ad, cipher, p + plain_len, p);
     if (!ok) return false;
     keys->seq++;
     PROVEN_CT_PUBLIC(p, plain_len);               /* content for the layer above, as in 1.3 */

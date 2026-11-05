@@ -12,6 +12,7 @@
 
 #include "proven.h"
 #include "../src/proven/proven_internal_tls.h"
+#include "../src/proven/proven_internal_cert_issue.h"
 #include <string.h>
 
 /* 2027-06-01 and 2029-06-01, seconds since 1970 */
@@ -42,8 +43,8 @@ static bool tp_pem(char *out, proven_size_t cap, const char *label, const proven
     return true;
 }
 
-static bool tp_cert(char *out, const char *subject, proven_tls_key_kind_t kind, const proven_byte_t *key,
-                    const char *issuer, proven_tls_key_kind_t issuer_kind, const proven_byte_t *issuer_key,
+static bool tp_cert(char *out, const char *subject, proven_issue_key_t kind, const proven_byte_t *key,
+                    const char *issuer, proven_issue_key_t issuer_kind, const proven_byte_t *issuer_key,
                     bool ca, proven_u32 eku, proven_i64 until, const char *dns) {
     proven_u8str_view_t names[3] = {
         { .ptr = (const proven_byte_t *)dns, .size = strlen(dns) },
@@ -61,7 +62,7 @@ static bool tp_cert(char *out, const char *subject, proven_tls_key_kind_t kind, 
     return proven_tls_issue_(&q, (proven_mem_mut_t){ .ptr = der, .size = sizeof der }, &n) == PROVEN_OK && tp_pem(out, 2048, "CERTIFICATE", der, n);
 }
 
-static bool tp_key_pem(char *out, proven_tls_key_kind_t kind, const proven_byte_t *key, bool sec1) {
+static bool tp_key_pem(char *out, proven_issue_key_t kind, const proven_byte_t *key, bool sec1) {
     proven_byte_t der[80];
     proven_size_t n = proven_tls_key_der_(kind, key, sec1, der);
     return n > 0 && tp_pem(out, 512, sec1 ? "EC PRIVATE KEY" : "PRIVATE KEY", der, n);
@@ -72,17 +73,17 @@ static bool tp_build(void) {
     const proven_u32 SRV = PROVEN_CERT_EKU_SERVER_AUTH, CLI = PROVEN_CERT_EKU_CLIENT_AUTH;
     tp_key(ca, 1); tp_key(other, 2); tp_key(p256, 3); tp_key(ed, 4); tp_key(client, 5); tp_key(stranger, 6);
     bool ok = true;
-    ok = ok && tp_cert(TP_CA, "TLS test CA", PROVEN_TLS_KEY_P256, ca, "TLS test CA", PROVEN_TLS_KEY_P256, ca, true, 0, TP_UNTIL, "");
-    ok = ok && tp_cert(TP_OTHER_CA, "Another CA", PROVEN_TLS_KEY_ED25519, other, "Another CA", PROVEN_TLS_KEY_ED25519, other, true, 0, TP_UNTIL, "");
-    ok = ok && tp_cert(TP_SERVER_P256, "server", PROVEN_TLS_KEY_P256, p256, "TLS test CA", PROVEN_TLS_KEY_P256, ca, false, SRV, TP_UNTIL, "example.test");
-    ok = ok && tp_cert(TP_SERVER_ED, "server", PROVEN_TLS_KEY_ED25519, ed, "TLS test CA", PROVEN_TLS_KEY_P256, ca, false, SRV, TP_UNTIL, "example.test");
-    ok = ok && tp_cert(TP_SERVER_EXPIRED, "server", PROVEN_TLS_KEY_P256, p256, "TLS test CA", PROVEN_TLS_KEY_P256, ca, false, SRV, TP_EXPIRY, "example.test");
-    ok = ok && tp_cert(TP_SERVER_OTHER_NAME, "server", PROVEN_TLS_KEY_P256, p256, "TLS test CA", PROVEN_TLS_KEY_P256, ca, false, SRV, TP_UNTIL, "elsewhere.test");
-    ok = ok && tp_cert(TP_CLIENT, "client", PROVEN_TLS_KEY_P256, client, "TLS test CA", PROVEN_TLS_KEY_P256, ca, false, CLI, TP_UNTIL, "example.test");
-    ok = ok && tp_cert(TP_STRANGER, "stranger", PROVEN_TLS_KEY_P256, stranger, "Another CA", PROVEN_TLS_KEY_ED25519, other, false, SRV | CLI, TP_UNTIL, "example.test");
-    ok = ok && tp_key_pem(TP_SERVER_P256_KEY, PROVEN_TLS_KEY_P256, p256, false) && tp_key_pem(TP_SERVER_P256_KEY_SEC1, PROVEN_TLS_KEY_P256, p256, true);
-    ok = ok && tp_key_pem(TP_SERVER_ED_KEY, PROVEN_TLS_KEY_ED25519, ed, false) && tp_key_pem(TP_CLIENT_KEY, PROVEN_TLS_KEY_P256, client, false);
-    ok = ok && tp_key_pem(TP_STRANGER_KEY, PROVEN_TLS_KEY_P256, stranger, false);
+    ok = ok && tp_cert(TP_CA, "TLS test CA", PROVEN_ISSUE_KEY_P256, ca, "TLS test CA", PROVEN_ISSUE_KEY_P256, ca, true, 0, TP_UNTIL, "");
+    ok = ok && tp_cert(TP_OTHER_CA, "Another CA", PROVEN_ISSUE_KEY_ED25519, other, "Another CA", PROVEN_ISSUE_KEY_ED25519, other, true, 0, TP_UNTIL, "");
+    ok = ok && tp_cert(TP_SERVER_P256, "server", PROVEN_ISSUE_KEY_P256, p256, "TLS test CA", PROVEN_ISSUE_KEY_P256, ca, false, SRV, TP_UNTIL, "example.test");
+    ok = ok && tp_cert(TP_SERVER_ED, "server", PROVEN_ISSUE_KEY_ED25519, ed, "TLS test CA", PROVEN_ISSUE_KEY_P256, ca, false, SRV, TP_UNTIL, "example.test");
+    ok = ok && tp_cert(TP_SERVER_EXPIRED, "server", PROVEN_ISSUE_KEY_P256, p256, "TLS test CA", PROVEN_ISSUE_KEY_P256, ca, false, SRV, TP_EXPIRY, "example.test");
+    ok = ok && tp_cert(TP_SERVER_OTHER_NAME, "server", PROVEN_ISSUE_KEY_P256, p256, "TLS test CA", PROVEN_ISSUE_KEY_P256, ca, false, SRV, TP_UNTIL, "elsewhere.test");
+    ok = ok && tp_cert(TP_CLIENT, "client", PROVEN_ISSUE_KEY_P256, client, "TLS test CA", PROVEN_ISSUE_KEY_P256, ca, false, CLI, TP_UNTIL, "example.test");
+    ok = ok && tp_cert(TP_STRANGER, "stranger", PROVEN_ISSUE_KEY_P256, stranger, "Another CA", PROVEN_ISSUE_KEY_ED25519, other, false, SRV | CLI, TP_UNTIL, "example.test");
+    ok = ok && tp_key_pem(TP_SERVER_P256_KEY, PROVEN_ISSUE_KEY_P256, p256, false) && tp_key_pem(TP_SERVER_P256_KEY_SEC1, PROVEN_ISSUE_KEY_P256, p256, true);
+    ok = ok && tp_key_pem(TP_SERVER_ED_KEY, PROVEN_ISSUE_KEY_ED25519, ed, false) && tp_key_pem(TP_CLIENT_KEY, PROVEN_ISSUE_KEY_P256, client, false);
+    ok = ok && tp_key_pem(TP_STRANGER_KEY, PROVEN_ISSUE_KEY_P256, stranger, false);
     /* Well-formed PKCS #8 for algorithms this version does not sign with: the identifiers are
      * real, the key bytes are filler. They only have to be recognised and refused. */
     static const proven_byte_t rsa[] = { 0x30, 0x1b, 0x02, 0x01, 0x00, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
@@ -129,7 +130,7 @@ typedef struct { char seed[32]; proven_u64 counter; } tp_stream_t;     /* the se
 }
 
 [[maybe_unused]] static bool tp_cert_rsa(char *out, proven_size_t cap, const char *subject, const proven_crypto_rsa_key_t *subject_rsa,
-                                         const char *issuer, proven_tls_key_kind_t issuer_kind, const proven_byte_t *issuer_key, const proven_crypto_rsa_key_t *issuer_rsa,
+                                         const char *issuer, proven_issue_key_t issuer_kind, const proven_byte_t *issuer_key, const proven_crypto_rsa_key_t *issuer_rsa,
                                          bool ca, proven_u32 eku) {
     proven_u8str_view_t names[3] = {
         { .ptr = (const proven_byte_t *)"example.test", .size = 12 },
@@ -137,7 +138,7 @@ typedef struct { char seed[32]; proven_u64 counter; } tp_stream_t;     /* the se
         { .ptr = (const proven_byte_t *)"127.0.0.1", .size = 9 },
     };
     proven_tls_issue_t q = {
-        .subject = subject, .issuer = issuer, .subject_kind = PROVEN_TLS_KEY_RSA, .subject_rsa = subject_rsa,
+        .subject = subject, .issuer = issuer, .subject_kind = PROVEN_ISSUE_KEY_RSA, .subject_rsa = subject_rsa,
         .issuer_kind = issuer_kind, .issuer_key = issuer_key, .issuer_rsa = issuer_rsa,
         .is_ca = ca, .eku = eku, .names = names, .name_count = ca ? 0 : 3, .not_before = TP_FROM, .not_after = TP_UNTIL,
     };
@@ -156,10 +157,10 @@ typedef struct { char seed[32]; proven_u64 counter; } tp_stream_t;     /* the se
     bool ok = proven_crypto_rsa_generate(2048, tp_stream, &st, &TP_RSA_SERVER_K, TP_RSA_SERVER_D) &&
               proven_crypto_rsa_generate(1024, tp_stream, &st, &TP_RSA_SMALL_K, TP_RSA_SMALL_D) &&
               proven_crypto_rsa_generate(1024, tp_stream, &st, &TP_RSA_CA_K, TP_RSA_CA_D);
-    ok = ok && tp_cert_rsa(TP_SERVER_RSA, sizeof TP_SERVER_RSA, "server", &TP_RSA_SERVER_K, "TLS test CA", PROVEN_TLS_KEY_P256, ca, NULL, false, SRV);
-    ok = ok && tp_cert_rsa(TP_CLIENT_RSA, sizeof TP_CLIENT_RSA, "client", &TP_RSA_SMALL_K, "TLS test CA", PROVEN_TLS_KEY_P256, ca, NULL, false, CLI);
-    ok = ok && tp_cert_rsa(TP_RSA_CA, sizeof TP_RSA_CA, "RSA test CA", &TP_RSA_CA_K, "RSA test CA", PROVEN_TLS_KEY_RSA, NULL, &TP_RSA_CA_K, true, 0);
-    ok = ok && tp_cert_rsa(TP_SERVER_RSA_BY_RSA, sizeof TP_SERVER_RSA_BY_RSA, "server", &TP_RSA_SERVER_K, "RSA test CA", PROVEN_TLS_KEY_RSA, NULL, &TP_RSA_CA_K, false, SRV);
+    ok = ok && tp_cert_rsa(TP_SERVER_RSA, sizeof TP_SERVER_RSA, "server", &TP_RSA_SERVER_K, "TLS test CA", PROVEN_ISSUE_KEY_P256, ca, NULL, false, SRV);
+    ok = ok && tp_cert_rsa(TP_CLIENT_RSA, sizeof TP_CLIENT_RSA, "client", &TP_RSA_SMALL_K, "TLS test CA", PROVEN_ISSUE_KEY_P256, ca, NULL, false, CLI);
+    ok = ok && tp_cert_rsa(TP_RSA_CA, sizeof TP_RSA_CA, "RSA test CA", &TP_RSA_CA_K, "RSA test CA", PROVEN_ISSUE_KEY_RSA, NULL, &TP_RSA_CA_K, true, 0);
+    ok = ok && tp_cert_rsa(TP_SERVER_RSA_BY_RSA, sizeof TP_SERVER_RSA_BY_RSA, "server", &TP_RSA_SERVER_K, "RSA test CA", PROVEN_ISSUE_KEY_RSA, NULL, &TP_RSA_CA_K, false, SRV);
     proven_size_t n = ok ? proven_tls_rsa_key_der_(&TP_RSA_SERVER_K, TP_RSA_SERVER_D, true, (proven_mem_mut_t){ .ptr = der, .size = sizeof der }) : 0;
     ok = ok && n > 0 && tp_pem(TP_SERVER_RSA_KEY, sizeof TP_SERVER_RSA_KEY, "PRIVATE KEY", der, n);
     n = ok ? proven_tls_rsa_key_der_(&TP_RSA_SERVER_K, TP_RSA_SERVER_D, false, (proven_mem_mut_t){ .ptr = der, .size = sizeof der }) : 0;

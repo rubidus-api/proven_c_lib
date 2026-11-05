@@ -1,5 +1,5 @@
 #include "proven/http_event_client.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 #include "proven_internal_http_event_client.h"
 #include "proven_internal_loop.h"
 
@@ -117,7 +117,7 @@ struct c3conn {
 static void *c3_alloc(proven_allocator_t a, proven_size_t n) {
     proven_result_mem_mut_t m = a.alloc_fn(a.ctx, n, 16);
     if (m.err != PROVEN_OK) return (void *)0;
-    proven_sys_mem_set(m.value.ptr, 0, n);
+    proven_net_mem_set(m.value.ptr, 0, n);
     return m.value.ptr;
 }
 
@@ -504,7 +504,7 @@ static void c_send_batch(c3conn_t *c, const proven_byte_t *p, proven_size_t n, p
     const proven_err_t e = proven_net_udp_send_marked_(&c->udp, c->to, (proven_mem_view_t){ .ptr = p, .size = n }, seg, ecn, &sent);
     if ((e == PROVEN_ERR_UNREACHABLE || e == PROVEN_ERR_REFUSED) && !c->up) c->send_failed = e;     /* RFC-0031: the round ends it */
     if (e != PROVEN_ERR_TIMEOUT) return;          /* sent, or lost as UDP may lose it */
-    proven_sys_mem_copy(c->pend, p + sent, n - sent);
+    proven_net_mem_copy(c->pend, p + sent, n - sent);
     c->pend_len = n - sent;
     c->pend_seg = seg;
     c->pend_ecn = ecn;
@@ -533,7 +533,7 @@ static void c_send(c3conn_t *c) {
         if (at > 0 && (len > seg || mark != bmark)) {
             c_send_batch(c, buf, at, seg, bmark);
             if (c->pend_len > 0) { at = 0; break; }    /* this one is lost as UDP may lose it */
-            proven_sys_mem_move(buf, buf + at, len);
+            proven_net_mem_move(buf, buf + at, len);
             at = 0; count = 0;
         }
         if (at == 0) { seg = len; bmark = mark; }
@@ -657,7 +657,7 @@ static proven_err_t r_submit(proven_c3req_t *r) {
             else {
                 r->out = c3_alloc(cl->alloc, r->body.size - taken);
                 if (!r->out) return PROVEN_ERR_NOMEM;
-                proven_sys_mem_copy(r->out, r->body.ptr + taken, r->body.size - taken);
+                proven_net_mem_copy(r->out, r->body.ptr + taken, r->body.size - taken);
                 r->out_len = r->body.size - taken;
                 r->blocked = true;
             }
@@ -1052,7 +1052,7 @@ static void c_sock_writable(void *ctx, proven_err_t err) {
         proven_size_t sent = 0;
         const proven_err_t e = proven_net_udp_send_marked_(&c->udp, c->to, (proven_mem_view_t){ .ptr = c->pend, .size = c->pend_len }, c->pend_seg, c->pend_ecn, &sent);
         if (e != PROVEN_ERR_TIMEOUT) c->pend_len = 0;
-        else if (sent > 0) { proven_sys_mem_move(c->pend, c->pend + sent, c->pend_len - sent); c->pend_len -= sent; }
+        else if (sent > 0) { proven_net_mem_move(c->pend, c->pend + sent, c->pend_len - sent); c->pend_len -= sent; }
     }
     c_round(c);
     c_leave(c);
@@ -1335,7 +1335,7 @@ void proven_http_event_client_h3_destroy_(proven_http_event_client_t *cl) {
 }
 
 void proven_http_event_client_h3_test_forget_(proven_http_event_client_t *client) {
-    if (client && client->h3_gone) proven_sys_mem_set(client->h3_gone, 0, C3_GONE * sizeof(c3gone_t));
+    if (client && client->h3_gone) proven_net_mem_set(client->h3_gone, 0, C3_GONE * sizeof(c3gone_t));
 }
 
 int proven_http_event_client_h3_protocol_(const proven_http_event_request_t *request) {

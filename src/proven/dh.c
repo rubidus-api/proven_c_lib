@@ -1,6 +1,8 @@
-#include "proven_internal_tls.h"
+#include "proven/kex.h"
+#include "proven_internal_crypto.h"
 
-/* Finite-field Diffie-Hellman for the legacy DHE suites (RFC-0011 decision T-8).
+/* kex.h's finite-field Diffie-Hellman, made for the legacy DHE suites of TLS (RFC-0011 decision
+ * T-8) and public since v0.111.0 (RFC-0043).
  *
  * What went wrong with DHE in TLS was the group: a server could send any prime it liked - too
  * small (Logjam), not prime, or with a subgroup that gives the exponent away - and a client
@@ -173,12 +175,15 @@ static const struct { const proven_byte_t *p; proven_size_t len; } DH_GROUPS[] =
     { DH_MODP2048, sizeof DH_MODP2048 }, { DH_MODP3072, sizeof DH_MODP3072 }, { DH_MODP4096, sizeof DH_MODP4096 },
 };
 
-proven_mem_view_t proven_tls_dh_server_group(void) { return (proven_mem_view_t){ .ptr = DH_FFDHE2048, .size = sizeof DH_FFDHE2048 }; }
+proven_mem_view_t proven_dh_ffdhe2048(void) { return (proven_mem_view_t){ .ptr = DH_FFDHE2048, .size = sizeof DH_FFDHE2048 }; }
 
-bool proven_tls_dh_known(proven_mem_view_t p, proven_mem_view_t g) {
-    while (p.size > 0 && p.ptr[0] == 0) { p.ptr++; p.size--; }
-    while (g.size > 0 && g.ptr[0] == 0) { g.ptr++; g.size--; }
-    if (g.size != 1 || g.ptr[0] != 2) return false;
+static proven_mem_view_t dh_trim(proven_mem_view_t v) {
+    while (v.size > 0 && v.ptr[0] == 0) { v.ptr++; v.size--; }
+    return v;
+}
+
+static bool dh_known_prime(proven_mem_view_t p) {
+    p = dh_trim(p);
     for (proven_size_t i = 0; i < sizeof DH_GROUPS / sizeof DH_GROUPS[0]; ++i) {
         if (DH_GROUPS[i].len != p.size) continue;
         proven_byte_t diff = 0;
@@ -188,15 +193,21 @@ bool proven_tls_dh_known(proven_mem_view_t p, proven_mem_view_t g) {
     return false;
 }
 
+bool proven_dh_known(proven_mem_view_t p, proven_mem_view_t g) {
+    if (!p.ptr || !g.ptr) return false;
+    g = dh_trim(g);
+    return g.size == 1 && g.ptr[0] == 2 && dh_known_prime(p);
+}
+
 /* An exponent twice as long as the group is strong, rounded up to a multiple of four bytes. */
-proven_size_t proven_tls_dh_exponent_len(proven_size_t p_len) { return p_len <= 256 ? 32 : p_len <= 384 ? 36 : 44; }
+proven_size_t proven_dh_exponent_len(proven_size_t p_len) { return p_len <= 256 ? 32 : p_len <= 384 ? 36 : 44; }
 
 /* base^priv mod p, big-endian, p.size bytes. */
 static bool dh_power(proven_mem_view_t p, const proven_crypto_limb_t *base, const proven_byte_t *priv, proven_size_t priv_len, proven_byte_t *out) {
     proven_crypto_mp_mod_t mod;
-    proven_crypto_limb_t b[PROVEN_CRYPTO_MP_DH_MAX], x[PROVEN_CRYPTO_MP_LIMBS(PROVEN_TLS_DH_EXP_MAX)];
+    proven_crypto_limb_t b[PROVEN_CRYPTO_MP_DH_MAX], x[PROVEN_CRYPTO_MP_LIMBS(PROVEN_DH_EXP_MAX_BYTES)];
     const proven_size_t exp_limbs = PROVEN_CRYPTO_MP_LIMBS(priv_len);
-    if (priv_len == 0 || priv_len > PROVEN_TLS_DH_EXP_MAX || priv_len % 4 != 0) return false;
+    if (priv_len == 0 || priv_len > PROVEN_DH_EXP_MAX_BYTES || priv_len % 4 != 0) return false;
     if (!proven_crypto_mp_mod_init(&mod, p.ptr, p.size) || mod.limbs > PROVEN_CRYPTO_MP_DH_MAX) return false;
     if (!proven_crypto_mp_load_be(x, exp_limbs, priv, priv_len)) return false;
     proven_crypto_mp_to_mont(&mod, b, base);
@@ -210,31 +221,34 @@ static bool dh_power(proven_mem_view_t p, const proven_crypto_limb_t *base, cons
     return ok;
 }
 
-bool proven_tls_dh_public(proven_mem_view_t p, const proven_byte_t *priv, proven_size_t priv_len, proven_byte_t *out) {
+proven_err_t proven_dh_public(proven_mem_view_t p, proven_mem_view_t priv, proven_byte_t *out) {
     proven_crypto_limb_t two[PROVEN_CRYPTO_MP_DH_MAX];
-    while (p.size > 0 && p.ptr[0] == 0) { p.ptr++; p.size--; }
-    if (p.size == 0 || p.size > PROVEN_TLS_DH_MAX) return false;
+    if (!p.ptr || !priv.ptr || !out) return PROVEN_ERR_INVALID_ARG;
+    p = dh_trim(p);
+    if (!dh_known_prime(p)) return PROVEN_ERR_UNSUPPORTED;
     for (proven_size_t i = 0; i < PROVEN_CRYPTO_MP_DH_MAX; ++i) two[i] = 0;
     two[0] = 2;
-    return dh_power(p, two, priv, priv_len, out);
+    return dh_power(p, two, priv.ptr, priv.size, out) ? PROVEN_OK : PROVEN_ERR_INVALID_ARG;
 }
 
-bool proven_tls_dh_shared(proven_mem_view_t p, const proven_byte_t *priv, proven_size_t priv_len, proven_mem_view_t peer,
-                          proven_byte_t *out, proven_size_t *out_len) {
+proven_err_t proven_dh_shared(proven_mem_view_t p, proven_mem_view_t priv, proven_mem_view_t peer, proven_byte_t *out, proven_size_t *out_len) {
     proven_crypto_limb_t y[PROVEN_CRYPTO_MP_DH_MAX], top[PROVEN_CRYPTO_MP_DH_MAX];
-    proven_byte_t z[PROVEN_TLS_DH_MAX];
-    while (p.size > 0 && p.ptr[0] == 0) { p.ptr++; p.size--; }
-    while (peer.size > 0 && peer.ptr[0] == 0) { peer.ptr++; peer.size--; }
-    if (p.size == 0 || p.size > PROVEN_TLS_DH_MAX || peer.size == 0 || peer.size > p.size) return false;
+    proven_byte_t z[PROVEN_DH_MAX_BYTES];
+    if (out_len) *out_len = 0;
+    if (!p.ptr || !priv.ptr || !peer.ptr || !out || !out_len) return PROVEN_ERR_INVALID_ARG;
+    p = dh_trim(p);
+    peer = dh_trim(peer);
+    if (!dh_known_prime(p)) return PROVEN_ERR_UNSUPPORTED;
+    if (peer.size == 0 || peer.size > p.size) return PROVEN_ERR_INVALID_FORMAT;
     const proven_size_t limbs = PROVEN_CRYPTO_MP_LIMBS(p.size);
     /* The peer's value is public, and must be one that can only lead somewhere unknown:
      * 2 <= y <= p - 2. Zero, one and p - 1 each give a shared secret anyone can name. */
-    if (!proven_crypto_mp_load_be(y, limbs, peer.ptr, peer.size) || !proven_crypto_mp_load_be(top, limbs, p.ptr, p.size)) return false;
+    if (!proven_crypto_mp_load_be(y, limbs, peer.ptr, peer.size) || !proven_crypto_mp_load_be(top, limbs, p.ptr, p.size)) return PROVEN_ERR_INVALID_FORMAT;
     top[0] -= 1;                                                      /* p is odd: p - 1, no borrow */
     bool small = true;
     for (proven_size_t i = 1; i < limbs; ++i) small = small && y[i] == 0;
-    if ((small && y[0] < 2) || !proven_crypto_mp_lt(y, top, limbs)) return false;
-    if (!dh_power(p, y, priv, priv_len, z)) return false;
+    if ((small && y[0] < 2) || !proven_crypto_mp_lt(y, top, limbs)) return PROVEN_ERR_INVALID_FORMAT;
+    if (!dh_power(p, y, priv.ptr, priv.size, z)) return PROVEN_ERR_INVALID_ARG;
     /* TLS drops the leading zero bytes of the shared number (RFC 5246 section 8.1.2), so how
      * many there are shows in what follows. That is why a DH key here is never used twice:
      * what leaks is about a key that is already gone (Raccoon, 2020, needs it reused). */
@@ -248,5 +262,5 @@ bool proven_tls_dh_shared(proven_mem_view_t p, const proven_byte_t *priv, proven
     for (proven_size_t i = lead; i < p.size; ++i) out[i - lead] = z[i];
     *out_len = p.size - lead;
     proven_mem_wipe((proven_mem_mut_t){ .ptr = z, .size = sizeof z });
-    return true;
+    return PROVEN_OK;
 }

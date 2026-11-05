@@ -1,4 +1,6 @@
-#include "proven_internal_tls.h"
+#include "proven_internal_cert_issue.h"
+#include "proven/hash.h"
+#include "proven/hmac.h"
 #include "proven/encode.h"
 #ifndef PROVEN_FREESTANDING
 #include "proven/random.h"
@@ -98,10 +100,10 @@ static void dw_name(proven_dw_t *w, const char *cn) {
 #define OID_RSA "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01"
 #define OID_RSA_SHA256 "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x0b"
 
-static void dw_sig_alg(proven_dw_t *w, proven_tls_key_kind_t issuer) {
+static void dw_sig_alg(proven_dw_t *w, proven_issue_key_t issuer) {
     proven_size_t at = dw_open(w, 0x30);
-    if (issuer == PROVEN_TLS_KEY_ED25519) DW_LIT(w, 0x06, OID_ED25519);
-    else if (issuer == PROVEN_TLS_KEY_RSA) { DW_LIT(w, 0x06, OID_RSA_SHA256); dw_tlv(w, 0x05, (const proven_byte_t *)"", 0); }
+    if (issuer == PROVEN_ISSUE_KEY_ED25519) DW_LIT(w, 0x06, OID_ED25519);
+    else if (issuer == PROVEN_ISSUE_KEY_RSA) { DW_LIT(w, 0x06, OID_RSA_SHA256); dw_tlv(w, 0x05, (const proven_byte_t *)"", 0); }
     else DW_LIT(w, 0x06, OID_ECDSA_SHA256);
     dw_close(w, at);
 }
@@ -121,12 +123,12 @@ static void dw_spki_rsa(proven_dw_t *w, const proven_crypto_rsa_key_t *k) {
     dw_close(w, seq); dw_close(w, bits); dw_close(w, spki);
 }
 
-static bool dw_spki(proven_dw_t *w, proven_tls_key_kind_t kind, const proven_byte_t key[32]) {
+static bool dw_spki(proven_dw_t *w, proven_issue_key_t kind, const proven_byte_t key[32]) {
     proven_byte_t pub[66];
     proven_size_t pub_len;
     pub[0] = 0;                                   /* no unused bits */
     proven_size_t spki = dw_open(w, 0x30), alg = dw_open(w, 0x30);
-    if (kind == PROVEN_TLS_KEY_ED25519) {
+    if (kind == PROVEN_ISSUE_KEY_ED25519) {
         DW_LIT(w, 0x06, OID_ED25519);
         proven_crypto_ed25519_public(pub + 1, key);
         pub_len = 33;
@@ -153,8 +155,8 @@ static proven_size_t dw_ext_open(proven_dw_t *w, const char *oid, proven_size_t 
 
 proven_err_t proven_tls_issue_(const proven_tls_issue_t *q, proven_mem_mut_t out, proven_size_t *len) {
     if (!q || !out.ptr || !len || !q->subject || !q->issuer) return PROVEN_ERR_INVALID_ARG;
-    if (q->subject_kind == PROVEN_TLS_KEY_RSA ? !q->subject_rsa : !q->subject_key) return PROVEN_ERR_INVALID_ARG;
-    if (q->issuer_kind == PROVEN_TLS_KEY_RSA ? !q->issuer_rsa : !q->issuer_key) return PROVEN_ERR_INVALID_ARG;
+    if (q->subject_kind == PROVEN_ISSUE_KEY_RSA ? !q->subject_rsa : !q->subject_key) return PROVEN_ERR_INVALID_ARG;
+    if (q->issuer_kind == PROVEN_ISSUE_KEY_RSA ? !q->issuer_rsa : !q->issuer_key) return PROVEN_ERR_INVALID_ARG;
     if (q->not_after <= q->not_before) return PROVEN_ERR_INVALID_ARG;
     proven_byte_t tbs_buf[1400];
     proven_dw_t t = { tbs_buf, 0, sizeof tbs_buf, true };
@@ -173,7 +175,7 @@ proven_err_t proven_tls_issue_(const proven_tls_issue_t *q, proven_mem_mut_t out
     dw_time(&t, q->not_before); dw_time(&t, q->not_after);
     dw_close(&t, validity);
     dw_name(&t, q->subject);
-    if (q->subject_kind == PROVEN_TLS_KEY_RSA) { if (!q->subject_rsa) return PROVEN_ERR_INVALID_ARG; dw_spki_rsa(&t, q->subject_rsa); }
+    if (q->subject_kind == PROVEN_ISSUE_KEY_RSA) { if (!q->subject_rsa) return PROVEN_ERR_INVALID_ARG; dw_spki_rsa(&t, q->subject_rsa); }
     else if (!dw_spki(&t, q->subject_kind, q->subject_key)) return PROVEN_ERR_INVALID_ARG;
 
     proven_size_t exts_wrap = dw_open(&t, 0xa3), exts = dw_open(&t, 0x30), ext, val, seq;
@@ -224,12 +226,12 @@ proven_err_t proven_tls_issue_(const proven_tls_issue_t *q, proven_mem_mut_t out
     proven_byte_t sig[PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES];
     proven_size_t sig_len;
     proven_mem_view_t signed_part = { .ptr = tbs_buf, .size = t.len };
-    if (q->issuer_kind == PROVEN_TLS_KEY_RSA) {
+    if (q->issuer_kind == PROVEN_ISSUE_KEY_RSA) {
         proven_byte_t digest[32];
         proven_sha256(signed_part, digest);
         if (!q->issuer_rsa || !proven_crypto_rsa_sign_pkcs1(q->issuer_rsa, (void *)0, PROVEN_HMAC_SHA256, (proven_mem_view_t){ .ptr = digest, .size = 32 }, sig)) return PROVEN_ERR_INVALID_ARG;
         sig_len = q->issuer_rsa->n_len;
-    } else if (q->issuer_kind == PROVEN_TLS_KEY_ED25519) {
+    } else if (q->issuer_kind == PROVEN_ISSUE_KEY_ED25519) {
         proven_byte_t pub[32];
         proven_crypto_ed25519_public(pub, q->issuer_key);
         proven_crypto_ed25519_sign(sig, q->issuer_key, pub, signed_part);
@@ -281,10 +283,10 @@ proven_size_t proven_tls_rsa_key_der_(const proven_crypto_rsa_key_t *k, const pr
     return w.ok ? w.len : 0;
 }
 
-proven_size_t proven_tls_key_der_(proven_tls_key_kind_t kind, const proven_byte_t key[32], bool sec1, proven_byte_t out[80]) {
+proven_size_t proven_tls_key_der_(proven_issue_key_t kind, const proven_byte_t key[32], bool sec1, proven_byte_t out[80]) {
     static const proven_byte_t zero = 0, one = 1;
     proven_dw_t w = { out, 0, 80, true };
-    if (kind == PROVEN_TLS_KEY_P256 && sec1) {
+    if (kind == PROVEN_ISSUE_KEY_P256 && sec1) {
         /* ECPrivateKey ::= SEQUENCE { 1, privateKey, [0] curve } */
         proven_size_t seq = dw_open(&w, 0x30);
         dw_tlv(&w, 0x02, &one, 1);
@@ -298,11 +300,11 @@ proven_size_t proven_tls_key_der_(proven_tls_key_kind_t kind, const proven_byte_
     proven_size_t seq = dw_open(&w, 0x30);
     dw_tlv(&w, 0x02, &zero, 1);
     proven_size_t alg = dw_open(&w, 0x30);
-    if (kind == PROVEN_TLS_KEY_ED25519) DW_LIT(&w, 0x06, OID_ED25519);
+    if (kind == PROVEN_ISSUE_KEY_ED25519) DW_LIT(&w, 0x06, OID_ED25519);
     else { DW_LIT(&w, 0x06, OID_EC_KEY); DW_LIT(&w, 0x06, OID_P256); }
     dw_close(&w, alg);
     proven_size_t wrap = dw_open(&w, 0x04);
-    if (kind == PROVEN_TLS_KEY_ED25519) {
+    if (kind == PROVEN_ISSUE_KEY_ED25519) {
         dw_tlv(&w, 0x04, key, 32);
     } else {
         proven_size_t inner = dw_open(&w, 0x30);
@@ -345,7 +347,7 @@ static void issue_os_random(void *ctx, proven_byte_t *out, proven_size_t len) { 
 
 proven_err_t proven_tls_self_signed_(const proven_u8str_view_t *names, proven_size_t name_count,
                                      proven_i64 not_before, proven_i64 not_after,
-                                     proven_tls_random_fn random, void *random_ctx,
+                                     proven_issue_random_fn random, void *random_ctx,
                                      proven_mem_mut_t certificate_pem, proven_size_t *certificate_len,
                                      proven_mem_mut_t private_key_pem, proven_size_t *private_key_len) {
     if (!names || name_count == 0 || name_count > 16 || !certificate_len || !private_key_len || not_after <= not_before) return PROVEN_ERR_INVALID_ARG;
@@ -362,8 +364,8 @@ proven_err_t proven_tls_self_signed_(const proven_u8str_view_t *names, proven_si
     subject[cn] = 0;
     proven_tls_issue_t q = {
         .subject = subject, .issuer = subject,
-        .subject_kind = PROVEN_TLS_KEY_ED25519, .subject_key = key,
-        .issuer_kind = PROVEN_TLS_KEY_ED25519, .issuer_key = key,
+        .subject_kind = PROVEN_ISSUE_KEY_ED25519, .subject_key = key,
+        .issuer_kind = PROVEN_ISSUE_KEY_ED25519, .issuer_key = key,
         .is_ca = false, .eku = PROVEN_CERT_EKU_SERVER_AUTH | PROVEN_CERT_EKU_CLIENT_AUTH,
         .names = names, .name_count = name_count, .not_before = not_before, .not_after = not_after,
     };
@@ -373,7 +375,7 @@ proven_err_t proven_tls_self_signed_(const proven_u8str_view_t *names, proven_si
     proven_err_t e = proven_tls_issue_(&q, (proven_mem_mut_t){ .ptr = der, .size = sizeof der }, &der_len);
     if (e == PROVEN_OK) e = proven_tls_pem_write_("CERTIFICATE", (proven_mem_view_t){ .ptr = der, .size = der_len }, certificate_pem, certificate_len);
     if (e == PROVEN_OK) {
-        proven_size_t kn = proven_tls_key_der_(PROVEN_TLS_KEY_ED25519, key, false, key_der);
+        proven_size_t kn = proven_tls_key_der_(PROVEN_ISSUE_KEY_ED25519, key, false, key_der);
         e = proven_tls_pem_write_("PRIVATE KEY", (proven_mem_view_t){ .ptr = key_der, .size = kn }, private_key_pem, private_key_len);
     }
     proven_mem_wipe((proven_mem_mut_t){ .ptr = key, .size = sizeof key });

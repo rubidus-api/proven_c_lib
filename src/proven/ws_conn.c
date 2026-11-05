@@ -6,7 +6,7 @@
 #include "proven/utf.h"
 #include "proven/url.h"
 #include "proven_internal_ws.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 
 /*
  * The WebSocket connection driver. The frames are ws.c's business and the opening handshake's
@@ -91,7 +91,7 @@ static proven_err_t wc_send_frame(proven_ws_conn_t *c, bool fin, proven_u8 opcod
         const proven_byte_t *from = take > 0 ? data.ptr + done : (const proven_byte_t *)0;    /* an empty payload may have no pointer */
         proven_mem_view_t piece = { .ptr = from, .size = take };
         if (f.masked || n > 0) {
-            proven_sys_mem_copy(c->send_buf + n, from, take);
+            proven_net_mem_copy(c->send_buf + n, from, take);
             if (f.masked) proven_ws_mask((proven_mem_mut_t){ .ptr = c->send_buf + n, .size = take }, f.mask, done);
             piece = (proven_mem_view_t){ .ptr = c->send_buf, .size = n + take };
         }
@@ -222,7 +222,7 @@ static proven_err_t wc_message_append(proven_ws_conn_t *c, proven_mem_view_t pie
         c->message = m.value.ptr;
         c->message_cap = cap;
     }
-    proven_sys_mem_copy(c->message + c->message_len, piece.ptr, piece.size);
+    proven_net_mem_copy(c->message + c->message_len, piece.ptr, piece.size);
     c->message_len = need;
     return PROVEN_OK;
 }
@@ -492,7 +492,7 @@ static proven_err_t wc_open(proven_transport_t transport, bool is_server, proven
         if (bits < 9) c->zip_off = true;
         else c->cfg.compress_window_bits = bits;
     }
-    proven_sys_mem_copy(c->read_buf, early.ptr, early.size);
+    proven_net_mem_copy(c->read_buf, early.ptr, early.size);
     proven_ws_decoder_init(&c->decoder, is_server, c->cfg.max_message_bytes);
     if (deflate) proven_ws_decoder_allow_compressed(&c->decoder);
     if (!is_server) {

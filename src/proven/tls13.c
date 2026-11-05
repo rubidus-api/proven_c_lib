@@ -1,6 +1,6 @@
 #include "proven_internal_tls.h"
 #include "proven_internal_quic.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 
 /* The TLS 1.3 state machine (RFC 8446), both roles. Bytes in, bytes out: no I/O, no clock and
  * no random source of its own - those come from the config.
@@ -281,7 +281,7 @@ static void buf_free(proven_tls_conn_t *c, proven_tls_buf_t *b) {
 
 static bool buf_append(proven_tls_conn_t *c, proven_tls_buf_t *b, const proven_byte_t *p, proven_size_t n) {
     if (n > (proven_size_t)-1 - b->len || !buf_reserve(c, b, b->len + n)) return false;
-    proven_sys_mem_copy(b->ptr + b->len, p, n);        /* a block: a byte at a time here was three cycles a byte of every record received */
+    proven_net_mem_copy(b->ptr + b->len, p, n);        /* a block: a byte at a time here was three cycles a byte of every record received */
     b->len += n;
     return true;
 }
@@ -542,7 +542,7 @@ static void suite_order(proven_u16 out[3]) {
     }
     /* Without the processor's AES the bitsliced code is some thirty times slower than
      * ChaCha20: prefer ChaCha20 there. */
-    if (proven_crypto_aes_hw_available()) {
+    if (proven_aes_hw_available()) {
         out[0] = PROVEN_TLS_AES_128_GCM_SHA256; out[1] = PROVEN_TLS_AES_256_GCM_SHA384; out[2] = PROVEN_TLS_CHACHA20_POLY1305_SHA256;
     } else {
         out[0] = PROVEN_TLS_CHACHA20_POLY1305_SHA256; out[1] = PROVEN_TLS_AES_128_GCM_SHA256; out[2] = PROVEN_TLS_AES_256_GCM_SHA384;
@@ -584,8 +584,8 @@ static void derive_application(proven_tls_conn_t *c, proven_byte_t client_ap[PRO
 
 /* The shared key for the agreed group. False for a peer key that must be refused. */
 static bool key_agree(proven_tls_conn_t *c, proven_u16 group, proven_mem_view_t peer, proven_byte_t out[32]) {
-    if (group == GROUP_X25519) return peer.size == 32 && proven_crypto_x25519(out, c->hs->x25519_priv, peer.ptr);
-    if (group == GROUP_P256) return peer.size == 65 && proven_crypto_ecdh(PROVEN_CRYPTO_EC_P256, c->hs->p256_priv, peer, out);
+    if (group == GROUP_X25519) return peer.size == 32 && proven_tls_x25519_(out, c->hs->x25519_priv, peer.ptr);
+    if (group == GROUP_P256) return peer.size == 65 && proven_tls_ecdh_(PROVEN_PKEY_P256, c->hs->p256_priv, peer, out);
     return false;
 }
 
@@ -593,7 +593,7 @@ static void make_p256_key(proven_tls_conn_t *c, proven_byte_t pub[65]) {
     /* A scalar in range is all but certain on the first draw; the loop is for the rest. */
     for (;;) {
         proven_tls_config_random(c->config, c->hs->p256_priv, 32);
-        if (proven_crypto_ec_public(PROVEN_CRYPTO_EC_P256, c->hs->p256_priv, pub)) break;
+        if (proven_tls_ec_public_(PROVEN_PKEY_P256, c->hs->p256_priv, pub)) break;
     }
     c->hs->have_p256 = true;
 }
@@ -641,27 +641,27 @@ static int sig_check(proven_u16 scheme, const proven_cert_t *leaf, proven_mem_vi
         case SIG_ECDSA_P256_SHA256:
             if (leaf->key_kind != PROVEN_CERT_KEY_EC_P256) return -1;
             proven_sha256(msg, digest);
-            return proven_crypto_ecdsa_verify_der(PROVEN_CRYPTO_EC_P256, leaf->key, (proven_mem_view_t){ .ptr = digest, .size = 32 }, s) ? 1 : 0;
+            return proven_tls_ecdsa_verify_(PROVEN_PKEY_P256, leaf->key, (proven_mem_view_t){ .ptr = digest, .size = 32 }, s) ? 1 : 0;
         case SIG_ECDSA_P384_SHA384:
             if (leaf->key_kind != PROVEN_CERT_KEY_EC_P384) return -1;
             proven_sha384(msg, digest);
-            return proven_crypto_ecdsa_verify_der(PROVEN_CRYPTO_EC_P384, leaf->key, (proven_mem_view_t){ .ptr = digest, .size = 48 }, s) ? 1 : 0;
+            return proven_tls_ecdsa_verify_(PROVEN_PKEY_P384, leaf->key, (proven_mem_view_t){ .ptr = digest, .size = 48 }, s) ? 1 : 0;
         case SIG_ED25519:
             if (leaf->key_kind != PROVEN_CERT_KEY_ED25519) return -1;
-            return s.size == 64 && proven_crypto_ed25519_verify(leaf->key.ptr, msg, s.ptr) ? 1 : 0;
+            return s.size == 64 && proven_tls_ed25519_verify_(leaf->key.ptr, msg, s.ptr) ? 1 : 0;
         case SIG_RSA_PSS_RSAE_SHA256: case SIG_RSA_PSS_RSAE_SHA384: case SIG_RSA_PSS_RSAE_SHA512:
         case SIG_RSA_PSS_PSS_SHA256: case SIG_RSA_PSS_PSS_SHA384: case SIG_RSA_PSS_PSS_SHA512: {
             if (leaf->key_kind != PROVEN_CERT_KEY_RSA) return -1;
             int which = (scheme - (scheme >= SIG_RSA_PSS_PSS_SHA256 ? SIG_RSA_PSS_PSS_SHA256 : SIG_RSA_PSS_RSAE_SHA256));
             proven_hmac_hash_t hash = which == 0 ? PROVEN_HMAC_SHA256 : which == 1 ? PROVEN_HMAC_SHA384 : PROVEN_HMAC_SHA512;
             digest_with(hash, msg, digest);
-            return proven_crypto_rsa_verify_pss(leaf->rsa_n, leaf->rsa_e, hash, proven_hmac_size(hash),
+            return proven_tls_rsa_verify_pss_(leaf->rsa_n, leaf->rsa_e, hash, proven_hmac_size(hash),
                                                 (proven_mem_view_t){ .ptr = digest, .size = proven_hmac_size(hash) }, s) ? 1 : 0; }
         case SIG_RSA_PKCS1_SHA256: case SIG_RSA_PKCS1_SHA384: case SIG_RSA_PKCS1_SHA512: {
             if (!allow_pkcs1 || leaf->key_kind != PROVEN_CERT_KEY_RSA) return -1;
             proven_hmac_hash_t hash = scheme == SIG_RSA_PKCS1_SHA256 ? PROVEN_HMAC_SHA256 : scheme == SIG_RSA_PKCS1_SHA384 ? PROVEN_HMAC_SHA384 : PROVEN_HMAC_SHA512;
             digest_with(hash, msg, digest);
-            return proven_crypto_rsa_verify_pkcs1(leaf->rsa_n, leaf->rsa_e, hash, (proven_mem_view_t){ .ptr = digest, .size = proven_hmac_size(hash) }, s) ? 1 : 0; }
+            return proven_tls_rsa_verify_pkcs1_(leaf->rsa_n, leaf->rsa_e, hash, (proven_mem_view_t){ .ptr = digest, .size = proven_hmac_size(hash) }, s) ? 1 : 0; }
         default:
             return -1;                            /* SHA-1 and everything else that was never offered */
     }
@@ -671,10 +671,10 @@ static int sig_check(proven_u16 scheme, const proven_cert_t *leaf, proven_mem_vi
  * MD5 | SHA-1 of the message, 36 bytes with no DigestInfo; an ECDSA key signs the SHA-1.
  * `digest` is those 36 bytes. 1 yes, 0 no, -1 a key that cannot sign there at all. */
 static int sig_check_old(const proven_cert_t *leaf, const proven_byte_t digest[36], proven_mem_view_t s) {
-    if (leaf->key_kind == PROVEN_CERT_KEY_RSA) return proven_crypto_rsa_verify_pkcs1_raw(leaf->rsa_n, leaf->rsa_e, (proven_mem_view_t){ .ptr = digest, .size = 36 }, s) ? 1 : 0;
+    if (leaf->key_kind == PROVEN_CERT_KEY_RSA) return proven_tls_rsa_verify_raw_(leaf->rsa_n, leaf->rsa_e, (proven_mem_view_t){ .ptr = digest, .size = 36 }, s) ? 1 : 0;
     const proven_mem_view_t sha1 = { .ptr = digest + 16, .size = 20 };
-    if (leaf->key_kind == PROVEN_CERT_KEY_EC_P256) return proven_crypto_ecdsa_verify_der(PROVEN_CRYPTO_EC_P256, leaf->key, sha1, s) ? 1 : 0;
-    if (leaf->key_kind == PROVEN_CERT_KEY_EC_P384) return proven_crypto_ecdsa_verify_der(PROVEN_CRYPTO_EC_P384, leaf->key, sha1, s) ? 1 : 0;
+    if (leaf->key_kind == PROVEN_CERT_KEY_EC_P256) return proven_tls_ecdsa_verify_(PROVEN_PKEY_P256, leaf->key, sha1, s) ? 1 : 0;
+    if (leaf->key_kind == PROVEN_CERT_KEY_EC_P384) return proven_tls_ecdsa_verify_(PROVEN_PKEY_P384, leaf->key, sha1, s) ? 1 : 0;
     return -1;
 }
 
@@ -707,7 +707,7 @@ static bool tls_sign(proven_tls_conn_t *c, proven_u16 scheme, proven_mem_view_t 
     const proven_tls_config_t *cfg = c->config;
     if (cfg->key_kind == PROVEN_TLS_KEY_ED25519) {
         proven_byte_t sig[64];
-        proven_crypto_ed25519_sign(sig, cfg->key, cfg->key_public, msg);
+        proven_ed25519_sign(sig, cfg->key, cfg->key_public, msg);
         wr_uint(w, scheme, 2); wr_uint(w, 64, 2); wr_bytes(w, sig, 64);
     } else {
         proven_byte_t digest[32];
@@ -724,13 +724,13 @@ static bool tls_sign_digest(proven_tls_conn_t *c, proven_u16 scheme, const prove
     const proven_tls_config_t *cfg = c->config;
     if (cfg->key_kind == PROVEN_TLS_KEY_ED25519) return false;
     if (cfg->key_kind == PROVEN_TLS_KEY_RSA) {
-        proven_byte_t sig[PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES];
+        proven_byte_t sig[PROVEN_SIGN_MAX_SIZE];
         proven_size_t n = 0;
         if (!proven_tls_config_rsa_sign_(cfg, scheme == SIG_RSA_PKCS1_SHA256, (proven_mem_view_t){ .ptr = digest, .size = 32 }, sig, &n)) return false;
         wr_uint(w, scheme, 2); wr_uint(w, (proven_u32)n, 2); wr_bytes(w, sig, n);
     } else {
         proven_byte_t raw[64], der[80];
-        if (!proven_crypto_ecdsa_sign(PROVEN_CRYPTO_EC_P256, PROVEN_HMAC_SHA256, cfg->key, (proven_mem_view_t){ .ptr = digest, .size = 32 }, raw)) return false;
+        if (!proven_tls_ecdsa_sign_(PROVEN_PKEY_P256, PROVEN_HMAC_SHA256, cfg->key, (proven_mem_view_t){ .ptr = digest, .size = 32 }, raw)) return false;
         /* SEQUENCE { INTEGER r, INTEGER s }, each minimal and non-negative. */
         proven_size_t n = 2;
         for (int part = 0; part < 2; ++part) {
@@ -753,7 +753,7 @@ static bool tls_sign_digest(proven_tls_conn_t *c, proven_u16 scheme, const prove
 static bool tls_sign_old(proven_tls_conn_t *c, const proven_byte_t digest[36], proven_wr_t *w) {
     const proven_tls_config_t *cfg = c->config;
     if (cfg->key_kind == PROVEN_TLS_KEY_RSA) {
-        proven_byte_t sig[PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES];
+        proven_byte_t sig[PROVEN_SIGN_MAX_SIZE];
         proven_size_t n = 0;
         if (!proven_tls_config_rsa_sign_(cfg, true, (proven_mem_view_t){ .ptr = digest, .size = 36 }, sig, &n)) return false;
         wr_uint(w, (proven_u32)n, 2); wr_bytes(w, sig, n);
@@ -761,7 +761,7 @@ static bool tls_sign_old(proven_tls_conn_t *c, const proven_byte_t digest[36], p
     }
     if (cfg->key_kind != PROVEN_TLS_KEY_P256) return false;
     proven_byte_t raw[64], der[80];
-    if (!proven_crypto_ecdsa_sign(PROVEN_CRYPTO_EC_P256, PROVEN_HMAC_SHA256, cfg->key, (proven_mem_view_t){ .ptr = digest + 16, .size = 20 }, raw)) return false;
+    if (!proven_tls_ecdsa_sign_(PROVEN_PKEY_P256, PROVEN_HMAC_SHA256, cfg->key, (proven_mem_view_t){ .ptr = digest + 16, .size = 20 }, raw)) return false;
     proven_size_t n = 2;
     for (int part = 0; part < 2; ++part) {
         const proven_byte_t *v = raw + 32 * part;
@@ -1119,7 +1119,7 @@ static proven_err_t client_hello_send(proven_tls_conn_t *c) {
             wr_uint(&w, GROUP_P256, 2); wr_uint(&w, 65, 2); wr_bytes(&w, pub, 65);
         } else {
             proven_byte_t pub[32];
-            proven_crypto_x25519_public(pub, h->x25519_priv);
+            proven_x25519_public(pub, h->x25519_priv);
             wr_uint(&w, GROUP_X25519, 2); wr_uint(&w, 32, 2); wr_bytes(&w, pub, 32);
         }
         wr_close(&w, l, 2); wr_close(&w, e, 2);
@@ -1901,7 +1901,7 @@ static proven_err_t server_client_hello(proven_tls_conn_t *c, proven_rd_t body, 
     proven_rd_t theirs = group == GROUP_X25519 ? share_x : share_p;
     if (group == GROUP_X25519) {
         proven_tls_config_random(cfg, h->x25519_priv, 32);
-        proven_crypto_x25519_public(pub, h->x25519_priv);
+        proven_x25519_public(pub, h->x25519_priv);
         pub_len = 32;
     } else {
         make_p256_key(c, pub);
@@ -2755,7 +2755,7 @@ static proven_err_t client12_flight(proven_tls_conn_t *c) {
         shared[0] = (proven_byte_t)(h->hello_version >> 8); shared[1] = (proven_byte_t)h->hello_version;       /* as the hello said, whatever was agreed since */
     } else {
         if (h->ske_group == GROUP_P256) { make_p256_key(c, pub); pub_len = 65; }
-        else { proven_crypto_x25519_public(pub, h->x25519_priv); pub_len = 32; }
+        else { proven_x25519_public(pub, h->x25519_priv); pub_len = 32; }
         if (!key_agree(c, h->ske_group, (proven_mem_view_t){ .ptr = h->cookie, .size = h->cookie_len }, shared)) return tls_illegal(c);
     }
     /* A certificate was asked for: this side's, or an empty list when it has none the server
@@ -2765,14 +2765,14 @@ static proven_err_t client12_flight(proven_tls_conn_t *c) {
     proven_wr_t w = hs_begin(c, HS12_CLIENT_KEY_EXCHANGE);
     if (by_rsa) {
         proven_cert_t leaf;
-        proven_byte_t pad[PROVEN_CRYPTO_RSA_MAX_BITS / 8], sealed[PROVEN_CRYPTO_RSA_MAX_BITS / 8];
+        proven_byte_t pad[PROVEN_TLS_RSA_MAX_BYTES], sealed[PROVEN_TLS_RSA_MAX_BYTES];
         proven_size_t sealed_len = 0;
         if (h->peer_leaf.len == 0 || proven_cert_parse((proven_mem_view_t){ .ptr = h->peer_leaf.ptr, .size = h->peer_leaf.len }, &leaf) != PROVEN_OK ||
             leaf.key_kind != PROVEN_CERT_KEY_RSA) return tls_unexpected(c);
         proven_tls_config_random(c->config, pad, sizeof pad);
         proven_byte_t sent[48];
         for (int i = 0; i < 48; ++i) sent[i] = shared[i];
-        bool ok = proven_crypto_rsa_encrypt_pkcs1(leaf.rsa_n, leaf.rsa_e, (proven_mem_view_t){ .ptr = sent, .size = 48 }, pad, sealed, &sealed_len);
+        bool ok = proven_tls_rsa_encrypt_(leaf.rsa_n, leaf.rsa_e, (proven_mem_view_t){ .ptr = sent, .size = 48 }, pad, sealed, &sealed_len);
         tls_wipe(sent, sizeof sent);
         tls_wipe(pad, sizeof pad);
         if (!ok) { tls_wipe(shared, sizeof shared); return tls_illegal(c); }
@@ -2901,13 +2901,13 @@ static int sig_check_handshake(proven_tls_conn_t *c, proven_u16 scheme, const pr
     proven_mem_view_t d = { .ptr = digest, .size = proven_hmac_size(hash) };
     switch (scheme) {
         case SIG_ECDSA_P256_SHA256:
-            return leaf->key_kind != PROVEN_CERT_KEY_EC_P256 ? -1 : proven_crypto_ecdsa_verify_der(PROVEN_CRYPTO_EC_P256, leaf->key, d, s) ? 1 : 0;
+            return leaf->key_kind != PROVEN_CERT_KEY_EC_P256 ? -1 : proven_tls_ecdsa_verify_(PROVEN_PKEY_P256, leaf->key, d, s) ? 1 : 0;
         case SIG_ECDSA_P384_SHA384:
-            return leaf->key_kind != PROVEN_CERT_KEY_EC_P384 ? -1 : proven_crypto_ecdsa_verify_der(PROVEN_CRYPTO_EC_P384, leaf->key, d, s) ? 1 : 0;
+            return leaf->key_kind != PROVEN_CERT_KEY_EC_P384 ? -1 : proven_tls_ecdsa_verify_(PROVEN_PKEY_P384, leaf->key, d, s) ? 1 : 0;
         case SIG_RSA_PSS_RSAE_SHA256: case SIG_RSA_PSS_RSAE_SHA384:
-            return leaf->key_kind != PROVEN_CERT_KEY_RSA ? -1 : proven_crypto_rsa_verify_pss(leaf->rsa_n, leaf->rsa_e, hash, d.size, d, s) ? 1 : 0;
+            return leaf->key_kind != PROVEN_CERT_KEY_RSA ? -1 : proven_tls_rsa_verify_pss_(leaf->rsa_n, leaf->rsa_e, hash, d.size, d, s) ? 1 : 0;
         case SIG_RSA_PKCS1_SHA256: case SIG_RSA_PKCS1_SHA384:
-            return leaf->key_kind != PROVEN_CERT_KEY_RSA ? -1 : proven_crypto_rsa_verify_pkcs1(leaf->rsa_n, leaf->rsa_e, hash, d, s) ? 1 : 0;
+            return leaf->key_kind != PROVEN_CERT_KEY_RSA ? -1 : proven_tls_rsa_verify_pkcs1_(leaf->rsa_n, leaf->rsa_e, hash, d, s) ? 1 : 0;
         default:
             return -1;
     }
@@ -3083,7 +3083,7 @@ static proven_err_t server12_client_hello(proven_tls_conn_t *c, proven_u16 versi
     if (suite->kx == PROVEN_TLS_KX_ECDHE) {
     proven_byte_t pub[65], signed_part[64 + 4 + 65];
     proven_size_t pub_len, n = 0;
-    if (group == GROUP_X25519) { proven_tls_config_random(cfg, h->x25519_priv, 32); proven_crypto_x25519_public(pub, h->x25519_priv); pub_len = 32; }
+    if (group == GROUP_X25519) { proven_tls_config_random(cfg, h->x25519_priv, 32); proven_x25519_public(pub, h->x25519_priv); pub_len = 32; }
     else { make_p256_key(c, pub); pub_len = 65; }
     h->ske_group = group;
     for (int i = 0; i < 32; ++i) signed_part[n++] = h->random[i];
@@ -3570,7 +3570,8 @@ void proven_tls_seed_take_(proven_tls_key_seed_t *seed, const proven_tls_keys_t 
     seed->active = k->active;
     seed->chacha = k->chacha;
     seed->key_len = (proven_u8)(k->chacha || k->aes.rounds == 14 ? 32 : 16);
-    for (int i = 0; i < seed->key_len; ++i) seed->key[i] = k->aes.rk[i];
+    /* AES's first round key is the key itself (FIPS 197 section 5.2). */
+    for (int i = 0; i < seed->key_len; ++i) seed->key[i] = seed->chacha ? k->chacha_key[i] : k->aes.rk[i];
     for (int i = 0; i < 12; ++i) seed->iv[i] = k->iv[i];
     seed->seq = k->seq;
 }
@@ -3578,8 +3579,8 @@ void proven_tls_seed_take_(proven_tls_key_seed_t *seed, const proven_tls_keys_t 
 void proven_tls_seed_give_(const proven_tls_key_seed_t *seed, proven_tls_keys_t *k) {
     k->active = seed->active;
     k->chacha = seed->chacha;
-    if (seed->chacha) for (int i = 0; i < 32; ++i) k->aes.rk[i] = seed->key[i];
-    else if (seed->active) (void)proven_crypto_aes_gcm_init(&k->aes, seed->key, seed->key_len);
+    if (seed->chacha) for (int i = 0; i < 32; ++i) k->chacha_key[i] = seed->key[i];
+    else if (seed->active) (void)proven_tls_aes_gcm_init_(&k->aes, seed->key, seed->key_len);
     for (int i = 0; i < 12; ++i) k->iv[i] = seed->iv[i];
     k->seq = seed->seq;
 }
@@ -3697,7 +3698,7 @@ proven_result_size_t proven_tls_read(proven_tls_conn_t *c, proven_mem_mut_t dest
     if (is_quic(c)) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
     if (c->plain_len > c->plain_off) {
         proven_size_t have = c->plain_len - c->plain_off, n = have < dest.size ? have : dest.size;
-        proven_sys_mem_copy(dest.ptr, c->in.ptr + c->plain_off, n);
+        proven_net_mem_copy(dest.ptr, c->in.ptr + c->plain_off, n);
         c->plain_off += n;
         c->read_total = n > 0xffffffffu - c->read_total ? 0xffffffffu : c->read_total + (proven_u32)n;
         if (c->in_early) c->early_read = (proven_u16)(c->early_read + n > 0xffffu ? 0xffffu : c->early_read + n);

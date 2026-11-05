@@ -5,7 +5,7 @@
 #include "proven/time.h"
 #include "proven_internal_tls.h"
 #include "proven_internal_http_coding.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 #include <stdatomic.h>
 
 /*
@@ -400,7 +400,7 @@ proven_err_t proven_http_exchange_respond(proven_http_exchange_t *exchange, prov
 
         /* A small response leaves in one write, and so in one packet. */
         if (!bodiless && body.size <= c->out_cap - head_len) {
-            proven_sys_mem_copy(c->out + head_len, body.ptr, body.size);
+            proven_net_mem_copy(c->out + head_len, body.ptr, body.size);
             e = sv_send(c, (proven_mem_view_t){ .ptr = c->out, .size = head_len + body.size });
         } else {
             e = sv_send(c, (proven_mem_view_t){ .ptr = c->out, .size = head_len });
@@ -568,7 +568,7 @@ static proven_result_size_t sv_read_body(proven_sv_conn_t *c, proven_mem_mut_t d
             c->body_pos += used;
             if (done) c->body_done = true;
             if (payload.size > 0) {
-                proven_sys_mem_copy(dest.ptr, payload.ptr, payload.size);     /* every body byte: a block copy */
+                proven_net_mem_copy(dest.ptr, payload.ptr, payload.size);     /* every body byte: a block copy */
                 res.value = payload.size;
                 return res;
             }
@@ -945,7 +945,7 @@ static bool sv_service(proven_http_server_t *s, proven_sv_conn_t *c) {
         if (!c->keep) { sv_linger(s, c); return false; }
         /* What follows the body in the buffer is the next request. */
         proven_size_t rest = c->len - c->body_pos;
-        proven_sys_mem_move(c->buf, c->buf + c->body_pos, rest);
+        proven_net_mem_move(c->buf, c->buf + c->body_pos, rest);
         c->len = rest;
         sv_reset_request(c);
         sv_wait_for(s, c, rest ? s->cfg.head_timeout_ms : s->cfg.idle_timeout_ms);
@@ -966,7 +966,7 @@ static bool sv_collect_done(proven_http_server_t *s) {
             sv_linger(s, c);
         } else {
             proven_size_t rest = c->len - c->body_pos;
-            proven_sys_mem_move(c->buf, c->buf + c->body_pos, rest);
+            proven_net_mem_move(c->buf, c->buf + c->body_pos, rest);
             c->len = rest;
             sv_reset_request(c);
             if (!sv_watch(s, c)) { c = next; continue; }

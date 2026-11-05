@@ -2,6 +2,7 @@
 #include "proven_test.h"
 #include "../src/proven/proven_internal_crypto.h"
 #include "../src/proven/proven_internal_tls.h"
+#include "../src/proven/proven_internal_cert_issue.h"
 #include "test_unit_tls_pki.h"
 #include <string.h>
 
@@ -40,8 +41,8 @@ static proven_size_t leaf_der(proven_byte_t *out, proven_size_t cap, proven_u32 
     tp_key(ca, 1);
     tp_key(key, 9);
     proven_tls_issue_t q = {
-        .subject = "signer", .issuer = "TLS test CA", .subject_kind = PROVEN_TLS_KEY_P256, .subject_key = key,
-        .issuer_kind = PROVEN_TLS_KEY_P256, .issuer_key = ca, .eku = eku, .eku_critical = critical, .ski = ski, .aki = aki,
+        .subject = "signer", .issuer = "TLS test CA", .subject_kind = PROVEN_ISSUE_KEY_P256, .subject_key = key,
+        .issuer_kind = PROVEN_ISSUE_KEY_P256, .issuer_key = ca, .eku = eku, .eku_critical = critical, .ski = ski, .aki = aki,
         .not_before = TP_FROM, .not_after = TP_UNTIL,
     };
     for (int i = 0; i < 16; ++i) q.serial[i] = (proven_byte_t)(i * 3 + (int)eku + (critical ? 100 : 0));
@@ -425,6 +426,33 @@ int main(void) {
             "a 1024-bit key is PROVEN_ERR_UNSUPPORTED", "");
         proven_mem_view_t scalar;
         PROVEN_TEST_ASSERT(proven_pkey_ec_scalar(a, &scalar) == PROVEN_ERR_INVALID_STATE, "an RSA key has no EC scalar", "");
+
+        /* v0.111.0: v1.5 padding with no DigestInfo (TLS 1.0 and 1.1), and PKCS #1 encryption. */
+        proven_byte_t old[36];
+        for (int i = 0; i < 36; ++i) old[i] = (proven_byte_t)(i * 7);
+        PROVEN_TEST_ASSERT(proven_pkey_sign(a, PROVEN_SIGN_RSA_PKCS1_RAW, PROVEN_HMAC_SHA256, mv(old, 36), (proven_rng_t){ 0 }, (proven_mem_mut_t){ s1, sizeof s1 }, &n1) == PROVEN_OK &&
+                           n1 == 256 && proven_crypto_rsa_verify_pkcs1_raw(pa.n, pa.e, mv(old, 36), mv(s1, n1)) &&
+                           proven_verify_rsa(pa.n, pa.e, PROVEN_SIGN_RSA_PKCS1_RAW, PROVEN_HMAC_SHA1, 0, mv(old, 36), mv(s1, n1)) == PROVEN_OK,
+            "PROVEN_SIGN_RSA_PKCS1_RAW: 36 bytes signed as they stand, and verified - by the internal code and by proven_verify_rsa", "");
+        old[0] ^= 1;
+        PROVEN_TEST_ASSERT(proven_verify_rsa(pa.n, pa.e, PROVEN_SIGN_RSA_PKCS1_RAW, PROVEN_HMAC_SHA256, 0, mv(old, 36), mv(s1, n1)) == PROVEN_ERR_UNTRUSTED,
+            "and other bytes do not verify", "");
+        proven_byte_t big[246] = { 0 };
+        PROVEN_TEST_ASSERT(proven_pkey_sign(a, PROVEN_SIGN_RSA_PKCS1_RAW, PROVEN_HMAC_SHA256, mv(big, 246), (proven_rng_t){ 0 }, (proven_mem_mut_t){ s1, sizeof s1 }, &n1) == PROVEN_ERR_INVALID_ARG,
+            "more than the modulus less 11 cannot be padded", "");
+        proven_byte_t secret[48], random[256], box1[256], box2[256];
+        for (int i = 0; i < 48; ++i) secret[i] = (proven_byte_t)(0x30 + i);
+        for (int i = 0; i < 256; ++i) random[i] = (proven_byte_t)(i * 13 + 1);
+        PROVEN_TEST_ASSERT(proven_rsa_encrypt_pkcs1(pa.n, pa.e, mv(secret, 48), mv(random, 256), (proven_mem_mut_t){ box1, sizeof box1 }, &n1) == PROVEN_OK && n1 == 256 &&
+                           proven_rsa_encrypt_pkcs1(pa.n, pa.e, mv(secret, 48), mv(random, 256), (proven_mem_mut_t){ box2, sizeof box2 }, &n2) == PROVEN_OK &&
+                           memcmp(box1, box2, 256) == 0, "PKCS #1 encryption: the modulus's length, the same for the same random bytes", "");
+        random[100] ^= 0x11;
+        PROVEN_TEST_ASSERT(proven_rsa_encrypt_pkcs1(pa.n, pa.e, mv(secret, 48), mv(random, 256), (proven_mem_mut_t){ box2, sizeof box2 }, &n2) == PROVEN_OK &&
+                           memcmp(box1, box2, 256) != 0, "and different for different ones", "");
+        PROVEN_TEST_ASSERT(proven_rsa_encrypt_pkcs1(pa.n, pa.e, mv(big, 246), mv(random, 256), (proven_mem_mut_t){ box2, sizeof box2 }, &n2) == PROVEN_ERR_INVALID_ARG &&
+                           proven_rsa_encrypt_pkcs1(pa.n, pa.e, mv(secret, 48), mv(random, 255), (proven_mem_mut_t){ box2, sizeof box2 }, &n2) == PROVEN_ERR_INVALID_ARG &&
+                           proven_rsa_encrypt_pkcs1(pa.n, pa.e, mv(secret, 48), mv(random, 256), (proven_mem_mut_t){ box2, 255 }, &n2) == PROVEN_ERR_OUT_OF_BOUNDS,
+            "a message too long, too few random bytes, too little room: refused", "");
         proven_pkey_destroy(a); proven_pkey_destroy(b); proven_pkey_destroy(c);
         proven_pkey_destroy(NULL);
         PROVEN_TEST_ASSERT(proven_pkey_kind(NULL) == PROVEN_PKEY_NONE && proven_pkey_bits(NULL) == 0, "NULL is no key", "");
@@ -493,6 +521,24 @@ int main(void) {
             }
         }
         proven_crypto_aes_force_portable(false);
+        /* v0.111.0: the key prepared once, for many calls. */
+        for (int k = 0; k < 3; ++k) {
+            proven_aes_cbc_key_t ck;
+            const proven_size_t kn = hex(keys[k], key);
+            hex(ciphers[k], want);
+            memcpy(buf, plain, 64);
+            for (int i = 0; i < 16; ++i) iv[i] = (proven_byte_t)i;
+            bool ok = proven_aes_cbc_key_init(&ck, mv(key, kn)) == PROVEN_OK &&
+                      proven_aes_cbc_encrypt_with(&ck, iv, (proven_mem_mut_t){ buf, 32 }) == PROVEN_OK &&
+                      proven_aes_cbc_encrypt_with(&ck, iv, (proven_mem_mut_t){ buf + 32, 32 }) == PROVEN_OK && memcmp(buf, want, 64) == 0;
+            for (int i = 0; i < 16; ++i) iv[i] = (proven_byte_t)i;
+            ok = ok && proven_aes_cbc_decrypt_with(&ck, iv, (proven_mem_mut_t){ buf, 64 }) == PROVEN_OK && memcmp(buf, plain, 64) == 0 &&
+                 proven_aes_cbc_decrypt_with(&ck, iv, (proven_mem_mut_t){ buf, 17 }) == PROVEN_ERR_INVALID_ARG;
+            proven_mem_wipe((proven_mem_mut_t){ (proven_byte_t *)&ck, sizeof ck });
+            PROVEN_TEST_ASSERT(ok, keys[k], "proven_aes_cbc_key_t disagrees with SP 800-38A, or takes a partial block.");
+        }
+        proven_aes_cbc_key_t ck;
+        PROVEN_TEST_ASSERT(proven_aes_cbc_key_init(&ck, mv(key, 20)) == PROVEN_ERR_INVALID_ARG, "a prepared key of 20 bytes: refused", "");
         PROVEN_TEST_ASSERT(proven_aes_cbc_decrypt(mv(key, 20), iv, (proven_mem_mut_t){ buf, 16 }) == PROVEN_ERR_INVALID_ARG &&
                            proven_aes_cbc_decrypt(mv(key, 16), iv, (proven_mem_mut_t){ buf, 15 }) == PROVEN_ERR_INVALID_ARG,
             "a key of 20 bytes, a length that is not whole blocks: refused", "");

@@ -9,6 +9,8 @@
  * This file can be modified (e.g., via search and replace) to support alternative prefixes.
  */
 
+#define XCV_AEAD_NONCE_SIZE PROVEN_AEAD_NONCE_SIZE
+#define XCV_AEAD_TAG_SIZE PROVEN_AEAD_TAG_SIZE
 #define XCV_ARG PROVEN_ARG
 #define XCV_ARG_CSTR proven_arg_cstr
 #define XCV_ARG_DATETIME proven_arg_datetime
@@ -109,6 +111,8 @@
 #define XCV_DER_SET PROVEN_DER_SET
 #define XCV_DER_UTC_TIME PROVEN_DER_UTC_TIME
 #define XCV_DER_UTF8_STRING PROVEN_DER_UTF8_STRING
+#define XCV_DH_EXP_MAX_BYTES PROVEN_DH_EXP_MAX_BYTES
+#define XCV_DH_MAX_BYTES PROVEN_DH_MAX_BYTES
 #define XCV_ERR_AGAIN PROVEN_ERR_AGAIN
 #define XCV_ERR_BUSY PROVEN_ERR_BUSY
 #define XCV_ERR_CANCELLED PROVEN_ERR_CANCELLED
@@ -339,6 +343,7 @@
 #define XCV_SIGN_ECDSA_RAW PROVEN_SIGN_ECDSA_RAW
 #define XCV_SIGN_MAX_SIZE PROVEN_SIGN_MAX_SIZE
 #define XCV_SIGN_RSA_PKCS1 PROVEN_SIGN_RSA_PKCS1
+#define XCV_SIGN_RSA_PKCS1_RAW PROVEN_SIGN_RSA_PKCS1_RAW
 #define XCV_SIGN_RSA_PSS PROVEN_SIGN_RSA_PSS
 #define XCV_TLS_CLIENT_AUTH_NONE PROVEN_TLS_CLIENT_AUTH_NONE
 #define XCV_TLS_CLIENT_AUTH_REQUEST PROVEN_TLS_CLIENT_AUTH_REQUEST
@@ -395,7 +400,19 @@
 #define XCV_ZSTD_FLUSH_NONE PROVEN_ZSTD_FLUSH_NONE
 #define XCV_ZSTD_WINDOW_DEFAULT PROVEN_ZSTD_WINDOW_DEFAULT
 #define xcv_aes_cbc_decrypt proven_aes_cbc_decrypt
+#define xcv_aes_cbc_decrypt_with proven_aes_cbc_decrypt_with
 #define xcv_aes_cbc_encrypt proven_aes_cbc_encrypt
+#define xcv_aes_cbc_encrypt_with proven_aes_cbc_encrypt_with
+#define xcv_aes_cbc_key_init proven_aes_cbc_key_init
+#define xcv_aes_cbc_key_t proven_aes_cbc_key_t
+#define xcv_aes_encrypt_block proven_aes_encrypt_block
+#define xcv_aes_gcm_init proven_aes_gcm_init
+#define xcv_aes_gcm_open proven_aes_gcm_open
+#define xcv_aes_gcm_seal proven_aes_gcm_seal
+#define xcv_aes_gcm_t proven_aes_gcm_t
+#define xcv_aes_hw_available proven_aes_hw_available
+#define xcv_aes_init proven_aes_init
+#define xcv_aes_t proven_aes_t
 #define xcv_alloc_check_entry_t proven_alloc_check_entry_t
 #define xcv_alloc_check_live proven_alloc_check_live
 #define xcv_alloc_check_owns proven_alloc_check_owns
@@ -495,6 +512,9 @@
 #define xcv_cert_verify proven_cert_verify
 #define xcv_cert_verify_options_t proven_cert_verify_options_t
 #define xcv_cert_verify_result_t proven_cert_verify_result_t
+#define xcv_chacha20 proven_chacha20
+#define xcv_chacha20_poly1305_open proven_chacha20_poly1305_open
+#define xcv_chacha20_poly1305_seal proven_chacha20_poly1305_seal
 #define xcv_chacha_rng proven_chacha_rng
 #define xcv_chacha_rng_fill proven_chacha_rng_fill
 #define xcv_chacha_rng_next proven_chacha_rng_next
@@ -534,6 +554,17 @@
 #define xcv_der_writer_finish proven_der_writer_finish
 #define xcv_der_writer_init proven_der_writer_init
 #define xcv_der_writer_t proven_der_writer_t
+#define xcv_dh_exponent_len proven_dh_exponent_len
+#define xcv_dh_ffdhe2048 proven_dh_ffdhe2048
+#define xcv_dh_known proven_dh_known
+#define xcv_dh_public proven_dh_public
+#define xcv_dh_shared proven_dh_shared
+#define xcv_ec_public proven_ec_public
+#define xcv_ecdh proven_ecdh
+#define xcv_ecdsa_sign_scalar proven_ecdsa_sign_scalar
+#define xcv_ed25519_public proven_ed25519_public
+#define xcv_ed25519_sign proven_ed25519_sign
+#define xcv_ed25519_verify proven_ed25519_verify
 #define xcv_entropy_fn proven_entropy_fn
 #define xcv_env_get proven_env_get
 #define xcv_eprint proven_eprint
@@ -947,6 +978,7 @@
 #define xcv_map_set_with_scratch proven_map_set_with_scratch
 #define xcv_map_t proven_map_t
 #define xcv_md5 proven_md5
+#define xcv_md5_compress proven_md5_compress
 #define xcv_md5_final proven_md5_final
 #define xcv_md5_init proven_md5_init
 #define xcv_md5_to_hex proven_md5_to_hex
@@ -1111,6 +1143,7 @@
 #define xcv_rng_shuffle proven_rng_shuffle
 #define xcv_rng_u64 proven_rng_u64
 #define xcv_rsa_components_t proven_rsa_components_t
+#define xcv_rsa_encrypt_pkcs1 proven_rsa_encrypt_pkcs1
 #define xcv_scan_arg_f64 proven_scan_arg_f64
 #define xcv_scan_arg_i32 proven_scan_arg_i32
 #define xcv_scan_arg_i64 proven_scan_arg_i64
@@ -1148,11 +1181,13 @@
 #define xcv_scan_u64_hex proven_scan_u64_hex
 #define xcv_set_panic_handler proven_set_panic_handler
 #define xcv_sha1 proven_sha1
+#define xcv_sha1_compress proven_sha1_compress
 #define xcv_sha1_final proven_sha1_final
 #define xcv_sha1_init proven_sha1_init
 #define xcv_sha1_to_hex proven_sha1_to_hex
 #define xcv_sha1_update proven_sha1_update
 #define xcv_sha256 proven_sha256
+#define xcv_sha256_compress proven_sha256_compress
 #define xcv_sha256_final proven_sha256_final
 #define xcv_sha256_init proven_sha256_init
 #define xcv_sha256_t proven_sha256_t
@@ -1164,6 +1199,7 @@
 #define xcv_sha384_t proven_sha384_t
 #define xcv_sha384_update proven_sha384_update
 #define xcv_sha512 proven_sha512
+#define xcv_sha512_compress proven_sha512_compress
 #define xcv_sha512_final proven_sha512_final
 #define xcv_sha512_init proven_sha512_init
 #define xcv_sha512_t proven_sha512_t
@@ -1437,6 +1473,8 @@
 #define xcv_ws_stream_set_user proven_ws_stream_set_user
 #define xcv_ws_stream_t proven_ws_stream_t
 #define xcv_ws_stream_user proven_ws_stream_user
+#define xcv_x25519 proven_x25519
+#define xcv_x25519_public proven_x25519_public
 #define xcv_xoshiro256ss_next proven_xoshiro256ss_next
 #define xcv_xoshiro256ss_rng proven_xoshiro256ss_rng
 #define xcv_xoshiro256ss_seed proven_xoshiro256ss_seed

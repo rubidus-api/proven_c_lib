@@ -8,7 +8,7 @@
 #include "proven/time.h"
 #include "proven_internal_http_coding.h"
 #include "proven_internal_tls.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 #if !defined(PROVEN_NO_HTTP3)
 #include "proven/loop.h"
 #include "proven/http_event_client.h"
@@ -612,8 +612,8 @@ static proven_size_t cl_absolute_target(const proven_byte_t *url, const proven_u
     /* "scheme://", then everything from the host on (an IPv6 literal's '[' is just before its view). */
     const proven_size_t lead = u->scheme.size + 3;
     const proven_size_t from = (proven_size_t)(u->host.ptr - url) - (u->host_is_ipv6 ? 1u : 0u);
-    proven_sys_mem_copy(target, url, lead);
-    proven_sys_mem_copy(target + lead, url + from, end - from);
+    proven_net_mem_copy(target, url, lead);
+    proven_net_mem_copy(target + lead, url + from, end - from);
     proven_size_t tl = lead + (end - from);
     if (u->path.size == 0 && !u->has_query) target[tl++] = '/';
     return tl;
@@ -765,7 +765,7 @@ static proven_err_t cl_exchange(proven_cl_call_t *call, const proven_http_client
                 if (++interim > CL_MAX_INTERIM) return PROVEN_ERR_INVALID_FORMAT;
                 const bool go_on = call->res.status == 100;
                 proven_size_t rest = call->buf_len - head;
-                proven_sys_mem_move(call->buf, call->buf + head, rest);
+                proven_net_mem_move(call->buf, call->buf + head, rest);
                 call->buf_len = rest;
                 if (!go_on) continue;
                 /* (More behind the 100 already: the server is answering, not waiting.) */
@@ -832,7 +832,7 @@ static proven_err_t cl_exchange(proven_cl_call_t *call, const proven_http_client
                  * caller, and each would restart the read timeout. */
                 if (++interim > CL_MAX_INTERIM) return PROVEN_ERR_INVALID_FORMAT;
                 proven_size_t rest = call->buf_len - head;
-                proven_sys_mem_move(call->buf, call->buf + head, rest);
+                proven_net_mem_move(call->buf, call->buf + head, rest);
                 call->buf_len = rest;
                 continue;
             }
@@ -925,8 +925,8 @@ static void cl_h3_response(void *ctx, proven_http_event_request_t *r, const prov
     for (proven_size_t i = 0; i < head->header_count && n < CL_MAX_HEADERS; ++i) {
         const proven_u8str_view_t name = head->headers[i].name, value = head->headers[i].value;
         if (name.size + value.size > call->buf_cap - at) break;
-        proven_sys_mem_copy(call->buf + at, name.ptr, name.size);
-        proven_sys_mem_copy(call->buf + at + name.size, value.ptr, value.size);
+        proven_net_mem_copy(call->buf + at, name.ptr, name.size);
+        proven_net_mem_copy(call->buf + at + name.size, value.ptr, value.size);
         call->headers[n++] = (proven_http_header_t){ .name = { .ptr = call->buf + at, .size = name.size }, .value = { .ptr = call->buf + at + name.size, .size = value.size } };
         at += name.size + value.size;
     }
@@ -940,7 +940,7 @@ static void cl_h3_body(void *ctx, proven_http_event_request_t *r, proven_mem_vie
     if (piece.size == 0) return;
     if (call->h3q_len + piece.size > call->h3q_cap) {
         if (call->h3q_pos > 0) {
-            proven_sys_mem_move(call->h3q, call->h3q + call->h3q_pos, call->h3q_len - call->h3q_pos);
+            proven_net_mem_move(call->h3q, call->h3q + call->h3q_pos, call->h3q_len - call->h3q_pos);
             call->h3q_len -= call->h3q_pos;
             call->h3q_pos = 0;
         }
@@ -949,13 +949,13 @@ static void cl_h3_body(void *ctx, proven_http_event_request_t *r, proven_mem_vie
             while (want < call->h3q_len + piece.size) want *= 2;
             proven_byte_t *q = cl_alloc(call->client->cfg.alloc, want);
             if (!q) { call->h3_why = PROVEN_ERR_NOMEM; proven_http_event_request_abort(r); return; }
-            proven_sys_mem_copy(q, call->h3q, call->h3q_len);
+            proven_net_mem_copy(q, call->h3q, call->h3q_len);
             cl_free(call->client->cfg.alloc, call->h3q);
             call->h3q = q;
             call->h3q_cap = want;
         }
     }
-    proven_sys_mem_copy(call->h3q + call->h3q_len, piece.ptr, piece.size);
+    proven_net_mem_copy(call->h3q + call->h3q_len, piece.ptr, piece.size);
     call->h3q_len += piece.size;
     /* Read at the caller's pace: past the high mark the request waits (QUIC's window then holds the server). */
     if (!call->h3_paused && call->h3q_len - call->h3q_pos > CL_H3_QUEUE_HIGH) { call->h3_paused = true; proven_http_event_request_pause(r); }
@@ -1159,7 +1159,7 @@ static proven_result_size_t cl_read_body(proven_cl_call_t *call, proven_mem_mut_
     proven_mem_view_t payload = {0};
     res.err = cl_next_payload(call, dest.size, &payload);
     if (res.err != PROVEN_OK) return res;
-    proven_sys_mem_copy(dest.ptr, payload.ptr, payload.size);     /* every body byte: a block copy, not a loop of single bytes */
+    proven_net_mem_copy(dest.ptr, payload.ptr, payload.size);     /* every body byte: a block copy, not a loop of single bytes */
     res.value = payload.size;
     return res;
 }

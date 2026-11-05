@@ -3,6 +3,7 @@
 #include "proven/cert.h"
 #include "proven/hash.h"
 #include "proven_internal_crypto.h"
+#include <stdatomic.h>
 
 /* sign.h: private keys, signing and verification over the crypto the TLS engine uses. */
 
@@ -19,6 +20,7 @@ struct proven_pkey {
     /* RSA */
     proven_crypto_rsa_key_t rsa;
     proven_crypto_rsa_blind_t blind;
+    atomic_flag lock;           /* held while the blinding pair moves: signing may run on several threads */
     proven_u32 uses;
     proven_size_t d_len;
     proven_byte_t d[PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES];
@@ -52,6 +54,7 @@ static proven_err_t pk_new(proven_allocator_t alloc, proven_pkey_kind_t kind, pr
     for (proven_size_t i = 0; i < sizeof *k; ++i) ((proven_byte_t *)k)[i] = 0;
     k->alloc = alloc;
     k->kind = kind;
+    atomic_flag_clear(&k->lock);
     *out = k;
     return PROVEN_OK;
 }
@@ -171,12 +174,13 @@ static proven_err_t pk_rsa_ready(proven_pkey_t *k, proven_rng_t rng) {
 
 static proven_err_t pk_rsa(proven_allocator_t alloc, proven_mem_view_t der, proven_mem_view_t d, proven_rng_t rng, proven_pkey_t **out) {
     if (!proven_rng_is_valid(rng)) return PROVEN_ERR_INVALID_ARG;
-    /* What the parser refuses for size is said as unsupported: it reads 2048 to 4096 bits. */
+    /* What the parser refuses for size is said as unsupported: it reads 2048 to 4096 bits (a test
+     * may lower the floor, as for verification). */
     {
         proven_mem_view_t in = der, seq, n;
         proven_u64 version;
         if (proven_der_expect(&in, PROVEN_DER_SEQUENCE, &seq) == PROVEN_OK && proven_der_read_u64(&seq, &version) == PROVEN_OK &&
-            proven_der_read_uint(&seq, &n) == PROVEN_OK && (n.size < 256 || n.size > PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES))
+            proven_der_read_uint(&seq, &n) == PROVEN_OK && (n.size * 8 < proven_crypto_rsa_min_bits() || n.size > PROVEN_CRYPTO_RSA_SIGN_MAX_BYTES))
             return PROVEN_ERR_UNSUPPORTED;
     }
     proven_pkey_t *k = (void *)0;
@@ -364,15 +368,19 @@ proven_err_t proven_pkey_spki(const proven_pkey_t *key, proven_mem_mut_t out, pr
 proven_err_t proven_pkey_sign(proven_pkey_t *key, proven_sign_scheme_t scheme, proven_hmac_hash_t hash, proven_mem_view_t digest,
                               proven_rng_t rng, proven_mem_mut_t out, proven_size_t *len) {
     if (len) *len = 0;
-    const proven_size_t hlen = proven_hmac_size(hash);
+    const bool raw = scheme == PROVEN_SIGN_RSA_PKCS1_RAW;
+    const proven_size_t hlen = raw ? digest.size : proven_hmac_size(hash);
     if (!key || !len || hlen == 0 || !digest.ptr || digest.size != hlen || (out.size > 0 && !out.ptr)) return PROVEN_ERR_INVALID_ARG;
     if (key->kind == PROVEN_PKEY_RSA) {
-        if (scheme != PROVEN_SIGN_RSA_PKCS1 && scheme != PROVEN_SIGN_RSA_PSS) return PROVEN_ERR_INVALID_ARG;
+        if (scheme != PROVEN_SIGN_RSA_PKCS1 && scheme != PROVEN_SIGN_RSA_PSS && !raw) return PROVEN_ERR_INVALID_ARG;
         if (scheme == PROVEN_SIGN_RSA_PSS && (!proven_rng_is_valid(rng) || hash == PROVEN_HMAC_SHA1)) return PROVEN_ERR_INVALID_ARG;
         proven_crypto_rsa_key_t *r = &key->rsa;
+        if (raw && digest.size + 11 > r->n_len) return PROVEN_ERR_INVALID_ARG;
         if (out.size < r->n_len) return PROVEN_ERR_OUT_OF_BOUNDS;
         /* This signature takes the pair as it stands and leaves the next one behind: squared, or
-         * made afresh every PK_RSA_RENEW signatures when there is a generator to make it from. */
+         * made afresh every PK_RSA_RENEW signatures when there is a generator to make it from.
+         * The flag is held for that alone; the signature is made outside it, on the copy. */
+        while (atomic_flag_test_and_set_explicit(&key->lock, memory_order_acquire)) { }
         proven_crypto_rsa_blind_t mine = key->blind;
         bool renewed = false;
         if (++key->uses >= PK_RSA_RENEW && proven_rng_is_valid(rng)) {
@@ -383,8 +391,11 @@ proven_err_t proven_pkey_sign(proven_pkey_t *key, proven_sign_scheme_t scheme, p
             if (renewed) key->uses = 0;
         }
         if (!renewed) proven_crypto_rsa_blind_next(r, &key->blind);
+        atomic_flag_clear_explicit(&key->lock, memory_order_release);
         bool ok;
-        if (scheme == PROVEN_SIGN_RSA_PKCS1) {
+        if (raw) {
+            ok = proven_crypto_rsa_sign_pkcs1_raw(r, &mine, digest, out.ptr);
+        } else if (scheme == PROVEN_SIGN_RSA_PKCS1) {
             ok = proven_crypto_rsa_sign_pkcs1(r, &mine, hash, digest, out.ptr);
         } else {
             proven_byte_t salt[PROVEN_HMAC_MAX_SIZE];
@@ -421,13 +432,15 @@ proven_err_t proven_pkey_sign(proven_pkey_t *key, proven_sign_scheme_t scheme, p
 
 proven_err_t proven_verify_rsa(proven_mem_view_t n, proven_mem_view_t e, proven_sign_scheme_t scheme, proven_hmac_hash_t hash,
                                proven_size_t salt_len, proven_mem_view_t digest, proven_mem_view_t sig) {
-    const proven_size_t hlen = proven_hmac_size(hash);
+    const bool raw = scheme == PROVEN_SIGN_RSA_PKCS1_RAW;
+    const proven_size_t hlen = raw ? digest.size : proven_hmac_size(hash);
     if (!n.ptr || !e.ptr || n.size == 0 || e.size == 0 || !sig.ptr || hlen == 0 || !digest.ptr || digest.size != hlen) return PROVEN_ERR_INVALID_ARG;
-    if (scheme != PROVEN_SIGN_RSA_PKCS1 && scheme != PROVEN_SIGN_RSA_PSS) return PROVEN_ERR_INVALID_ARG;
+    if (scheme != PROVEN_SIGN_RSA_PKCS1 && scheme != PROVEN_SIGN_RSA_PSS && !raw) return PROVEN_ERR_INVALID_ARG;
     while (n.size > 0 && n.ptr[0] == 0) { n.ptr++; n.size--; }
     while (e.size > 1 && e.ptr[0] == 0) { e.ptr++; e.size--; }
-    if (n.size < 256 || n.size > 1024) return PROVEN_ERR_UNSUPPORTED;
-    const bool ok = scheme == PROVEN_SIGN_RSA_PKCS1 ? proven_crypto_rsa_verify_pkcs1(n, e, (int)hash, digest, sig)
+    if (n.size * 8 < proven_crypto_rsa_min_bits() || n.size > 1024) return PROVEN_ERR_UNSUPPORTED;
+    const bool ok = raw ? proven_crypto_rsa_verify_pkcs1_raw(n, e, digest, sig)
+                  : scheme == PROVEN_SIGN_RSA_PKCS1 ? proven_crypto_rsa_verify_pkcs1(n, e, (int)hash, digest, sig)
                                                     : proven_crypto_rsa_verify_pss(n, e, (int)hash, salt_len, digest, sig);
     return ok ? PROVEN_OK : PROVEN_ERR_UNTRUSTED;
 }
@@ -473,4 +486,50 @@ proven_err_t proven_verify_spki(proven_mem_view_t spki, proven_sign_scheme_t sch
         return proven_verify_ecdsa(kind, bits, scheme, digest, sig);
     }
     return PROVEN_ERR_UNSUPPORTED;
+}
+
+/* ---- Keys held by the caller ---- */
+
+void proven_ed25519_public(proven_byte_t pub[32], const proven_byte_t seed[32]) {
+    proven_crypto_ed25519_public(pub, seed);
+}
+
+void proven_ed25519_sign(proven_byte_t sig[64], const proven_byte_t seed[32], const proven_byte_t pub[32], proven_mem_view_t msg) {
+    proven_crypto_ed25519_sign(sig, seed, pub, msg);
+}
+
+proven_err_t proven_ed25519_verify(const proven_byte_t pub[32], proven_mem_view_t msg, const proven_byte_t sig[64]) {
+    if (!pub || !sig || (msg.size > 0 && !msg.ptr)) return PROVEN_ERR_INVALID_ARG;
+    return proven_crypto_ed25519_verify(pub, msg, sig) ? PROVEN_OK : PROVEN_ERR_UNTRUSTED;
+}
+
+proven_err_t proven_ecdsa_sign_scalar(proven_pkey_kind_t kind, proven_hmac_hash_t nonce_hash, proven_mem_view_t scalar,
+                                      proven_mem_view_t digest, proven_byte_t *rs) {
+    proven_crypto_ec_curve_t curve;
+    proven_size_t size;
+    if (!pk_ec_curve(kind, &curve, &size) || proven_hmac_size(nonce_hash) == 0 || !scalar.ptr || scalar.size != size ||
+        !digest.ptr || digest.size == 0 || !rs) return PROVEN_ERR_INVALID_ARG;
+    return proven_crypto_ecdsa_sign(curve, (int)nonce_hash, scalar.ptr, digest, rs) ? PROVEN_OK : PROVEN_ERR_INVALID_FORMAT;
+}
+
+proven_err_t proven_rsa_encrypt_pkcs1(proven_mem_view_t n, proven_mem_view_t e, proven_mem_view_t msg, proven_mem_view_t random,
+                                      proven_mem_mut_t out, proven_size_t *len) {
+    if (len) *len = 0;
+    if (!n.ptr || !e.ptr || e.size == 0 || !random.ptr || !out.ptr || !len || (msg.size > 0 && !msg.ptr)) return PROVEN_ERR_INVALID_ARG;
+    while (n.size > 0 && n.ptr[0] == 0) { n.ptr++; n.size--; }
+    if (n.size * 8 < proven_crypto_rsa_min_bits() || n.size > 1024 || msg.size + 11 > n.size || random.size < n.size) return PROVEN_ERR_INVALID_ARG;
+    if (out.size < n.size) return PROVEN_ERR_OUT_OF_BOUNDS;
+    return proven_crypto_rsa_encrypt_pkcs1(n, e, msg, random.ptr, out.ptr, len) ? PROVEN_OK : PROVEN_ERR_INVALID_ARG;
+}
+
+/* For tests: how often an RSA key's blinding pair has been used, put where a test says - the
+ * renewal is 65,536 signatures away otherwise. Returns the count as it was; 0 for another key. */
+proven_u32 proven_pkey_test_rsa_uses_(proven_pkey_t *key, proven_u32 uses);
+proven_u32 proven_pkey_test_rsa_uses_(proven_pkey_t *key, proven_u32 uses) {
+    if (!key || key->kind != PROVEN_PKEY_RSA) return 0;
+    while (atomic_flag_test_and_set_explicit(&key->lock, memory_order_acquire)) { }
+    const proven_u32 was = key->uses;
+    key->uses = uses;
+    atomic_flag_clear_explicit(&key->lock, memory_order_release);
+    return was;
 }

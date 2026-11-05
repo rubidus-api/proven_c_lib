@@ -9,7 +9,73 @@
 #include "proven/hash.h"
 #include "proven/hmac.h"
 #include "proven/hash_legacy.h"
-#include "proven_internal_crypto.h"
+#include "proven/aead.h"
+#include "proven/aes.h"
+#include "proven/kex.h"
+#include "proven/sign.h"
+
+/* Where secret-derived data becomes public on purpose (a tag that matched, a length the protocol
+ * shows anyway), the code says so. Nothing in any build of the library; the private constant-time
+ * check defines PROVEN_CT_CHECK and then tells Valgrind the bytes may be branched on. */
+#ifndef PROVEN_CT_PUBLIC
+#ifdef PROVEN_CT_CHECK
+#include <valgrind/memcheck.h>
+#define PROVEN_CT_PUBLIC(p, n) ((void)VALGRIND_MAKE_MEM_DEFINED((p), (n)))
+#else
+#define PROVEN_CT_PUBLIC(p, n) ((void)(p), (void)(n))
+#endif
+#endif
+
+/* aead.h's calls in the shapes the engine's code is written in: true for success. */
+static inline bool proven_tls_aes_gcm_init_(proven_aes_gcm_t *ctx, const proven_byte_t *key, proven_size_t key_len) {
+    return proven_aes_gcm_init(ctx, (proven_mem_view_t){ .ptr = key, .size = key_len }) == PROVEN_OK;
+}
+static inline bool proven_tls_aes_gcm_open_(const proven_aes_gcm_t *ctx, const proven_byte_t nonce[12], proven_mem_view_t aad,
+                                            proven_mem_view_t cipher, const proven_byte_t tag[16], proven_byte_t *out) {
+    return proven_aes_gcm_open(ctx, nonce, aad, cipher, tag, out) == PROVEN_OK;
+}
+/* sign.h's and kex.h's, likewise. A curve is sign.h's PROVEN_PKEY_P256 or PROVEN_PKEY_P384. */
+#define PROVEN_TLS_RSA_MAX_BYTES 1024              /* the largest modulus verified or encrypted to: 8192 bits */
+static inline bool proven_tls_ecdsa_verify_(proven_pkey_kind_t curve, proven_mem_view_t pub, proven_mem_view_t digest, proven_mem_view_t sig) {
+    return proven_verify_ecdsa(curve, pub, PROVEN_SIGN_ECDSA, digest, sig) == PROVEN_OK;
+}
+static inline bool proven_tls_rsa_verify_pss_(proven_mem_view_t n, proven_mem_view_t e, proven_hmac_hash_t hash, proven_size_t salt_len,
+                                              proven_mem_view_t digest, proven_mem_view_t sig) {
+    return proven_verify_rsa(n, e, PROVEN_SIGN_RSA_PSS, hash, salt_len, digest, sig) == PROVEN_OK;
+}
+static inline bool proven_tls_rsa_verify_pkcs1_(proven_mem_view_t n, proven_mem_view_t e, proven_hmac_hash_t hash, proven_mem_view_t digest, proven_mem_view_t sig) {
+    return proven_verify_rsa(n, e, PROVEN_SIGN_RSA_PKCS1, hash, 0, digest, sig) == PROVEN_OK;
+}
+static inline bool proven_tls_rsa_verify_raw_(proven_mem_view_t n, proven_mem_view_t e, proven_mem_view_t data, proven_mem_view_t sig) {
+    return proven_verify_rsa(n, e, PROVEN_SIGN_RSA_PKCS1_RAW, PROVEN_HMAC_SHA256, 0, data, sig) == PROVEN_OK;
+}
+static inline bool proven_tls_x25519_(proven_byte_t out[32], const proven_byte_t scalar[32], const proven_byte_t peer[32]) {
+    return proven_x25519(out, scalar, peer) == PROVEN_OK;
+}
+static inline bool proven_tls_ecdh_(proven_pkey_kind_t curve, const proven_byte_t *priv, proven_mem_view_t peer, proven_byte_t *out) {
+    const proven_size_t size = curve == PROVEN_PKEY_P384 ? 48 : 32;
+    return proven_ecdh(curve, (proven_mem_view_t){ .ptr = priv, .size = size }, peer, (proven_mem_mut_t){ .ptr = out, .size = size }) == PROVEN_OK;
+}
+static inline bool proven_tls_ec_public_(proven_pkey_kind_t curve, const proven_byte_t *priv, proven_byte_t *pub) {
+    const proven_size_t size = curve == PROVEN_PKEY_P384 ? 48 : 32;
+    return proven_ec_public(curve, (proven_mem_view_t){ .ptr = priv, .size = size }, (proven_mem_mut_t){ .ptr = pub, .size = 1 + 2 * size }) == PROVEN_OK;
+}
+static inline bool proven_tls_ecdsa_sign_(proven_pkey_kind_t curve, proven_hmac_hash_t nonce_hash, const proven_byte_t *priv, proven_mem_view_t digest, proven_byte_t *rs) {
+    const proven_size_t size = curve == PROVEN_PKEY_P384 ? 48 : 32;
+    return proven_ecdsa_sign_scalar(curve, nonce_hash, (proven_mem_view_t){ .ptr = priv, .size = size }, digest, rs) == PROVEN_OK;
+}
+static inline bool proven_tls_rsa_encrypt_(proven_mem_view_t n, proven_mem_view_t e, proven_mem_view_t msg, const proven_byte_t *random,
+                                           proven_byte_t *out, proven_size_t *out_len) {
+    return proven_rsa_encrypt_pkcs1(n, e, msg, (proven_mem_view_t){ .ptr = random, .size = PROVEN_TLS_RSA_MAX_BYTES },
+                                    (proven_mem_mut_t){ .ptr = out, .size = PROVEN_TLS_RSA_MAX_BYTES }, out_len) == PROVEN_OK;
+}
+static inline bool proven_tls_ed25519_verify_(const proven_byte_t pub[32], proven_mem_view_t msg, const proven_byte_t sig[64]) {
+    return proven_ed25519_verify(pub, msg, sig) == PROVEN_OK;
+}
+static inline bool proven_tls_chacha_open_(const proven_byte_t key[32], const proven_byte_t nonce[12], proven_mem_view_t aad,
+                                           proven_mem_view_t cipher, const proven_byte_t tag[16], proven_byte_t *out) {
+    return proven_chacha20_poly1305_open(key, nonce, aad, cipher, tag, out) == PROVEN_OK;
+}
 
 #define PROVEN_TLS_AES_128_GCM_SHA256       ((proven_u16)0x1301)
 #define PROVEN_TLS_AES_256_GCM_SHA384       ((proven_u16)0x1302)
@@ -71,7 +137,11 @@ void proven_tls13_finished(proven_hmac_hash_t hash, const proven_byte_t *base_se
 typedef struct {
     bool active;                                  /* false: records travel in the clear */
     bool chacha;
-    proven_crypto_aes_gcm_t aes;                  /* AES: the context. ChaCha20: its key, in the first 32 bytes of aes.rk */
+    union {
+        proven_aes_gcm_t aes;                     /* AES-GCM: the context */
+        proven_aes_cbc_key_t cbc_key;             /* the legacy CBC suites' AES: the same, with no GHASH key */
+        proven_byte_t chacha_key[32];             /* ChaCha20-Poly1305: the key */
+    };
     proven_byte_t iv[12];
     proven_u64 seq;
 } proven_tls_keys_t;
@@ -180,21 +250,20 @@ proven_size_t proven_tls_cbc_seal(proven_tls_keys_t *keys, proven_tls_cbc_t *cbc
 /* Open one in place. Without encrypt_then_mac this does the same work whatever the padding
  * says and wherever the MAC turns out to start (Lucky Thirteen): there is one answer for every
  * kind of failure, and the time to reach it depends only on the record's length. */
-/* ---- Finite-field Diffie-Hellman over six known groups: tls_dh.c ---- */
-#define PROVEN_TLS_DH_MAX 512                    /* bytes: the largest prime known here, 4096 bits */
-#define PROVEN_TLS_DH_EXP_MAX 44                 /* bytes: the longest private exponent */
+/* ---- Finite-field Diffie-Hellman over six known groups: proven's kex.h, in the engine's words ---- */
+#define PROVEN_TLS_DH_MAX PROVEN_DH_MAX_BYTES
+#define PROVEN_TLS_DH_EXP_MAX PROVEN_DH_EXP_MAX_BYTES
 /* The group a server offers: ffdhe2048 (RFC 7919). Its generator is 2, as every group's here. */
-proven_mem_view_t proven_tls_dh_server_group(void);
-/* True when `p` is one of the six primes and `g` is 2. Nothing else is ever used. */
-[[nodiscard]] bool proven_tls_dh_known(proven_mem_view_t p, proven_mem_view_t g);
-/* How many random bytes make a private exponent for a prime of `p_len` bytes: 32, 36 or 44. */
-proven_size_t proven_tls_dh_exponent_len(proven_size_t p_len);
-/* 2^priv mod p into `out`, p.size bytes. SECRET: priv. */
-[[nodiscard]] bool proven_tls_dh_public(proven_mem_view_t p, const proven_byte_t *priv, proven_size_t priv_len, proven_byte_t *out);
-/* peer^priv mod p with its leading zero bytes dropped, as TLS wants the premaster: up to
- * p.size bytes into `out`. False when the peer's value is not in 2 .. p-2. SECRET: priv, out. */
-[[nodiscard]] bool proven_tls_dh_shared(proven_mem_view_t p, const proven_byte_t *priv, proven_size_t priv_len, proven_mem_view_t peer,
-                                        proven_byte_t *out, proven_size_t *out_len);
+static inline proven_mem_view_t proven_tls_dh_server_group(void) { return proven_dh_ffdhe2048(); }
+static inline bool proven_tls_dh_known(proven_mem_view_t p, proven_mem_view_t g) { return proven_dh_known(p, g); }
+static inline proven_size_t proven_tls_dh_exponent_len(proven_size_t p_len) { return proven_dh_exponent_len(p_len); }
+static inline bool proven_tls_dh_public(proven_mem_view_t p, const proven_byte_t *priv, proven_size_t priv_len, proven_byte_t *out) {
+    return proven_dh_public(p, (proven_mem_view_t){ .ptr = priv, .size = priv_len }, out) == PROVEN_OK;
+}
+static inline bool proven_tls_dh_shared(proven_mem_view_t p, const proven_byte_t *priv, proven_size_t priv_len, proven_mem_view_t peer,
+                                        proven_byte_t *out, proven_size_t *out_len) {
+    return proven_dh_shared(p, (proven_mem_view_t){ .ptr = priv, .size = priv_len }, peer, out, out_len) == PROVEN_OK;
+}
 
 /* Both directions' keys for a CBC suite from the master secret: the MAC keys, the cipher keys
  * and - in TLS 1.0 only - the first IVs. cbc[0] is the client's writing state, cbc[1] the
@@ -216,17 +285,6 @@ void proven_tls_cbc_set_keys(proven_tls_keys_t *client_write, proven_tls_keys_t 
 
 typedef enum { PROVEN_TLS_KEY_NONE = 0, PROVEN_TLS_KEY_P256, PROVEN_TLS_KEY_ED25519, PROVEN_TLS_KEY_RSA } proven_tls_key_kind_t;
 
-/* An RSA key and its blinding pair. The pair changes with every signature - from inside
- * handshakes, on whichever thread signs - so a flag serialises that, as for the ticket keys.
- * It is held for one squaring of the pair (and, every 65,536 signatures, for making a new
- * one): longer than the ticket keys' few instructions, and still far shorter than the
- * signature that follows outside it. */
-typedef struct {
-    proven_crypto_rsa_key_t key;                  /* SECRET */
-    atomic_flag lock;
-    proven_crypto_rsa_blind_t blind;              /* SECRET */
-    proven_u32 uses;
-} proven_tls_rsa_t;
 
 /* A server's ticket keys: the current one and the one before. They are replaced on a timer
  * from inside handshakes, on whichever thread gets there first; a flag serialises that. */
@@ -292,7 +350,7 @@ struct proven_tls_config {
     proven_tls_key_kind_t key_kind;
     proven_byte_t key[32];                        /* the P-256 scalar or the Ed25519 seed. SECRET */
     proven_byte_t key_public[32];                 /* Ed25519 only */
-    proven_tls_rsa_t *rsa;                        /* an RSA key lives here instead: it is eight kilobytes, six of them its moduli prepared */
+    proven_pkey_t *rsa;                           /* an RSA key lives here instead (sign.h): eight kilobytes, six of them its moduli prepared */
     proven_tls_client_auth_t client_auth;
     proven_byte_t *alpn_wire;                     /* the names, each behind its length byte */
     proven_size_t alpn_wire_len;
@@ -396,55 +454,12 @@ void proven_tls_transport_close_now_(proven_transport_t tls);
 void proven_tls_transport_shutdown_now_(proven_transport_t tls);
 #endif
 
-/* ---- Issuing certificates: for tests that need an identity or a chain ---- */
-
-/* A self-signed Ed25519 certificate for `names` (DNS names or IP literals, 1 to 16), valid from
- * `not_before` to `not_after`, for server and client authentication, and its key, as PEM. Public
- * as proven_tls_self_signed until v0.78.0 (owner decision 2026-10-23: an identity comes from
- * files). random NULL: the system's (hosted). PROVEN_ERR_INVALID_ARG, PROVEN_ERR_OUT_OF_BOUNDS. */
-proven_err_t proven_tls_self_signed_(const proven_u8str_view_t *names, proven_size_t name_count,
-                                     proven_i64 not_before, proven_i64 not_after,
-                                     proven_tls_random_fn random, void *random_ctx,
-                                     proven_mem_mut_t certificate_pem, proven_size_t *certificate_len,
-                                     proven_mem_mut_t private_key_pem, proven_size_t *private_key_len);
-
-typedef struct {
-    const char *subject;                          /* the subject's common name */
-    const char *issuer;                           /* the issuer's; the same string for a self-signed certificate */
-    proven_tls_key_kind_t subject_kind;
-    const proven_byte_t *subject_key;             /* 32 bytes: an Ed25519 seed or a P-256 scalar */
-    proven_tls_key_kind_t issuer_kind;
-    const proven_byte_t *issuer_key;
-    const proven_crypto_rsa_key_t *subject_rsa;   /* instead of subject_key, for PROVEN_TLS_KEY_RSA */
-    const proven_crypto_rsa_key_t *issuer_rsa;
-    bool is_ca;
-    proven_u32 eku;                               /* PROVEN_CERT_EKU_SERVER_AUTH, _CLIENT_AUTH, _CODE_SIGNING, _TIME_STAMPING; 0: none */
-    bool eku_critical;                            /* extendedKeyUsage marked critical (a TSA's, RFC 3161) */
-    proven_mem_view_t ski, aki;                   /* subjectKeyIdentifier and authorityKeyIdentifier's keyIdentifier; empty: none */
-    const proven_u8str_view_t *names;             /* subjectAltName entries: DNS names and IP literals */
-    proven_size_t name_count;
-    proven_i64 not_before, not_after;
-    proven_byte_t serial[16];
-} proven_tls_issue_t;
-
-/* One certificate, DER. PROVEN_ERR_OUT_OF_BOUNDS when `out` is too small (1 KiB is plenty for a few names). */
-proven_err_t proven_tls_issue_(const proven_tls_issue_t *what, proven_mem_mut_t out, proven_size_t *len);
-/* A private key as PKCS #8 DER; with `sec1`, a P-256 key as an ECPrivateKey instead. At most 80 bytes. */
-proven_size_t proven_tls_key_der_(proven_tls_key_kind_t kind, const proven_byte_t key[32], bool sec1, proven_byte_t out[80]);
-/* An RSA private key as an RSAPrivateKey (PKCS #1), or with `pkcs8` inside a PrivateKeyInfo.
- * `d` is the private exponent, n_len bytes. Returns the length, or 0 when `out` is too small. */
-proven_size_t proven_tls_rsa_key_der_(const proven_crypto_rsa_key_t *key, const proven_byte_t *d, bool pkcs8, proven_mem_mut_t out);
 /* A signature of a SHA-256 digest with the config's RSA key, n_len bytes into `sig`:
  * RSASSA-PSS with a salt of 32 bytes, or - `pkcs1`, for TLS 1.2 peers that offer nothing
  * else - PKCS #1 v1.5. False when the config has no RSA key or the signature could not be made. */
 [[nodiscard]] bool proven_tls_config_rsa_sign_(const proven_tls_config_t *config, bool pkcs1, proven_mem_view_t digest, proven_byte_t *sig, proven_size_t *len);
-/* PEM: the label between the dashes, the bytes in Base64, 64 to a line. */
-proven_err_t proven_tls_pem_write_(const char *label, proven_mem_view_t der, proven_mem_mut_t out, proven_size_t *len);
-/* 4 or 16 when `text` is an IP literal (cert.c). */
-proven_size_t proven_cert_host_as_ip_(proven_u8str_view_t text, proven_byte_t out[16]);
 
 /* Test hooks. Not for any other use. */
-void proven_crypto_rsa_test_min_bits(proven_size_t bits);
 /* Put one suite first in both roles' order (0: the normal order), and make the server ignore
  * an X25519 key share so that it has to ask for P-256. */
 void proven_tls_test_knobs(proven_u16 suite_first, bool server_refuses_x25519);
@@ -503,8 +518,6 @@ void proven_tls_test_knobs12(unsigned flags);
  * certificate even on a connection without the extended master secret. */
 /* The client offers only this TLS 1.2-family suite (0: everything, as usual). */
 void proven_tls_test_only_suite12(proven_u16 id);
-/* How often an RSA key's blinding pair has been used, put where a test says; returns what it was. */
-proven_u32 proven_tls_config_test_rsa_uses_(const proven_tls_config_t *config, proven_u32 uses);
 /* The count of records `writer` has written and `reader` has read, put where a test says. */
 void proven_tls_test_records_(proven_tls_conn_t *writer, proven_tls_conn_t *reader, proven_u64 count);
 /* Send an empty handshake message of `type` under the current keys. */

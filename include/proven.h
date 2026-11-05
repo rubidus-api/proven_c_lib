@@ -37,6 +37,8 @@
 #include "proven/der.h"
 #include "proven/sign.h"
 #include "proven/aes.h"
+#include "proven/aead.h"
+#include "proven/kex.h"
 #include "proven/tls.h"
 #include "proven/url.h"
 #include "proven/http.h"

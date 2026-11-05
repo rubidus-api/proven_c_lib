@@ -1,5 +1,5 @@
 #include "proven_internal_tls.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 
 /* TLS 1.3 below the state machine: suites, transcript, key schedule, record protection. */
 
@@ -102,9 +102,9 @@ void proven_tls13_set_keys(proven_tls_keys_t *keys, const proven_tls_suite_t *su
     proven_tls13_expand_label(suite->hash, traffic_secret, "iv", none, keys->iv, 12);
     keys->chacha = suite->chacha;
     if (suite->chacha) {
-        for (int i = 0; i < 32; ++i) keys->aes.rk[i] = key[i];
+        for (int i = 0; i < 32; ++i) keys->chacha_key[i] = key[i];
     } else {
-        (void)proven_crypto_aes_gcm_init(&keys->aes, key, suite->key_len);       /* 16 or 32: cannot fail */
+        (void)proven_tls_aes_gcm_init_(&keys->aes, key, suite->key_len);       /* 16 or 32: cannot fail */
     }
     keys->seq = 0;
     keys->active = true;
@@ -123,13 +123,13 @@ proven_size_t proven_tls13_seal(proven_tls_keys_t *keys, proven_byte_t type, pro
     out[0] = PROVEN_TLS_CT_APPLICATION; out[1] = 0x03; out[2] = 0x03;
     out[3] = (proven_byte_t)(body >> 8); out[4] = (proven_byte_t)body;
     proven_byte_t *p = out + PROVEN_TLS_RECORD_HEADER;
-    proven_sys_mem_copy(p, content.ptr, content.size);
+    proven_net_mem_copy(p, content.ptr, content.size);
     p[content.size] = type;
     tls13_nonce(keys, nonce);
     proven_mem_view_t aad = { .ptr = out, .size = PROVEN_TLS_RECORD_HEADER };
     proven_mem_view_t plain = { .ptr = p, .size = inner };
-    if (keys->chacha) proven_crypto_chacha20poly1305_seal(keys->aes.rk, nonce, aad, plain, p, p + inner);
-    else proven_crypto_aes_gcm_seal(&keys->aes, nonce, aad, plain, p, p + inner);
+    if (keys->chacha) proven_chacha20_poly1305_seal(keys->chacha_key, nonce, aad, plain, p, p + inner);
+    else proven_aes_gcm_seal(&keys->aes, nonce, aad, plain, p, p + inner);
     keys->seq++;
     return PROVEN_TLS_RECORD_HEADER + body;
 }
@@ -143,8 +143,8 @@ bool proven_tls13_open(proven_tls_keys_t *keys, proven_byte_t *record, proven_si
     tls13_nonce(keys, nonce);
     proven_mem_view_t aad = { .ptr = record, .size = PROVEN_TLS_RECORD_HEADER };
     proven_mem_view_t cipher = { .ptr = p, .size = inner };
-    bool ok = keys->chacha ? proven_crypto_chacha20poly1305_open(keys->aes.rk, nonce, aad, cipher, p + inner, p)
-                           : proven_crypto_aes_gcm_open(&keys->aes, nonce, aad, cipher, p + inner, p);
+    bool ok = keys->chacha ? proven_tls_chacha_open_(keys->chacha_key, nonce, aad, cipher, p + inner, p)
+                           : proven_tls_aes_gcm_open_(&keys->aes, nonce, aad, cipher, p + inner, p);
     if (!ok) return false;
     keys->seq++;
     /* From here the record's content is data for the layer above, which reads and branches on

@@ -54,8 +54,14 @@ proven_u64 proven_quic_pn_decode(proven_u64 largest_plus_one, proven_u64 truncat
 typedef struct {
     bool chacha;
     proven_size_t key_len;                        /* 16 or 32 */
-    proven_crypto_aes_gcm_t aead;                 /* AES: the context. ChaCha20: its key, in the first 32 bytes of aead.rk */
-    proven_crypto_aes_t hp;                       /* the same for the header protection key: AES with no GHASH key */
+    union {
+        proven_aes_gcm_t aead;                    /* AES: the context */
+        proven_byte_t aead_chacha[32];            /* ChaCha20-Poly1305: the key */
+    };
+    union {
+        proven_aes_t hp;                          /* the header protection key: AES with no GHASH key */
+        proven_byte_t hp_chacha[32];              /* or ChaCha20's */
+    };
     proven_byte_t iv[12];
 } proven_quic_keys_t;
 

@@ -4,6 +4,7 @@
 #include "proven/types.h"
 #include "proven/error.h"
 #include "proven/memory.h"
+#include "proven/aead.h"
 
 /**
  * @file aes.h
@@ -31,6 +32,27 @@ proven_err_t proven_aes_cbc_decrypt(proven_mem_view_t key, proven_byte_t iv[16],
 /** @brief Encrypt `data` in place, the same way round. Errors as proven_aes_cbc_decrypt. */
 [[nodiscard]]
 proven_err_t proven_aes_cbc_encrypt(proven_mem_view_t key, proven_byte_t iv[16], proven_mem_mut_t data);
+
+/**
+ * @brief A CBC key prepared once, for many calls (records of the legacy TLS suites, say): the
+ *        two calls above make and wipe one each time. The field is private; wipe it with
+ *        proven_mem_wipe when done. Since v0.111.0.
+ */
+typedef struct {
+    proven_aes_gcm_t k;
+} proven_aes_cbc_key_t;
+
+/** @brief Prepare a 16-, 24- or 32-byte key. PROVEN_ERR_INVALID_ARG otherwise. */
+[[nodiscard]]
+proven_err_t proven_aes_cbc_key_init(proven_aes_cbc_key_t *ctx, proven_mem_view_t key);
+
+/** @brief proven_aes_cbc_decrypt under a prepared key. */
+[[nodiscard]]
+proven_err_t proven_aes_cbc_decrypt_with(const proven_aes_cbc_key_t *ctx, proven_byte_t iv[16], proven_mem_mut_t data);
+
+/** @brief proven_aes_cbc_encrypt under a prepared key. */
+[[nodiscard]]
+proven_err_t proven_aes_cbc_encrypt_with(const proven_aes_cbc_key_t *ctx, proven_byte_t iv[16], proven_mem_mut_t data);
 
 /**
  * @brief The length of `data` without its PKCS #7 padding (RFC 5652 section 6.3): 1 to `block`

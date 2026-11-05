@@ -1,5 +1,5 @@
 #include "proven/http.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 
 /*
  * An HTTP/1.1 message codec written from RFC 9110 and RFC 9112. Plain byte code: no C library
@@ -786,7 +786,7 @@ static void http_put(proven_http_w_t *w, proven_u8str_view_t s) {
     proven_byte_t *to = w->out.ptr + w->len;
     /* A long value - a cookie, a policy - as a block; the short pieces of syntax byte by byte,
      * where a call costs more than the copy. */
-    if (s.size > 32) proven_sys_mem_copy(to, s.ptr, s.size);
+    if (s.size > 32) proven_net_mem_copy(to, s.ptr, s.size);
     else for (proven_size_t i = 0; i < s.size; ++i) to[i] = s.ptr[i];
     w->len += s.size;
 }

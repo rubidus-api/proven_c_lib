@@ -1,5 +1,5 @@
 #include "proven/http_event.h"
-#include "../../platform/proven_sys_mem.h"
+#include "../../platform/proven_sys_net_mem.h"
 #include "proven_internal_http_event.h"
 #include "proven_internal_http_coding.h"
 
@@ -136,7 +136,7 @@ struct h3d {
 static void *h3_alloc(proven_allocator_t a, proven_size_t n) {
     proven_result_mem_mut_t m = a.alloc_fn(a.ctx, n, 16);
     if (m.err != PROVEN_OK) return (void *)0;
-    proven_sys_mem_set(m.value.ptr, 0, n);
+    proven_net_mem_set(m.value.ptr, 0, n);
     return m.value.ptr;
 }
 
@@ -147,12 +147,12 @@ static bool h3_append(proven_allocator_t a, proven_byte_t **buf, proven_size_t *
         while (want < *len + n) { if (want > (proven_size_t)-1 / 2) return false; want *= 2; }
         proven_byte_t *q = h3_alloc(a, want);
         if (!q) return false;
-        proven_sys_mem_copy(q, *buf, *len);
+        proven_net_mem_copy(q, *buf, *len);
         if (*buf) a.free_fn(a.ctx, *buf);
         *buf = q;
         *cap = want;
     }
-    proven_sys_mem_copy(*buf + *len, p, n);
+    proven_net_mem_copy(*buf + *len, p, n);
     *len += n;
     return true;
 }
@@ -288,7 +288,7 @@ static void e_send_batch(h3e_t *e, proven_net_addr_t to, const proven_byte_t *p,
     proven_size_t sent = 0;
     const proven_err_t r = proven_net_udp_send_marked_(&e->udp, to, (proven_mem_view_t){ .ptr = p, .size = n }, seg, ecn, &sent);
     if (r != PROVEN_ERR_TIMEOUT || n - sent > sizeof e->pend) return;      /* sent, or lost as UDP may lose it */
-    proven_sys_mem_copy(e->pend, p + sent, n - sent);
+    proven_net_mem_copy(e->pend, p + sent, n - sent);
     e->pend_len = n - sent;
     e->pend_seg = seg;
     e->pend_ecn = ecn;
@@ -442,7 +442,7 @@ static void d_send(h3d_t *d) {
             /* The socket would not take all of it: this datagram is lost as UDP may lose it, and
              * nothing more is asked of the engine until the socket takes what is kept. */
             if (d->e->pend_len > 0) { d_mark(d); return; }
-            proven_sys_mem_move(x->batch, x->batch + at, len);
+            proven_net_mem_move(x->batch, x->batch + at, len);
             at = 0; count = 0;
         }
         if (at == 0) { seg = len; bto = d->peer; bmark = mark; }
@@ -900,7 +900,7 @@ static void e_writable(void *ctx, proven_err_t err) {
         proven_size_t sent = 0;
         const proven_err_t r = proven_net_udp_send_marked_(&e->udp, e->pend_to, (proven_mem_view_t){ .ptr = e->pend, .size = e->pend_len }, e->pend_seg, e->pend_ecn, &sent);
         if (r != PROVEN_ERR_TIMEOUT) e->pend_len = 0;
-        else if (sent > 0) { proven_sys_mem_move(e->pend, e->pend + sent, e->pend_len - sent); e->pend_len -= sent; }
+        else if (sent > 0) { proven_net_mem_move(e->pend, e->pend + sent, e->pend_len - sent); e->pend_len -= sent; }
     }
     x_rounds(e->x);
 }
