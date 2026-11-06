@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.112.1] - 2026-11-06
+
 ### Fixed
 
 - Pointer arithmetic on a null pointer: an empty buffer's NULL advanced by zero in the network
