@@ -225,6 +225,25 @@ int main(void) {
             "the accept key matches the RFC's example", "");
     }
 
+    PROVEN_TEST_SECTION("an empty update mid-block", "{NULL, 0} after a partial block changes nothing (v0.112.0).",
+        "legacy_update must return before touching the block for an empty view: under UBSan the old code advanced a NULL pointer.");
+    {
+        proven_byte_t a[PROVEN_SHA1_SIZE], b[PROVEN_SHA1_SIZE], m[PROVEN_MD5_SIZE], n[PROVEN_MD5_SIZE];
+        proven_sha1_t s1;
+        proven_sha1_init(&s1);
+        proven_sha1_update(&s1, (proven_mem_view_t){ (const proven_byte_t *)"abc", 3 });
+        proven_sha1_update(&s1, (proven_mem_view_t){ NULL, 0 });
+        proven_sha1_final(&s1, a);
+        proven_sha1((proven_mem_view_t){ (const proven_byte_t *)"abc", 3 }, b);
+        proven_md5_t m5;
+        proven_md5_init(&m5);
+        proven_md5_update(&m5, (proven_mem_view_t){ (const proven_byte_t *)"abc", 3 });
+        proven_md5_update(&m5, (proven_mem_view_t){ NULL, 0 });
+        proven_md5_final(&m5, m);
+        proven_md5((proven_mem_view_t){ (const proven_byte_t *)"abc", 3 }, n);
+        PROVEN_TEST_ASSERT(memcmp(a, b, sizeof a) == 0 && memcmp(m, n, sizeof m) == 0, "SHA-1 and MD5 of \"abc\" with an empty update between", "");
+    }
+
     PROVEN_TEST_PASS("SHA-1 and MD5 agree with their standards' vectors.");
     return 0;
 }

@@ -225,6 +225,19 @@ int main(void) {
         PROVEN_TEST_ASSERT(memcmp(d1, d2, 32) == 0, "SHA-256 likewise", "");
     }
 
+    PROVEN_TEST_SECTION("an empty update mid-block", "{NULL, 0} after a partial block changes nothing (reported by rubrapack's fuzzing, v0.112.0).",
+        "proven_sha256_update must return before touching the block for an empty view: under UBSan the old code advanced a NULL pointer.");
+    {
+        proven_byte_t a[PROVEN_SHA256_SIZE], b[PROVEN_SHA256_SIZE];
+        proven_sha256_t c;
+        proven_sha256_init(&c);
+        proven_sha256_update(&c, (proven_mem_view_t){ (const proven_byte_t *)"abc", 3 });
+        proven_sha256_update(&c, (proven_mem_view_t){ NULL, 0 });
+        proven_sha256_final(&c, a);
+        proven_sha256((proven_mem_view_t){ (const proven_byte_t *)"abc", 3 }, b);
+        PROVEN_TEST_ASSERT(memcmp(a, b, sizeof a) == 0, "SHA-256 of \"abc\" with an empty update between", "");
+    }
+
     PROVEN_TEST_PASS("every hash agrees with its own standard's vectors.");
     return 0;
 }

@@ -726,6 +726,7 @@ Sub-checks:
 - Every entry point guards a `{NULL, size>0}` view the way SHA-256 does, rather than dereferencing it.
 
 Failure tip: inspect `src/proven/hash.c`. The algorithms are implemented from their specifications; a KAT mismatch means a rotation, round count, or endianness is off.
+- An empty update - `{NULL, 0}` - after a partial block leaves SHA-256 unchanged (v0.112.0; UBSan once reported pointer arithmetic on NULL there).
 
 ### `tests/test_unit_deflate` - DEFLATE, zlib and gzip, both ways
 
@@ -1562,6 +1563,7 @@ Sub-checks:
 - The WebSocket accept key of RFC 6455 section 1.3, from `proven_sha1` and `proven_base64_encode`.
 
 Failure tip: inspect `src/proven/hash_legacy.c`. A boundary-length failure points at `legacy_pad` (the `0x80` byte, the zero fill, the byte order of the bit length); a vector failure at one compression function.
+- The same empty update after a partial block for SHA-1 and MD5 (v0.112.0).
 
 ### `tests/test_unit_job` - job system
 

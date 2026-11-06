@@ -44,6 +44,14 @@ written; their tags still exist.
   on a full buffer. The strict functions are unchanged.
 - Tests: `test_unit_u16str_views`, `test_unit_der_ber`; `test_unit_utf` covers the lossy forms.
 
+### Fixed
+
+- `proven_sha256_update`, `proven_sha1_update` and `proven_md5_update` with an empty view
+  (`{NULL, 0}`) while a block was partly filled advanced a NULL pointer by zero - undefined
+  behaviour that UBSan reports; the digest was right. They now return at once for an empty view
+  (reported by rubrapack's fuzzing). `proven_hash_keyed` did the same for any empty view and no
+  longer does.
+
 ### Not added
 
 - A 16-bit `fmt_to`: the formatter writes UTF-8; use `proven_fmt_to`, then `proven_utf8_to_utf16`.
