@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.112.0] - 2026-11-06
+
 ### Added
 
 - `u16str.h`: the view vocabulary of `u8str.h` in 16-bit units, for code that holds Win32 wide
