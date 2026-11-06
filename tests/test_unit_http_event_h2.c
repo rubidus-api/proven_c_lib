@@ -496,7 +496,7 @@ static res_t *cl_res(cl_t *c, proven_u32 id) { return &c->r[(id - 1) / 2]; }
 static bool cl_send(cl_t *c, proven_u32 id, const proven_byte_t *p, proven_size_t n, bool end) {
     proven_size_t sent = 0;
     for (int round = 0; round < 20000 && (sent < n || (n == 0 && round == 0)); round++) {
-        proven_result_size_t w = proven_h2_conn_send_data(c->e, id, (proven_mem_view_t){ p + sent, n - sent }, end);
+        proven_result_size_t w = proven_h2_conn_send_data(c->e, id, (proven_mem_view_t){ sent ? p + sent : p, n - sent }, end);
         if (w.err != PROVEN_OK) return false;
         sent += w.value;
         if (sent < n) (void)cl_pump(c, 5);

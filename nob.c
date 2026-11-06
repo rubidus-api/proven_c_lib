@@ -149,7 +149,9 @@ static void append_mode_cflags(Nob_Cmd *cmd, const char *mode, const char *stand
     if (strcmp(mode, "release") == 0) nob_cmd_append(cmd, "-O3", "-DNDEBUG");
     else if (strcmp(mode, "hardened") == 0) nob_cmd_append(cmd, "-O2", "-DNDEBUG", "-DPROVEN_HARDENED=1");
     else if (strcmp(mode, "asan") == 0) nob_cmd_append(cmd, "-g", "-O0", "-fsanitize=address");
-    else if (strcmp(mode, "ubsan") == 0) nob_cmd_append(cmd, "-g", "-O0", "-fsanitize=undefined");
+    /* -fno-sanitize-recover: a report stops the program, so it fails its test - without it UBSan
+     * only prints, and a run with 95 reports in its log passed (2026-11-06, clang). */
+    else if (strcmp(mode, "ubsan") == 0) nob_cmd_append(cmd, "-g", "-O0", "-fsanitize=undefined", "-fno-sanitize-recover=undefined");
     else if (strcmp(mode, "tsan") == 0) nob_cmd_append(cmd, "-g", "-O0", "-fsanitize=thread");
     else if (strcmp(mode, "strict-error") == 0) nob_cmd_append(cmd, "-g", "-O0", "-Wall", "-Wextra", "-Werror");
     else if (strcmp(mode, "freestanding") == 0) nob_cmd_append(cmd, "-g", "-O0", "-Wall", "-Wextra", "-Werror", "-DPROVEN_FREESTANDING", "-DPROVEN_FMT_NO_FLOAT", "-DPROVEN_NO_U16STR", "-ffreestanding");
@@ -257,7 +259,7 @@ static void build_test_link_cmd(Nob_Cmd *cmd, const char *compiler, const char *
      * public headers stay consistent with the library objects. */
     if (extra_cflags) nob_cmd_append(cmd, extra_cflags);
     if (strcmp(mode, "asan") == 0) nob_cmd_append(cmd, "-fsanitize=address");
-    else if (strcmp(mode, "ubsan") == 0) nob_cmd_append(cmd, "-fsanitize=undefined");
+    else if (strcmp(mode, "ubsan") == 0) nob_cmd_append(cmd, "-fsanitize=undefined", "-fno-sanitize-recover=undefined");
     else if (strcmp(mode, "tsan") == 0) nob_cmd_append(cmd, "-fsanitize=thread");
 
     if (strcmp(mode, "freestanding") != 0) {
@@ -1620,7 +1622,7 @@ int main(int argc, char **argv)
     if (strcmp(build_mode, "hardened") == 0) nob_sb_append_cstr(&hash_src, "-O2-DNDEBUG-DPROVEN_HARDENED=1");
     if (strcmp(build_mode, "strict-error") == 0) nob_sb_append_cstr(&hash_src, "-Wall-Wextra-Werror-g-O0");
     if (strcmp(build_mode, "asan") == 0) nob_sb_append_cstr(&hash_src, "-fsanitize=address-g-O0");
-    if (strcmp(build_mode, "ubsan") == 0) nob_sb_append_cstr(&hash_src, "-fsanitize=undefined-g-O0");
+    if (strcmp(build_mode, "ubsan") == 0) nob_sb_append_cstr(&hash_src, "-fsanitize=undefined-fno-sanitize-recover=undefined-g-O0");
     if (strcmp(build_mode, "tsan") == 0) nob_sb_append_cstr(&hash_src, "-fsanitize=thread-g-O0");
     if (strcmp(build_mode, "strict") == 0) nob_sb_append_cstr(&hash_src, "-Wall-Wextra-g-O0");
     if (strcmp(build_mode, "freestanding") == 0) nob_sb_append_cstr(&hash_src, "-DPROVEN_FREESTANDING-DPROVEN_FMT_NO_FLOAT-DPROVEN_NO_U16STR-ffreestanding-g-O0");

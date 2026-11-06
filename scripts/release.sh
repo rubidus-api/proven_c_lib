@@ -44,6 +44,18 @@ echo "release: build and every gate passed"
     grep -n 'FAIL\|ERROR: AddressSanitizer' "$root/build/release-asan.log" | head -5 >&2; exit 1; }
 echo "release: asan passed"
 
+# UBSan under clang as well: gcc's does not report an offset applied to a null pointer, clang's
+# does, and both stop the program at a report (nob's -fno-sanitize-recover). Skipped, and said so,
+# where there is no clang.
+if command -v clang >/dev/null 2>&1; then
+    ( cd "$root" && ./nob ubsan -cc clang -build-root build/clang-ubsan ) >"$root/build/release-ubsan-clang.log" 2>&1 || {
+        echo "release: ./nob ubsan -cc clang failed - not releasing (build/release-ubsan-clang.log)" >&2
+        grep -n 'FAIL\|runtime error' "$root/build/release-ubsan-clang.log" | head -5 >&2; exit 1; }
+    echo "release: ubsan (clang) passed"
+else
+    echo "release: no clang here - ubsan (clang) not run" >&2
+fi
+
 "$root/scripts/project-check.sh" >/dev/null || {
     echo "release: project-check failed (privacy or docs) - not releasing" >&2; exit 1; }
 echo "release: project-check passed"

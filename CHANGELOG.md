@@ -18,6 +18,22 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Fixed
+
+- Pointer arithmetic on a null pointer: an empty buffer's NULL advanced by zero in the network
+  code (`h2`, `h2_conn`, `h3_conn`, `http_client`, `http_coding`, `http_event`, `http_event_client`,
+  `http_event_h2`, `http_event_h3`, `http_server`, `ws_conn`, `ws_deflate`, `ws_event`) and in
+  `deflate`; through the new `PROVEN_NET_AT` in the network library's own platform header.
+  Undefined in C and reported by clang's UBSan; no output changed.
+- `zstd_encode.c`: a backward match extension indexed `st[-1 - off]` with an unsigned `off`, an
+  offset that wraps around the address space (clang's UBSan: pointer overflow); now `st - 1 - off`.
+
+### Changed
+
+- `./nob ubsan` stops at the first report (`-fno-sanitize-recover=undefined`), so undefined
+  behaviour fails the test that ran into it; before, a run with reports in its log passed.
+- `scripts/release.sh` also runs `./nob ubsan` with clang when there is one.
+
 ## [0.112.0] - 2026-11-06
 
 ### Added

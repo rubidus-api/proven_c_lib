@@ -271,6 +271,8 @@ What it checks:
 
 - Signed integer overflow, invalid shifts, misaligned access, invalid casts in instrumented code, and other UB classes supported by the compiler.
 - C23 checked arithmetic wrappers are not bypassed in overflow-prone paths.
+- A report stops the program (`-fno-sanitize-recover=undefined`, since v0.112.1), so it fails the test that ran it; before, UBSan only printed and the run passed.
+- Run it with clang too - `./nob ubsan -cc clang -build-root build/clang-ubsan`, as `scripts/release.sh` does: gcc's UBSan does not report an offset applied to a null pointer (`{NULL, 0} + 0`), clang's does.
 
 Failure tip: the failing expression is usually the bug. Do not paper over it with casts unless the conversion is explicitly proven and guarded.
 
