@@ -23,6 +23,7 @@ PROVEN_BUILD_SOURCE("src/proven/heap.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/alloc_check.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/u8str.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/u16str.c", PROVEN_SOURCE_HOSTED_ONLY)   /* UTF-16 strings are left out of the freestanding profile (PROVEN_NO_U16STR) */
+PROVEN_BUILD_SOURCE("src/proven/u16str_view.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the view vocabulary (RFC-0044), with u16str.c */
 PROVEN_BUILD_SOURCE("src/proven/array.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/ring.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/map.c", PROVEN_SOURCE_FREESTANDING)

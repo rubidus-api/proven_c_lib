@@ -92,6 +92,8 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_u8str_view_eq_ascii_ci(PROVEN_LIT("Content-Type"), PROVEN_LIT("content-TYPE")), "field names ignore ASCII case");
     EXAMPLE_REQUIRE(!proven_u8str_view_eq_ascii_ci(PROVEN_LIT("@"), PROVEN_LIT("`")), "a byte next to the letters is only itself");
     EXAMPLE_REQUIRE(proven_u8str_view_starts_with_ascii_ci(PROVEN_LIT("HTTPS://example.org"), PROVEN_LIT("https:")), "and so does a prefix test");
+    EXAMPLE_REQUIRE(proven_u8str_view_ends_with_ascii_ci(PROVEN_LIT("REPORT.PDF"), PROVEN_LIT(".pdf")), "a suffix test too");
+    EXAMPLE_REQUIRE(proven_u8str_view_cmp_ascii_ci(PROVEN_LIT("apple"), PROVEN_LIT("Banana")) < 0, "and an order that ignores case, for sorting names");
     /* To write a name in its lower-case form - HTTP/2 wants field names so - fold it a byte at a time. */
     proven_u8str_view_t field = PROVEN_LIT("X-Request-Id");
     proven_byte_t folded[16];

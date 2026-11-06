@@ -568,6 +568,24 @@ constructed element is opened with `proven_der_begin` and its length written by
 must be in it, and a signature over unsorted ones does not verify elsewhere. Errors are sticky:
 check `proven_der_writer_finish` once at the end.
 
+Some files are BER rather than DER: PKCS#12 files exported by Windows use indefinite lengths and
+OCTET STRINGs cut into pieces. `proven_der_from_ber` (since v0.112.0) rewrites one such element
+into the DER the reader takes - definite lengths, shortest length forms, each constructed OCTET
+STRING joined into one - and copies everything else as it is; it is not a canonical form of any
+BER (SET order and the rest are left alone). It writes into caller memory and gives the size even
+when the buffer is too small, so a first call with an empty buffer measures.
+
+```c
+/* SEQUENCE (indefinite) { OCTET STRING in two pieces "ab" "c" } */
+static const proven_byte_t ber[] = { 0x30, 0x80, 0x24, 0x80, 0x04, 0x02, 'a', 'b', 0x04, 0x01, 'c',
+                                     0x00, 0x00, 0x00, 0x00 };
+proven_byte_t der[32];
+proven_size_t der_len = 0;
+proven_err_t err = proven_der_from_ber((proven_mem_view_t){ ber, sizeof ber }, (proven_mem_mut_t){ der, sizeof der }, &der_len);
+/* PROVEN_OK; der is 30 05 04 03 'a' 'b' 'c', and proven_der_read reads it. */
+(void)err;
+```
+
 ## 11. Encrypted key files: PBKDF2 and AES-CBC
 
 An encrypted PKCS #8 ("ENCRYPTED PRIVATE KEY") or a PKCS #12 file is opened by deriving a key from

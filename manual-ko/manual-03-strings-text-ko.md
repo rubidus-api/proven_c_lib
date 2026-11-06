@@ -208,6 +208,8 @@ proven_u8str_destroy(alloc, &s);
 | `proven_u8str_view_from_bytes(ptr, size)` | 어떤 객체 포인터에서든 `size` 바이트의 view를 캐스트 없이 만든다. | `proven_u8str_view_t`; 복사하지 않음. |
 | `proven_u8str_view_eq(a, b)` | 바이트 동등성 검사. | int 진리값. |
 | `proven_u8str_view_eq_ascii_ci(a, b)` | ASCII 글자의 대소문자를 무시한 동등성: HTTP 필드 이름, URL 스킴, MIME 타입. | int 진리값. |
+| `proven_u8str_view_ends_with_ascii_ci(str, suffix)` | ASCII 글자의 대소문자를 무시한 접미사 검사. v0.112.0부터. | int 진리값. |
+| `proven_u8str_view_cmp_ascii_ci(a, b)` | ASCII 글자를 소문자로 내려 비교한 순서: `eq_ascii_ci`와 맞는다. v0.112.0부터. | 부호. |
 | `proven_ascii_lower(c)` | 바이트 하나의 'A'~'Z'를 'a'~'z'로 바꾸고, 0x80 이상을 포함한 다른 바이트는 그대로 돌려준다. 인라인(inline). | `proven_byte_t`. |
 | `proven_u8str_destroy(alloc, str)` | 일치하는 allocator로 owned 저장소를 해제한다. | void. |
 | `proven_u8str_as_view(str)` | 현재 내용을 borrow한다. | `proven_u8str_view_t`. |
@@ -418,6 +420,8 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_u8str_view_eq_ascii_ci(PROVEN_LIT("Content-Type"), PROVEN_LIT("content-TYPE")), "field names ignore ASCII case");
     EXAMPLE_REQUIRE(!proven_u8str_view_eq_ascii_ci(PROVEN_LIT("@"), PROVEN_LIT("`")), "a byte next to the letters is only itself");
     EXAMPLE_REQUIRE(proven_u8str_view_starts_with_ascii_ci(PROVEN_LIT("HTTPS://example.org"), PROVEN_LIT("https:")), "and so does a prefix test");
+    EXAMPLE_REQUIRE(proven_u8str_view_ends_with_ascii_ci(PROVEN_LIT("REPORT.PDF"), PROVEN_LIT(".pdf")), "a suffix test too");
+    EXAMPLE_REQUIRE(proven_u8str_view_cmp_ascii_ci(PROVEN_LIT("apple"), PROVEN_LIT("Banana")) < 0, "and an order that ignores case, for sorting names");
     /* To write a name in its lower-case form - HTTP/2 wants field names so - fold it a byte at a time. */
     proven_u8str_view_t field = PROVEN_LIT("X-Request-Id");
     proven_byte_t folded[16];
@@ -530,6 +534,113 @@ proven_u16str_destroy(alloc, &s);
 
 참고: `proven_u16`은 코드 유닛이지, 반드시 하나의 완전한 Unicode 문자인 것은 아니다. UTF-16 서로게이트 쌍은 코드 유닛 두 개를 쓴다.
 
+### Win32 와이드 문자열 다루기: view 어휘
+
+Win32의 와이드 함수를 부르는 프로그램은 NUL로 끝나는 16비트 텍스트를 들고 있고, C에서는
+`wcslen`, `wcscmp`, `wcsstr`, `wcstok`, `wcstoul`을 찾게 된다. v0.112.0부터 `u16str.h`에는
+`u8str.h`와 같은 view 어휘가 유닛 단위로 있다: `proven_u16str_view_from_cstr`로 view를 한 번 잡으면
+그 뒤로는 길이를 안다. 종료 문자나 `wcstok`의 숨은 상태 없이 비교하고, 찾고, 다듬고, 나눈다. 숫자는
+명시한 진법과 오버플로 에러로 읽고, 고정 버퍼로의 복사는 잘렸는지를 결과로 알려 준다. 윈도에서
+`wchar_t`는 C에서 `proven_u16`과 같은 타입이라 `const wchar_t *`를 캐스트 없이 넘길 수 있다. 여기의
+어느 것도 할당하지 않고, 규칙은 `u8str.h`와 같다: 빈 결과는 `{NULL, 0}`, 못 찾은 검색은
+`PROVEN_INDEX_NOT_FOUND`. 이들 모두에게 유닛은 그냥 수다 - 서로게이트 쌍은 유닛 두 개이고, 대소문자
+무시는 ASCII 글자만이다.
+
+| API | 대신하는 것 | 반환 |
+|---|---|---|
+| `proven_u16_cstr_len(s)`, `proven_u16str_view_from_cstr(s)` | `wcslen` | `proven_size_t`, view |
+| `proven_u16str_as_view(str)` | - | owned 문자열의 view |
+| `proven_u16str_view_eq(a, b)`, `proven_u16str_view_cmp(a, b)` | `wcscmp` | 1/0; 부호 |
+| `proven_u16str_view_starts_with(s, p)`, `proven_u16str_view_ends_with(s, p)` | `wcsncmp` | 1/0 |
+| `proven_u16str_view_eq_ascii_ci`, `_cmp_ascii_ci`, `_starts_with_ascii_ci`, `_ends_with_ascii_ci` | ASCII에 대한 `_wcsicmp` | 1/0; 부호 |
+| `proven_u16_ascii_lower(unit)` | ASCII에 대한 `towlower` | 유닛 |
+| `proven_u16str_view_find(h, start, n)`, `proven_u16str_view_find_last(h, n)` | `wcsstr` | 위치 |
+| `proven_u16str_view_find_unit(h, start, u)`, `proven_u16str_view_find_last_unit(h, u)` | `wcschr`, `wcsrchr` | 위치 |
+| `proven_u16str_view_contains(h, n)` | `wcsstr != NULL` | `bool` |
+| `proven_u16str_view_slice(s, i, n)`, `proven_u16str_view_trim(s)`, `_trim_start`, `_trim_end`, `_remove_prefix`, `_remove_suffix` | 포인터 계산 | view |
+| `proven_u16str_view_split(src, sep)` + `proven_u16str_view_split_next(&it, &field)` | - | 구분자 n개, 필드 n + 1개 |
+| `proven_u16str_view_tokens(src, set)` + `proven_u16str_view_tokens_next(&it, &tok)` | `wcstok` | 비어 있지 않은 토큰 |
+| `proven_u16str_view_parse_u64/_i64/_u32/_i32(s, base, used, &out)` | `wcstoul`, `wcstol` | `proven_err_t` |
+| `proven_u16str_view_copy_to(buf, cap, view)` | `wcsncpy`, `wcscpy_s` | `proven_result_size_t` |
+
+숫자 읽기는 일부러 `wcstoul`보다 엄격하다: 공백을 건너뛰지 않고, 부호 없는 형은 부호를 거부한다 -
+`wcstoul(L"-1")`은 가장 큰 값을 돌려준다. `used`에 NULL을 주면 view 전체가 숫자여야 하고, 포인터를
+주면 앞에 있는 숫자를 읽고 어디서 끝났는지 알려 준다. 16비트 `fmt_to`는 없다: `proven_fmt_to`로
+포맷하고 아래의 `proven_utf8_to_utf16`으로 변환한다.
+
+```c
+#ifndef PROVEN_NO_U16STR
+/* A command line as Win32 hands it over, split into switches. */
+static const proven_u16 cmdline[] = u"setup.exe  /Quiet /LOG=install.txt /retry:0x10";
+proven_u16str_view_tokens_t it = proven_u16str_view_tokens(proven_u16str_view_from_cstr(cmdline), PROVEN_U16_LIT(" "));
+proven_u16str_view_t arg;
+bool quiet = false;
+proven_u32 retries = 0;
+proven_u16 log_name[16];
+while (proven_u16str_view_tokens_next(&it, &arg)) {
+    if (proven_u16str_view_eq_ascii_ci(arg, PROVEN_U16_LIT("/quiet"))) {
+        quiet = true;
+    } else if (proven_u16str_view_starts_with_ascii_ci(arg, PROVEN_U16_LIT("/log="))) {
+        proven_u16str_view_t name = proven_u16str_view_slice(arg, 5, arg.size);
+        proven_result_size_t c = proven_u16str_view_copy_to(log_name, 16, name);
+        if (c.err == PROVEN_ERR_OUT_OF_BOUNDS) return;   /* cut: a name this long is refused */
+    } else if (proven_u16str_view_starts_with(arg, PROVEN_U16_LIT("/retry:"))) {
+        proven_u16str_view_t n = proven_u16str_view_remove_prefix(arg, PROVEN_U16_LIT("/retry:"));
+        if (!proven_is_ok(proven_u16str_view_parse_u32(n, 16, NULL, &retries))) return;
+    }
+}
+/* quiet, log_name "install.txt", retries 16. */
+(void)quiet;
+
+/* The extension of a path, from the last dot. */
+proven_u16str_view_t path = PROVEN_U16_LIT("C:\\Temp\\setup.log ");
+path = proven_u16str_view_trim(path);
+proven_size_t dot = proven_u16str_view_find_last_unit(path, u'.');
+bool is_log = dot != PROVEN_INDEX_NOT_FOUND &&
+              proven_u16str_view_ends_with_ascii_ci(path, PROVEN_U16_LIT(".LOG"));
+(void)is_log;
+
+/* The rest of the vocabulary, on a registry-style value "Name=Setup;Version=2;Delta=-3". */
+proven_u16str_view_split_t fields = proven_u16str_view_split(PROVEN_U16_LIT("Name=Setup;Version=2;Delta=-3"), PROVEN_U16_LIT(";"));
+proven_u16str_view_t field;
+proven_u64 version = 0;
+proven_i64 delta = 0;
+proven_i32 small = 0;
+while (proven_u16str_view_split_next(&fields, &field)) {
+    proven_size_t eq = proven_u16str_view_find_unit(field, 0, u'=');
+    if (eq == PROVEN_INDEX_NOT_FOUND) continue;
+    proven_u16str_view_t key = proven_u16str_view_slice(field, 0, eq);
+    proven_u16str_view_t val = proven_u16str_view_slice(field, eq + 1, field.size);
+    if (proven_u16str_view_eq(key, PROVEN_U16_LIT("Version"))) {
+        (void)proven_u16str_view_parse_u64(val, 10, NULL, &version);
+    } else if (proven_u16str_view_cmp_ascii_ci(key, PROVEN_U16_LIT("delta")) == 0) {
+        (void)proven_u16str_view_parse_i64(val, 10, NULL, &delta);
+        (void)proven_u16str_view_parse_i32(val, 10, NULL, &small);
+    }
+}
+/* Ordering, searching from either end, and the pieces of a trim. */
+int order = proven_u16str_view_cmp(PROVEN_U16_LIT("a"), PROVEN_U16_LIT("b"));   /* negative */
+proven_size_t first = proven_u16str_view_find(path, 0, PROVEN_U16_LIT("\\"));
+proven_size_t last = proven_u16str_view_find_last(path, PROVEN_U16_LIT("\\"));
+bool has_temp = proven_u16str_view_contains(path, PROVEN_U16_LIT("Temp"));
+bool ends_log = proven_u16str_view_ends_with(path, PROVEN_U16_LIT(".log"));
+proven_u16str_view_t stem = proven_u16str_view_remove_suffix(path, PROVEN_U16_LIT(".log"));
+proven_u16str_view_t left = proven_u16str_view_trim_start(PROVEN_U16_LIT("  x  "));   /* "x  " */
+proven_u16str_view_t right = proven_u16str_view_trim_end(PROVEN_U16_LIT("  x  "));    /* "  x" */
+proven_u16 lower = proven_u16_ascii_lower(u'Q');                                     /* u'q' */
+proven_size_t units = proven_u16_cstr_len(cmdline);
+(void)order; (void)first; (void)last; (void)has_temp; (void)ends_log; (void)stem; (void)left; (void)right; (void)lower; (void)units;
+
+/* An owned string is searched through its view. */
+proven_result_u16str_t owned = proven_u16str_create_from_view(alloc, PROVEN_U16_LIT("report.txt"));
+if (proven_is_ok(owned.err)) {
+    proven_size_t at = proven_u16str_view_find_unit(proven_u16str_as_view(&owned.value), 0, u'.');
+    (void)at;
+    proven_u16str_destroy(alloc, &owned.value);
+}
+#endif
+```
+
 ### UTF-8과 UTF-16 사이의 변환 (`utf.h`)
 
 프로그램은 UTF-8을 들고 있고, 윈도 와이드 API는 UTF-16을 원하며, 그 API가 돌려주는 이름과 텍스트는
@@ -539,8 +650,11 @@ UTF-16인데 프로그램의 나머지는 그것을 UTF-8로 원한다. 이 경�
 유혹이 있다 - U+FFFD로 바꾸고 계속 가는 것 - 그러나 운영체제에 파일 이름을 건네는 라이브러리에게는
 틀린 답이다. 고쳐진 이름은 다른 이름이고, 프로그램은 열라고 한 적 없는 파일을 연다.
 
-**그래서 `utf.h`는 어디서나 엄격하다.** 잘못된 입력은 `PROVEN_ERR_INVALID_ENCODING`이고, 내 메모리에
-쓰는 형태들은 거부할 때 아무것도 쓰지 않는다. 손실 모드는 없다.
+**그래서 `utf.h`는 이름으로 요청하지 않는 한 엄격하다.** 잘못된 입력은 `PROVEN_ERR_INVALID_ENCODING`이고,
+내 메모리에 쓰는 형태들은 거부할 때 아무것도 쓰지 않는다. 예외는 네 `_lossy` 함수(v0.112.0부터)
+하나뿐이다. 한 조각이 깨져도 텍스트 전체는 와야 하는 경우 - 사용자 파일의 내용으로 만드는 보고서 -
+를 위한 것으로, 디코드할 수 없는 자리에 U+FFFD를 넣는다. 이름에 그렇게 적혀 있으므로 파일 이름이
+실수로 이 함수를 지나갈 일은 없다.
 
 **잘못된 것과 덜 온 것은 다른 답이다.** 조각으로 읽는 텍스트 - 파이프, 버퍼 쓰기 스트림(writer),
 콘솔에서 오는 - 는 다음 조각이 완성할 문자의 한가운데서 끝날 수 있다. 부분 변환 형태는 거기서
@@ -566,6 +680,24 @@ UTF-16인데 프로그램의 나머지는 그것을 UTF-8로 원한다. 이 경�
 | `proven_utf8_decode_next(s, pos)` | 바이트 `pos`에서 시작하는 문자 하나, 또는 그렇지 못한 이유; `len`은 언제나 나아갈 거리다. | `proven_utf8_char_t` |
 | `proven_utf8_encode_one(cp, out)` | 코드 포인트 하나를 UTF-8로 `out[0..3]`에. | 길이 1~4; 서로게이트나 U+10FFFF 초과면 0. |
 | `proven_utf8_validate(s, bad_at)` | `s` 전체가 올바른 UTF-8인지(끝에서 잘린 문자는 아님). | `PROVEN_OK`, 또는 `PROVEN_ERR_INVALID_ENCODING`과 `*bad_at`의 첫 잘못된 위치. |
+| `proven_utf8_to_utf16_lossy(src, out, out_cap, written)`, `proven_utf16_to_utf8_lossy(src, n, out, out_cap, written)` | `src` 전체를, 잘못된 부분마다 U+FFFD 하나로(UTF-8은 maximal subpart마다, UTF-16은 짝 없는 서로게이트 유닛마다); `OUT_OF_BOUNDS`면 전부 아니면 전무. | `proven_err_t`, `INVALID_ENCODING`은 없음 |
+| `proven_utf8_to_utf16_lossy_size(src)`, `proven_utf16_to_utf8_lossy_size(src, n)` | 손실 형태가 쓸 크기. | `proven_result_size_t` |
+
+```c
+/* A report written from text read out of users' files: one broken name must not lose it all. */
+static const proven_u16 name[] = { 'r', 'e', 'p', 0xD800, 'o', 'r', 't' };   /* a lone surrogate */
+proven_result_size_t need = proven_utf16_to_utf8_lossy_size(name, 7);           /* 9: EF BF BD for it */
+proven_byte_t line[16];
+proven_size_t got = 0;
+if (proven_is_ok(need.err) && need.value <= sizeof line &&
+    proven_is_ok(proven_utf16_to_utf8_lossy(name, 7, line, sizeof line, &got))) {
+    /* line is "rep\xEF\xBF\xBDort" */
+}
+proven_u16 wide[16];
+proven_size_t units = 0;
+(void)proven_utf8_to_utf16_lossy(proven_u8str_view_from_bytes("a\xC0z", 3), wide, 16, &units);   /* a U+FFFD z */
+(void)proven_utf8_to_utf16_lossy_size(proven_u8str_view_from_bytes("a\xC0z", 3));
+```
 
 ```text
 typedef struct {

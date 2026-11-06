@@ -211,6 +211,8 @@ proven_u8str_destroy(alloc, &s);
 | `proven_u8str_view_from_bytes(ptr, size)` | Make a view of `size` bytes at any object pointer, no cast needed. | `proven_u8str_view_t`; nothing copied. |
 | `proven_u8str_view_eq(a, b)` | Byte equality test. | int truth value. |
 | `proven_u8str_view_eq_ascii_ci(a, b)` | Equality with ASCII letters compared without case: HTTP field names, URL schemes, MIME types. | int truth value. |
+| `proven_u8str_view_ends_with_ascii_ci(str, suffix)` | Suffix test with ASCII letters compared without case. Since v0.112.0. | int truth value. |
+| `proven_u8str_view_cmp_ascii_ci(a, b)` | Order of the views with ASCII letters lowered: agrees with `eq_ascii_ci`. Since v0.112.0. | sign. |
 | `proven_ascii_lower(c)` | One byte with 'A' to 'Z' made 'a' to 'z'; every other byte, 0x80 and up included, as it is. Inline. | `proven_byte_t`. |
 | `proven_u8str_destroy(alloc, str)` | Free owned storage with matching allocator. | void. |
 | `proven_u8str_as_view(str)` | Borrow current contents. | `proven_u8str_view_t`. |
@@ -430,6 +432,8 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_u8str_view_eq_ascii_ci(PROVEN_LIT("Content-Type"), PROVEN_LIT("content-TYPE")), "field names ignore ASCII case");
     EXAMPLE_REQUIRE(!proven_u8str_view_eq_ascii_ci(PROVEN_LIT("@"), PROVEN_LIT("`")), "a byte next to the letters is only itself");
     EXAMPLE_REQUIRE(proven_u8str_view_starts_with_ascii_ci(PROVEN_LIT("HTTPS://example.org"), PROVEN_LIT("https:")), "and so does a prefix test");
+    EXAMPLE_REQUIRE(proven_u8str_view_ends_with_ascii_ci(PROVEN_LIT("REPORT.PDF"), PROVEN_LIT(".pdf")), "a suffix test too");
+    EXAMPLE_REQUIRE(proven_u8str_view_cmp_ascii_ci(PROVEN_LIT("apple"), PROVEN_LIT("Banana")) < 0, "and an order that ignores case, for sorting names");
     /* To write a name in its lower-case form - HTTP/2 wants field names so - fold it a byte at a time. */
     proven_u8str_view_t field = PROVEN_LIT("X-Request-Id");
     proven_byte_t folded[16];
@@ -542,6 +546,115 @@ proven_u16str_destroy(alloc, &s);
 
 Note: `proven_u16` is a code unit, not necessarily one full Unicode character. UTF-16 surrogate pairs use two code units.
 
+### Working with Win32 wide strings: the view vocabulary
+
+A program that calls Win32's wide functions holds NUL-terminated 16-bit text and, in C, reaches
+for `wcslen`, `wcscmp`, `wcsstr`, `wcstok` and `wcstoul`. Since v0.112.0 `u16str.h` has the same
+view vocabulary as `u8str.h`, in units: take a view once with `proven_u16str_view_from_cstr` and
+the length is known from then on; compare, search, trim and split without a terminator or a
+hidden `wcstok` state; read numbers with an explicit base and an overflow error; copy into a
+fixed buffer with a result that says whether it was cut. On Windows `wchar_t` is the same C type
+as `proven_u16`, so a `const wchar_t *` passes without a cast. Nothing here allocates, and the
+rules are `u8str.h`'s: an empty result is `{NULL, 0}`, a search that misses returns
+`PROVEN_INDEX_NOT_FOUND`. A unit is a number to all of them - a surrogate pair is two units, and
+case-insensitive means ASCII letters only.
+
+| API | Replaces | Returns |
+|---|---|---|
+| `proven_u16_cstr_len(s)`, `proven_u16str_view_from_cstr(s)` | `wcslen` | `proven_size_t`, a view |
+| `proven_u16str_as_view(str)` | - | a view of an owned string |
+| `proven_u16str_view_eq(a, b)`, `proven_u16str_view_cmp(a, b)` | `wcscmp` | 1/0; a sign |
+| `proven_u16str_view_starts_with(s, p)`, `proven_u16str_view_ends_with(s, p)` | `wcsncmp` | 1/0 |
+| `proven_u16str_view_eq_ascii_ci`, `_cmp_ascii_ci`, `_starts_with_ascii_ci`, `_ends_with_ascii_ci` | `_wcsicmp` on ASCII | 1/0; a sign |
+| `proven_u16_ascii_lower(unit)` | `towlower` on ASCII | the unit |
+| `proven_u16str_view_find(h, start, n)`, `proven_u16str_view_find_last(h, n)` | `wcsstr` | a position |
+| `proven_u16str_view_find_unit(h, start, u)`, `proven_u16str_view_find_last_unit(h, u)` | `wcschr`, `wcsrchr` | a position |
+| `proven_u16str_view_contains(h, n)` | `wcsstr != NULL` | `bool` |
+| `proven_u16str_view_slice(s, i, n)`, `proven_u16str_view_trim(s)`, `_trim_start`, `_trim_end`, `_remove_prefix`, `_remove_suffix` | pointer arithmetic | a view |
+| `proven_u16str_view_split(src, sep)` + `proven_u16str_view_split_next(&it, &field)` | - | n separators, n + 1 fields |
+| `proven_u16str_view_tokens(src, set)` + `proven_u16str_view_tokens_next(&it, &tok)` | `wcstok` | non-empty tokens |
+| `proven_u16str_view_parse_u64/_i64/_u32/_i32(s, base, used, &out)` | `wcstoul`, `wcstol` | `proven_err_t` |
+| `proven_u16str_view_copy_to(buf, cap, view)` | `wcsncpy`, `wcscpy_s` | `proven_result_size_t` |
+
+The number readers are stricter than `wcstoul` on purpose: they skip no whitespace, and an
+unsigned one refuses a sign, where `wcstoul(L"-1")` returns the largest value. Pass `used` as
+NULL to require the whole view to be the number, or a pointer to read a number at the front and
+learn where it ended. There is no 16-bit `fmt_to`: format with `proven_fmt_to` and convert with
+`proven_utf8_to_utf16` below.
+
+```c
+#ifndef PROVEN_NO_U16STR
+/* A command line as Win32 hands it over, split into switches. */
+static const proven_u16 cmdline[] = u"setup.exe  /Quiet /LOG=install.txt /retry:0x10";
+proven_u16str_view_tokens_t it = proven_u16str_view_tokens(proven_u16str_view_from_cstr(cmdline), PROVEN_U16_LIT(" "));
+proven_u16str_view_t arg;
+bool quiet = false;
+proven_u32 retries = 0;
+proven_u16 log_name[16];
+while (proven_u16str_view_tokens_next(&it, &arg)) {
+    if (proven_u16str_view_eq_ascii_ci(arg, PROVEN_U16_LIT("/quiet"))) {
+        quiet = true;
+    } else if (proven_u16str_view_starts_with_ascii_ci(arg, PROVEN_U16_LIT("/log="))) {
+        proven_u16str_view_t name = proven_u16str_view_slice(arg, 5, arg.size);
+        proven_result_size_t c = proven_u16str_view_copy_to(log_name, 16, name);
+        if (c.err == PROVEN_ERR_OUT_OF_BOUNDS) return;   /* cut: a name this long is refused */
+    } else if (proven_u16str_view_starts_with(arg, PROVEN_U16_LIT("/retry:"))) {
+        proven_u16str_view_t n = proven_u16str_view_remove_prefix(arg, PROVEN_U16_LIT("/retry:"));
+        if (!proven_is_ok(proven_u16str_view_parse_u32(n, 16, NULL, &retries))) return;
+    }
+}
+/* quiet, log_name "install.txt", retries 16. */
+(void)quiet;
+
+/* The extension of a path, from the last dot. */
+proven_u16str_view_t path = PROVEN_U16_LIT("C:\\Temp\\setup.log ");
+path = proven_u16str_view_trim(path);
+proven_size_t dot = proven_u16str_view_find_last_unit(path, u'.');
+bool is_log = dot != PROVEN_INDEX_NOT_FOUND &&
+              proven_u16str_view_ends_with_ascii_ci(path, PROVEN_U16_LIT(".LOG"));
+(void)is_log;
+
+/* The rest of the vocabulary, on a registry-style value "Name=Setup;Version=2;Delta=-3". */
+proven_u16str_view_split_t fields = proven_u16str_view_split(PROVEN_U16_LIT("Name=Setup;Version=2;Delta=-3"), PROVEN_U16_LIT(";"));
+proven_u16str_view_t field;
+proven_u64 version = 0;
+proven_i64 delta = 0;
+proven_i32 small = 0;
+while (proven_u16str_view_split_next(&fields, &field)) {
+    proven_size_t eq = proven_u16str_view_find_unit(field, 0, u'=');
+    if (eq == PROVEN_INDEX_NOT_FOUND) continue;
+    proven_u16str_view_t key = proven_u16str_view_slice(field, 0, eq);
+    proven_u16str_view_t val = proven_u16str_view_slice(field, eq + 1, field.size);
+    if (proven_u16str_view_eq(key, PROVEN_U16_LIT("Version"))) {
+        (void)proven_u16str_view_parse_u64(val, 10, NULL, &version);
+    } else if (proven_u16str_view_cmp_ascii_ci(key, PROVEN_U16_LIT("delta")) == 0) {
+        (void)proven_u16str_view_parse_i64(val, 10, NULL, &delta);
+        (void)proven_u16str_view_parse_i32(val, 10, NULL, &small);
+    }
+}
+/* Ordering, searching from either end, and the pieces of a trim. */
+int order = proven_u16str_view_cmp(PROVEN_U16_LIT("a"), PROVEN_U16_LIT("b"));   /* negative */
+proven_size_t first = proven_u16str_view_find(path, 0, PROVEN_U16_LIT("\\"));
+proven_size_t last = proven_u16str_view_find_last(path, PROVEN_U16_LIT("\\"));
+bool has_temp = proven_u16str_view_contains(path, PROVEN_U16_LIT("Temp"));
+bool ends_log = proven_u16str_view_ends_with(path, PROVEN_U16_LIT(".log"));
+proven_u16str_view_t stem = proven_u16str_view_remove_suffix(path, PROVEN_U16_LIT(".log"));
+proven_u16str_view_t left = proven_u16str_view_trim_start(PROVEN_U16_LIT("  x  "));   /* "x  " */
+proven_u16str_view_t right = proven_u16str_view_trim_end(PROVEN_U16_LIT("  x  "));    /* "  x" */
+proven_u16 lower = proven_u16_ascii_lower(u'Q');                                     /* u'q' */
+proven_size_t units = proven_u16_cstr_len(cmdline);
+(void)order; (void)first; (void)last; (void)has_temp; (void)ends_log; (void)stem; (void)left; (void)right; (void)lower; (void)units;
+
+/* An owned string is searched through its view. */
+proven_result_u16str_t owned = proven_u16str_create_from_view(alloc, PROVEN_U16_LIT("report.txt"));
+if (proven_is_ok(owned.err)) {
+    proven_size_t at = proven_u16str_view_find_unit(proven_u16str_as_view(&owned.value), 0, u'.');
+    (void)at;
+    proven_u16str_destroy(alloc, &owned.value);
+}
+#endif
+```
+
 ### Converting between UTF-8 and UTF-16 (`utf.h`)
 
 The program holds UTF-8; the Windows wide API wants UTF-16; the names and text that API hands
@@ -552,8 +665,12 @@ UTF-16 side. The tempting answer is to repair it - swap in U+FFFD and carry on -
 wrong one for a library that hands file names to the operating system: a repaired name is a
 different name, and the program opens a file it was never asked to open.
 
-**So `utf.h` is strict everywhere.** Malformed input is `PROVEN_ERR_INVALID_ENCODING`, and the
-forms that write into your memory write nothing when they refuse. There is no lossy mode.
+**So `utf.h` is strict unless you ask by name.** Malformed input is `PROVEN_ERR_INVALID_ENCODING`,
+and the forms that write into your memory write nothing when they refuse. The one exception is
+the four `_lossy` functions (since v0.112.0), for text that must arrive whole even when a piece
+of it is broken - a report built from what users' files contain: they put U+FFFD where a
+character cannot be decoded, and say so in their name, so a file name never goes through one by
+accident.
 
 **Malformed and incomplete are different answers.** Text read in pieces - from a pipe, a
 buffered writer, a console - can end in the middle of a character that the next piece
@@ -579,6 +696,24 @@ never writes half a surrogate pair or half a UTF-8 sequence.
 | `proven_utf8_decode_next(s, pos)` | The one character at byte `pos`, or why not; `len` is always the step to take. | `proven_utf8_char_t` |
 | `proven_utf8_encode_one(cp, out)` | One code point as UTF-8 into `out[0..3]`. | Its length, 1 to 4; 0 for a surrogate or above U+10FFFF. |
 | `proven_utf8_validate(s, bad_at)` | Whether all of `s` is well-formed UTF-8 (a character cut off at the end is not). | `PROVEN_OK`, or `PROVEN_ERR_INVALID_ENCODING` and the first bad offset in `*bad_at`. |
+| `proven_utf8_to_utf16_lossy(src, out, out_cap, written)`, `proven_utf16_to_utf8_lossy(src, n, out, out_cap, written)` | All of `src`, one U+FFFD per malformed part (per maximal subpart for UTF-8, per unpaired surrogate unit for UTF-16); all or nothing on `OUT_OF_BOUNDS`. | `proven_err_t`, never `INVALID_ENCODING` |
+| `proven_utf8_to_utf16_lossy_size(src)`, `proven_utf16_to_utf8_lossy_size(src, n)` | What the lossy forms will write. | `proven_result_size_t` |
+
+```c
+/* A report written from text read out of users' files: one broken name must not lose it all. */
+static const proven_u16 name[] = { 'r', 'e', 'p', 0xD800, 'o', 'r', 't' };   /* a lone surrogate */
+proven_result_size_t need = proven_utf16_to_utf8_lossy_size(name, 7);           /* 9: EF BF BD for it */
+proven_byte_t line[16];
+proven_size_t got = 0;
+if (proven_is_ok(need.err) && need.value <= sizeof line &&
+    proven_is_ok(proven_utf16_to_utf8_lossy(name, 7, line, sizeof line, &got))) {
+    /* line is "rep\xEF\xBF\xBDort" */
+}
+proven_u16 wide[16];
+proven_size_t units = 0;
+(void)proven_utf8_to_utf16_lossy(proven_u8str_view_from_bytes("a\xC0z", 3), wide, 16, &units);   /* a U+FFFD z */
+(void)proven_utf8_to_utf16_lossy_size(proven_u8str_view_from_bytes("a\xC0z", 3));
+```
 
 ```text
 typedef struct {

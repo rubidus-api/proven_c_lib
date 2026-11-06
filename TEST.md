@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 136 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 138 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -348,7 +348,7 @@ Last run, 2026-11-06, Windows 11 test VM (v0.111.0): x86-64 390 PASS, 0 FAIL, 10
 ## Test catalog
 
 
-The hosted full run builds and executes 206 registered tests plus the 194 runnable manual examples - 400 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 219 test files: the 206 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 208 registered tests plus the 194 runnable manual examples - 402 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 221 test files: the 208 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -590,6 +590,18 @@ Sub-checks:
 OpenSSL 3.5 agreed outside the suite (by hand, 2026-11-03): its 3072-bit RSA, P-256 and P-384 keys in PKCS #8, PKCS #1 and SEC1 were read; v1.5 signatures over SHA-256 and SHA-1 were identical to its own; each side verified the other's PSS and ECDSA signatures.
 
 Failure tip: inspect `src/proven/der.c`, `src/proven/sign.c`, `src/proven/aes.c`, `proven_pbkdf2` in `src/proven/hmac.c` and the EKU and key-identifier code of `src/proven/cert.c`.
+
+### `tests/test_unit_der_ber` - der.h: BER to DER
+
+Intent: verify `proven_der_from_ber` (RFC-0044, v0.112.0): the rewrite PKCS#12 files exported by Windows need, and the inputs refused, as the converter rubrapack used before it.
+
+Sub-checks:
+
+- Rewritten: DER left as it is; an indefinite SEQUENCE made definite; a long length made short; a constructed OCTET STRING of two pieces joined, pieces themselves constructed and an empty piece; context and SET tags kept.
+- Not rewritten: a SET's elements keep their order; a constructed BIT STRING stays constructed (with a definite length).
+- Refused with `PROVEN_ERR_INVALID_FORMAT`: bytes after the element, a high-tag-number tag, an indefinite primitive, a 5-byte length, a length past the input, a missing end-of-contents, a piece of a constructed OCTET STRING that is not one, one byte, nothing.
+- Depth: `PROVEN_DER_BER_MAX_DEPTH` levels below the outermost are read; one more is refused.
+- The buffer: an empty one measures (OUT_OF_BOUNDS with the size), too small gives the size, exactly enough succeeds; NULL `len` and an ill-formed view are INVALID_ARG; 70,000 bytes under an indefinite SEQUENCE come out a byte longer than they went in, and `proven_der_read` reads the result.
 
 ### `tests/test_unit_aead_kex` - aead.h, kex.h: the crypto the network library uses
 
@@ -2250,6 +2262,19 @@ Sub-checks:
 
 Failure tip: inspect `src/proven/u16str.c` and `include/proven/u16str.h`. Treat U16 values as UTF-16 code units, not Unicode scalar values. Check `PROVEN_NO_U16STR` guards if the failure is compile-time.
 
+### `tests/test_unit_u16str_views` - u16str views: the wide-string vocabulary
+
+Intent: verify the 16-bit view vocabulary (RFC-0044, v0.112.0) against u8str.h's view rules, as code holding Win32 wide strings uses it in place of wcslen, wcscmp, wcsstr, wcstok, wcstoul and wcsncpy.
+
+Sub-checks:
+
+- Length and views: `proven_u16_cstr_len` and `proven_u16str_view_from_cstr`, NULL as empty; on Windows a `const wchar_t *` passed without a cast under `-Werror`.
+- Equality and order: eq, an ill-formed view as empty, cmp by unsigned unit with a prefix first; the ASCII case-insensitive eq, cmp, starts_with and ends_with matching only 'A'-'Z' with 'a'-'z' (not '@' with '`', not U+00C4 with U+00E4); `proven_u16_ascii_lower`.
+- Search: find from an offset, an empty needle at its start, a start past the end finding nothing; find_last with overlap and an empty needle at the end; the unit searches both ways; contains; slice clamping and its {NULL, 0}; trim of the six ASCII units only (not U+00A0); remove_prefix and an absent suffix left alone.
+- Splitting: "a,,b," into four fields with the empty ones kept, "" as one field; tokens over ";; a;b ;" giving "a" and "b", two copies of an iterator running apart, an empty set giving the whole, only separators giving none.
+- Integers: u64, i64, u32 and i32 at their limits and one past; no sign on unsigned, no whitespace, the whole view with `used` NULL and a prefix with it; hex with and without 0x, "0xg" read as 0; bases other than 10 and 16 refused; `*out` untouched on error.
+- `copy_to`: a fit, a cut at a unit (a surrogate pair cut too) with OUT_OF_BOUNDS and the 0 written, `cap` 0, an empty view; `proven_u16str_as_view` of an owned string and of NULL.
+
 ### `tests/test_unit_utf` - UTF-8 and UTF-16 transcoding
 
 Intent: verify `utf.h` converts every scalar value exactly in both directions, refuses malformed input without writing, and tells input cut mid-character apart from malformed input.
@@ -2267,6 +2292,7 @@ Sub-checks:
 - One code point out and a whole text checked (RFC-0022, v0.76.0): `proven_utf8_encode_one` writes every value from 0 to 0x110010 - each scalar value as the reference does, decoding back through `proven_utf8_decode_next` to the same value and length; the 2,048 surrogates, everything past U+10FFFF and 0xFFFFFFFF give 0 and write nothing; each length boundary. `proven_utf8_validate` agrees with the reference, verdict and first bad offset, over every input of one and two bytes and every seventh of three; NULL with size 0 is valid, with a size `PROVEN_ERR_INVALID_ARG`; a character cut off at the end is malformed at its first byte.
 
 Failure tip: inspect `src/proven/utf.c`. A validity mismatch is a hole in the lead-byte range table (Unicode table 3-7); a rollback failure leaves the destination longer or unterminated.
+- Lossy forms (v0.112.0): UTF-16 with a lone high, a lone low, a high before a non-low and a high at the end gives one EF BF BD each and a pair converted, with the size and a buffer a byte short (nothing written); UTF-8 with C0, E2 82, ED A0 80 and a cut F0 9F 98 gives one U+FFFD per maximal subpart (three for the encoded surrogate) and one for the cut end; well-formed text as the strict form. On Windows, `WideCharToMultiByte` with no flags gives the same bytes (asserted) and `MultiByteToWideChar`'s answer is logged.
 
 ### `tests/test_unit_u8str_mutation` - U8 string mutation
 

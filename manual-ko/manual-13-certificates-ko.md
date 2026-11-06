@@ -546,6 +546,23 @@ if (proven_rsa_encrypt_pkcs1(n, e, (proven_mem_view_t){ secret, 48 }, (proven_me
 서명 속성은 그 순서여야 하고, 정렬되지 않은 것에 대한 서명은 다른 곳에서 검증되지 않는다. 에러는
 남아 있으므로 마지막에 `proven_der_writer_finish`를 한 번 확인하면 된다.
 
+어떤 파일은 DER이 아니라 BER이다: 윈도가 내보내는 PKCS#12 파일은 불확정 길이와 조각난 OCTET
+STRING을 쓴다. `proven_der_from_ber`(v0.112.0부터)는 그런 요소 하나를 읽개가 받는 DER로 다시 쓴다 -
+확정 길이, 가장 짧은 길이 꼴, 구성형 OCTET STRING은 하나로 이어 붙임 - 그리고 나머지는 그대로
+복사한다. 모든 BER의 정규형은 아니다(SET 순서 등은 건드리지 않는다). 호출자의 메모리에 쓰고, 버퍼가
+작아도 크기를 알려 주므로 빈 버퍼로 한 번 불러 크기를 잴 수 있다.
+
+```c
+/* SEQUENCE (indefinite) { OCTET STRING in two pieces "ab" "c" } */
+static const proven_byte_t ber[] = { 0x30, 0x80, 0x24, 0x80, 0x04, 0x02, 'a', 'b', 0x04, 0x01, 'c',
+                                     0x00, 0x00, 0x00, 0x00 };
+proven_byte_t der[32];
+proven_size_t der_len = 0;
+proven_err_t err = proven_der_from_ber((proven_mem_view_t){ ber, sizeof ber }, (proven_mem_mut_t){ der, sizeof der }, &der_len);
+/* PROVEN_OK; der is 30 05 04 03 'a' 'b' 'c', and proven_der_read reads it. */
+(void)err;
+```
+
 ## 11. 암호화된 키 파일: PBKDF2와 AES-CBC
 
 암호화된 PKCS #8("ENCRYPTED PRIVATE KEY")이나 PKCS #12 파일은, PBKDF2(`proven_pbkdf2`, `hmac.h`)로

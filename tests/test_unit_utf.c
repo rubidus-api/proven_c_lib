@@ -1,6 +1,9 @@
 #include "proven.h"
 #include "proven_test.h"
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 /*
  * Written from the contract in include/proven/utf.h (TESTING.md section 5.1).
@@ -483,6 +486,48 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_utf8_validate(bv("ab\xE2\x82", 4), &bad) == PROVEN_ERR_INVALID_ENCODING && bad == 2 &&
                            proven_utf8_validate(bv("\xE2\x82\xAC", 3), (void *)0) == PROVEN_OK,
             "a character cut off at the end is malformed at its first byte; the same character whole is valid", "");
+    }
+
+    PROVEN_TEST_SECTION("lossy conversion", "The _lossy forms: U+FFFD for what cannot be decoded, the rest as the strict forms convert it (v0.112.0).",
+        "Inspect the Lossy block of src/proven/utf.c: one U+FFFD per maximal subpart (UTF-8), per unpaired surrogate unit (UTF-16).");
+    {
+        proven_byte_t o8[64];
+        proven_u16 o16[64];
+        proven_size_t w = 99;
+        /* A lone high, a lone low, a high before a non-low, a high at the end. */
+        static const proven_u16 bad16[] = { 'a', 0xD800, 'b', 0xDC00, 0xD83D, 'c', 0xD83D, 0xDE00, 0xDBFF };
+        static const proven_byte_t want8[] = { 'a', 0xEF, 0xBF, 0xBD, 'b', 0xEF, 0xBF, 0xBD, 0xEF, 0xBF, 0xBD, 'c', 0xF0, 0x9F, 0x98, 0x80, 0xEF, 0xBF, 0xBD };
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8_lossy(bad16, 9, o8, sizeof o8, &w) == PROVEN_OK && w == sizeof want8 && memcmp(o8, want8, w) == 0,
+            "UTF-16: each unpaired surrogate unit is one U+FFFD, a pair converts", "");
+        proven_result_size_t m = proven_utf16_to_utf8_lossy_size(bad16, 9);
+        PROVEN_TEST_ASSERT(m.err == PROVEN_OK && m.value == sizeof want8, "and the size says so", "");
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8_lossy(bad16, 9, o8, sizeof want8 - 1, &w) == PROVEN_ERR_OUT_OF_BOUNDS && w == 0,
+            "one byte short: nothing", "");
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8_lossy(NULL, 1, o8, 4, &w) == PROVEN_ERR_INVALID_ARG &&
+                           proven_utf16_to_utf8_lossy(NULL, 0, NULL, 0, &w) == PROVEN_OK && w == 0, "NULL and empty", "");
+
+        /* "a" C0 "b" E2 82 "c" F0 9F 98 (cut at the end): maximal subparts C0, E2 82, F0 9F 98. */
+        static const proven_byte_t bad8[] = { 'a', 0xC0, 'b', 0xE2, 0x82, 'c', 0xED, 0xA0, 0x80, 0xF0, 0x9F, 0x98 };
+        static const proven_u16 want16[] = { 'a', 0xFFFD, 'b', 0xFFFD, 'c', 0xFFFD, 0xFFFD, 0xFFFD, 0xFFFD };
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16_lossy(bv((const char *)bad8, sizeof bad8), o16, 64, &w) == PROVEN_OK &&
+                           w == 9 && memcmp(o16, want16, sizeof want16) == 0,
+            "UTF-8: one U+FFFD per maximal subpart (ED A0 80, a surrogate, is three), one for the cut end", "");
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16_lossy_size(bv((const char *)bad8, sizeof bad8)).value == 9, "and the size says so", "");
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16_lossy(bv("x\xF0\x9F\x98\x80", 5), o16, 3, &w) == PROVEN_OK && w == 3 &&
+                           o16[1] == 0xD83D && o16[2] == 0xDE00, "well-formed text as the strict form converts it", "");
+
+#ifdef _WIN32
+        /* The claim in utf.h: WideCharToMultiByte without WC_ERR_INVALID_CHARS gives the same bytes. */
+        char win8[64];
+        int wn = WideCharToMultiByte(CP_UTF8, 0, (const wchar_t *)bad16, 9, win8, (int)sizeof win8, NULL, NULL);
+        PROVEN_TEST_ASSERT(wn == (int)sizeof want8 && memcmp(win8, want8, sizeof want8) == 0,
+            "WideCharToMultiByte agrees on unpaired surrogates", "If Windows differs, utf.h's sentence about it is wrong: change the sentence.");
+        wchar_t win16[64];
+        int un = MultiByteToWideChar(CP_UTF8, 0, (const char *)bad8, (int)sizeof bad8, win16, 64);
+        bool same = un == 9 && memcmp(win16, want16, sizeof want16) == 0;
+        PROVEN_TEST_INFO("MultiByteToWideChar on the same malformed UTF-8: {} units, {} (not claimed in utf.h)",
+            PROVEN_ARG(un), PROVEN_ARG(same ? "the same" : "different"));
+#endif
     }
 
     PROVEN_TEST_PASS("UTF-8 and UTF-16 transcoding");

@@ -18,6 +18,36 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- `u16str.h`: the view vocabulary of `u8str.h` in 16-bit units, for code that holds Win32 wide
+  strings (RFC-0044): `proven_u16_cstr_len`, `proven_u16str_view_from_cstr` (a `wchar_t *` passes
+  on Windows without a cast), `proven_u16str_as_view`; `eq`, `cmp`, `starts_with`, `ends_with`,
+  `find`, `find_last`, `find_unit`, `find_last_unit`, `contains`, `slice`, `trim`, `trim_start`,
+  `trim_end`, `remove_prefix`, `remove_suffix`; ASCII case-insensitive `eq_ascii_ci`,
+  `cmp_ascii_ci`, `starts_with_ascii_ci`, `ends_with_ascii_ci` and `proven_u16_ascii_lower`;
+  `split`/`split_next` (n separators, n + 1 fields) and `tokens`/`tokens_next` (wcstok without its
+  hidden state); `parse_u64`, `parse_i64`, `parse_u32`, `parse_i32` in base 10 or 16, the whole
+  view or a prefix - stricter than `wcstoul`: no whitespace skipped, no sign on the unsigned forms;
+  `proven_u16str_view_copy_to`, a bounded copy that always ends with a 0 unit and reports a cut.
+  All pure; like the rest of `u16str.h`, outside the freestanding profile.
+- `u8str.h`: `proven_u8str_view_ends_with_ascii_ci` and `proven_u8str_view_cmp_ascii_ci`, so the
+  two view vocabularies match.
+- `der.h`: `proven_der_from_ber` and `PROVEN_DER_BER_MAX_DEPTH` - BER (indefinite lengths, long
+  lengths, constructed OCTET STRINGs, as in PKCS#12 files Windows exports) rewritten into the DER
+  `proven_der_read` reads, into caller memory, with a measuring call. Not a canonical form of any
+  BER: SET order and other string types are left as they are.
+- `utf.h`: lossy conversion, asked for by name - `proven_utf8_to_utf16_lossy`,
+  `proven_utf16_to_utf8_lossy` and their `_size` forms put U+FFFD where a character cannot be
+  decoded (one per maximal subpart of UTF-8, one per unpaired surrogate unit of UTF-16, as
+  `WideCharToMultiByte` without `WC_ERR_INVALID_CHARS` does - checked on Windows), all or nothing
+  on a full buffer. The strict functions are unchanged.
+- Tests: `test_unit_u16str_views`, `test_unit_der_ber`; `test_unit_utf` covers the lossy forms.
+
+### Not added
+
+- A 16-bit `fmt_to`: the formatter writes UTF-8; use `proven_fmt_to`, then `proven_utf8_to_utf16`.
+
 ## [0.111.0] - 2026-11-06
 
 ### Added
