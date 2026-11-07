@@ -46,6 +46,16 @@ int main(void) {
         r = proven_fmt_to(b, sizeof b, "{:.3}", PROVEN_ARG(raw));
         PROVEN_TEST_ASSERT(r.err == PROVEN_OK && same(b, "xyz"), "a C string with no NUL inside N is read to N and no further", "");
     }
+    {
+        /* A text that starts just past the output's end is not the output's own (v0.112.3: gcc
+         * 16 laid `raw` above right after `b`, and the self-alias check refused it); one that
+         * starts inside it still is. */
+        char block[17] = "0123456789abcdef";
+        r = proven_fmt_to(block, 8, "{:.3}", PROVEN_ARG((const char *)block + 8));
+        PROVEN_TEST_ASSERT(r.err == PROVEN_OK && same(block, "89a"), "a C string starting at the buffer's end is taken", "");
+        r = proven_fmt_to(block, 8, "{:.3}", PROVEN_ARG((const char *)block + 7));
+        PROVEN_TEST_ASSERT(r.err == PROVEN_ERR_INVALID_ARG, "one starting at its last byte is refused as the output's own", "");
+    }
     r = proven_fmt_to(b, sizeof b, "{:.2}", PROVEN_ARG("a\x80\x80\x80"));
     PROVEN_TEST_ASSERT(r.err == PROVEN_OK && same(b, "a\x80"), "bytes that are not UTF-8 are cut where N says", "");
     r = proven_fmt_to(b, sizeof b, "[{:.3}]", PROVEN_ARG((const char *)0));

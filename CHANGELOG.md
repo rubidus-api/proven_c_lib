@@ -20,10 +20,17 @@ written; their tags still exist.
 
 ## [0.112.3] - 2026-11-08
 
-No change to the library's code since v0.112.2: the tests, the build driver and the release gate.
+One fix in the library (`fmt`); the rest is the tests, the build driver and the release gate.
 
 ### Fixed
 
+- `fmt`: a C-string argument that starts exactly at the end of the output buffer was refused
+  with `PROVEN_ERR_INVALID_ARG` as if it were the output's own text: the self-alias check used an
+  empty range, which takes the one-past-the-end pointer too. Nothing is written there; it is now
+  taken, and a text that starts inside the buffer is still refused. Found by the release gate on
+  gcc 16, which laid a test's array directly after its output buffer
+  (`proven_fmt_to(b, sizeof b, "{:.3}", PROVEN_ARG(raw))` failed); any caller whose string
+  happened to follow its buffer in memory saw the same.
 - `test_unit_http_event_h3`, "several loops on one port": the check that a NEW_TOKEN token from
   one loop is good at the other made eight connections and asserted that one crossed, with the
   connect, the Retry and the crossing in one condition; it failed twice under load (2026-11-05,
