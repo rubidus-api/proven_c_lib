@@ -15,6 +15,7 @@ nob
 /test_unit_sysio_scanner.txt
 *.tmp
 *.out
+__pycache__/
 AGENTS.md
 CLAUDE.md
 CONTEXT.md
