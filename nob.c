@@ -811,7 +811,9 @@ static bool run_tests_parallel(Test_Link_Job *jobs, size_t count, const char *bu
             }
         }
         char exe_abs[PATH_MAX];
-        if (!format_path(exe_abs, sizeof exe_abs, "%s/%s", root_abs, j->exec_path)) { ok = false; break; }
+        /* Under an absolute -build-root the path is absolute already. */
+        if (!(j->exec_path[0] == '/' ? format_path(exe_abs, sizeof exe_abs, "%s", j->exec_path)
+                                     : format_path(exe_abs, sizeof exe_abs, "%s/%s", root_abs, j->exec_path))) { ok = false; break; }
         Nob_Cmd run = {0};
         nob_cmd_append(&run, "sh", "-c", "cd \"$1\" && exec \"$2\"", "sh", j->run_dir, exe_abs);
         Nob_Procs one = {0};

@@ -102,6 +102,9 @@ int main(void) {
     static const proven_u8str_view_t h2h3[] = { { (const proven_byte_t *)"h2", 2 }, { (const proven_byte_t *)"h3", 2 } };
     proven_tls_options_t so = { .alloc = g_heap, .certificate_pem = { (const proven_byte_t *)TP_SERVER_P256, strlen(TP_SERVER_P256) },
                                 .private_key_pem = { (const proven_byte_t *)TP_SERVER_P256_KEY, strlen(TP_SERVER_P256_KEY) }, .alpn = all, .alpn_count = 3 };
+#ifdef PROVEN_NO_HTTP3
+    so.alpn_count = 2;                            /* no "h3": a server offers only what it serves */
+#endif
     proven_tls_options_t so_none = so; so_none.no_resumption = true;
     proven_tls_options_t c1 = { .alloc = g_heap, .anchors = anchors };
     proven_tls_options_t c1_none = c1; c1_none.no_resumption = true;

@@ -306,6 +306,7 @@ typedef struct {
     bool established, closed, remote_close, mute;
     bool ecn;                          /* this socket reads and sets the ECN field (RFC-0035) */
     int first_type;                    /* the first datagram's first byte, high nibble: 0xf for a Retry; -1 before one has come */
+    int aim;                           /* the first byte of the destination ID of the first Initial sent; -1 before one has gone */
     proven_u64 close_code;
     int goaways;
     proven_u64 goaway_id;
@@ -331,6 +332,7 @@ static bool cl_open(cl_t *c, proven_u16 port) {
     if (g_resume) c->session = *g_resume;
     c->server = proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, port);
     c->first_type = -1;
+    c->aim = -1;
     if (proven_net_udp_open(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &c->udp, NULL) != PROVEN_OK) return false;
     c->ecn = proven_net_udp_ecn_(&c->udp);
     const proven_quic_config_t qc = { .alloc = g_heap, .tls = g_client_tls };
@@ -415,6 +417,7 @@ static void cl_pump(cl_t *c, proven_u32 ms) {
         proven_quic_addr_t to;
         proven_u8 mark = 0;
         if (proven_quic_conn_send(c->q, us_now(), (proven_mem_mut_t){ dg, sizeof dg }, &len, &to, c->ecn ? &mark : NULL) != PROVEN_OK || len == 0) break;
+        if (c->aim < 0 && len > 6 && (dg[0] & 0x80)) c->aim = dg[6];   /* a long header: type, version, the ID's length, the ID */
         if (c->mute) continue;
         proven_size_t sent = 0;
         if (!mark || proven_net_udp_send_marked_(&c->udp, c->server, (proven_mem_view_t){ dg, len }, len, mark, &sent) == PROVEN_ERR_TIMEOUT)
@@ -449,7 +452,7 @@ static proven_u64 ms_now(void) { return (proven_u64)proven_time_monotonic_now() 
 
 static bool cl_connect(cl_t *c, proven_u16 port) {
     if (!cl_open(c, port)) return false;
-    for (const proven_u64 end = ms_now() + 4000; ms_now() < end && !c->established && !c->closed;) cl_pump(c, 10);
+    for (const proven_u64 end = ms_now() + 4000u * PROVEN_TEST_BULK_SCALE; ms_now() < end && !c->established && !c->closed;) cl_pump(c, 10);
     return c->established;
 }
 
@@ -473,8 +476,10 @@ static int cl_request(cl_t *c, const char *method, const char *path, proven_size
     return c->n++;
 }
 
+/* The waits below are bounds on a failure, never expected to run out: under ThreadSanitizer
+ * they are ten times as long (PROVEN_TEST_BULK_SCALE), as a loaded machine needs. */
 static bool cl_wait(cl_t *c, int from, int to, int ms) {
-    for (const proven_u64 end = ms_now() + (proven_u64)ms; ms_now() < end;) {
+    for (const proven_u64 end = ms_now() + (proven_u64)ms * PROVEN_TEST_BULK_SCALE; ms_now() < end;) {
         bool all = true;
         for (int i = from; i < to; ++i) all = all && c->r[i].end;
         if (all) return true;
@@ -485,7 +490,7 @@ static bool cl_wait(cl_t *c, int from, int to, int ms) {
 }
 
 static bool cl_wait_closed(cl_t *c, int ms) {
-    for (const proven_u64 end = ms_now() + (proven_u64)ms; ms_now() < end && !c->closed;) cl_pump(c, 5);
+    for (const proven_u64 end = ms_now() + (proven_u64)ms * PROVEN_TEST_BULK_SCALE; ms_now() < end && !c->closed;) cl_pump(c, 5);
     if (c->closed) cl_pump(c, 0);                  /* a close of this side's own: its CONNECTION_CLOSE goes out */
     return c->closed;
 }
@@ -809,22 +814,35 @@ static void case_port(void) {
     PROVEN_TEST_ASSERT(same, "after each client moved to a new port, its connection still answered by the same loop", "");
 
     /* A NEW_TOKEN token one loop gave, brought to a connection the other loop takes: the key is
-     * the port's, so the address counts as validated - no Retry. */
+     * the port's, so the address counts as validated - no Retry. Which loop a new connection
+     * reaches is decided by its first Initial's destination ID, which the client draws: its first
+     * byte modulo the loops. So connections are made until one is aimed at the other loop (each
+     * draw does so with even odds: 64 tries leave 2^-64), and each must reach the loop its ID
+     * names - rather than a fixed few draws hoped to cross, which twice did not under load. */
     cl_run(&c[0], 200);                               /* the token and the ticket in */
     const proven_tls_session_t kept = c[0].session;
-    bool no_retry = true, crossed = false;
-    for (int i = 0; i < 8; ++i) {
+    const int home = who[0] - '0';
+    int tries = 0, unanswered = 0, retries = 0, astray = 0, crossed = 0;
+    while (tries < 64 && !crossed) {
         cl_t *d = calloc(1, sizeof *d);
         g_resume = &kept;
         const bool ok = cl_connect(d, bound.port);
         g_resume = NULL;
         const char w = ok ? cl_who(d) : 0;
-        no_retry = no_retry && ok && d->first_type != 0xf && w != 0;
-        crossed = crossed || (w != 0 && w != who[0]);
+        ++tries;
+        if (w == 0) ++unanswered;
+        else if (d->first_type == 0xf) ++retries;
+        else if (d->aim < 0 || w != '0' + d->aim % PORT_LOOPS) ++astray;
+        else if (w - '0' != home) ++crossed;
         cl_close(d);
         free(d);
     }
-    PROVEN_TEST_ASSERT(no_retry && crossed, "a token from one loop taken at the other: no Retry", "");
+    if (unanswered || retries || astray || !crossed)
+        PROVEN_TEST_INFO("{} connections with the token: {} unanswered, {} through a Retry, {} at a loop their ID does not name, {} at the other loop",
+                         PROVEN_ARG(tries), PROVEN_ARG(unanswered), PROVEN_ARG(retries), PROVEN_ARG(astray), PROVEN_ARG(crossed));
+    PROVEN_TEST_ASSERT(unanswered == 0, "each connection with the token made and its request answered", "");
+    PROVEN_TEST_ASSERT(astray == 0, "each reached the loop its first destination ID names", "");
+    PROVEN_TEST_ASSERT(retries == 0 && crossed == 1, "a token from one loop taken at the other: no Retry", "");
     for (int i = 0; i < CLIENTS; ++i) cl_close(&c[i]);
     free(c);
 
@@ -1214,164 +1232,6 @@ int main(void) {
 }
 
 #else
-
-// -----------------------------------------------------------------------------
-// Several loops on one port (RFC-0037)
-// -----------------------------------------------------------------------------
-
-#define PORT_LOOPS 2
-static proven_loop_t *g_port_loop[PORT_LOOPS];
-static proven_http_event_server_t *g_port_server[PORT_LOOPS];
-static int g_port_index[PORT_LOOPS] = { 0, 1 };
-static atomic_int g_port_served[PORT_LOOPS];
-static atomic_int g_port_ran;
-
-static void port_on_request(void *ctx, proven_http_stream_t *s, const proven_http_request_t *req) {
-    (void)req;
-    const int i = *(const int *)ctx;
-    atomic_fetch_add(&g_port_served[i], 1);
-    const char who = (char)('0' + i);
-    (void)proven_http_stream_respond(s, 200, NULL, 0, (proven_mem_view_t){ (const proven_byte_t *)&who, 1 });
-}
-static void port_run(void *arg) { (void)proven_loop_run((proven_loop_t *)arg); }
-static void port_destroy(void *ctx) {
-    const int i = *(const int *)ctx;
-    proven_http_event_server_destroy(g_port_server[i]);
-    g_port_server[i] = NULL;
-    atomic_fetch_add(&g_port_ran, 1);
-}
-static void port_destroy_one(int i) {
-    const int before = atomic_load(&g_port_ran);
-    PROVEN_TEST_ASSERT(proven_loop_post(g_port_loop[i], port_destroy, &g_port_index[i]) == PROVEN_OK, "posted to its loop", "");
-    for (int k = 0; k < 4000 && atomic_load(&g_port_ran) == before; ++k) proven_time_sleep(1);
-}
-
-/* The loop that answered the last request of `c` ('0' or '1'), or 0 for none. */
-static char cl_who(cl_t *c) {
-    const int h = cl_request(c, "GET", "/who", 0, NULL, 0, true);
-    if (h < 0 || !cl_wait(c, h, h + 1, 3000) || c->r[h].status != 200 || c->r[h].got != 1) return 0;
-    return (char)c->r[h].first[0];
-}
-
-static void case_port(void) {
-    proven_http_event_port_t *port = NULL;
-    proven_net_addr_t bound;
-    const proven_err_t opened = proven_http_event_port_open(g_heap, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), PORT_LOOPS, true, &port, &bound);
-#if !defined(__linux__)
-    PROVEN_TEST_ASSERT(opened == PROVEN_ERR_UNSUPPORTED && !port, "not Linux: unsupported, nothing opened", "");
-    return;
-#endif
-    PROVEN_TEST_ASSERT(opened == PROVEN_OK && port && bound.port != 0, "a port for two loops, HTTP/3 too", "");
-    PROVEN_TEST_ASSERT(proven_http_event_port_open(g_heap, bound, 0, true, &(proven_http_event_port_t *){ NULL }, NULL) == PROVEN_ERR_INVALID_ARG, "no loops: refused", "");
-    proven_job_sys_t *threads = NULL;
-    PROVEN_TEST_ASSERT(proven_job_system_init(g_heap, PORT_LOOPS, 4, &threads) == PROVEN_OK, "a thread for each loop", "");
-    proven_job_group_t running;
-    proven_job_group_init(&running);
-    for (int i = 0; i < PORT_LOOPS; ++i) {
-        atomic_store(&g_port_served[i], 0);
-        PROVEN_TEST_ASSERT(proven_loop_create(g_heap, &g_port_loop[i]) == PROVEN_OK, "a loop each", "");
-        proven_http_event_server_config_t cfg = { .on = { .on_request = port_on_request }, .ctx = &g_port_index[i], .http2 = true, .http3 = true,
-                                                  .tls = g_server_tls, .http3_retry = true };
-        PROVEN_TEST_ASSERT(proven_http_event_server_create(g_port_loop[i], &cfg, &g_port_server[i]) == PROVEN_OK, "a server each", "");
-    }
-    {
-        proven_http_event_server_t *tcp_only = NULL;
-        const proven_http_event_server_config_t cfg = { .on = { .on_request = port_on_request }, .ctx = &g_port_index[0] };
-        PROVEN_TEST_ASSERT(proven_http_event_server_create(g_port_loop[0], &cfg, &tcp_only) == PROVEN_OK, "a server without HTTP/3", "");
-        PROVEN_TEST_ASSERT(proven_http_event_server_listen_port(tcp_only, port, 0) == PROVEN_ERR_INVALID_ARG, "on a port with HTTP/3: refused", "");
-        proven_http_event_server_destroy(tcp_only);
-    }
-    PROVEN_TEST_ASSERT(proven_http_event_server_listen_port(g_port_server[0], port, PORT_LOOPS) == PROVEN_ERR_INVALID_ARG, "an index past the port's loops: refused", "");
-    for (int i = 0; i < PORT_LOOPS; ++i)
-        PROVEN_TEST_ASSERT(proven_http_event_server_listen_port(g_port_server[i], port, (proven_size_t)i) == PROVEN_OK, "each server takes its share", "");
-    PROVEN_TEST_ASSERT(proven_http_event_server_listen_port(g_port_server[1], port, 0) == PROVEN_ERR_INVALID_STATE, "an index taken, by a server that has listened: refused", "");
-    proven_http_event_port_close(port);
-    for (int i = 0; i < PORT_LOOPS; ++i)
-        PROVEN_TEST_ASSERT(proven_job_group_submit(threads, &running, port_run, g_port_loop[i]) == PROVEN_OK, "a thread each", "");
-
-    /* HTTP/3 from many sockets: each connection's first Initial carries an ID its client drew, and
-     * the port's program sends it to the loop that ID names - with a Retry first (http3_retry),
-     * whose own ID must bring the client back to the same loop. */
-    enum { CLIENTS = 12 };
-    cl_t *c = calloc(CLIENTS, sizeof *c);
-    char who[CLIENTS];
-    int on[PORT_LOOPS] = { 0 };
-    bool all = true, retried = true;
-    for (int i = 0; i < CLIENTS; ++i) {
-        all = all && cl_connect(&c[i], bound.port);
-        retried = retried && c[i].first_type == 0xf;
-        who[i] = cl_who(&c[i]);
-        all = all && (who[i] == '0' || who[i] == '1');
-        if (who[i] == '0' || who[i] == '1') on[who[i] - '0']++;
-    }
-    PROVEN_TEST_ASSERT(all && retried, "twelve HTTP/3 connections, each made through a Retry, each request answered", "");
-    PROVEN_TEST_ASSERT(on[0] > 0 && on[1] > 0, "both loops served some", "");
-
-    /* A client whose address changes (NAT rebinding): its next datagrams come from a new port.
-     * The system's hash of the addresses would pick another socket for some; the program, by
-     * connection ID, picks the loop that owns each. */
-    bool same = true;
-    for (int i = 0; i < CLIENTS; ++i) {
-        proven_net_udp_t old = c[i].udp;
-        PROVEN_TEST_ASSERT(proven_net_udp_open(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &c[i].udp, NULL) == PROVEN_OK, "a new socket", "");
-        c[i].ecn = proven_net_udp_ecn_(&c[i].udp);
-        (void)proven_net_udp_close(&old);
-        same = same && cl_who(&c[i]) == who[i];
-    }
-    PROVEN_TEST_ASSERT(same, "after each client moved to a new port, its connection still answered by the same loop", "");
-
-    /* A NEW_TOKEN token one loop gave, brought to a connection the other loop takes: the key is
-     * the port's, so the address counts as validated - no Retry. */
-    cl_run(&c[0], 200);                               /* the token and the ticket in */
-    const proven_tls_session_t kept = c[0].session;
-    bool no_retry = true, crossed = false;
-    for (int i = 0; i < 8; ++i) {
-        cl_t *d = calloc(1, sizeof *d);
-        g_resume = &kept;
-        const bool ok = cl_connect(d, bound.port);
-        g_resume = NULL;
-        const char w = ok ? cl_who(d) : 0;
-        no_retry = no_retry && ok && d->first_type != 0xf && w != 0;
-        crossed = crossed || (w != 0 && w != who[0]);
-        cl_close(d);
-        free(d);
-    }
-    PROVEN_TEST_ASSERT(no_retry && crossed, "a token from one loop taken at the other: no Retry", "");
-    for (int i = 0; i < CLIENTS; ++i) cl_close(&c[i]);
-    free(c);
-
-    /* HTTPS over TCP: the system spreads connections over the two listeners. */
-    const int before0 = atomic_load(&g_port_served[0]), before1 = atomic_load(&g_port_served[1]);
-    bool tcp_ok = true;
-    char alt[64];
-    for (int i = 0; i < 12; ++i) tcp_ok = tcp_alt_svc(bound.port, false, "/who", alt) && tcp_ok;
-    PROVEN_TEST_ASSERT(tcp_ok && atomic_load(&g_port_served[0]) > before0 && atomic_load(&g_port_served[1]) > before1, "twelve HTTPS requests over TCP, served by both loops", "");
-
-    /* One loop gone while the other runs: the group is one socket, and a datagram whose ID names
-     * the gone loop now reaches loop 0 - which answers no stateless reset for it, but does for an
-     * unknown ID of its own. */
-    port_destroy_one(1);
-    proven_net_udp_t u;
-    PROVEN_TEST_ASSERT(proven_net_udp_open(proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &u, NULL) == PROVEN_OK, "a socket", "");
-    proven_byte_t junk[60], back[200];
-    for (proven_size_t i = 0; i < sizeof junk; ++i) junk[i] = (proven_byte_t)(i * 37 + 11);
-    junk[0] = 0x40;
-    junk[1] = 0x11;                                   /* odd: an ID of loop 1 */
-    (void)proven_net_udp_send_to(&u, bound, (proven_mem_view_t){ junk, sizeof junk }, proven_net_deadline_in(1000));
-    proven_result_size_t r = proven_net_udp_recv_from(&u, (proven_mem_mut_t){ back, sizeof back }, NULL, proven_net_deadline_in(400));
-    PROVEN_TEST_ASSERT(r.err == PROVEN_ERR_TIMEOUT, "an unknown ID that names the other loop: no stateless reset", "");
-    junk[1] = 0x12;                                   /* even: one of loop 0's own */
-    (void)proven_net_udp_send_to(&u, bound, (proven_mem_view_t){ junk, sizeof junk }, proven_net_deadline_in(1000));
-    r = proven_net_udp_recv_from(&u, (proven_mem_mut_t){ back, sizeof back }, NULL, proven_net_deadline_in(2000));
-    PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.value < sizeof junk && (back[0] & 0xc0) == 0x40, "an unknown ID of its own: a stateless reset", "");
-    (void)proven_net_udp_close(&u);
-
-    port_destroy_one(0);
-    for (int i = 0; i < PORT_LOOPS; ++i) proven_loop_stop(g_port_loop[i]);
-    proven_job_group_wait(threads, &running);
-    proven_job_system_close(threads); proven_job_system_destroy(threads);
-    for (int i = 0; i < PORT_LOOPS; ++i) { proven_loop_destroy(g_port_loop[i]); g_port_loop[i] = NULL; }
-}
 
 int main(void) {
     PROVEN_TEST_SUITE("the event-driven HTTP server, speaking HTTP/3", "Built with PROVEN_NO_HTTP3: nothing to test.", "");

@@ -56,6 +56,15 @@ else
     echo "release: no clang here - ubsan (clang) not run" >&2
 fi
 
+# PROVEN_NO_HTTP3 is a documented build option, and nothing else builds it: the whole suite
+# built and run with it (-jobs 4: under two minutes on 16 cores, building
+# included). Before this gate (v0.100.0
+# to v0.112.2) one test did not compile there and another refused its own server.
+( cd "$root" && ./nob build -jobs 4 -cflags -DPROVEN_NO_HTTP3 -build-root build/no-http3 ) >"$root/build/release-no-http3.log" 2>&1 || {
+    echo "release: the PROVEN_NO_HTTP3 build failed - not releasing (build/release-no-http3.log)" >&2
+    grep -n 'error:\|FAIL' "$root/build/release-no-http3.log" | head -5 >&2; exit 1; }
+echo "release: PROVEN_NO_HTTP3 build passed"
+
 "$root/scripts/project-check.sh" >/dev/null || {
     echo "release: project-check failed (privacy or docs) - not releasing" >&2; exit 1; }
 echo "release: project-check passed"

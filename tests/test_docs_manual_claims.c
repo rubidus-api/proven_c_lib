@@ -546,6 +546,7 @@ int main(void) {
             "a header value with a line break must be refused with the length unmoved", "");
     }
 
+#ifndef PROVEN_NO_NET
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chapter 9, addresses and deadlines",
         "The facts the networking chapter states that need no socket to check.",
@@ -600,6 +601,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(PROVEN_NET_DONT_WAIT < before && PROVEN_NET_NO_DEADLINE > d,
             "DONT_WAIT is before every moment and NO_DEADLINE after every moment", "");
     }
+#endif
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("chapter 4, legacy digests",

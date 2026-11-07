@@ -18,6 +18,36 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.112.3] - 2026-11-08
+
+No change to the library's code since v0.112.2: the tests, the build driver and the release gate.
+
+### Fixed
+
+- `test_unit_http_event_h3`, "several loops on one port": the check that a NEW_TOKEN token from
+  one loop is good at the other made eight connections and asserted that one crossed, with the
+  connect, the Retry and the crossing in one condition; it failed twice under load (2026-11-05,
+  2026-11-07) with no word of which. Now connections are made until one is aimed at the other
+  loop - the loop is the first byte of the client's first destination ID modulo the loops, read
+  from the Initial it sends - at most 64; each must be answered with no Retry at the loop its ID
+  names, and a failure prints its counts. The test client's waits are ten times as long under
+  ThreadSanitizer (`PROVEN_TEST_BULK_SCALE`): its "goodbye" section failed 2 of 6 such runs on them. Passed 16, 24 and 32 copies at once (the last
+  beside 16 busy loops), and 6 ThreadSanitizer copies beside 12 debug ones in each of two runs.
+- `test_unit_http_event_h3` did not compile with `PROVEN_NO_HTTP3` since v0.100.0: a copy of the
+  several-loops case sat in the skip branch.
+- `test_unit_http_event_client_resume` failed with `PROVEN_NO_HTTP3`: its server's TLS offered
+  `h3`, which a server without HTTP/3 rightly refuses.
+- `test_docs_manual_claims` did not compile with `PROVEN_NO_NET`: the chapter 9 section was
+  outside the guard the rest of its network claims are in.
+- `./nob ... -jobs N -build-root /absolute/path` ran no test: the executable's path was joined to
+  the working directory a second time.
+
+### Changed
+
+- `scripts/release.sh` also builds and runs the whole suite with `PROVEN_NO_HTTP3`
+  (`build/no-http3`, `-jobs 4`): nothing else built that option's tests, which is how the two
+  failures above went unseen.
+
 ## [0.112.2] - 2026-11-07
 
 No change to the library's code since v0.112.1 beyond the version number.
