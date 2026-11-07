@@ -18,6 +18,15 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.112.2] - 2026-11-07
+
+No change to the library's code since v0.112.1 beyond the version number.
+
+### Removed
+
+- A Python bytecode cache (`scripts/__pycache__/`) committed by accident; `.gitignore` now
+  ignores `__pycache__/`.
+
 ## [0.112.1] - 2026-11-06
 
 ### Fixed
