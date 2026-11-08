@@ -18,6 +18,14 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- Zstandard decoder: a sequence's literals are copied sixteen bytes at a time even when it has
+  none, where the output has the slack, instead of branching on a length that is zero about as
+  often as not. Measured with the processor's counters (one core, x86-64, gcc 16, `-O3`, three
+  inputs at levels 3 and 19): branch mispredictions per KiB of output 44-103 down to 17-46, cycles
+  per byte 3 to 9 % fewer. Output unchanged.
+
 ## [0.112.3] - 2026-11-08
 
 One fix in the library (`fmt`); the rest is the tests, the build driver and the release gate.

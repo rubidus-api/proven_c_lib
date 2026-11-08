@@ -508,10 +508,11 @@ static proven_err_t sequences(proven_zstd_decoder_t *z, const proven_byte_t *p, 
                 os = o.next + (proven_u32)bits_read(&b, o.bits);
             }
             if (ll > nlit - lp || ll > limit - op) { verdict = PROVEN_ERR_INVALID_FORMAT; break; }
-            if (ll > 0) {
-                if (op + ll + 16 <= wend && lp + ll + 16 <= lend) copy_wild(h + op, lit + lp, ll);
-                else copy_bytes(h + op, lit + lp, ll);
-            }
+            /* With the slack, sixteen bytes are copied even when there are none: no branch on a
+             * length that is zero about as often as not. What lands beyond the literals is
+             * written over by the match, or by what follows, before anything reads it. */
+            if (op + ll + 16 <= wend && lp + ll + 16 <= lend) copy_wild(h + op, lit + lp, ll);
+            else copy_bytes(h + op, lit + lp, ll);
             op += ll;
             lp += ll;
             /* Further back than this frame has produced, or than its window reaches. */
