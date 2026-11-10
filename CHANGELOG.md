@@ -18,6 +18,10 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.112.5] - 2026-11-10
+
+One change in the library: P-256's field addition and subtraction.
+
 ### Changed
 
 - P-256: the field's modular addition and subtraction on named words, each carry the high half
