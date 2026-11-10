@@ -781,6 +781,44 @@ int main(void) {
         printf("  P-256's reduction alone: %d of %d made values agree with the general code (%d not applicable)\n", agreed, tried, skipped);
         PROVEN_TEST_ASSERT(agreed == tried && (tried >= 300 || proven_crypto_ec_test_p256_reduce((const proven_u64[8]){ 0 }) < 0),
             "P-256's reduction, on values made to reach its rare borrows and carries, agrees with the general code", "");
+        {
+            /* The field's own sum and difference at the edges: a sum of exactly p, just above it,
+             * at 2^256 - 1 and past 2^256; a difference of 0, of -1 and of -(p - 1). */
+            const proven_u64 PP[4] = { 0xffffffffffffffffull, 0x00000000ffffffffull, 0, 0xffffffff00000001ull };
+            const proven_u64 V[][4] = {
+                { 0, 0, 0, 0 }, { 1, 0, 0, 0 }, { 2, 0, 0, 0 },
+                { 0xfffffffffffffffeull, 0x00000000ffffffffull, 0, 0xffffffff00000001ull },          /* p - 1 */
+                { 0xfffffffffffffffdull, 0x00000000ffffffffull, 0, 0xffffffff00000001ull },          /* p - 2 */
+                { 0, 0xffffffff00000000ull, 0xffffffffffffffffull, 0x00000000fffffffeull },         /* 2^256 - p - 1 */
+                { 1, 0xffffffff00000000ull, 0xffffffffffffffffull, 0x00000000fffffffeull },         /* 2^256 - p */
+                { 0xffffffffffffffffull, 0x000000007fffffffull, 0x8000000000000000ull, 0x7fffffff80000000ull }, /* (p - 1) / 2 */
+                { 0, 0x0000000100000000ull, 0, 0 }, { 0xffffffffffffffffull, 0, 0, 0 },
+                { 0, 0, 0xffffffffffffffffull, 0xffffffff00000000ull },
+                { 0x0123456789abcdefull, 0xfedcba9876543210ull, 0x0f1e2d3c4b5a6978ull, 0x8796a5b4c3d2e1f0ull },
+            };
+            const int nv = (int)(sizeof V / sizeof V[0]);
+            int pairs = 0, matched = 0;
+            for (int i = 0; i < nv; ++i)
+                for (int j = 0; j < nv; ++j) {
+                    const int got = proven_crypto_ec_test_p256_addsub(V[i], V[j]);
+                    if (got < 0) continue;
+                    pairs++;
+                    if (got == 1) matched++;
+                }
+            /* p - V[k] for each, so that every sum of exactly p is among the pairs. */
+            for (int i = 0; i < nv; ++i) {
+                proven_u64 q[4], bw = 0;
+                for (int w = 0; w < 4; ++w) { const unsigned __int128 v = (unsigned __int128)PP[w] - V[i][w] - bw; q[w] = (proven_u64)v; bw = (proven_u64)(v >> 64) & 1u; }
+                if (bw) continue;
+                const int got = proven_crypto_ec_test_p256_addsub(V[i], q);
+                if (got < 0) continue;
+                pairs++;
+                if (got == 1) matched++;
+            }
+            printf("  P-256's addition and subtraction alone: %d of %d pairs agree with the general code\n", matched, pairs);
+            PROVEN_TEST_ASSERT(matched == pairs && (pairs >= 100 || proven_crypto_ec_test_p256_addsub(V[0], V[0]) < 0),
+                "P-256's own addition and subtraction agree with the general code at the edges of p and 2^256", "");
+        }
 #endif
     }
 

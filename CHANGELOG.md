@@ -18,6 +18,21 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- P-256: the field's modular addition and subtraction on named words, each carry the high half
+  of a 128-bit sum, in place of loops over arrays. GCC made over a hundred instructions and a
+  vector select of each and kept them out of line; now they are inlined. An ECDH shared secret
+  (x86-64, `-O3`, hardware counters): GCC 14 6 % fewer instructions and 17 % fewer cycles, GCC 16
+  7 % and 5 %, Clang 2 % and no change. Branch-free at -O0, -Og, -O1, -O2, -O3 and -Os as before;
+  outputs unchanged.
+
+### Tests
+
+- `test_unit_crypto`: P-256's own addition and subtraction against the general code at the edges
+  of p and 2^256 (155 pairs), through a new internal hook; it catches a sum of exactly p left
+  unreduced, which no earlier case did.
+
 ## [0.112.4] - 2026-11-10
 
 One change in the library: the Zstandard decoder's literal copy.
