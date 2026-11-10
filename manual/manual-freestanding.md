@@ -1,4 +1,4 @@
-# Proven Freestanding Mode (v0.112.5)
+# Proven Freestanding Mode (v0.112.6)
 
 **Part VI - Going further. Prerequisites: Parts II-V, and
 [Chapter 6](manual-06-execution-and-platform.md).**

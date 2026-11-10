@@ -18,6 +18,10 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.112.6] - 2026-11-10
+
+Speed only, judged by cycles: P-256 under GCC, and the Zstandard and Brotli decoders.
+
 ### Changed
 
 - P-256 under GCC: the field's products and reduction carry through comparisons of 64-bit words
