@@ -1,4 +1,5 @@
 #include "proven.h"
+#include "../src/proven/proven_internal_zstd.h"
 #include "proven_test.h"
 #include "test_unit_zstd_dict_vectors.h"
 #include "test_unit_zstd_vectors.h"
@@ -168,6 +169,9 @@ int main(void) {
     g_heap = proven_heap_allocator();
 
     PROVEN_TEST_SECTION("streams libzstd made, and hand-built ones", "Every line: decompressed in one call, a byte in and a byte out at a time, and in odd steps.", "Check proven_zstd_decode's state machine: the stepped forms stop and resume in every state.");
+    /* Twice: the build the processor gets (BMI2 where it has it) and the plain one. */
+    for (int plain = 0; plain < 2; ++plain) {
+    proven_zstd_decode_force_plain_(plain != 0);
     {
         int failed = 0, counts[3] = { 0 };
         for (proven_size_t i = 0; i < sizeof ZSTDV / sizeof ZSTDV[0]; ++i) {
@@ -221,7 +225,12 @@ int main(void) {
         PROVEN_TEST_ASSERT(counts[0] == 91 && counts[1] == 13 && counts[2] == 20, "91 streams libzstd made, 13 odd ones it accepts, 20 it refuses (one of them only its streaming decoder accepts)", "");
     }
 
+    }
+    proven_zstd_decode_force_plain_(false);
     PROVEN_TEST_SECTION("damage", "Every prefix and every single-bit change of the short streams: refused, or decoded within the output given - and the same whole as in steps.", "A sanitizer report here is an out-of-bounds read or write in src/proven/zstd.c.");
+    /* Twice: the build the processor gets (BMI2 where it has it) and the plain one. */
+    for (int plain = 0; plain < 2; ++plain) {
+    proven_zstd_decode_force_plain_(plain != 0);
     {
         int streams = 0, prefixes_refused = 0, prefixes = 0, mismatches = 0;
         long changed = 0, refused = 0;
@@ -257,6 +266,8 @@ int main(void) {
         PROVEN_TEST_ASSERT(mismatches == 0 && changed > 10000 && refused > 0, "every single-bit change is refused or decoded within the output given, and the same whole as in steps", "");
     }
 
+    }
+    proven_zstd_decode_force_plain_(false);
     PROVEN_TEST_SECTION("several frames", "Frames that follow each other, with a skippable one between: each call stops at a frame's end, and the next goes on.", "Check the boundary in proven_zstd_decode: Z_MAGIC with `boundary` set.");
     {
         /* The first frame has a checksum, so that it ends where the checksum is read. */

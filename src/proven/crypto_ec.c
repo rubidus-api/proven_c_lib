@@ -338,6 +338,7 @@ __extension__ typedef unsigned __int128 ec_u128;
 #define P256_P3 0xffffffff00000001ull
 static const proven_u64 P256_P[4] = { 0xffffffffffffffffull, 0x00000000ffffffffull, 0, P256_P3 };
 
+#if defined(__clang__)
 /* Every carry is the high half of a 128-bit sum - branch-free at every optimisation level. */
 #define P256_MAC(t, x, y, c) do { const ec_u128 v_ = (ec_u128)(x) * (y) + (t) + (c); (t) = (proven_u64)v_; (c) = (proven_u64)(v_ >> 64); } while (0)
 /* One step of the reduction: m = t0, the low word, cleared by adding m p, and what it carries
@@ -354,6 +355,34 @@ static const proven_u64 P256_P[4] = { 0xffffffffffffffffull, 0x00000000ffffffffu
         (t4) = (proven_u64)v_;                                                        \
         (top) = (proven_u64)(v_ >> 64);                                               \
     } while (0)
+#else
+/* GCC: each 128-bit product split into its words and every carry a comparison of 64-bit words
+ * (`lo < t` after `lo += t`), branch-free at every optimisation level too. With the high half of
+ * a 128-bit sum as the carry, as above, GCC zeroed a register for each sum and spilled: the
+ * reduction 191 instructions against Clang's 123. An ECDH 6 % (GCC 14) and 10-13 % (GCC 16)
+ * fewer cycles this way; Clang 5 % more, so it keeps the form above (2026-11-10). */
+#define P256_MAC(t, x, y, c) do {                                                     \
+        const ec_u128 p_ = (ec_u128)(x) * (y);                                        \
+        proven_u64 lo_ = (proven_u64)p_, hi_ = (proven_u64)(p_ >> 64);                \
+        lo_ += (t); hi_ += lo_ < (t);                                                 \
+        lo_ += (c); hi_ += lo_ < (c);                                                 \
+        (t) = lo_; (c) = hi_;                                                         \
+    } while (0)
+/* One step of the reduction: m = t0, the low word, cleared by adding m p, and what it carries
+ * into the four words above it (m (2^64 - 1) only carries m on, m (2^32 - 1) plus that is m 2^32,
+ * the third limb is zero, the fourth one multiplication). */
+#define P256_RED(m, t1, t2, t3, t4, top) do {                                         \
+        const proven_u64 ml_ = (m) << 32, mh_ = (m) >> 32;                            \
+        const ec_u128 p_ = (ec_u128)(m) * P256_P3;                                    \
+        const proven_u64 pl_ = (proven_u64)p_, ph_ = (proven_u64)(p_ >> 64);          \
+        proven_u64 c_, k_;                                                            \
+        (t1) += ml_; c_ = (t1) < ml_;                                                 \
+        (t2) += mh_; k_ = (t2) < mh_; (t2) += c_; k_ += (t2) < c_; c_ = k_;           \
+        (t3) += pl_; k_ = (t3) < pl_; (t3) += c_; k_ += (t3) < c_; c_ = k_;           \
+        (t4) += ph_; k_ = (t4) < ph_; (t4) += c_; k_ += (t4) < c_;                    \
+        (t4) += (top); k_ += (t4) < (top); (top) = k_;                                \
+    } while (0)
+#endif
 
 /* t0..t7, a value below p^2: t / 2^256 mod p into o, fully reduced. */
 static inline void p256_reduce8(proven_u64 o[4], proven_u64 t0, proven_u64 t1, proven_u64 t2, proven_u64 t3,

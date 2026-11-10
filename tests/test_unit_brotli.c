@@ -1,4 +1,5 @@
 #include "proven.h"
+#include "../src/proven/proven_internal_brotli.h"
 #include "proven_test.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -132,6 +133,9 @@ int main(void) {
     g_heap = proven_heap_allocator();
 
     PROVEN_TEST_SECTION("streams libbrotli made, and hand-built ones", "Every line: decompressed in one call, a byte in and a byte out at a time, and in odd steps.", "Check proven_brotli_decode's state machine: the stepped forms stop and resume at every item.");
+    /* Twice: the build the processor gets (BMI2 where it has it) and the plain one. */
+    for (int plain = 0; plain < 2; ++plain) {
+    proven_brotli_decode_force_plain_(plain != 0);
     {
         int failed = 0, counts[3] = { 0 };
         for (proven_size_t i = 0; i < sizeof BROTLIV / sizeof BROTLIV[0]; ++i) {
@@ -175,7 +179,12 @@ int main(void) {
         PROVEN_TEST_ASSERT(counts[0] == 110 && counts[1] == 66 && counts[2] == 25, "110 streams libbrotli made, 66 hand-built ones it decodes, 25 it refuses", "");
     }
 
+    }
+    proven_brotli_decode_force_plain_(false);
     PROVEN_TEST_SECTION("damage", "Every prefix and every single-bit change of the short streams: refused, or decoded within the output given - and the same whole as in steps.", "A sanitizer report here is an out-of-bounds read or write in src/proven/brotli.c.");
+    /* Twice: the build the processor gets (BMI2 where it has it) and the plain one. */
+    for (int plain = 0; plain < 2; ++plain) {
+    proven_brotli_decode_force_plain_(plain != 0);
     {
         int streams = 0, prefixes_refused = 0, prefixes = 0, mismatches = 0;
         long changed = 0, refused = 0;
@@ -211,6 +220,8 @@ int main(void) {
         PROVEN_TEST_ASSERT(mismatches == 0 && changed > 20000 && refused > 0, "every single-bit change is refused or decoded within the output given, and the same whole as in steps", "");
     }
 
+    }
+    proven_brotli_decode_force_plain_(false);
     PROVEN_TEST_SECTION("the end of a stream", "A step stops where the stream ends, takes nothing after it, and a reset starts the next.", "Check S_END and S_DONE in proven_brotli_decode.");
     {
         proven_u32 crc = 0;

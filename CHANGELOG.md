@@ -18,6 +18,30 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- P-256 under GCC: the field's products and reduction carry through comparisons of 64-bit words
+  instead of the high half of 128-bit sums, which GCC compiled with a zeroed register for each sum
+  and spilled to the stack. An ECDH shared secret (x86-64, `-O3`, best of nine alternated runs,
+  hardware counters): 6 % fewer cycles with GCC 14, 13 % with GCC 16. Clang, 5 % slower that way,
+  keeps the earlier form. Branch-free at every optimisation level with both; outputs unchanged.
+- Brotli decoder: the command code and the four distance codes of the current block types are
+  held as pointers, made again at a block switch, instead of being looked up through the type,
+  the context map and the code table at every command - a chain of dependent loads on the path
+  from one command to the next.
+- Zstandard and Brotli decoders on x86: the block decoder of each is built twice, as the build
+  compiles it and once more with BMI2 allowed, and the processor is asked once which to run, as
+  the Zstandard encoder already did. Their bit readers shift by amounts held in registers: three
+  micro-operations an instruction without BMI2, one with it. With the change above, against
+  v0.112.5 (best of seven alternated runs, one core, hardware counters): Zstandard 12 to 14 % fewer
+  cycles at levels 3 and 19, Brotli 5 to 10 % at qualities 5 and 11, on C source, text and an
+  executable. Output unchanged.
+
+### Tests
+
+- `test_unit_zstd` and `test_unit_brotli`: the vectors and the damage sections run on both builds
+  of the block decoder (`proven_zstd_decode_force_plain_`, `proven_brotli_decode_force_plain_`).
+
 ## [0.112.5] - 2026-11-10
 
 One change in the library: P-256's field addition and subtraction.
