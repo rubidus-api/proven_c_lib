@@ -1,4 +1,4 @@
-# Proven Freestanding 모드 (v0.112.6)
+# Proven Freestanding 모드 (v0.113.0)
 
 **6부 — 더 나아가기. 선행 조건: 2–5부, 그리고
 [6장](manual-06-execution-and-platform-ko.md).**
@@ -115,8 +115,8 @@ src/proven/ring.c
 src/proven/map.c
 src/proven/algorithm.c
 src/proven/hash.c
-src/proven/hash_legacy.c
-src/proven/hmac.c
+crypto/src/hash_legacy.c
+crypto/src/hmac.c
 src/proven/utf.c
 src/proven/url.c
 net/src/http.c
@@ -193,9 +193,9 @@ platform/proven_sys_mem.c
 | `u16str.h` | 제외됨 | 현재 프로파일은 `PROVEN_NO_U16STR`를 정의한다. |
 | `array.h`, `list.h`, `ring.h`, `map.h` | 사용 가능 | 숨겨진 OS 의존성 없음. |
 | `algorithm.h` | 사용 가능 | 배열용 정렬/검색 헬퍼. |
-| `hash.h` | 사용 가능 | FNV-1a, SipHash-2-4, CRC-32, SHA-256 — 바이트 단위로 정확, OS 의존성 없음. CRC-32는 기본으로 256항목 표 여덟 개(읽기 전용 데이터 8 KiB)를 쓴다. 라이브러리를 `-DPROVEN_CRC32_SMALL=1`로 빌드하면 1 KiB 표 하나만 남는다. 긴 입력에서 약 5배 느리고 결과는 같다. |
+| `hash.h` | 사용 가능 | FNV-1a, SipHash-2-4, CRC-32(SHA-256은 v0.113.0부터 proven_crypto의 `sha2.h`) — 바이트 단위로 정확, OS 의존성 없음. CRC-32는 기본으로 256항목 표 여덟 개(읽기 전용 데이터 8 KiB)를 쓴다. 라이브러리를 `-DPROVEN_CRC32_SMALL=1`로 빌드하면 1 KiB 표 하나만 남는다. 긴 입력에서 약 5배 느리고 결과는 같다. |
 | `hash_legacy.h` | 사용 가능 | SHA-1과 MD5. 그것을 못 박은 형식(WebSocket accept 키, 오래된 체크섬 파일)을 위한 것이다. SHA-256과 같은 모양이고, MD5의 상수 64개보다 큰 표는 없다. |
-| `hmac.h` | 사용 가능 | SHA-256, SHA-384, SHA-512(뒤의 둘은 `hash.h`에 있다)와 SHA-1 위의 HMAC, HKDF, PBKDF2. 순수한 산술이다. 함께 쓰는 `proven_mem_equal_ct`와 `proven_mem_wipe`는 `memory.h`에 있다. |
+| `hmac.h` | 사용 가능 | SHA-256, SHA-384, SHA-512(셋 모두 `sha2.h`에 있다)와 SHA-1 위의 HMAC, HKDF, PBKDF2. 순수한 산술이다. 함께 쓰는 `proven_mem_equal_ct`와 `proven_mem_wipe`는 `memory.h`에 있다. |
 | `deflate.h` | 사용 가능 | DEFLATE, zlib, gzip을 양방향으로. 순수한 산술이다. 압축기(기본 윈도에서 약 325 KiB, 가장 작은 윈도에서 11 KiB)나 해제기(약 35 KiB)마다 할당 하나를, 넘겨준 할당자로 한다. |
 | `zstd.h` | 사용 가능 | Zstandard 양방향. 순수한 산술이다. 디코더는 약 16 KiB, 프레임을 푸는 동안에는 그 창(여러분이 정한 상한까지, 기본 8 MiB)과 최대 384 KiB를 출력이 자라는 대로, 인코더는 해시 표(레벨에 따라 64 KiB부터 1 MiB), 블록 하나에 약 500 KiB, 스트림이면 창의 한 배 반인 입력 버퍼를 - 모두 넘겨준 할당자로 할당한다. 디코더와 인코더는 다른 오브젝트 파일이다: 읽기만 하는 프로그램에는 인코더가 링크되지 않는다. |
 | `brotli.h` | 사용 가능 | Brotli 풀기. 순수한 산술이다. 디코더는 약 24 KiB, 스트림을 푸는 동안에는 히스토리(출력이 닿은 만큼의 창, 최대 16 MiB)와 접두 부호(최대 1.3 MiB)를 필요한 만큼 넘겨준 할당자로 할당한다. 122,784바이트의 정적 사전이 함께 들어 있고, `-DPROVEN_NO_BROTLI`는 둘 다 뺀다. |

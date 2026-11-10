@@ -787,7 +787,7 @@ void proven_chacha20(const proven_byte_t key[32], proven_u32 counter, const prov
 proven_err_t proven_aes_init(proven_aes_t *ctx, proven_mem_view_t key);                 /* 16 or 32 bytes */
 void proven_aes_encrypt_block(const proven_aes_t *ctx, const proven_byte_t in[16], proven_byte_t out[16]);
 bool proven_aes_hw_available(void);
-void proven_sha256_compress(proven_u32 state[8], const proven_byte_t block[64]);        /* hash.h */
+void proven_sha256_compress(proven_u32 state[8], const proven_byte_t block[64]);        /* sha2.h */
 void proven_sha512_compress(proven_u64 state[8], const proven_byte_t block[128]);
 void proven_sha1_compress(proven_u32 state[5], const proven_byte_t block[64]);          /* hash_legacy.h */
 void proven_md5_compress(proven_u32 state[4], const proven_byte_t block[64]);

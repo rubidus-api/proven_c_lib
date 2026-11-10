@@ -1,5 +1,5 @@
 #include "proven.h"
-#include "../src/proven/proven_internal_brotli.h"
+#include "../codec/src/proven_internal_brotli.h"
 #include "proven_test.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -129,7 +129,7 @@ static proven_err_t decode_steps(proven_allocator_t alloc, proven_u64 window_max
 int main(void) {
     PROVEN_TEST_SUITE("Brotli decompression",
         "Decompress what libbrotli made and refuse what libbrotli refuses; stay inside the window limit and the output given; behave on input cut short, changed, or fed a byte at a time.",
-        "Inspect src/proven/brotli.c. For a vector, the name printed says what it is; tests/test_unit_brotli_vectors.h is written by a private generator that checks libbrotli's verdict on every line.");
+        "Inspect codec/src/brotli.c. For a vector, the name printed says what it is; tests/test_unit_brotli_vectors.h is written by a private generator that checks libbrotli's verdict on every line.");
     g_heap = proven_heap_allocator();
 
     PROVEN_TEST_SECTION("streams libbrotli made, and hand-built ones", "Every line: decompressed in one call, a byte in and a byte out at a time, and in odd steps.", "Check proven_brotli_decode's state machine: the stepped forms stop and resume at every item.");
@@ -181,7 +181,7 @@ int main(void) {
 
     }
     proven_brotli_decode_force_plain_(false);
-    PROVEN_TEST_SECTION("damage", "Every prefix and every single-bit change of the short streams: refused, or decoded within the output given - and the same whole as in steps.", "A sanitizer report here is an out-of-bounds read or write in src/proven/brotli.c.");
+    PROVEN_TEST_SECTION("damage", "Every prefix and every single-bit change of the short streams: refused, or decoded within the output given - and the same whole as in steps.", "A sanitizer report here is an out-of-bounds read or write in codec/src/brotli.c.");
     /* Twice: the build the processor gets (BMI2 where it has it) and the plain one. */
     for (int plain = 0; plain < 2; ++plain) {
     proven_brotli_decode_force_plain_(plain != 0);
@@ -260,7 +260,7 @@ int main(void) {
             "no bytes at all are not a stream", "");
     }
 
-    PROVEN_TEST_SECTION("bounds", "The window limit, the output given, and the memory a decoder holds.", "Check stream_header (the limit, before anything is allocated), room and tab_room in src/proven/brotli.c.");
+    PROVEN_TEST_SECTION("bounds", "The window limit, the output given, and the memory a decoder holds.", "Check stream_header (the limit, before anything is allocated), room and tab_room in codec/src/brotli.c.");
     {
         proven_u32 crc = 0;
         proven_size_t want = 0, made = 0, used = 0;

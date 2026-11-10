@@ -54,7 +54,6 @@ typedef struct {
 } srv_t;
 
 static int g_srv_closed, g_srv_last_code, g_srv_messages;
-static proven_err_t g_srv_last_why;
 
 static void srv_push(void *ctx) {
     srv_t *s = ctx;
@@ -88,7 +87,7 @@ static void srv_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, prove
     srv_t *s = proven_ws_stream_user(ws);
     g_srv_closed++;
     g_srv_last_code = code;
-    g_srv_last_why = why;
+    (void)why;                              /* the server side's reason is not checked; its code is */
     if (s) { proven_loop_timer_cancel(g_loop, &s->timer); free(s->whole); free(s); }
 }
 

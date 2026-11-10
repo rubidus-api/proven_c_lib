@@ -1,7 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "../net/src/proven_internal_quic.h"
-#include "../src/proven/proven_internal_crypto.h"
+#include "../crypto/src/proven_internal_crypto.h"
 #include "test_unit_quic_vectors.h"
 #include "test_unit_quic_vectors_v2.h"
 #include <stdio.h>

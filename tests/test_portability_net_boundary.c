@@ -135,7 +135,7 @@ int main(void) {
                     stray_in("include/proven", base_may_include, "the base library includes the network library's", &files) +
                     stray_in("include", base_may_include, "the base library includes the network library's", &files) +
                     stray_in("platform", base_may_include, "the base library includes the network library's", &files);
-        PROVEN_TEST_ASSERT(files >= 100, "the base files are read", "");
+        PROVEN_TEST_ASSERT(files >= 80, "the base files are read", "");   /* fewer since RFC-0045 moved crypto and codec out */
         PROVEN_TEST_ASSERT(stray == 0, "no base file includes anything of the network library", "");
     }
 

@@ -1,7 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "../net/src/proven_internal_tls.h"
-#include "../src/proven/proven_internal_cert_issue.h"
+#include "../crypto/src/proven_internal_cert_issue.h"
 
 /* sign.c's test hook: the uses of an RSA key's blinding pair, put where the test says. */
 proven_u32 proven_pkey_test_rsa_uses_(proven_pkey_t *key, proven_u32 uses);
@@ -376,7 +376,7 @@ int main(void) {
 
     g_count.heap = proven_heap_allocator();
     g_alloc = (proven_allocator_t){ .ctx = &g_count, .alloc_fn = count_alloc, .realloc_fn = count_realloc, .free_fn = count_free };
-    PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "Check src/proven/cert_issue.c.");
+    PROVEN_TEST_ASSERT(tp_build(), "the test's certificates and keys are issued", "Check crypto/src/cert_issue.c.");
     PROVEN_TEST_ASSERT(proven_cert_store_create(g_alloc, &g_anchors) == PROVEN_OK && proven_cert_store_add_pem(g_anchors, pem(TP_CA), NULL) == PROVEN_OK &&
                        proven_cert_store_create(g_alloc, &g_other_anchors) == PROVEN_OK && proven_cert_store_add_pem(g_other_anchors, pem(TP_OTHER_CA), NULL) == PROVEN_OK,
         "trust anchors", "");
@@ -437,7 +437,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("a self-signed identity",
         "proven_tls_self_signed_ makes a certificate this library's own reader accepts, for the names and the period asked, and a key that matches it.",
-        "Check src/proven/cert_issue.c.");
+        "Check crypto/src/cert_issue.c.");
     {
         static proven_byte_t cert_pem[1024], key_pem[256], der[1024];
         proven_size_t cert_len = 0, key_len = 0, pos = 0, der_len = 0;

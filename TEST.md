@@ -1,4 +1,4 @@
-# proven Test Matrix (v0.112.6)
+# proven Test Matrix (v0.113.0)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -22,7 +22,7 @@ The class says what kind of question the test answers:
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
-| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 16 |
+| `portability` | Does it compile, link, and keep its platform branches intact where we cannot run it? | 17 |
 | `stress` | Does it survive concurrency, under a sanitizer, long enough for a race to be likely? | 1 |
 | `docs` | Are the claims the documentation makes still true? | 14 |
 | `bench` | How fast is it? (Not a correctness gate.) | 5 |
@@ -345,12 +345,12 @@ The whole hosted suite also runs natively on Windows, cross-built with mingw-w64
 
 `-no-run` builds and installs every test executable and runs none. The build driver asks the compiler for its target (`-dumpmachine`); for a Windows target the executables are `.exe`, linked `-static` with `-lbcrypt`, and never `-ldl`. A maintainers' script (`win11kd-full-suite.sh`, not in this repository) builds both word sizes, sends the tracked tree and the executables to a Windows machine, and runs them there with `win11kd-run-suite.ps1`, which records PASS, FAIL, SKIP (a POSIX-only test that skipped itself - counted apart, since it proves nothing on Windows) and TIMEOUT per test.
 
-Last run, 2026-11-07, Windows 11 test VM (v0.112.2): x86-64 392 PASS, 0 FAIL, 10 SKIP; i686 392 PASS, 0 FAIL, 10 SKIP. The ten skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_portability_compile_nonet`, `test_portability_compile_nobrotli` and `test_portability_compile_nohttp3` (they drive the host compiler through one), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
+Last run, 2026-11-10, Windows 11 test VM (v0.113.0, the RFC-0045 split): x86-64 393 PASS, 0 FAIL, 10 SKIP; i686 393 PASS, 0 FAIL, 10 SKIP. The ten skips are fixtures whose subject is POSIX: `test_portability_nob_std_probe` and `test_portability_nob_clean` (they drive `./nob` through a POSIX shell), `test_portability_compile_nonet`, `test_portability_compile_nobrotli` and `test_portability_compile_nohttp3` (they drive the host compiler through one), `test_regression_fs_walk_errors` (libc interposition with `dlsym`), `test_unit_fs_walk` (chmod 000 and `ln -s` cycles), `test_regression_fs_backslash_parent` (a backslash as an ordinary byte), `test_regression_fs_private_staging` and `test_regression_fs_perms_and_types` (POSIX modes). `test_unit_sysio_streams`, `test_regression_scanner_float_split` and `test_regression_scanner_short_read` run on Windows too.
 
 ## Test catalog
 
 
-The hosted full run builds and executes 208 registered tests plus the 194 runnable manual examples - 402 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 221 test files: the 208 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 209 registered tests plus the 194 runnable manual examples - 403 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 222 test files: the 209 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -591,7 +591,7 @@ Sub-checks:
 
 OpenSSL 3.5 agreed outside the suite (by hand, 2026-11-03): its 3072-bit RSA, P-256 and P-384 keys in PKCS #8, PKCS #1 and SEC1 were read; v1.5 signatures over SHA-256 and SHA-1 were identical to its own; each side verified the other's PSS and ECDSA signatures.
 
-Failure tip: inspect `src/proven/der.c`, `src/proven/sign.c`, `src/proven/aes.c`, `proven_pbkdf2` in `src/proven/hmac.c` and the EKU and key-identifier code of `src/proven/cert.c`.
+Failure tip: inspect `crypto/src/der.c`, `crypto/src/sign.c`, `crypto/src/aes.c`, `proven_pbkdf2` in `crypto/src/hmac.c` and the EKU and key-identifier code of `crypto/src/cert.c`.
 
 ### `tests/test_unit_der_ber` - der.h: BER to DER
 
@@ -619,7 +619,7 @@ Sub-checks:
 - Finite-field DH over ffdhe2048: both sides agree; another prime `PROVEN_ERR_UNSUPPORTED`, peer values 1 and p-1 `PROVEN_ERR_INVALID_FORMAT`.
 - Compression functions: one hand-padded block of "abc" from each initial state gives SHA-256's, SHA-512's, SHA-1's and MD5's own digest.
 
-Failure tip: inspect `src/proven/aead.c`, `src/proven/kex.c`, `src/proven/dh.c` and the v0.111.0 functions at the end of `src/proven/sign.c`; the arithmetic itself is `test_unit_crypto`'s business.
+Failure tip: inspect `crypto/src/aead.c`, `crypto/src/kex.c`, `crypto/src/dh.c` and the v0.111.0 functions at the end of `crypto/src/sign.c`; the arithmetic itself is `test_unit_crypto`'s business.
 
 ### `tests/test_unit_fmt_to` - fmt: string precision, argument counts, proven_fmt_to
 
@@ -741,7 +741,7 @@ Sub-checks:
 - Thirty hand-built streams that zlib refuses, each refused the same way in one call and a byte at a time: a reserved block type, a stored length that disagrees with its complement, symbols and distance codes outside the alphabets, a distance before the first byte, too many codes, an incomplete or over-subscribed code of each kind, a repeat with nothing before it or past the end, no end-of-block code, bits that are no code, and each defect of the zlib and gzip wrappers including both checksums (a preset dictionary is `PROVEN_ERR_UNSUPPORTED`).
 - Streams built in the test: a stored block of 65,535 bytes and one more byte; a match of 258 at distance 32,768, and the same with one byte less before it refused; a hundred matches at distance 1 giving 25,801 equal bytes, and refused into 25 bytes with the byte after the buffer untouched.
 - More built in the test, for the table-driven decoder: forty thousand stored bytes and then a match at 32,768, read in two calls, so that the first leaves more than a window behind it; a dynamic block that holds only its end, and the same with a run of code lengths that passes the number announced - refused whole and a byte at a time.
-- The fixed code's tables in `src/proven/deflate_tables.h`, which are generated, made again from the lengths RFC 1951 gives: the counts, the order of the symbols, and all 512 and 32 entries.
+- The fixed code's tables in `codec/src/deflate_tables.h`, which are generated, made again from the lengths RFC 1951 gives: the counts, the order of the symbols, and all 512 and 32 entries.
 - Pieces of every size: the corpus, and 32,000 bytes of noise written twice (checked to compress to little more than once, so the far matches are in the stream), at levels 1, 5 and 9, decompressed through 104 combinations of input piece (1 to 70,000 bytes) and output piece (1, 2, 3, 8, 9, 257 to 266, 300, 16,384, 40,000, 70,000) - over 3,000 runs, each giving the data back.
 - What a call writes and does not report: every corpus item decompressed five bytes of input at a time into all the room there is - after each call nothing is written further than seven bytes past what it reported, and within those seven some bytes were (72 in 990 calls), which is the case the header describes.
 - Every proper prefix of the short streams (over a thousand) is `PROVEN_OK`, not done, and what it produced is the start of the data; every single-bit change of them (over eight thousand) gives an error or data inside the space given.
@@ -751,7 +751,7 @@ Sub-checks:
 - Two gzip members in sequence: done at the end of the first with the position reported, nothing taken until reset, then the second; an error repeated on every call until reset.
 - Arguments: unknown framings, levels and windows, missing allocators, null buffers with a length, missing out-parameters, an unknown flush; no input and no room is `PROVEN_OK` with no progress; a buffer too small for `proven_deflate_all`; nothing compresses to a 20-byte gzip member.
 
-Failure tip: inspect `src/proven/deflate.c`. The letter and line number printed name the vector; `tests/test_unit_deflate_vectors.h` is written by a private generator that runs every hand-built stream through zlib and stops if zlib's verdict is not the one written down. Not covered here: that zlib reads everything this compressor writes - a private check does that for 2,856 streams, and a private mutation run decompresses millions of damaged streams under the sanitizers; speed.
+Failure tip: inspect `codec/src/deflate.c`. The letter and line number printed name the vector; `tests/test_unit_deflate_vectors.h` is written by a private generator that runs every hand-built stream through zlib and stops if zlib's verdict is not the one written down. Not covered here: that zlib reads everything this compressor writes - a private check does that for 2,856 streams, and a private mutation run decompresses millions of damaged streams under the sanitizers; speed.
 
 ### `tests/test_unit_zstd` - Zstandard decompression
 
@@ -771,7 +771,7 @@ Sub-checks:
 
 - Dictionaries (v0.104.0): four frames libzstd 1.5.7 made with a dictionary it trained on the records of `tests/test_unit_zstd_dict_vectors.h` (one record at level 3, twenty at 19, one with the dictionary's last 2,048 bytes as a raw one, one whose frame names no dictionary): each decoded in one call and a byte at a time, twice through one decoder; a frame that names a dictionary is `PROVEN_ERR_UNSUPPORTED` without one and with another set; fewer than 8 bytes is `PROVEN_ERR_INVALID_ARG`; a formatted dictionary cut anywhere in its tables or offsets, or with a repeat offset of 0 or past its content, `PROVEN_ERR_INVALID_FORMAT`; one of the content's size is taken.
 
-Failure tip: inspect `src/proven/zstd.c`. A vector's index and letter are printed; `tests/test_unit_zstd_vectors.h` is written by a private generator that checks libzstd's verdict on every line before writing it. Not covered here: frames from other encoders than libzstd; the 130 larger streams and the 70,000 damaged ones of the private runs; speed.
+Failure tip: inspect `codec/src/zstd.c`. A vector's index and letter are printed; `tests/test_unit_zstd_vectors.h` is written by a private generator that checks libzstd's verdict on every line before writing it. Not covered here: frames from other encoders than libzstd; the 130 larger streams and the 70,000 damaged ones of the private runs; speed.
 
 ### `tests/test_unit_zstd_encode` - Zstandard compression
 
@@ -792,7 +792,7 @@ Sub-checks:
 - Pinned output: the size and CRC-32 of nineteen whole frames (at levels 1 to 3, 6 and 9 to 19, and 13 on a 50,000-byte input, parsed optimally) and of seven streamed at levels 3, 4, 6, 8, 13 and 16 with a sliding 64 KiB buffer, each by an encoder that made a frame of the same input before - frames libzstd decoded when they were pinned. Binary-tree breaks (levels 13 to 15) caught: the trees rotated as a chain when the buffer slides, the positions skipped by a match left out of the trees, the walk not stopped at the input's end (an out-of-bounds read). Not caught, as expected: the trees' order mirrored (insert and search compare the same way - an equivalent tree), and a node older than the trees' reach followed (only when the trees hold fewer positions than the window, above 2 MiB of input at the largest window; it changes which matches are found, not whether they are right). Optimal-parse breaks (16 to 19) caught: positions already in the trees put in again (corrupt frames), the match the path stopped at not written, repeat codes priced without the shift a sequence with no literals makes, a literal's length priced once, short inputs not parsed optimally from 13, the three-byte table not moved on a slide; a stretch not held to the sequences left - also when held for four-byte matches at 18 and 19 - and the loop not stopped for them (each an overflow of the sequence buffer, found by ASan on the blocks full of sequences). Not caught here: the path's stack sized for four-byte matches - no unit-test input fills a stretch with three-byte matches alone; the private encoder check met it on a real file under UBSan (1,027 matches in one stretch) before the bound was one match per three bytes. Not caught, as expected: three-byte matches taken from any distance (priced, and rarely chosen: the limit saves work).
 - Arguments: no out pointer, no options, no allocator, a level outside 0 to 19, a window outside 10 to 23; null buffers with a length, missing out-parameters, an unknown flush, no encoder; no input and no room is `PROVEN_OK` with no progress; destroy and reset accept null.
 
-Failure tip: inspect `src/proven/zstd_encode.c`. A failing input is printed with its level and window. A changed pin means changed output: if that was meant, the private check (`docs/checks/zstd-encode`) decodes the new frames with libzstd before they are pinned again. Not covered here: that libzstd decodes everything the encoder makes - the private check does that for 5,815 frames, and 1,620 with long-distance matching, under the sanitizers; speed.
+Failure tip: inspect `codec/src/zstd_encode.c`. A failing input is printed with its level and window. A changed pin means changed output: if that was meant, the private check (`docs/checks/zstd-encode`) decodes the new frames with libzstd before they are pinned again. Not covered here: that libzstd decodes everything the encoder makes - the private check does that for 5,815 frames, and 1,620 with long-distance matching, under the sanitizers; speed.
 
 ### `tests/test_unit_brotli` - Brotli decompression
 
@@ -812,7 +812,7 @@ Sub-checks:
 
 The suite is a skip in a build with `PROVEN_NO_BROTLI`.
 
-Failure tip: inspect `src/proven/brotli.c`. A vector's name is printed; `tests/test_unit_brotli_vectors.h` is written by a private generator that checks libbrotli's verdict on every line before writing it. Not covered here: the 502 larger streams of the private run (Python's and Node's libbrotli), the 1,437,490 damaged copies compared with libbrotli, the largest code tables; speed.
+Failure tip: inspect `codec/src/brotli.c`. A vector's name is printed; `tests/test_unit_brotli_vectors.h` is written by a private generator that checks libbrotli's verdict on every line before writing it. Not covered here: the 502 larger streams of the private run (Python's and Node's libbrotli), the 1,437,490 damaged copies compared with libbrotli, the largest code tables; speed.
 
 ### `tests/test_unit_hmac` - SHA-384, SHA-512, HMAC and HKDF
 
@@ -826,11 +826,11 @@ Sub-checks:
 - HKDF: RFC 5869 A.1, A.2 and A.3 (extract's pseudorandom key and expand's output), the A.1 inputs over SHA-384 and SHA-512, 200 bytes, 1 byte, and exactly one block and one byte more - extract, expand and the combined call, writing exactly the length asked. Different `info` gives different keys. 255 blocks succeed; one byte more is `PROVEN_ERR_OUT_OF_BOUNDS` with nothing written; a short key, an unknown hash and a null input are `PROVEN_ERR_INVALID_ARG`.
 - `proven_mem_equal_ct`: equal ranges, a flip of each of 512 bits, different lengths, empty and null ranges. `proven_mem_wipe`: zeroes exactly the bytes named - one range inside a pattern, then 1,040 ranges (sixteen alignments by lengths 0 to 64) each with a guard on both sides, then 5,000 bytes; a null or empty range is left alone.
 
-Failure tip: inspect the SHA-512 section of `src/proven/hash.c`, `src/proven/hmac.c` and the end of `src/proven/memory.c`. The digests at boundary lengths and the HKDF values over SHA-384 and SHA-512 are not printed by any standard: they were computed with Python's `hashlib` and `hmac` by a script that first reproduced the published vectors. That `proven_mem_equal_ct` takes the same time whatever it finds, and that `proven_mem_wipe` survives optimisation, are properties of the source and are not observed by this test.
+Failure tip: inspect the SHA-512 section of `src/proven/hash.c`, `crypto/src/hmac.c` and the end of `src/proven/memory.c`. The digests at boundary lengths and the HKDF values over SHA-384 and SHA-512 are not printed by any standard: they were computed with Python's `hashlib` and `hmac` by a script that first reproduced the published vectors. That `proven_mem_equal_ct` takes the same time whatever it finds, and that `proven_mem_wipe` survives optimisation, are properties of the source and are not observed by this test.
 
 ### `tests/test_unit_crypto` - the cryptographic primitives under TLS
 
-Intent: verify the internal primitives the TLS unit will stand on against another implementation, and that each refuses what it must. They are not public API; the test reaches them through `src/proven/proven_internal_crypto.h`.
+Intent: verify the internal primitives the TLS unit will stand on against another implementation, and that each refuses what it must. They are not public API; the test reaches them through `crypto/src/proven_internal_crypto.h`.
 
 Sub-checks:
 
@@ -845,7 +845,7 @@ Sub-checks:
 - X25519 and Ed25519: the examples of RFC 7748 section 6.1 and RFC 8032 section 7.1 first, then twenty more of each; a point of small order is refused by the key exchange; a changed R, S, public key or message, and the signature with the group order added to S, are refused. The iterated exchange of RFC 7748 section 5.2 after one round and after a thousand; a coordinate of p or more and one with the 256th bit set give what the number they are modulo p gives; forty-eight pairs of keys from a fixed stream, the extreme scalars among them, agree on their secret, and each key's signature verifies under it alone. The base point's table, entry by entry, against the general multiplication; k B by the table's signed comb against the general walk for 40 scalars - 0, 1, 16, L - 1, L - 2, the edges of each tooth and random ones; and verification's variable-time s B + k Q against the constant-time code for 40 pairs - Q = B and Q = -B with s = k (the latter's sum the identity), either or both scalars zero, k = L - 1, random points with long runs in k. With 64-bit limbs the field is five limbs of 51 bits; built with `-DPROVEN_CRYPTO_MP_LIMB_BITS=32` it is ten of 26 and 25, and the same checks pass.
 - RSA verification: PKCS #1 v1.5 and PSS over three hashes and moduli of 2048, 2049, 2056 and 3072 bits, with public exponents 65537 and 3 and salts of the hash length, 0 and 20; a 1024-bit key, a changed digest or signature, another hash, another salt length, a PSS signature offered as PKCS #1 and the reverse, a short signature, and a signature equal to the modulus are refused.
 
-Failure tip: inspect the `src/proven/crypto_*.c` file the failing section names, and `platform/proven_sys_aes.c` for the hardware path. The expected values are in `tests/test_unit_crypto_vectors.h`, written by a private generator from Python `cryptography`; where a standard prints the value, the generator reproduced it first. Not covered here: constant-time behaviour (a private Valgrind check), and the larger adversarial vector sets (a private Project Wycheproof run). That the variable-time functions are reached from verification alone is not a test here but a build step: `scripts/check-vartime.py`, run by `./nob build`.
+Failure tip: inspect the `src/proven/crypto_*.c` file the failing section names, and `crypto/platform/proven_sys_aes.c` for the hardware path. The expected values are in `tests/test_unit_crypto_vectors.h`, written by a private generator from Python `cryptography`; where a standard prints the value, the generator reproduced it first. Not covered here: constant-time behaviour (a private Valgrind check), and the larger adversarial vector sets (a private Project Wycheproof run). That the variable-time functions are reached from verification alone is not a test here but a build step: `scripts/check-vartime.py`, run by `./nob build`.
 
 ### `tests/test_unit_cert` - X.509 certificates
 
@@ -859,7 +859,7 @@ Sub-checks:
 - The store: a bundle taken entry by entry with a non-certificate block skipped, growth past its first capacity, copies that outlive the caller's bytes, text with no certificate and bytes that are not one refused without changing it.
 - Chain verification, forty cases with the error code, the fault and the depth each must give: RSA, P-256, P-384 and Ed25519 keys with PKCS #1, PSS and ECDSA signatures; an intermediate or the leaf as the anchor; extra certificates in any order; the name rules again; before and after the validity period; an expired and a not-yet-valid leaf; a missing intermediate; an anchor with the right name and another key; one changed signature bit; an issuer that is not a CA, or whose key usage does not allow issuing; a path length exceeded; name constraints permitting, excluding, by address, and against a wildcard; an unknown critical extension; the wrong extended key usage in each direction; a hash that is not accepted; a name only in the common name; a version 3 anchor that is not a CA; a trailing byte.
 
-Failure tip: inspect `src/proven/cert.c`. The chains are in `tests/test_unit_cert_vectors.h`, written by a private generator with Python `cryptography`; their dates are fixed and the test supplies the time. The case's text says what was built. Not covered: a certificate signed with SHA-1 (the generator's library will not make one; SHA-224 stands in for "a hash that is not accepted"), and the Windows root store beyond being opened by the manual example.
+Failure tip: inspect `crypto/src/cert.c`. The chains are in `tests/test_unit_cert_vectors.h`, written by a private generator with Python `cryptography`; their dates are fixed and the test supplies the time. The case's text says what was built. Not covered: a certificate signed with SHA-1 (the generator's library will not make one; SHA-224 stands in for "a hash that is not accepted"), and the Windows root store beyond being opened by the manual example.
 
 ### `tests/test_unit_tls_keys` - TLS 1.3 key schedule and records against RFC 8448
 
@@ -1019,7 +1019,7 @@ Sub-checks:
 - The signature of TLS 1.0 and 1.1: 36 bytes signed without a DigestInfo verify as such, not with a bit changed, not as 35 bytes; a signature with a DigestInfo is not accepted as one without.
 - Key block layout: for five CBC suites in every version they exist in, the two directions have different keys and each side opens what the other seals and not its own; the suite table holds twenty-seven suites, the twenty-one legacy ones last, and no 3DES or RC4 suite.
 
-Failure tip: inspect `net/src/tls_legacy.c`, `src/proven/dh.c`, the CBC functions of `src/proven/crypto_aes.c`, and the key-exchange functions of `src/proven/crypto_rsa.c`. `tests/test_unit_tls_legacy_vectors.h` is written by a private generator with Python's `hashlib` and `hmac` and another library's AES; the Diffie-Hellman primes in it are read from the library's source, so that part checks the arithmetic and not the constants (those were checked against two other implementations when they were added). Not covered: that opening a CBC record takes the same time whatever its padding - no test here can see that; a private check runs the code under a tool that reports any branch or index that depends on the decrypted bytes.
+Failure tip: inspect `net/src/tls_legacy.c`, `crypto/src/dh.c`, the CBC functions of `crypto/src/crypto_aes.c`, and the key-exchange functions of `crypto/src/crypto_rsa.c`. `tests/test_unit_tls_legacy_vectors.h` is written by a private generator with Python's `hashlib` and `hmac` and another library's AES; the Diffie-Hellman primes in it are read from the library's source, so that part checks the arithmetic and not the constants (those were checked against two other implementations when they were added). Not covered: that opening a CBC record takes the same time whatever its padding - no test here can see that; a private check runs the code under a tool that reports any branch or index that depends on the decrypted bytes.
 
 ### `tests/test_unit_tls` - the TLS engine
 
@@ -1046,11 +1046,11 @@ Sub-checks:
 - TLS 1.2 at its record limit, for an AES-GCM and a ChaCha20 suite, the count of records put at 2^31 - 2 on both sides by an internal call: two more records are written and read, the next write is `PROVEN_ERR_OVERFLOW` with nothing queued, and the other direction goes on.
 - The renewal of an RSA key's blinding pair, the count of uses put at 65,533 by an internal call: five handshakes across the renewal all complete, and the count begins again at it.
 
-Failure tip: inspect `net/src/tls13.c`, `net/src/tls_config.c` and `src/proven/cert_issue.c`. No key is stored in the tree: `tests/test_unit_tls_pki.h` derives keys from a fixed pattern and issues the certificates when the test starts, with the library's internal certificate writer. The RFC's records are in `tests/test_unit_tls_vectors.h`, written by a private generator. Not covered here: the server role against a published trace (RFC 8448's server key is RSA, which this version cannot sign with) - that is checked against OpenSSL and GnuTLS in a private interoperability run, as are both roles for every suite and group in both versions; `record_size_limit` from a peer; a ServerKeyExchange or CertificateVerify actually signed with SHA-1 (no SHA-1 scheme is offered or accepted, and no peer at hand will send one unasked).
+Failure tip: inspect `net/src/tls13.c`, `net/src/tls_config.c` and `crypto/src/cert_issue.c`. No key is stored in the tree: `tests/test_unit_tls_pki.h` derives keys from a fixed pattern and issues the certificates when the test starts, with the library's internal certificate writer. The RFC's records are in `tests/test_unit_tls_vectors.h`, written by a private generator. Not covered here: the server role against a published trace (RFC 8448's server key is RSA, which this version cannot sign with) - that is checked against OpenSSL and GnuTLS in a private interoperability run, as are both roles for every suite and group in both versions; `record_size_limit` from a peer; a ServerKeyExchange or CertificateVerify actually signed with SHA-1 (no SHA-1 scheme is offered or accepted, and no peer at hand will send one unasked).
 
 ### `tests/test_unit_crypto_rsa` - RSA signing
 
-Intent: verify the private half of RSA - the constant-time exponentiation, signing by CRT with its check, blinding, the two encodings, reading and making keys - with keys the test makes when it starts, from a fixed seed. Internal code, reached through `src/proven/proven_internal_crypto.h`.
+Intent: verify the private half of RSA - the constant-time exponentiation, signing by CRT with its check, blinding, the two encodings, reading and making keys - with keys the test makes when it starts, from a fixed seed. Internal code, reached through `crypto/src/proven_internal_crypto.h`.
 
 Sub-checks:
 
@@ -1062,7 +1062,7 @@ Sub-checks:
 - An `RSAPrivateKey` written and read back is the same key; cut short, or with a byte after it, it is not a key; a modulus that is not the product of the two primes is refused; a 1024-bit key is not accepted for signing.
 - Making a key: sizes outside 1024 to 4096 bits, sizes that are not a multiple of 64, and no random source are refused; a key has exactly the size asked for and two different primes; its `d` undoes its `e`.
 
-Failure tip: inspect `src/proven/crypto_rsa.c` (`rsa_private`, `rsa_garner`, `proven_crypto_rsa_blind_make`) and `proven_crypto_mp_pow_ct` in `src/proven/crypto_mp.c`. Keys and random bytes come from fixed seeds, so a failure repeats exactly. Agreement with another implementation, and the absence of secret-dependent branches, are checked outside the suite and are not this test's.
+Failure tip: inspect `crypto/src/crypto_rsa.c` (`rsa_private`, `rsa_garner`, `proven_crypto_rsa_blind_make`) and `proven_crypto_mp_pow_ct` in `crypto/src/crypto_mp.c`. Keys and random bytes come from fixed seeds, so a failure repeats exactly. Agreement with another implementation, and the absence of secret-dependent branches, are checked outside the suite and are not this test's.
 
 ### `tests/test_unit_tls_quic` - TLS 1.3 in QUIC mode
 
@@ -1566,7 +1566,7 @@ Sub-checks:
 - The hex spellings are 40 and 32 lowercase characters, NUL-terminated; a `{NULL, 0}` view is the empty message.
 - The WebSocket accept key of RFC 6455 section 1.3, from `proven_sha1` and `proven_base64_encode`.
 
-Failure tip: inspect `src/proven/hash_legacy.c`. A boundary-length failure points at `legacy_pad` (the `0x80` byte, the zero fill, the byte order of the bit length); a vector failure at one compression function.
+Failure tip: inspect `crypto/src/hash_legacy.c`. A boundary-length failure points at `legacy_pad` (the `0x80` byte, the zero fill, the byte order of the bit length); a vector failure at one compression function.
 - The same empty update after a partial block for SHA-1 and MD5 (v0.112.0).
 
 ### `tests/test_unit_job` - job system
@@ -2994,6 +2994,20 @@ Sub-checks:
 
 Failure tip: use the public API (`aead.h`, `kex.h`, `sign.h`, `der.h`) instead of the internal header named; if the public API lacks something, publish it first.
 
+### `tests/test_portability_module_boundary` - the crypto and codec libraries on public headers only
+
+Intent: verify that proven_crypto (`crypto/`) and proven_codec (`codec/`) include only the base library's public headers and their own, and that the base library includes nothing of either, so that each can be built and taken alone on the base (RFC-0045).
+
+Sub-checks:
+
+- Every crypto source, header and platform file: each quoted `#include` is a base public header, a crypto public, private or platform header, `proven.h` or `proven_crypto.h` - a codec or network header, or one private to the base, is a failure.
+- Every codec file likewise with codec's own and `proven_codec.h`.
+- Every base file (`src/proven`, `include/proven`, `include`, `platform`): no crypto or codec header of any kind; `include/proven.h`'s optional includes of `proven_crypto.h` and `proven_codec.h` are the one exception.
+- No file left in `src/proven` named like a crypto or codec unit (`crypto`, `aead`, `aes`, `kex`, `dh`, `sign`, `der`, `cert`, `hmac`, `hash_legacy`, `sha2`, `deflate`, `zstd`, `brotli`).
+- Breaks caught (each run once): `proven/sha2.h` included from `src/proven/map.c`; `proven/zstd.h` included from `crypto/src/hmac.c`.
+
+Failure tip: crypto or codec code uses the base library's public API; base code must not need either library - move the code instead.
+
 ### `tests/test_portability_source_contracts` - source portability contracts
 
 Intent: guard platform branches and documentation/test-output contracts that may not be executable on the current host.
@@ -3060,7 +3074,7 @@ Sub-checks:
 
 The fixture runs the host compiler through `/bin/sh` and is skipped on Windows.
 
-Failure tip: inspect the `PROVEN_NO_BROTLI` guards in `include/proven.h`, `src/proven/brotli.c` and `net/src/http_coding.c`.
+Failure tip: inspect the `PROVEN_NO_BROTLI` guards in `include/proven.h`, `codec/src/brotli.c` and `net/src/http_coding.c`.
 
 ### `tests/test_portability_compile_nohttp3` - PROVEN_NO_HTTP3 leaves QUIC and HTTP/3 out
 

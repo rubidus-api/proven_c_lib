@@ -1,7 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "test_unit_deflate_vectors.h"
-#include "../src/proven/deflate_tables.h"
+#include "../codec/src/deflate_tables.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -112,7 +112,7 @@ static void bw_end(bw_t *w) { if (w->cnt) { w->p[w->n++] = (proven_byte_t)w->acc
 int main(void) {
     PROVEN_TEST_SUITE("DEFLATE, zlib and gzip",
         "Decompress what zlib made and refuse what zlib refuses; compress and get the input back at every level and window; behave on input cut short, changed, or fed a byte at a time.",
-        "Inspect src/proven/deflate.c. For a vector, the letter and line number printed name it; tests/test_unit_deflate_vectors.h is written by a private generator that checks zlib's verdict on every hand-built stream.");
+        "Inspect codec/src/deflate.c. For a vector, the letter and line number printed name it; tests/test_unit_deflate_vectors.h is written by a private generator that checks zlib's verdict on every hand-built stream.");
     g_heap = proven_heap_allocator();
 
     PROVEN_TEST_SECTION("the corpus", "The test's own bytes are the generator's.", "Compare corpus() here with the generator's; a Z line's CRC-32 and length say which item differs.");
@@ -349,7 +349,7 @@ int main(void) {
         proven_deflate_destroy(z);
     }
 
-    PROVEN_TEST_SECTION("the fixed code's tables", "The decompressor builds nothing for a fixed block: its code is in src/proven/deflate_tables.h, generated. Here it is made again from the lengths RFC 1951 gives and compared.", "Regenerate src/proven/deflate_tables.h with the private generator; do not edit it.");
+    PROVEN_TEST_SECTION("the fixed code's tables", "The decompressor builds nothing for a fixed block: its code is in codec/src/deflate_tables.h, generated. Here it is made again from the lengths RFC 1951 gives and compared.", "Regenerate codec/src/deflate_tables.h with the private generator; do not edit it.");
     {
         bool same = true;
         for (int which = 0; which < 2; ++which) {
@@ -375,7 +375,7 @@ int main(void) {
     }
 
     PROVEN_TEST_SECTION("pieces of every size", "The decoder finds whole symbols by table and leaves what the end of its input or of its output cuts to the code that works a bit at a time: where the two ends fall must not matter.",
-        "Check fast() and fast_lengths() in src/proven/deflate.c - what they leave untaken, and the bytes they give back - and back() and keep() for a distance that reaches past the beginning of a call's output.");
+        "Check fast() and fast_lengths() in codec/src/deflate.c - what they leave untaken, and the bytes they give back - and back() and keep() for a distance that reaches past the beginning of a call's output.");
     {
         static const proven_size_t ins[] = { 1, 2, 7, 8, 9, 64, 4096, 70000 }, outs[] = { 1, 2, 3, 8, 9, 257, 258, 259, 266, 300, 16384, 40000, 70000 };      /* 40,000: a call that leaves more than a window behind it, and then another */
         bool all = true, far_found = true;

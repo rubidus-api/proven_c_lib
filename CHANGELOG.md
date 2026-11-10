@@ -18,6 +18,37 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.113.0] - 2026-11-10
+
+Cryptography, certificates and compression leave proven_base for two libraries of their own, as
+the network code did in v0.111.0 (RFC-0045). Moving a project across:
+[docs/migrating-to-proven-crypto-and-codec.md](docs/migrating-to-proven-crypto-and-codec.md).
+
+### Changed
+
+- **proven_crypto** - `crypto/include/proven/`, `crypto/src/`, `crypto/platform/` - holds SHA-2,
+  HMAC and the legacy hashes, AES and the AEAD ciphers, key exchange (with finite-field DH), signing
+  keys, DER and X.509 certificates (with the system trust store and the test certificate writer).
+  **proven_codec** - `codec/...` - holds DEFLATE with zlib and gzip framing, Zstandard and Brotli.
+  Each includes only proven_base's public headers and its own, not each other; proven_net now
+  stands on both; proven_base includes nothing of either. Header names, function names and outputs
+  are unchanged. Umbrellas: `crypto/include/proven_crypto.h`, `codec/include/proven_codec.h`;
+  `include/proven.h` includes them when their directories are on the include path.
+- **SHA-256, SHA-384 and SHA-512 move from `hash.h` to the new `sha2.h`** (proven_crypto). `hash.h`
+  keeps FNV-1a, SipHash-2-4 and CRC-32. Code that uses SHA-2 through `hash.h` alone adds
+  `#include "proven/sha2.h"`.
+- `random.h` stays in proven_base.
+- The system trust store reads `SSL_CERT_FILE` through `proven_env_get`: a value that is not
+  valid UTF-8 is no longer taken. `der.c` copies through `proven_mem_copy`/`proven_mem_move`.
+  Neither changes what is computed.
+
+### Tests
+
+- `test_portability_module_boundary`: the crypto and codec libraries on the base library's public
+  headers and their own, and the base on nothing of either (two planted includes caught).
+- `scripts/check-vartime.py` reads `crypto/` (and `codec/`, `net/`); it would have passed on
+  nothing with the old paths.
+
 ## [0.112.6] - 2026-11-10
 
 Speed only, judged by cycles: P-256 under GCC, and the Zstandard and Brotli decoders.

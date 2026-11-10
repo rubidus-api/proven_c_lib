@@ -332,18 +332,20 @@ gcc -std=c2x -Iinclude -Iplatform your_program.c src/proven/*.c platform/*.c -o 
 전부 거기에 있고 다른 어디에도 없으며, 그래서 나머지 라이브러리를 운영체제가 전혀 없는 대상용으로
 컴파일할 수 있습니다.
 
-이것이 기본 라이브러리 **proven_base**입니다. 네트워크 라이브러리 **proven_net** - 소켓, 이벤트 루프,
-TLS, HTTP/1.1·2·3, WebSocket, server-sent events(9~12장, 14장, 15장, 17장) - 는 `net/` 아래에 있고,
-프로그램이 네트워크를 쓸 때 함께 컴파일합니다(v0.111.0부터).
+이것이 기본 라이브러리 **proven_base**입니다. 그 위에 라이브러리 셋이 더 있고, 프로그램이 쓸 때 함께
+컴파일합니다. `crypto/` 아래의 **proven_crypto** - SHA-2, HMAC, 암호, 키 교환, 서명, DER, 인증서 - 와
+`codec/` 아래의 **proven_codec** - DEFLATE/gzip, Zstandard, Brotli - 은 v0.113.0부터, `net/` 아래의
+**proven_net** - 소켓, 이벤트 루프, TLS, HTTP/1.1·2·3, WebSocket, server-sent events(9~12장, 14장,
+15장, 17장) - 은 v0.111.0부터이며, 나머지 둘 위에 섭니다.
 
 ```text
-gcc -std=c2x -Iinclude -Iplatform -Inet/include your_program.c src/proven/*.c platform/*.c net/src/*.c net/platform/*.c -o your_program
+gcc -std=c2x -Iinclude -Iplatform -Icrypto/include -Icodec/include -Inet/include your_program.c src/proven/*.c platform/*.c crypto/src/*.c crypto/platform/*.c codec/src/*.c codec/platform/*.c net/src/*.c net/platform/*.c -o your_program
 ```
 
-헤더 이름은 같고(`#include "proven/http.h"`), `net/include`가 경로에 있으면 `proven.h`가 그것들도
-포함합니다. proven_net은 proven_base의 공개 헤더 말고는 아무것도 쓰지 않으므로, 네트워크를 쓰지 않는
-프로그램은 `net/`을 통째로 뺍니다. 기존 프로젝트를 이 분리에 맞춰 옮길 때는
-`docs/migrating-to-proven-net.md`를 따릅니다.
+헤더 이름은 같고(`#include "proven/sign.h"`, `#include "proven/http.h"`), 디렉터리가 경로에 있으면
+`proven.h`가 그 라이브러리의 헤더도 포함합니다. 각 라이브러리는 아래쪽 라이브러리의 공개 헤더 말고는
+아무것도 쓰지 않으므로, 프로그램은 쓰지 않는 것을 뺍니다. 기존 프로젝트를 이 분리에 맞춰 옮길 때는
+`docs/migrating-to-proven-crypto-and-codec.md`와 `docs/migrating-to-proven-net.md`를 따릅니다.
 
 이 저장소는 빌드 시스템 대신 C 프로그램으로 스스로를 빌드합니다:
 
@@ -981,7 +983,8 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `ring.h` | 고정 용량 FIFO ring | 챕터 4 |
 | `map.h` | Open-addressing map | 챕터 4 |
 | `algorithm.h` | Array 정렬·검색 헬퍼 | 챕터 4 |
-| `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, 용도별, SHA-384, SHA-512 | 챕터 4 |
+| `hash.h` | FNV-1a, SipHash-2-4, CRC-32, 용도별 | 챕터 4 |
+| `sha2.h` | SHA-256, SHA-384, SHA-512(proven_crypto, v0.113.0부터; 그전에는 `hash.h`) | 챕터 4 |
 | `hmac.h` | SHA-2 계열(오래된 형식을 위해 SHA-1도) 위의 HMAC, HKDF, PBKDF2 | 챕터 4, 13 |
 | `deflate.h` | DEFLATE 압축과 풀기, 그대로 또는 zlib·gzip으로. 스트리밍이며 출력은 호출자가 한정한다 | 챕터 16 |
 | `zstd.h` | Zstandard 풀기와 압축(레벨 열아홉, 사전, 먼 거리 일치). 스트리밍이며 출력과 창은 호출자가 한정한다 | 챕터 16 |

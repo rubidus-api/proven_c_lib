@@ -1,8 +1,8 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_crypto.h"
+#include "../crypto/src/proven_internal_crypto.h"
 #include "../net/src/proven_internal_tls.h"
-#include "../src/proven/proven_internal_cert_issue.h"
+#include "../crypto/src/proven_internal_cert_issue.h"
 #include "test_unit_tls_pki.h"
 #include <string.h>
 
@@ -60,7 +60,7 @@ static proven_cert_fault_t purpose(const proven_cert_store_t *anchors, proven_me
 int main(void) {
     PROVEN_TEST_SUITE("sign.h, der.h, aes.h, PBKDF2: public signing crypto",
         "Verify the strict DER reader and the writer (lengths fixed up, SET OF ordered), PBKDF2 and HMAC-SHA-1 against published vectors, and private keys - RSA and P-256/P-384, read from PEM and DER or made from parts - signing deterministically (RFC 6979's own example) and verifying both ways.",
-        "Inspect src/proven/der.c, src/proven/sign.c and proven_pbkdf2 in src/proven/hmac.c.");
+        "Inspect crypto/src/der.c, crypto/src/sign.c and proven_pbkdf2 in crypto/src/hmac.c.");
     proven_allocator_t heap = proven_heap_allocator();
     proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE] = { 7 };
     proven_chacha_rng_seed(&g_chacha, seed);
@@ -458,7 +458,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_pkey_kind(NULL) == PROVEN_PKEY_NONE && proven_pkey_bits(NULL) == 0, "NULL is no key", "");
     }
 
-    PROVEN_TEST_SECTION("certificate purposes and key identifiers", "codeSigning and timeStamping (critical, alone, RFC 3161 2.3) as uses of proven_cert_verify; SKI and AKI read.", "Check the EKU and the SKI/AKI branches of parse_extensions and the top of cv_check_path in src/proven/cert.c.");
+    PROVEN_TEST_SECTION("certificate purposes and key identifiers", "codeSigning and timeStamping (critical, alone, RFC 3161 2.3) as uses of proven_cert_verify; SKI and AKI read.", "Check the EKU and the SKI/AKI branches of parse_extensions and the top of cv_check_path in crypto/src/cert.c.");
     {
         PROVEN_TEST_ASSERT(tp_build(), "the P-256 test CA", "");
         proven_cert_store_t *anchors = NULL;
@@ -496,7 +496,7 @@ int main(void) {
         proven_cert_store_destroy(anchors);
     }
 
-    PROVEN_TEST_SECTION("AES-CBC and PKCS #7", "NIST SP 800-38A F.2 for 128-, 192- and 256-bit keys, both ways, whole and in two calls, with the processor's AES and without; padding removed only when it is padding.", "Check proven_crypto_aes_cbc_init (12 rounds for 192 bits) and src/proven/aes.c.");
+    PROVEN_TEST_SECTION("AES-CBC and PKCS #7", "NIST SP 800-38A F.2 for 128-, 192- and 256-bit keys, both ways, whole and in two calls, with the processor's AES and without; padding removed only when it is padding.", "Check proven_crypto_aes_cbc_init (12 rounds for 192 bits) and crypto/src/aes.c.");
     {
         static const char *const keys[3] = { "2b7e151628aed2a6abf7158809cf4f3c", "8e73b0f7da0e6452c810f32b809079e562f8ead2522c6b7b",
                                              "603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4" };

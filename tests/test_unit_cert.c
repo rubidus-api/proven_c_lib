@@ -32,7 +32,7 @@ static proven_byte_t g_der[8][2048];
 int main(void) {
     PROVEN_TEST_SUITE("X.509 certificates",
         "A strict reader, host-name matching, PEM, a store of anchors, and path validation with every refusal it claims.",
-        "Inspect src/proven/cert.c. A chain accepted here that should be refused is a security defect, not a test nuisance.");
+        "Inspect crypto/src/cert.c. A chain accepted here that should be refused is a security defect, not a test nuisance.");
 
     proven_allocator_t alloc = proven_heap_allocator();
 

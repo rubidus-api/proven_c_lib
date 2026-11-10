@@ -1,9 +1,9 @@
 #include "proven.h"
 #include "proven_test.h"
-#include "../src/proven/proven_internal_crypto.h"
+#include "../crypto/src/proven_internal_crypto.h"
 #include "test_unit_crypto_vectors.h"
-#include "../platform/proven_sys_aes.h"
-#include "../platform/proven_sys_chacha.h"
+#include "../crypto/platform/proven_sys_aes.h"
+#include "../crypto/platform/proven_sys_chacha.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -145,7 +145,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("ChaCha20-Poly1305",
         "RFC 8439's example and lengths on each side of every block boundary and of the vector path's groups, on the portable code and each vector width; a changed tag, text or header is refused.",
-        "Check src/proven/crypto_chacha.c (portable, Poly1305) and platform/proven_sys_chacha.c (vector).");
+        "Check crypto/src/crypto_chacha.c (portable, Poly1305) and crypto/platform/proven_sys_chacha.c (vector).");
     {
         PROVEN_TEST_ASSERT(COUNT(CRV_CHACHA) >= 31 && COUNT(CRV_CHACHA20) >= 10 && COUNT(CRV_POLY1305) >= 25, "the vectors are all there", "");
         PROVEN_TEST_ASSERT(proven_crypto_chacha_force_width(0) == 0, "the test hook forces the portable code", "");
@@ -156,7 +156,7 @@ int main(void) {
             proven_size_t bad = run_chacha();
             char what[96];
             snprintf(what, sizeof what, "%d blocks a call: every case (%zu failed)", w, (size_t)bad);
-            PROVEN_TEST_ASSERT(bad == 0, what, "platform/proven_sys_chacha.c");
+            PROVEN_TEST_ASSERT(bad == 0, what, "crypto/platform/proven_sys_chacha.c");
             /* Against the portable code on every length to 1,100 bytes, with counters that wrap past 2^32. */
             static proven_byte_t key[32], nonce[12], text[1100], a[1100], b[1100];
             for (int k = 0; k < 32; ++k) key[k] = (proven_byte_t)(k * 7 + w);
@@ -180,7 +180,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("AES-GCM, both implementations",
         "FIPS 197's blocks and GCM at many lengths, on the bitsliced code and on the processor's instructions, which must agree.",
-        "Check src/proven/crypto_aes.c (portable) and platform/proven_sys_aes.c (hardware).");
+        "Check crypto/src/crypto_aes.c (portable) and crypto/platform/proven_sys_aes.c (hardware).");
     {
         proven_crypto_aes_force_portable(true);
         PROVEN_TEST_ASSERT(!proven_crypto_aes_hw_available(), "the test hook forces the portable code", "");
@@ -222,7 +222,7 @@ int main(void) {
                 keys_same = keys_same && hw.rounds == sw.rounds && memcmp(hw.rk, sw.rk, (proven_size_t)(16 * (hw.rounds + 1))) == 0 && memcmp(hw.h, sw.h, 16) == 0;
             }
             PROVEN_TEST_ASSERT(keys_same, "the processor's key schedule makes the portable one's round keys for 200 keys of 16 bytes and 200 of 32",
-                "Inspect proven_sys_aes_expand in platform/proven_sys_aes.c: the round constants, and AES-256's odd round keys.");
+                "Inspect proven_sys_aes_expand in crypto/platform/proven_sys_aes.c: the round constants, and AES-256's odd round keys.");
 
             /* Every length: the hardware path takes eight blocks at a time and folds eight
              * into one reduction, so each count of whole blocks and each length of tail is a
@@ -260,7 +260,7 @@ int main(void) {
                 if (memcmp(r1, r2, len) != 0 || memcmp(tag_hw, tag_sw, 16) != 0) differing++;
             }
             PROVEN_TEST_ASSERT(differing == 0, "and on every length from 0 to 1,100 bytes, with associated data of 0 to 400 - sealed, sealed in place, and each opened by the other - and on four records of the largest size",
-                "Inspect proven_sys_aes_ctr and proven_sys_aes_ghash in platform/proven_sys_aes.c: the eight-block loops, what is left after them, and the one-block tails.");
+                "Inspect proven_sys_aes_ctr and proven_sys_aes_ghash in crypto/platform/proven_sys_aes.c: the eight-block loops, what is left after them, and the one-block tails.");
 
             /* The counter, across the end of its thirty-two bits. GCM as TLS uses it never
              * gets there, but the function says what it does and so it is held to it: the
@@ -334,7 +334,7 @@ int main(void) {
                 } else opened++;
             }
             PROVEN_TEST_ASSERT(wrong == 0, "one pass: every length from 0 to 2,048 bytes and associated data of 0 to 64, sealed, sealed in place, opened in place, and opened by the portable code, as the portable code does",
-                "Inspect proven_sys_aes_gcm in platform/proven_sys_aes.c: the stitched loop, the group it hashes, what is left after it, and the lengths block.");
+                "Inspect proven_sys_aes_gcm in crypto/platform/proven_sys_aes.c: the stitched loop, the group it hashes, what is left after it, and the lengths block.");
             PROVEN_TEST_ASSERT(cleared == 2049 + 65 * 11, "one pass: a wrong tag is refused, and the plaintext written during the pass is cleared - every byte asked for and none beyond", "");
             PROVEN_TEST_ASSERT(opened == 2049 + 65 * 11, "one pass: a changed byte of ciphertext anywhere is refused", "");
         } else {
@@ -350,7 +350,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("multi-precision arithmetic",
         "Multiplication, squaring, addition, subtraction, exponentiation, inversion and reduction modulo primes and odd composites of many sizes.",
-        "Check src/proven/crypto_mp.c.");
+        "Check crypto/src/crypto_mp.c.");
     {
         proven_size_t good = 0;
         proven_size_t secret_inits = 0;
@@ -509,7 +509,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("P-256 and P-384",
         "Public keys, ECDH, deterministic ECDSA (RFC 6979's own example first) and verification; points off the curve and scalars out of range are refused.",
-        "Check src/proven/crypto_ec.c.");
+        "Check crypto/src/crypto_ec.c.");
     {
         proven_size_t good = 0;
         for (proven_size_t i = 0; i < COUNT(CRV_EC); ++i) {
@@ -685,7 +685,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("P-256's own field against the general code",
         "Public keys, shared secrets, signatures and verifications on P-256 with the field code of P-256 alone and with the general one: the same bytes and verdicts, for scalars at the ends of the range and random ones.",
-        "Check the p256_* functions in src/proven/crypto_ec.c (the general code is crypto_mp.c's).");
+        "Check the p256_* functions in crypto/src/crypto_ec.c (the general code is crypto_mp.c's).");
     {
         static const proven_byte_t n_minus_1[32] = { 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                                                      0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x50 };
@@ -825,7 +825,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("X25519 and Ed25519",
         "RFC 7748's and RFC 8032's own examples first, then more; a small-order point and every changed part of a signature are refused.",
-        "Check src/proven/crypto_25519.c.");
+        "Check crypto/src/crypto_25519.c.");
     {
         proven_size_t good = 0;
         for (proven_size_t i = 0; i < COUNT(CRV_X25519); ++i) {
@@ -983,7 +983,7 @@ int main(void) {
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("RSA signature verification",
         "PKCS #1 v1.5 and PSS over three hashes and several modulus sizes; a key below 2048 bits, another hash, another salt length and any changed bit are refused.",
-        "Check src/proven/crypto_rsa.c.");
+        "Check crypto/src/crypto_rsa.c.");
     {
         proven_size_t good = 0;
         for (proven_size_t i = 0; i < COUNT(CRV_RSA); ++i) {

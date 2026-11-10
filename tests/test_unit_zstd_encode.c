@@ -1,7 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "test_unit_zstd_dict_vectors.h"
-#include "../src/proven/proven_internal_zstd.h"
+#include "../codec/src/proven_internal_zstd.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -148,7 +148,7 @@ static bool decodes_to(const proven_byte_t *f, proven_size_t fn, const proven_by
 int main(void) {
     PROVEN_TEST_SUITE("Zstandard compression",
         "Compress so that the decoder gives back every byte, whole and in steps, at every level and window; keep to the bound, the window and the memory stated; flush and finish as documented.",
-        "Inspect src/proven/zstd_encode.c. A failing input is printed by its corpus number, level and window.");
+        "Inspect codec/src/zstd_encode.c. A failing input is printed by its corpus number, level and window.");
     g_heap = proven_heap_allocator();
 
     PROVEN_TEST_SECTION("round trips", "Eleven inputs at levels 1 to 19 (13 to 19 on the large ones with the 1 KiB window only) and windows of 1 KiB, 64 KiB and the default, with and without the checksum, in one call, and in steps at levels 1 to 4, 6, 8 and 13 (each matcher).", "Check compress_block and write_block; a frame the decoder refuses is printed with what made it.");
@@ -189,7 +189,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(failed == 0 && frames > 600, "every frame decodes to its input, with every offset inside the window it states", "");
     }
 
-    PROVEN_TEST_SECTION("blocks full of sequences", "Short matches a few bytes apart, more sequences than a block holds, at the optimal levels: each block ends where its sequences run out, whole and streamed, and every frame decodes; and a long run of one byte through the trees.", "Check the stretch's limit (`span`, the sequences left) in match_opt in src/proven/zstd_encode.c.");
+    PROVEN_TEST_SECTION("blocks full of sequences", "Short matches a few bytes apart, more sequences than a block holds, at the optimal levels: each block ends where its sequences run out, whole and streamed, and every frame decodes; and a long run of one byte through the trees.", "Check the stretch's limit (`span`, the sequences left) in match_opt in codec/src/zstd_encode.c.");
     {
         /* Four-byte tokens from a set of 64, a random byte after each: a match of four (or a little
          * more) every five bytes - about 26,000 sequences in a block of 128 KiB, which holds 16,384. */
@@ -238,7 +238,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(bad == 0, "a million bytes of one value at 13, 16 and 19: under 200 bytes, and quickly", "Check bt_update: without its skip this takes minutes.");
     }
 
-    PROVEN_TEST_SECTION("what the frame states", "A whole buffer states its size, and its window is that size; a stream states its window.", "Check frame_header in src/proven/zstd_encode.c.");
+    PROVEN_TEST_SECTION("what the frame states", "A whole buffer states its size, and its window is that size; a stream states its window.", "Check frame_header in codec/src/zstd_encode.c.");
     {
         proven_zstd_encoder_options_t o = { .alloc = g_heap, .level = 1 };
         proven_size_t made = 0;
@@ -340,7 +340,7 @@ int main(void) {
     }
 
     PROVEN_TEST_SECTION("a stream is the whole buffer", "300,000 bytes at every level, with windows of 1 KiB and 64 KiB: streamed in pieces of 100,000, the input buffer sliding many times, the blocks are byte for byte those of the same bytes compressed whole - only the frame headers differ.",
-        "Check slide in src/proven/zstd_encode.c: the hash tables, and the chain of levels 4 to 12 and the trees of 13 to 19 (indexed by position modulo their size, so rotated), and the three-byte table of the optimal parse, must move with the buffer.");
+        "Check slide in codec/src/zstd_encode.c: the hash tables, and the chain of levels 4 to 12 and the trees of 13 to 19 (indexed by position modulo their size, so rotated), and the three-byte table of the optimal parse, must move with the buffer.");
     {
         corpus(4, g_in);
         const proven_size_t n = 300000;
@@ -362,7 +362,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(differ == 0, "at every level and both windows, the streamed frame's blocks are the whole frame's", "");
     }
 
-    PROVEN_TEST_SECTION("long-distance matching", "`long_distance`: pieces of 1,024 bytes repeated from more than 550,000 bytes back, which level 1's table cannot reach, are found - whole and streamed through a sliding buffer; from level 6 the option changes nothing.", "Check ldm_find and match_ldm in src/proven/zstd_encode.c, and slide's move of the long-distance table.");
+    PROVEN_TEST_SECTION("long-distance matching", "`long_distance`: pieces of 1,024 bytes repeated from more than 550,000 bytes back, which level 1's table cannot reach, are found - whole and streamed through a sliding buffer; from level 6 the option changes nothing.", "Check ldm_find and match_ldm in codec/src/zstd_encode.c, and slide's move of the long-distance table.");
     {
         /* 245,760 random bytes, 554,240 more, then the first part's 240 pieces of 1,024 bytes again in
          * another order (each once, so that nothing in the last part is near). */
@@ -460,7 +460,7 @@ int main(void) {
         }
     }
 
-    PROVEN_TEST_SECTION("dictionaries", "`dictionary`: records like the dictionary's, one a frame and twenty a frame, at every level with the formatted dictionary and a raw one, whole and streamed through one encoder reset between frames: each decodes with the dictionary, names its ID, and is smaller than without; a first block repeats the dictionary's tables; a match into the content further back than a short frame's window; a stream through a sliding buffer; damaged dictionaries refused.", "Check dict_load, frame_start's tables and offsets, compress_block's reach and frame_header's ID in src/proven/zstd_encode.c.");
+    PROVEN_TEST_SECTION("dictionaries", "`dictionary`: records like the dictionary's, one a frame and twenty a frame, at every level with the formatted dictionary and a raw one, whole and streamed through one encoder reset between frames: each decodes with the dictionary, names its ID, and is smaller than without; a first block repeats the dictionary's tables; a match into the content further back than a short frame's window; a stream through a sliding buffer; damaged dictionaries refused.", "Check dict_load, frame_start's tables and offsets, compress_block's reach and frame_header's ID in codec/src/zstd_encode.c.");
     {
         static char rec[3000 * 160];
         static proven_size_t roff[3001];
@@ -581,7 +581,7 @@ int main(void) {
         proven_zstd_decoder_destroy(d);
     }
 
-    PROVEN_TEST_SECTION("memory", "What an encoder holds, for a stream and for a whole buffer; and allocations that fail.", "Check make, block_room, emit and the input buffer's growth in src/proven/zstd_encode.c.");
+    PROVEN_TEST_SECTION("memory", "What an encoder holds, for a stream and for a whole buffer; and allocations that fail.", "Check make, block_room, emit and the input buffer's growth in codec/src/zstd_encode.c.");
     {
         const proven_size_t n = corpus(4, g_in);
         for (int level = 1; level <= 19; ++level) {
@@ -694,7 +694,7 @@ int main(void) {
         }
         }
         proven_zstd_encode_force_plain_(false);
-        PROVEN_TEST_ASSERT(differ == 0, "the frames are what they were when pinned, from both builds of the block coder", "Check block_plain and block_bmi2 in src/proven/zstd_encode.c: the same C, so a difference is the compiler's.");
+        PROVEN_TEST_ASSERT(differ == 0, "the frames are what they were when pinned, from both builds of the block coder", "Check block_plain and block_bmi2 in codec/src/zstd_encode.c: the same C, so a difference is the compiler's.");
     }
 
     PROVEN_TEST_SECTION("what every function refuses", "Arguments that cannot be right.", "");

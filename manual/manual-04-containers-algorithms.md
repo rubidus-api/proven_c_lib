@@ -805,7 +805,8 @@ is the compiled-and-run version of exactly this.
 
 There is no single "hash". Which function is correct depends entirely on what you are
 doing with the result, and reaching for the wrong one gives you either a program that is
-needlessly slow or one that is quietly insecure. `proven/hash.h` offers exactly one
+needlessly slow or one that is quietly insecure. `proven/hash.h` - and, for the fingerprint,
+`proven/sha2.h` of proven_crypto (since v0.113.0; it was in `hash.h` before) - offers exactly one
 primitive per job so the choice is made once you name the job:
 
 | You are... | Use | And crucially |
@@ -813,7 +814,7 @@ primitive per job so the choice is made once you name the job:
 | hashing keys into **your own** table, **trusted** input | `proven_hash_bytes` (FNV-1a) | fast; a crypto hash here is ~50x slower for no gain |
 | hashing keys from **untrusted** input into a table | `proven_hash_keyed` (SipHash-2-4) | FNV lets an attacker collide every key into one bucket and turn your O(1) table into O(n^2) |
 | checking data was not **corrupted** in transit or on disk | `proven_crc32` | a checksum; interoperates with gzip/zlib/PNG |
-| **fingerprinting** content: dedup, content-addressing, "same file?" | `proven_sha256` | the only one safe against a *deliberately* forged match |
+| **fingerprinting** content: dedup, content-addressing, "same file?" | `proven_sha256` (`sha2.h`, proven_crypto) | the only one safe against a *deliberately* forged match |
 
 The one line to remember: **CRC-32 and FNV detect accident, not attack.** Do not use them
 to decide whether two things are "the same" when someone might benefit from fooling you --

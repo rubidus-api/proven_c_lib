@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Variable-time code is reachable from verification alone.
 
-Signature verification handles nothing secret, and src/proven/crypto_ec.c and
-src/proven/crypto_25519.c verify with functions that branch and index on the values they are
+Signature verification handles nothing secret, and crypto/src/crypto_ec.c and
+crypto/src/crypto_25519.c verify with functions that branch and index on the values they are
 given - fast, and correct only for public values. Those functions are named `*_vartime`. This
 check fails when anything but verification can reach one:
 
@@ -29,12 +29,12 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-FILES = ("src/proven/crypto_ec.c", "src/proven/crypto_25519.c")
+FILES = ("crypto/src/crypto_ec.c", "crypto/src/crypto_25519.c")
 VERIFY = {
-    "src/proven/crypto_ec.c": "proven_crypto_ecdsa_verify",
-    "src/proven/crypto_25519.c": "proven_crypto_ed25519_verify",
+    "crypto/src/crypto_ec.c": "proven_crypto_ecdsa_verify",
+    "crypto/src/crypto_25519.c": "proven_crypto_ed25519_verify",
 }
-SCANNED = ("src", "platform", "include")
+SCANNED = ("src", "platform", "include", "crypto", "codec", "net")
 VARTIME = re.compile(r"\b(\w+_vartime)\b")
 HOOK = re.compile(r"\bproven_crypto_\w+_test_\w+\b")
 IDENT = re.compile(r"[A-Za-z_]\w*")
@@ -192,7 +192,8 @@ def object_check(errors: list[str], names: set[str]) -> str:
         for rel in FILES:
             obj = Path(tmp) / (Path(rel).stem + ".o")
             build = subprocess.run([cc, "-std=c2x", "-O0", "-fno-inline", "-I", str(ROOT / "include"), "-I", str(ROOT / "platform"),
-                                    "-I", str(ROOT / "src/proven"), "-c", str(ROOT / rel), "-o", str(obj)],
+                                    "-I", str(ROOT / "crypto/include"), "-I", str(ROOT / "crypto/src"), "-I", str(ROOT / "crypto/platform"),
+                                    "-c", str(ROOT / rel), "-o", str(obj)],
                                    capture_output=True, text=True)
             if build.returncode != 0:
                 # A compiler that refuses these flags (the build has a fallback for -std=c2x;

@@ -1,4 +1,4 @@
-**한국어** | [English](README.md) — **Proven C library v0.112.6** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.112.6/proven_c_lib-v0.112.6.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.112.6/proven_c_lib-v0.112.6-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.112.6/proven_c_lib-v0.112.6-ko-manual.pdf)
+**한국어** | [English](README.md) — **Proven C library v0.113.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.113.0/proven_c_lib-v0.113.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.113.0/proven_c_lib-v0.113.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.113.0/proven_c_lib-v0.113.0-ko-manual.pdf)
 
 # Proven C library
 
@@ -24,7 +24,7 @@ C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도
 짧은 프로그램 아홉 개가 출력, 길이를 아는 문자열, 값으로 오는 오류, allocator, arena, 컨테이너, 파일을
 하나씩 더해 갑니다. 다 읽은 뒤에는 0장으로 가면 됩니다.
 
-- 버전: proven_c_lib-v0.112.6 · 표준: C23 · 라이선스: MIT
+- 버전: proven_c_lib-v0.113.0 · 표준: C23 · 라이선스: MIT
 - 버전은 시맨틱 버전 `MAJOR.MINOR.PATCH`이며 v0.0.1(2026-09-04)부터 시작합니다. 그 이전 릴리스는
   날짜 기반 번호(`v26.MM.DDx`)이고, 발표된 그대로 둡니다.
 - `*_internal`이나 `*_impl`로 끝나는 함수 일곱 개는 매크로가 호출하기 때문에 공개 헤더에 있습니다.
@@ -466,12 +466,24 @@ cc -std=c23 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L \
   -pthread -o app
 ```
 
-네트워크 라이브러리(소켓, TLS, HTTP, WebSocket)를 쓰는 프로그램은 그 디렉터리를 더합니다.
+암호 라이브러리(CRC-32 밖의 해시, 암호, 서명, 인증서)나 압축 라이브러리(DEFLATE/gzip, Zstandard,
+Brotli)를 쓰는 프로그램은 그 디렉터리를 더합니다(v0.113.0부터).
 
 ```sh
 cc -std=c23 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L \
-  -Iinclude -Iplatform -Inet/include \
-  app.c src/proven/*.c platform/proven_sys_*.c net/src/*.c net/platform/*.c \
+  -Iinclude -Iplatform -Icrypto/include -Icodec/include \
+  app.c src/proven/*.c platform/proven_sys_*.c crypto/src/*.c crypto/platform/*.c codec/src/*.c codec/platform/*.c \
+  -pthread -o app
+```
+
+네트워크 라이브러리(소켓, TLS, HTTP, WebSocket)를 쓰는 프로그램은 그 디렉터리도 더합니다. 네트워크
+라이브러리는 나머지 둘 위에 섭니다.
+
+```sh
+cc -std=c23 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L \
+  -Iinclude -Iplatform -Icrypto/include -Icodec/include -Inet/include \
+  app.c src/proven/*.c platform/proven_sys_*.c crypto/src/*.c crypto/platform/*.c codec/src/*.c codec/platform/*.c \
+  net/src/*.c net/platform/*.c \
   -pthread -o app
 ```
 
@@ -654,19 +666,23 @@ portable implementation 파일은 `src/proven/`에 있습니다. OS와 C runtime
 
 Cross compilation은 header, source visibility, ABI assumption, target별 compile-time branch가 함께 맞는지 확인하는 용도입니다. 대상 머신에서의 runtime test를 대신하지는 않습니다.
 
-## 두 라이브러리: proven_base와 proven_net
+## 네 라이브러리: proven_base, proven_crypto, proven_codec, proven_net
 
-이 트리에는 버전 하나 아래 라이브러리 두 개가 있습니다. **proven_base** - `include/proven/`,
-`src/proven/`, `platform/` - 는 네트워크와 말하지 않는 프로그램에 필요한 모든 것입니다: 메모리,
-문자열, 컨테이너, 텍스트, 숫자, 파일, 시간, job, 압축, 해시, 인증서, 서명, 암호. **proven_net** -
-`net/include/proven/`, `net/src/`, `net/platform/` - 은 소켓, 이벤트 루프, TLS, HTTP/1.1, HTTP/2, QUIC
-위의 HTTP/3, WebSocket, server-sent events입니다. proven_net은 proven_base의 공개 헤더 말고는 아무것도
-쓰지 않으며(테스트가 그 선을 지킵니다), proven_base는 proven_net을 전혀 모릅니다.
+이 트리에는 버전 하나 아래 라이브러리 네 개가 있습니다. **proven_base** - `include/proven/`,
+`src/proven/`, `platform/` - 는 메모리, 문자열, 컨테이너, 텍스트, 숫자, 파일, 시간, job, 난수 생성기,
+CRC-32와 테이블용 해시입니다. **proven_crypto** - `crypto/` - 는 SHA-2, HMAC과 레거시 해시, AES와
+AEAD 암호, 키 교환, 서명 키, DER과 X.509 인증서입니다. **proven_codec** - `codec/` - 은 zlib·gzip
+틀을 포함한 DEFLATE, Zstandard, Brotli입니다. **proven_net** - `net/` - 은 소켓, 이벤트 루프, TLS,
+HTTP/1.1, HTTP/2, QUIC 위의 HTTP/3, WebSocket, server-sent events입니다. 각 라이브러리는 아래쪽
+라이브러리의 공개 헤더 말고는 아무것도 쓰지 않습니다(테스트가 그 선을 지킵니다). crypto와 codec은
+base 위에만 서고, 네트워크 라이브러리는 셋 모두 위에 서며, base는 어느 쪽도 모릅니다.
 
-네트워크를 쓰지 않는 프로그램은 예전처럼 proven_base만 가져와 컴파일합니다. 쓰는 프로그램은
-`-Inet/include`와 `net/` 소스를 더합니다. 헤더 이름은 바뀌지 않았고(`#include "proven/http.h"`),
-`net/include`가 경로에 있으면 `proven.h`가 네트워크 헤더도 포함합니다. 기존 프로젝트를 이 분리에 맞춰
-옮기는 단계별 절차는 [docs/migrating-to-proven-net.md](docs/migrating-to-proven-net.md)에 있습니다.
+프로그램은 base와, 쓰는 라이브러리만 함께 컴파일합니다. 각각 자기 `include/` 디렉터리와 `src/`,
+`platform/` 소스를 더합니다. 헤더 이름은 바뀌지 않았고(`#include "proven/sign.h"`,
+`#include "proven/http.h"`), 디렉터리가 경로에 있으면 `proven.h`가 그 라이브러리의 헤더도 포함합니다.
+기존 프로젝트를 이 분리에 맞춰 옮기는 단계별 절차는
+[docs/migrating-to-proven-crypto-and-codec.md](docs/migrating-to-proven-crypto-and-codec.md) (v0.113.0)와
+[docs/migrating-to-proven-net.md](docs/migrating-to-proven-net.md) (v0.111.0)에 있습니다(영문).
 
 ## 주요 모듈
 

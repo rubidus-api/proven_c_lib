@@ -134,7 +134,7 @@ static void key_cases(const char *which, const proven_crypto_rsa_key_t *k, const
 int main(void) {
     PROVEN_TEST_SUITE("RSA signing",
         "The exponentiation for secret exponents, signing by CRT with its check, blinding, PKCS #1 v1.5 and PSS, and reading and making keys.",
-        "Inspect src/proven/crypto_rsa.c (rsa_private, rsa_garner, proven_crypto_rsa_blind_make) and proven_crypto_mp_pow_ct in src/proven/crypto_mp.c. The keys and every random byte come from fixed seeds, so a failure repeats exactly.");
+        "Inspect crypto/src/crypto_rsa.c (rsa_private, rsa_garner, proven_crypto_rsa_blind_make) and proven_crypto_mp_pow_ct in crypto/src/crypto_mp.c. The keys and every random byte come from fixed seeds, so a failure repeats exactly.");
 
     PROVEN_TEST_ASSERT(tp_build() && tp_build_rsa(), "RSA keys of 2048 and 1024 bits are made", "");
 

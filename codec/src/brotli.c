@@ -6,7 +6,7 @@
 #include "proven_internal_brotli.h"
 #if !defined(PROVEN_FREESTANDING) && (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__))
 #define BROTLI_BMI2 1
-#include "../../platform/proven_sys_cpu.h"
+#include "../platform/proven_sys_cpu.h"
 #else
 #define BROTLI_BMI2 0
 #endif

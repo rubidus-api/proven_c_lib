@@ -335,17 +335,21 @@ system - the **PAL**, or platform abstraction layer. Everything that makes a sys
 and nowhere else, which is why the rest of the library can be compiled for a target with no
 operating system at all.
 
-That is the base library, **proven_base**. The network library, **proven_net** - sockets, the event
-loop, TLS, HTTP/1.1, 2 and 3, WebSocket, server-sent events (chapters 9 to 12, 14, 15 and 17) -
-lives under `net/` and is compiled with it when a program uses the network (since v0.111.0):
+That is the base library, **proven_base**. Three more libraries sit on it, each compiled with it
+when a program uses it. **proven_crypto** under `crypto/` - SHA-2, HMAC, ciphers, key exchange,
+signatures, DER and certificates - and **proven_codec** under `codec/` - DEFLATE/gzip, Zstandard,
+Brotli - since v0.113.0; **proven_net** under `net/` - sockets, the event loop, TLS, HTTP/1.1, 2
+and 3, WebSocket, server-sent events (chapters 9 to 12, 14, 15 and 17) - since v0.111.0, standing
+on both of the others:
 
 ```text
-gcc -std=c2x -Iinclude -Iplatform -Inet/include your_program.c src/proven/*.c platform/*.c net/src/*.c net/platform/*.c -o your_program
+gcc -std=c2x -Iinclude -Iplatform -Icrypto/include -Icodec/include -Inet/include your_program.c src/proven/*.c platform/*.c crypto/src/*.c crypto/platform/*.c codec/src/*.c codec/platform/*.c net/src/*.c net/platform/*.c -o your_program
 ```
 
-Its header names are the same (`#include "proven/http.h"`), and `proven.h` includes them when
-`net/include` is on the path. proven_net uses nothing of proven_base but its public headers, so a
-program without networking leaves `net/` out entirely. A project moving across the split follows
+Header names are the same (`#include "proven/sign.h"`, `#include "proven/http.h"`), and `proven.h`
+includes each library's headers when its directory is on the path. Each uses nothing of the
+libraries below it but their public headers, so a program leaves out what it does not use. A
+project moving across the splits follows `docs/migrating-to-proven-crypto-and-codec.md` and
 `docs/migrating-to-proven-net.md`.
 
 The repository builds itself with a C program rather than a build system:
@@ -1007,7 +1011,8 @@ Two things this table tells you that the file names do not:
 | `ring.h` | Fixed-capacity FIFO ring | Chapter 4 |
 | `map.h` | Open-addressing map | Chapter 4 |
 | `algorithm.h` | Array sort and search helpers | Chapter 4 |
-| `hash.h` | FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512, by use case | Chapter 4 |
+| `hash.h` | FNV-1a, SipHash-2-4, CRC-32, by use case | Chapter 4 |
+| `sha2.h` | SHA-256, SHA-384, SHA-512 (proven_crypto, since v0.113.0; `hash.h` before) | Chapter 4 |
 | `hmac.h` | HMAC, HKDF and PBKDF2 over the SHA-2 family (and SHA-1, for old formats) | Chapters 4 and 13 |
 | `deflate.h` | DEFLATE compression and decompression, bare or as zlib or gzip; streaming, with the output bounded by the caller | Chapter 16 |
 | `zstd.h` | Zstandard decompression and compression (nineteen levels, dictionaries, long-distance matching), streaming, with the output and the window bounded by the caller | Chapter 16 |

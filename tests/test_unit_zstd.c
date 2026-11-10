@@ -1,5 +1,5 @@
 #include "proven.h"
-#include "../src/proven/proven_internal_zstd.h"
+#include "../codec/src/proven_internal_zstd.h"
 #include "proven_test.h"
 #include "test_unit_zstd_dict_vectors.h"
 #include "test_unit_zstd_vectors.h"
@@ -165,7 +165,7 @@ static proven_size_t zstream(const char *line, proven_byte_t *out) {
 int main(void) {
     PROVEN_TEST_SUITE("Zstandard decompression",
         "Decompress what libzstd made and refuse what libzstd refuses; stay inside the window limit and the output given; behave on input cut short, changed, or fed a byte at a time.",
-        "Inspect src/proven/zstd.c. For a vector, the letter and line number printed name it; tests/test_unit_zstd_vectors.h is written by a private generator that checks libzstd's verdict on every line.");
+        "Inspect codec/src/zstd.c. For a vector, the letter and line number printed name it; tests/test_unit_zstd_vectors.h is written by a private generator that checks libzstd's verdict on every line.");
     g_heap = proven_heap_allocator();
 
     PROVEN_TEST_SECTION("streams libzstd made, and hand-built ones", "Every line: decompressed in one call, a byte in and a byte out at a time, and in odd steps.", "Check proven_zstd_decode's state machine: the stepped forms stop and resume in every state.");
@@ -227,7 +227,7 @@ int main(void) {
 
     }
     proven_zstd_decode_force_plain_(false);
-    PROVEN_TEST_SECTION("damage", "Every prefix and every single-bit change of the short streams: refused, or decoded within the output given - and the same whole as in steps.", "A sanitizer report here is an out-of-bounds read or write in src/proven/zstd.c.");
+    PROVEN_TEST_SECTION("damage", "Every prefix and every single-bit change of the short streams: refused, or decoded within the output given - and the same whole as in steps.", "A sanitizer report here is an out-of-bounds read or write in codec/src/zstd.c.");
     /* Twice: the build the processor gets (BMI2 where it has it) and the plain one. */
     for (int plain = 0; plain < 2; ++plain) {
     proven_zstd_decode_force_plain_(plain != 0);
@@ -312,7 +312,7 @@ int main(void) {
             "a skippable frame alone is an empty stream; no bytes at all are not a stream", "");
     }
 
-    PROVEN_TEST_SECTION("bounds", "The window limit, the output given, and the memory a decoder holds.", "Check frame_header (the limit, before anything is allocated), make_room and grow in src/proven/zstd.c.");
+    PROVEN_TEST_SECTION("bounds", "The window limit, the output given, and the memory a decoder holds.", "Check frame_header (the limit, before anything is allocated), make_room and grow in codec/src/zstd.c.");
     {
         const proven_size_t big = zstream(zline(6, 1, 0), g_in);
         proven_size_t made = 0;
@@ -357,7 +357,7 @@ int main(void) {
 
     PROVEN_TEST_SECTION("decode_all into the caller's buffer",
         "A frame that states its size and fits is decoded straight into the caller's buffer: no history buffer is allocated, nothing past the buffer is written, and matches at every short distance copy right.",
-        "Check `lent` in src/proven/zstd.c (Z_HEADER, make_room, Z_DRAIN) and copy_match's short distances.");
+        "Check `lent` in codec/src/zstd.c (Z_HEADER, make_room, Z_DRAIN) and copy_match's short distances.");
     {
         /* Memory: a 200,000-byte frame that states its size (proven_zstd_encode_all's do), so
          * decode_all holds the decoder and a block's literals, not 200,000 bytes of history. */
@@ -432,7 +432,7 @@ int main(void) {
 
     PROVEN_TEST_SECTION("one call with the whole frame",
         "A frame that states its size, all of it in one call's input, with room for it in that call's output: decoded straight into the caller's buffer, as decode_all does - no history buffer allocated. A frame split over two calls is not, and its history survives the caller's reuse of the first call's buffer.",
-        "Check frame_here and the condition for `lent` in Z_HEADER of src/proven/zstd.c.");
+        "Check frame_here and the condition for `lent` in Z_HEADER of codec/src/zstd.c.");
     {
         /* 200,000 bytes of text in one frame that states its size. */
         corpus(6, g_plain);
@@ -488,7 +488,7 @@ int main(void) {
         proven_zstd_decoder_destroy(d);
     }
 
-    PROVEN_TEST_SECTION("dictionaries", "Four frames libzstd made with a dictionary it trained on the records of test_unit_zstd_dict_vectors.h - one record at level 3, twenty at 19, one with the dictionary's last 2,048 bytes as a raw one, one whose frame does not name the dictionary - decoded with it, in one call and a byte at a time, and two frames one after the other; a frame that names another dictionary, or any when none is set, refused; damaged dictionaries refused.", "Check proven_zstd_decoder_use_dictionary, dict_begin and the reach rule in sequences in src/proven/zstd.c.");
+    PROVEN_TEST_SECTION("dictionaries", "Four frames libzstd made with a dictionary it trained on the records of test_unit_zstd_dict_vectors.h - one record at level 3, twenty at 19, one with the dictionary's last 2,048 bytes as a raw one, one whose frame does not name the dictionary - decoded with it, in one call and a byte at a time, and two frames one after the other; a frame that names another dictionary, or any when none is set, refused; damaged dictionaries refused.", "Check proven_zstd_decoder_use_dictionary, dict_begin and the reach rule in sequences in codec/src/zstd.c.");
     {
         /* The records: as the private generator made them. */
         static char rec[3000 * 160];

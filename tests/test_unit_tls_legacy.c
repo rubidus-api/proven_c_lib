@@ -1,8 +1,8 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "../net/src/proven_internal_tls.h"
-#include "../src/proven/proven_internal_crypto.h"
-#include "../src/proven/proven_internal_cert_issue.h"
+#include "../crypto/src/proven_internal_crypto.h"
+#include "../crypto/src/proven_internal_cert_issue.h"
 
 /* crypto_rsa.c's test hook: the smallest modulus accepted, lowered for the 1024-bit vectors; 0 restores it. */
 void proven_crypto_rsa_test_min_bits(proven_size_t bits);
@@ -106,7 +106,7 @@ static bool pkcs1_type2_holds(const proven_byte_t *em, proven_size_t k, const pr
 int main(void) {
     PROVEN_TEST_SUITE("the legacy TLS set below the state machine",
         "AES-CBC, HMAC with MD5 and SHA-1, the PRF of TLS 1.0 and 1.1, CBC records, Diffie-Hellman and RSA key exchange: against values computed outside the library, and what each must refuse.",
-        "Inspect net/src/tls_legacy.c, src/proven/dh.c, the CBC functions of src/proven/crypto_aes.c and the key-exchange functions of src/proven/crypto_rsa.c. The failing line's letter names the function.");
+        "Inspect net/src/tls_legacy.c, crypto/src/dh.c, the CBC functions of crypto/src/crypto_aes.c and the key-exchange functions of crypto/src/crypto_rsa.c. The failing line's letter names the function.");
 
     (void)tp_build;                                               /* only the byte stream of that header is used here */
     PROVEN_TEST_SECTION("the script", "Every line of known answers, replayed.", "The letter printed names the kind of line; the header comment of this file lists them.");
@@ -261,7 +261,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(proven_tls_dh_exponent_len(256) == 32 && proven_tls_dh_exponent_len(384) == 36 && proven_tls_dh_exponent_len(512) == 44, "exponents are 256, 288 and 352 bits for primes of 2048, 3072 and 4096", "");
     }
 
-    PROVEN_TEST_SECTION("RSA for key exchange", "A client's premaster secret encrypted under the server's public key: opened here with the private exponent, it is 00 02, eight or more nonzero bytes, 00, and the premaster. (A server's half is not in this library.)", "Check proven_crypto_rsa_encrypt_pkcs1 in src/proven/crypto_rsa.c.");
+    PROVEN_TEST_SECTION("RSA for key exchange", "A client's premaster secret encrypted under the server's public key: opened here with the private exponent, it is 00 02, eight or more nonzero bytes, 00, and the premaster. (A server's half is not in this library.)", "Check proven_crypto_rsa_encrypt_pkcs1 in crypto/src/crypto_rsa.c.");
     {
         static proven_crypto_rsa_key_t key;
         static proven_crypto_rsa_blind_t blind;

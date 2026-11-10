@@ -537,7 +537,7 @@ int main(void) {
         }
     }
 
-    PROVEN_TEST_SECTION("context takeover", "A window kept from one message to the next, on both sides: the RFC's shared-window example, a final block between messages, and similar short messages.", "Check proven_ws_inflate_begin_ with a kept decompressor, the restart in proven_ws_inflate_step_, and proven_inflate_restart in src/proven/deflate.c.");
+    PROVEN_TEST_SECTION("context takeover", "A window kept from one message to the next, on both sides: the RFC's shared-window example, a final block between messages, and similar short messages.", "Check proven_ws_inflate_begin_ with a kept decompressor, the restart in proven_ws_inflate_step_, and proven_inflate_restart in codec/src/deflate.c.");
     {
         /* RFC 7692 7.2.3.2: "Hello", then "Hello" again as a match five bytes back - into the
          * message before. */

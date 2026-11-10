@@ -98,13 +98,13 @@ done
 # tests and its manual - not the generated site, and not the build directory.
 stage="$root/build/release/$version"
 rm -rf "$root/build/release"; mkdir -p "$stage"
-for item in include src platform net tests manual manual-ko scripts site nob.c nob.h \
+for item in include src platform crypto codec net tests manual manual-ko scripts site nob.c nob.h \
             build_headers.inc build_tests.inc build_sources.inc README.md README-ko.md LICENSE \
             THIRD_PARTY_NOTICES.md CHANGELOG.md TEST.md; do
     [ -e "$root/$item" ] && cp -r "$root/$item" "$stage/"
 done
 # The migration guide the READMEs link to (RFC-0043).
-mkdir -p "$stage/docs" && cp "$root/docs/migrating-to-proven-net.md" "$stage/docs/"
+mkdir -p "$stage/docs" && cp "$root/docs/migrating-to-proven-net.md" "$root/docs/migrating-to-proven-crypto-and-codec.md" "$stage/docs/"
 # zip where it exists; Python's zipfile where it does not (same archive layout).
 if command -v zip >/dev/null 2>&1; then
     ( cd "$root/build/release" && zip -qr "$dist/$version.zip" "$version" )

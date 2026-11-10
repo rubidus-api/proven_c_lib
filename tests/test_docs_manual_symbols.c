@@ -123,11 +123,15 @@ static void collect_real_from(const char *dir, bool is_public) {
  * manual references them when it explains where the platform boundary is. */
 static void collect_real(void) {
     collect_real_from("include/proven", true);
+    collect_real_from("crypto/include/proven", true);       /* the cryptography library (RFC-0045) */
+    collect_real_from("codec/include/proven", true);        /* the compression library (RFC-0045) */
     collect_real_from("net/include/proven", true);          /* the network library (RFC-0043) */
     /* The PAL is real - the manual references it when it explains the platform boundary, and a
      * reference to it is not a ghost. But it is an internal layer for porting and integration,
      * not the API a caller programs against, so it is NOT held to the coverage requirement. */
     collect_real_from("platform", false);
+    collect_real_from("crypto/platform", false);
+    collect_real_from("codec/platform", false);
     collect_real_from("net/platform", false);
 }
 

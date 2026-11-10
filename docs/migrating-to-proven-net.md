@@ -1,5 +1,10 @@
 # Migrating to the proven_base / proven_net split (v0.111.0)
 
+> **Since v0.113.0** the network library also needs **proven_crypto** and **proven_codec**, which
+> left proven_base then (RFC-0045). The build lines below are v0.111.0's: a project moving to
+> v0.113.0 or later follows [migrating-to-proven-crypto-and-codec.md](migrating-to-proven-crypto-and-codec.md)
+> as well, which gives the full lines.
+
 This guide is written to be followed by an automated agent working in a project that uses this
 library, as well as by a person. Every step says what to run, what result to expect, and what to
 do with each outcome. Do the steps in order; do not skip the checks.
@@ -113,8 +118,8 @@ network source's path from `src/proven/X.c` to `net/src/X.c` and `platform/prove
 `http_client`, `http_server`, `http_event`, `http_event_h2`, `http_event_h3`, `http_event_client`,
 `http_event_client_h2`, `http_event_client_h3`, `ws`, `ws_conn`, `ws_deflate`, `ws_event`,
 `ws_event_client`, `sse`, `net`, `loop`. Two files were renamed and stay in the base:
-`src/proven/tls_dh.c` is now `src/proven/dh.c`, and `src/proven/tls_issue.c` is now
-`src/proven/cert_issue.c`. A list that names `tls_dh.c` or `tls_issue.c` must use the new names.
+`src/proven/tls_dh.c` is now `crypto/src/dh.c`, and `src/proven/tls_issue.c` is now
+`crypto/src/cert_issue.c`. A list that names `tls_dh.c` or `tls_issue.c` must use the new names.
 
 A project that defined `PROVEN_NO_NET` to keep the network code out can now simply not compile
 `net/`; the macro still works if it compiles `net/` anyway.
@@ -169,6 +174,6 @@ and proven_net split)".
 | `undefined reference to 'proven_http_...'` / `'proven_tls_...'` / `'proven_sys_net_...'` | `net/src/*.c` or `net/platform/*.c` not compiled | Step 3, item 2 |
 | `undefined reference to 'proven_dh_...'` or `'proven_x25519'` from the network code | an old base copy beside a new `net/` | Re-vendor the whole tree from one release (step 2) |
 | `src/proven/tls13.c: No such file` in a build file list | the list names network sources by their old path | Step 3, the per-file list |
-| `src/proven/tls_dh.c` or `tls_issue.c: No such file` | the two renamed base files | `src/proven/dh.c`, `src/proven/cert_issue.c` |
+| `src/proven/tls_dh.c` or `tls_issue.c: No such file` | the two renamed base files | `crypto/src/dh.c`, `crypto/src/cert_issue.c` |
 | `undefined reference to 'WSAStartup'` (Windows) | Winsock not linked | add `-lws2_32` |
 | `unknown type name 'proven_transport_t'` in a file that includes `proven/tls.h` under `PROVEN_FREESTANDING` | the transport parts are hosted only, as before | unchanged behaviour: do not use them in a freestanding build |

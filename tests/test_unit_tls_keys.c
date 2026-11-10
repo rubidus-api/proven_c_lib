@@ -1,7 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "../net/src/proven_internal_tls.h"
-#include "../src/proven/proven_internal_crypto.h"
+#include "../crypto/src/proven_internal_crypto.h"
 #include "test_unit_tls_vectors.h"
 #include <stdio.h>
 #include <stdlib.h>

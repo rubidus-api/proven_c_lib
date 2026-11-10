@@ -29,25 +29,26 @@ PROVEN_BUILD_SOURCE("src/proven/ring.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/map.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/algorithm.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/hash.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/hash_legacy.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/hmac.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/deflate.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/zstd.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/zstd_encode.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/brotli.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/crypto_chacha.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/crypto_aes.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/crypto_mp.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/crypto_ec.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/crypto_25519.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/crypto_rsa.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/cert.c", PROVEN_SOURCE_FREESTANDING)
-PROVEN_BUILD_SOURCE("src/proven/der.c", PROVEN_SOURCE_FREESTANDING)   /* der.h: the strict DER reader and the writer */
-PROVEN_BUILD_SOURCE("src/proven/sign.c", PROVEN_SOURCE_FREESTANDING)   /* sign.h: private keys, signing and verification */
-PROVEN_BUILD_SOURCE("src/proven/aes.c", PROVEN_SOURCE_FREESTANDING)   /* aes.h: CBC and PKCS #7 padding */
-PROVEN_BUILD_SOURCE("src/proven/aead.c", PROVEN_SOURCE_FREESTANDING)   /* aead.h: AES-GCM, ChaCha20-Poly1305, raw ChaCha20 and AES */
-PROVEN_BUILD_SOURCE("src/proven/kex.c", PROVEN_SOURCE_FREESTANDING)   /* kex.h: X25519, ECDH */
-PROVEN_BUILD_SOURCE("src/proven/dh.c", PROVEN_SOURCE_FREESTANDING)   /* kex.h: finite-field DH over six known groups */
+PROVEN_BUILD_SOURCE("crypto/src/sha2.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("crypto/src/hash_legacy.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("crypto/src/hmac.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("codec/src/deflate.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("codec/src/zstd.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("codec/src/zstd_encode.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("codec/src/brotli.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("crypto/src/crypto_chacha.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("crypto/src/crypto_aes.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("crypto/src/crypto_mp.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("crypto/src/crypto_ec.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("crypto/src/crypto_25519.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("crypto/src/crypto_rsa.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("crypto/src/cert.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("crypto/src/der.c", PROVEN_SOURCE_FREESTANDING)   /* der.h: the strict DER reader and the writer */
+PROVEN_BUILD_SOURCE("crypto/src/sign.c", PROVEN_SOURCE_FREESTANDING)   /* sign.h: private keys, signing and verification */
+PROVEN_BUILD_SOURCE("crypto/src/aes.c", PROVEN_SOURCE_FREESTANDING)   /* aes.h: CBC and PKCS #7 padding */
+PROVEN_BUILD_SOURCE("crypto/src/aead.c", PROVEN_SOURCE_FREESTANDING)   /* aead.h: AES-GCM, ChaCha20-Poly1305, raw ChaCha20 and AES */
+PROVEN_BUILD_SOURCE("crypto/src/kex.c", PROVEN_SOURCE_FREESTANDING)   /* kex.h: X25519, ECDH */
+PROVEN_BUILD_SOURCE("crypto/src/dh.c", PROVEN_SOURCE_FREESTANDING)   /* kex.h: finite-field DH over six known groups */
 PROVEN_BUILD_SOURCE("net/src/tls_keys.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("net/src/tls12_keys.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("net/src/tls_legacy.c", PROVEN_SOURCE_FREESTANDING)
@@ -58,7 +59,7 @@ PROVEN_BUILD_SOURCE("net/src/quic_frame.c", PROVEN_SOURCE_FREESTANDING)   /* QUI
 PROVEN_BUILD_SOURCE("net/src/quic_conn.c", PROVEN_SOURCE_FREESTANDING)   /* a QUIC connection: streams, loss recovery, NewReno, no socket; empty under PROVEN_NO_HTTP3 */
 PROVEN_BUILD_SOURCE("net/src/qpack.c", PROVEN_SOURCE_FREESTANDING)   /* QPACK with a dynamic table of capacity 0; empty under PROVEN_NO_HTTP3 */
 PROVEN_BUILD_SOURCE("net/src/h3_conn.c", PROVEN_SOURCE_FREESTANDING)   /* an HTTP/3 connection over a QUIC one, no socket; empty under PROVEN_NO_HTTP3 */
-PROVEN_BUILD_SOURCE("src/proven/cert_issue.c", PROVEN_SOURCE_FREESTANDING)   /* certificates and keys written, for tests (proven_internal_cert_issue.h) */
+PROVEN_BUILD_SOURCE("crypto/src/cert_issue.c", PROVEN_SOURCE_FREESTANDING)   /* certificates and keys written, for tests (proven_internal_cert_issue.h) */
 PROVEN_BUILD_SOURCE("net/src/tls_transport.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the engine over a transport */
 PROVEN_BUILD_SOURCE("net/src/loop.c", PROVEN_SOURCE_HOSTED_ONLY)   /* an event loop over the selector */
 PROVEN_BUILD_SOURCE("net/src/http_event.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the event-driven HTTP server */
@@ -69,7 +70,7 @@ PROVEN_BUILD_SOURCE("net/src/ws_event_client.c", PROVEN_SOURCE_HOSTED_ONLY)   /*
 PROVEN_BUILD_SOURCE("net/src/http_event_client.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the event-driven HTTP client */
 PROVEN_BUILD_SOURCE("net/src/http_event_client_h2.c", PROVEN_SOURCE_HOSTED_ONLY)   /* HTTP/2 in the event-driven client: connections kept, requests on them */
 PROVEN_BUILD_SOURCE("net/src/http_event_client_h3.c", PROVEN_SOURCE_HOSTED_ONLY)   /* HTTP/3 in the event-driven client: a QUIC connection per origin on a UDP socket of its own, the driver of h3_conn; empty under PROVEN_NO_HTTP3 */
-PROVEN_BUILD_SOURCE("src/proven/cert_system.c", PROVEN_SOURCE_HOSTED_ONLY)   /* reads the system trust store */
+PROVEN_BUILD_SOURCE("crypto/src/cert_system.c", PROVEN_SOURCE_HOSTED_ONLY)   /* reads the system trust store */
 PROVEN_BUILD_SOURCE("src/proven/encode.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/utf.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("src/proven/url.c", PROVEN_SOURCE_FREESTANDING)
@@ -104,10 +105,10 @@ PROVEN_BUILD_SOURCE("platform/proven_sys_fs.c", PROVEN_SOURCE_HOSTED_ONLY)
 PROVEN_BUILD_SOURCE("platform/proven_sys_time.c", PROVEN_SOURCE_HOSTED_ONLY)
 PROVEN_BUILD_SOURCE("net/platform/proven_sys_net.c", PROVEN_SOURCE_HOSTED_ONLY)
 PROVEN_BUILD_SOURCE("platform/proven_sys_env.c", PROVEN_SOURCE_HOSTED_ONLY)
-PROVEN_BUILD_SOURCE("platform/proven_sys_trust.c", PROVEN_SOURCE_HOSTED_ONLY)
-PROVEN_BUILD_SOURCE("platform/proven_sys_aes.c", PROVEN_SOURCE_HOSTED_ONLY)   /* hardware AES; the freestanding build is portable only */
-PROVEN_BUILD_SOURCE("platform/proven_sys_chacha.c", PROVEN_SOURCE_HOSTED_ONLY)   /* ChaCha20 on vector lanes; the freestanding build is portable only */
-PROVEN_BUILD_SOURCE("platform/proven_sys_cpu.c", PROVEN_SOURCE_HOSTED_ONLY)   /* processor features asked at run time; the freestanding build asks none */
+PROVEN_BUILD_SOURCE("crypto/platform/proven_sys_trust.c", PROVEN_SOURCE_HOSTED_ONLY)
+PROVEN_BUILD_SOURCE("crypto/platform/proven_sys_aes.c", PROVEN_SOURCE_HOSTED_ONLY)   /* hardware AES; the freestanding build is portable only */
+PROVEN_BUILD_SOURCE("crypto/platform/proven_sys_chacha.c", PROVEN_SOURCE_HOSTED_ONLY)   /* ChaCha20 on vector lanes; the freestanding build is portable only */
+PROVEN_BUILD_SOURCE("codec/platform/proven_sys_cpu.c", PROVEN_SOURCE_HOSTED_ONLY)   /* processor features asked at run time; the freestanding build asks none */
 PROVEN_BUILD_SOURCE("platform/proven_sys_random.c", PROVEN_SOURCE_HOSTED_ONLY)   /* no OS CSPRNG on bare metal */
 PROVEN_BUILD_SOURCE("platform/proven_sys_thread.c", PROVEN_SOURCE_HOSTED_ONLY)
 PROVEN_BUILD_SOURCE("platform/proven_sys_io.c", PROVEN_SOURCE_HOSTED_ONLY)

@@ -12,7 +12,7 @@
 
 #include "proven.h"
 #include "../net/src/proven_internal_tls.h"
-#include "../src/proven/proven_internal_cert_issue.h"
+#include "../crypto/src/proven_internal_cert_issue.h"
 #include <string.h>
 
 /* 2027-06-01 and 2029-06-01, seconds since 1970 */

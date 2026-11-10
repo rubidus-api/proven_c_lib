@@ -32,7 +32,7 @@ static bool hex_eq(const proven_byte_t *bytes, proven_size_t n, const char *hex)
 int main(void) {
     PROVEN_TEST_SUITE("legacy digests: SHA-1 and MD5",
         "Two broken digests that formats still name - each against its own published vectors.",
-        "Inspect src/proven/hash_legacy.c. A mismatch means the implementation disagrees with the standard, not merely with itself.");
+        "Inspect crypto/src/hash_legacy.c. A mismatch means the implementation disagrees with the standard, not merely with itself.");
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("SHA-1: the FIPS 180-4 vectors",

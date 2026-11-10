@@ -1,4 +1,4 @@
-# Proven Freestanding Mode (v0.112.6)
+# Proven Freestanding Mode (v0.113.0)
 
 **Part VI - Going further. Prerequisites: Parts II-V, and
 [Chapter 6](manual-06-execution-and-platform.md).**
@@ -116,8 +116,8 @@ src/proven/ring.c
 src/proven/map.c
 src/proven/algorithm.c
 src/proven/hash.c
-src/proven/hash_legacy.c
-src/proven/hmac.c
+crypto/src/hash_legacy.c
+crypto/src/hmac.c
 src/proven/utf.c
 src/proven/url.c
 net/src/http.c
@@ -194,9 +194,9 @@ on every release, not asserted in this table.
 | `u16str.h` | Excluded | Current profile defines `PROVEN_NO_U16STR`. |
 | `array.h`, `list.h`, `ring.h`, `map.h` | Available | No hidden OS dependency. |
 | `algorithm.h` | Available | Sort/search helpers for arrays. |
-| `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32, SHA-256 - byte-exact, no OS dependency. CRC-32 uses eight 256-entry tables (8 KiB of read-only data) by default; build the library with `-DPROVEN_CRC32_SMALL=1` to keep one 1 KiB table, about 5x slower on long inputs, same output. |
+| `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32 (SHA-256 is `sha2.h`, proven_crypto, since v0.113.0) - byte-exact, no OS dependency. CRC-32 uses eight 256-entry tables (8 KiB of read-only data) by default; build the library with `-DPROVEN_CRC32_SMALL=1` to keep one 1 KiB table, about 5x slower on long inputs, same output. |
 | `hash_legacy.h` | Available | SHA-1 and MD5, for formats that fix them (the WebSocket accept key, old checksum files). Same shape as SHA-256; no table larger than MD5's 64 constants. |
-| `hmac.h` | Available | HMAC, HKDF and PBKDF2 over SHA-256, SHA-384 and SHA-512 (the last two are in `hash.h`), and SHA-1. Pure arithmetic. `proven_mem_equal_ct` and `proven_mem_wipe`, which go with them, are in `memory.h`. |
+| `hmac.h` | Available | HMAC, HKDF and PBKDF2 over SHA-256, SHA-384 and SHA-512 (all three in `sha2.h`), and SHA-1. Pure arithmetic. `proven_mem_equal_ct` and `proven_mem_wipe`, which go with them, are in `memory.h`. |
 | `deflate.h` | Available | DEFLATE, zlib and gzip, both ways. Pure arithmetic; one allocation per compressor (about 325 KiB at the default window, 11 KiB at the smallest) or decompressor (about 35 KiB), through the allocator you pass. |
 | `zstd.h` | Available | Zstandard, both ways. Pure arithmetic. A decoder is about 16 KiB, and while a frame is decoded its window (at most the limit you set, 8 MiB by default) plus up to 384 KiB, grown as its output grows; an encoder its hash tables (64 KiB to 1 MiB by level), about 500 KiB for a block and, for a stream, an input buffer of one and a half windows - all through the allocator you pass. Decoder and encoder are separate objects: a program that only reads links no encoder. |
 | `brotli.h` | Available | Brotli decompression. Pure arithmetic. A decoder is about 24 KiB, and while a stream is decoded its history (as much of the stream's window as its output has reached: 16 MiB at most) and its prefix codes (1.3 MiB at most), grown as needed through the allocator you pass. The 122,784-byte static dictionary is part of it; `-DPROVEN_NO_BROTLI` leaves both out. |

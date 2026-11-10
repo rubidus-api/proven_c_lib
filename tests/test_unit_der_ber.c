@@ -17,7 +17,7 @@ static bool conv(const proven_byte_t *in, proven_size_t n, proven_err_t want_err
 int main(void) {
     PROVEN_TEST_SUITE("der.h: BER to DER, the rewrite PKCS#12 files need",
         "RFC-0044: indefinite lengths made definite, lengths shortest, constructed OCTET STRINGs joined; everything else as it was; the inputs refused are those of the converter rubrapack used before.",
-        "A failure names the case. Inspect proven_der_from_ber at the end of src/proven/der.c; byte-identity with rubrapack's converter is the private ber-diff check.");
+        "A failure names the case. Inspect proven_der_from_ber at the end of crypto/src/der.c; byte-identity with rubrapack's converter is the private ber-diff check.");
 
     PROVEN_TEST_SECTION("what is rewritten", "Indefinite lengths, long lengths, constructed OCTET STRINGs.", "");
     {

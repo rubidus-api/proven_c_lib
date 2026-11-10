@@ -42,7 +42,7 @@ static void pattern(proven_byte_t *out, proven_size_t n) {
 int main(void) {
     PROVEN_TEST_SUITE("SHA-384, SHA-512, HMAC and HKDF",
         "The published vectors, the padding boundaries, independence from chunking, and the refusals.",
-        "Inspect the SHA-512 section of src/proven/hash.c and src/proven/hmac.c. A mismatch means disagreement with the standard, not merely with an earlier version.");
+        "Inspect the SHA-512 section of src/proven/hash.c and crypto/src/hmac.c. A mismatch means disagreement with the standard, not merely with an earlier version.");
 
     static proven_byte_t buf[1024];
     proven_byte_t d[PROVEN_SHA512_SIZE];

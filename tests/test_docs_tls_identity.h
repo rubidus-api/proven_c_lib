@@ -8,7 +8,7 @@
  * repository holds no key; this is how the examples stay run by the suite.
  */
 #include "../net/src/proven_internal_tls.h"
-#include "../src/proven/proven_internal_cert_issue.h"
+#include "../crypto/src/proven_internal_cert_issue.h"
 
 static bool tls_identity_files(const char *cert_path, const char *key_path) {
     proven_allocator_t heap = proven_heap_allocator();

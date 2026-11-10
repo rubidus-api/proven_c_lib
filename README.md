@@ -1,4 +1,4 @@
-[한국어](README-ko.md) | **English** - **Proven C library v0.112.6** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.112.6/proven_c_lib-v0.112.6.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.112.6/proven_c_lib-v0.112.6-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.112.6/proven_c_lib-v0.112.6-ko-manual.pdf)
+[한국어](README-ko.md) | **English** - **Proven C library v0.113.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.113.0/proven_c_lib-v0.113.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.113.0/proven_c_lib-v0.113.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.113.0/proven_c_lib-v0.113.0-ko-manual.pdf)
 
 # Proven C library
 
@@ -27,7 +27,7 @@ than looked up.
 programs, each adding one idea: printing, text with a length, errors as values, allocators, arenas,
 a container and a file. Chapter 0 is the place to go after it.
 
-- Version: proven_c_lib-v0.112.6 | Standard: C23 | License: MIT
+- Version: proven_c_lib-v0.113.0 | Standard: C23 | License: MIT
 - Versions are semantic, `MAJOR.MINOR.PATCH`, from v0.0.1 (2026-09-04); the releases before it carry
   date-based numbers (`v26.MM.DDx`) and stay as they were published.
 - Seven functions named `*_internal` or `*_impl` sit in public headers because macros call them;
@@ -494,12 +494,25 @@ cc -std=c23 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L \
   -pthread -o app
 ```
 
-A program that uses the network library (sockets, TLS, HTTP, WebSocket) adds its directory:
+A program that uses the cryptography library (hashes beyond CRC-32, ciphers, signatures,
+certificates) or the compression library (DEFLATE/gzip, Zstandard, Brotli) adds its directory
+(since v0.113.0):
 
 ```sh
 cc -std=c23 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L \
-  -Iinclude -Iplatform -Inet/include \
-  app.c src/proven/*.c platform/proven_sys_*.c net/src/*.c net/platform/*.c \
+  -Iinclude -Iplatform -Icrypto/include -Icodec/include \
+  app.c src/proven/*.c platform/proven_sys_*.c crypto/src/*.c crypto/platform/*.c codec/src/*.c codec/platform/*.c \
+  -pthread -o app
+```
+
+A program that uses the network library (sockets, TLS, HTTP, WebSocket) adds its directory as well;
+the network library stands on both of the others:
+
+```sh
+cc -std=c23 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L \
+  -Iinclude -Iplatform -Icrypto/include -Icodec/include -Inet/include \
+  app.c src/proven/*.c platform/proven_sys_*.c crypto/src/*.c crypto/platform/*.c codec/src/*.c codec/platform/*.c \
+  net/src/*.c net/platform/*.c \
   -pthread -o app
 ```
 
@@ -683,21 +696,24 @@ This split keeps the core library easier to audit and gives ports a clear place 
 
 Cross compilation shows that headers, source visibility, ABI assumptions, and compile-time platform branches line up. It does not replace runtime tests on the target machine.
 
-## Two libraries: proven_base and proven_net
+## Four libraries: proven_base, proven_crypto, proven_codec and proven_net
 
-The tree holds two libraries under one version. **proven_base** - `include/proven/`, `src/proven/`,
-`platform/` - is everything a program needs that does not talk to a network: memory, strings,
-containers, text, numbers, files, time, jobs, compression, hashes, certificates, signatures and
-the ciphers. **proven_net** - `net/include/proven/`, `net/src/`, `net/platform/` - is sockets, the
-event loop, TLS, HTTP/1.1, HTTP/2, HTTP/3 over QUIC, WebSocket and server-sent events. It uses
-nothing of proven_base but its public headers (a test holds that line), and proven_base knows
-nothing of it.
+The tree holds four libraries under one version. **proven_base** - `include/proven/`, `src/proven/`,
+`platform/` - is memory, strings, containers, text, numbers, files, time, jobs, the random
+generators, CRC-32 and the table hashes. **proven_crypto** - `crypto/` - is SHA-2, HMAC and the
+legacy hashes, AES and the AEAD ciphers, key exchange, signing keys, DER and X.509 certificates.
+**proven_codec** - `codec/` - is DEFLATE with zlib and gzip framing, Zstandard and Brotli.
+**proven_net** - `net/` - is sockets, the event loop, TLS, HTTP/1.1, HTTP/2, HTTP/3 over QUIC,
+WebSocket and server-sent events. Each uses nothing of the ones below it but their public headers
+(tests hold those lines): crypto and codec stand on the base alone, the network library on all
+three, and the base knows nothing of any of them.
 
-A program that does not use the network vendors and compiles proven_base alone, as before. One
-that does adds `-Inet/include` and the `net/` sources. Header names did not change -
-`#include "proven/http.h"` - and `proven.h` includes the network headers too when `net/include` is
-on the path. Moving an existing project across the split, step by step and checkable, is
-[docs/migrating-to-proven-net.md](docs/migrating-to-proven-net.md).
+A program compiles the base and whichever of the others it uses: each adds its `include/`
+directory and its `src/` and `platform/` sources. Header names did not change -
+`#include "proven/sign.h"`, `#include "proven/http.h"` - and `proven.h` includes each library's
+headers when its directory is on the path. Moving an existing project across the splits, step by
+step and checkable: [docs/migrating-to-proven-crypto-and-codec.md](docs/migrating-to-proven-crypto-and-codec.md)
+(v0.113.0) and [docs/migrating-to-proven-net.md](docs/migrating-to-proven-net.md) (v0.111.0).
 
 ## The modules
 

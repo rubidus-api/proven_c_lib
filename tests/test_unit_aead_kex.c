@@ -63,10 +63,10 @@ static void abc_block(proven_byte_t *b, proven_size_t block, bool little) {
 int main(void) {
     PROVEN_TEST_SUITE("aead.h, kex.h and the v0.111.0 additions to sign.h and the hashes",
         "Run RFC 8439's, FIPS 197's, the GCM cases', RFC 7748's and RFC 8032's vectors through the public AEAD, cipher, X25519 and Ed25519 functions; agree ECDH and finite-field DH keys both ways; check ECDSA from a scalar against a key's, and the compression functions against the hashes.",
-        "Inspect src/proven/aead.c, src/proven/kex.c, src/proven/dh.c and the v0.111.0 functions at the end of src/proven/sign.c; the arithmetic itself is test_unit_crypto's business.");
+        "Inspect crypto/src/aead.c, crypto/src/kex.c, crypto/src/dh.c and the v0.111.0 functions at the end of crypto/src/sign.c; the arithmetic itself is test_unit_crypto's business.");
 
     PROVEN_TEST_SECTION("ChaCha20-Poly1305 and ChaCha20", "Every case seals to the expected bytes and opens; a changed tag is PROVEN_ERR_UNTRUSTED with zeros left; the raw stream matches.",
-        "Check proven_chacha20_poly1305_seal/open and proven_chacha20 in src/proven/aead.c.");
+        "Check proven_chacha20_poly1305_seal/open and proven_chacha20 in crypto/src/aead.c.");
     {
         proven_size_t good = 0;
         for (proven_size_t i = 0; i < COUNT(CRV_CHACHA); ++i) {
@@ -92,7 +92,7 @@ int main(void) {
     }
 
     PROVEN_TEST_SECTION("AES-GCM and the AES block", "The GCM cases seal and open; one-block cases (FIPS 197) through proven_aes_encrypt_block; keys of 16 and 32 bytes only.",
-        "Check proven_aes_gcm_init/seal/open and proven_aes_init/encrypt_block in src/proven/aead.c.");
+        "Check proven_aes_gcm_init/seal/open and proven_aes_init/encrypt_block in crypto/src/aead.c.");
     {
         proven_size_t gcm = 0, gcm_good = 0, blocks = 0, blocks_good = 0;
         for (proven_size_t i = 0; i < COUNT(CRV_GCM); ++i) {
@@ -131,7 +131,7 @@ int main(void) {
     }
 
     PROVEN_TEST_SECTION("X25519 and Ed25519", "RFC 7748's and RFC 8032's cases and the rest of the set; a small-order point is PROVEN_ERR_UNTRUSTED; a changed signature is refused.",
-        "Check proven_x25519 in src/proven/kex.c and the Ed25519 functions at the end of src/proven/sign.c.");
+        "Check proven_x25519 in crypto/src/kex.c and the Ed25519 functions at the end of crypto/src/sign.c.");
     {
         proven_size_t x = 0, x_good = 0, e = 0, e_good = 0;
         for (proven_size_t i = 0; i < COUNT(CRV_X25519); ++i) {
@@ -162,7 +162,7 @@ int main(void) {
     }
 
     PROVEN_TEST_SECTION("ECDH and ECDSA from a scalar", "Two keys agree both ways on P-256 and P-384; a point off the curve and a zero scalar are PROVEN_ERR_INVALID_FORMAT; ECDSA from a scalar gives a key's own signature.",
-        "Check proven_ec_public and proven_ecdh in src/proven/kex.c, and proven_ecdsa_sign_scalar in src/proven/sign.c.");
+        "Check proven_ec_public and proven_ecdh in crypto/src/kex.c, and proven_ecdsa_sign_scalar in crypto/src/sign.c.");
     {
         for (int curve = 0; curve < 2; ++curve) {
             const proven_pkey_kind_t kind = curve ? PROVEN_PKEY_P384 : PROVEN_PKEY_P256;
@@ -206,7 +206,7 @@ int main(void) {
     }
 
     PROVEN_TEST_SECTION("finite-field Diffie-Hellman", "Both sides agree over ffdhe2048; only the six primes with generator 2; peer values 0, 1 and p-1 refused.",
-        "Check src/proven/dh.c.");
+        "Check crypto/src/dh.c.");
     {
         const proven_mem_view_t p = proven_dh_ffdhe2048();
         static const proven_byte_t two = 2, three = 3;
@@ -235,7 +235,7 @@ int main(void) {
     }
 
     PROVEN_TEST_SECTION("the hashes' compression functions", "One block of \"abc\", padded by hand, from each initial state gives the hash's own digest.",
-        "Check proven_sha256_compress and proven_sha512_compress in src/proven/hash.c, proven_sha1_compress and proven_md5_compress in src/proven/hash_legacy.c.");
+        "Check proven_sha256_compress and proven_sha512_compress in src/proven/hash.c, proven_sha1_compress and proven_md5_compress in crypto/src/hash_legacy.c.");
     {
         proven_byte_t block[128], want[64], got[64];
         proven_u32 s256[8] = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 };
