@@ -18,6 +18,10 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.112.4] - 2026-11-10
+
+One change in the library: the Zstandard decoder's literal copy.
+
 ### Changed
 
 - Zstandard decoder: a sequence's literals are copied sixteen bytes at a time even when it has
