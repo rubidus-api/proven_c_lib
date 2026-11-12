@@ -2,6 +2,11 @@
 #include "proven_test.h"
 #include <string.h>
 
+/* 0.1 + 0.2 as a double adds them: 0x1.3333333333334p-2, "0.30000000000000004". Written as the
+ * literal, not the sum - on i686 the sum is taken in x87's 80 bits and rounded twice, which can
+ * give the double nearest 0.3 instead (seen 2026-11-12 on the Windows i686 run). */
+#define SUM_01_02 0x1.3333333333334p-2
+
 #include "test_unit_fmt_general_vectors.h"
 
 /*
@@ -57,8 +62,8 @@ int main(void) {
 
     PROVEN_TEST_SECTION("the cases a reader checks first", "0.1 + 0.2, the six-digit default, and {:r} beside {:g}.", "");
     {
-        EQ("{:g}", proven_arg_f64(0.1 + 0.2), "0.3");
-        EQ("{:r}", proven_arg_f64(0.1 + 0.2), "0.30000000000000004");
+        EQ("{:g}", proven_arg_f64(SUM_01_02), "0.3");
+        EQ("{:r}", proven_arg_f64(SUM_01_02), "0.30000000000000004");
         EQ("{:g}", proven_arg_f64(3.14159265358979), "3.14159");
         EQ("{:.17g}", proven_arg_f64(0.1), "0.10000000000000001");
         EQ("{:g}", proven_arg_f64(999999.5), "1e+06");       /* the exponent of the ROUNDED value */
@@ -120,7 +125,7 @@ int main(void) {
         char out[64];
         proven_size_t n = 0;
         proven_float_format_options_t o = proven_float_format_options_general();
-        PROVEN_TEST_ASSERT(proven_is_ok(proven_float_format_f64_policy(out, sizeof out, 0.1 + 0.2, PROVEN_FLOAT_FORMAT_POLICY_DEFAULT, o, &n)) &&
+        PROVEN_TEST_ASSERT(proven_is_ok(proven_float_format_f64_policy(out, sizeof out, SUM_01_02, PROVEN_FLOAT_FORMAT_POLICY_DEFAULT, o, &n)) &&
                            n == 3 && strcmp(out, "0.3") == 0, "six significant digits by default", "");
         o.precision = 0;
         PROVEN_TEST_ASSERT(proven_is_ok(proven_float_format_f64_policy(out, sizeof out, 25.0, PROVEN_FLOAT_FORMAT_POLICY_DEFAULT, o, &n)) &&

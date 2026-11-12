@@ -2,6 +2,11 @@
 #include "proven_test.h"
 #include <string.h>
 
+/* 0.1 + 0.2 as a double adds them: 0x1.3333333333334p-2, "0.30000000000000004". Written as the
+ * literal, not the sum - on i686 the sum is taken in x87's 80 bits and rounded twice, which can
+ * give the double nearest 0.3 instead (seen 2026-11-12 on the Windows i686 run). */
+#define SUM_01_02 0x1.3333333333334p-2
+
 /*
  * The format spec grammar.
  *
@@ -64,8 +69,8 @@ int main(void) {
 
     /* Shortest round-trip. */
     EXPECT("{:g}",   PROVEN_ARG(0.1), "0.1");
-    EXPECT("{:r}",   PROVEN_ARG(0.1 + 0.2), "0.30000000000000004");
-    EXPECT("{:g}",   PROVEN_ARG(0.1 + 0.2), "0.3");
+    EXPECT("{:r}",   PROVEN_ARG(SUM_01_02), "0.30000000000000004");
+    EXPECT("{:g}",   PROVEN_ARG(SUM_01_02), "0.3");
 
     /* And now a column actually lines up. This is the whole point. */
     EXPECT("{:>9.2}", PROVEN_ARG(12.5),   "    12.50");
