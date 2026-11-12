@@ -137,6 +137,8 @@ int main(void) {
         o.precision = -1;
         PROVEN_TEST_ASSERT(proven_float_format_f64_policy(out, sizeof out, 1.0, PROVEN_FLOAT_FORMAT_POLICY_DEFAULT, o, &n) == PROVEN_ERR_INVALID_ARG,
                            "a negative precision is refused", "");
+        PROVEN_TEST_ASSERT(proven_float_format_f64_policy(out, sizeof out, 1e308 * 10.0, PROVEN_FLOAT_FORMAT_POLICY_DEFAULT, o, &n) == PROVEN_ERR_INVALID_ARG,
+                           "and refused for infinity too: the options are checked before the value", "");
     }
 
     PROVEN_TEST_SECTION("the scanner's float letters", "{:f}, {:e}, {:E}, {:g}, {:G} read a double as {} does - every spelling the formatter writes, inf and nan included; on any other destination they are refused.",

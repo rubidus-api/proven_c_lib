@@ -594,7 +594,7 @@ The type letters are printf's, and write what printf writes, digit for digit:
   keeps its trailing zeros (`{:#g}` on 2.0 is `2.00000`).
 - Under the letters `f`, `e`, `g`, infinity and NaN are printf's: `inf`, `-inf`, `nan`, `-nan`
   (a NaN with its sign bit set, as glibc writes it), `INF` and `NAN` under `E` and `G`, padded
-  with spaces under a `0` flag. `{}` and `{:r}` write `Inf`, `-Inf` and `NaN`.
+  with spaces under a `0` flag or fill. `{}` and `{:r}` write `Inf`, `-Inf` and `NaN`.
 
 Until v26.07.12i **none of these existed**: every float came out with exactly six
 decimals, forever. The exact engine could always do all of it - the `{}` grammar

@@ -534,6 +534,19 @@ static proven_err_t proven_float_format_dispatch_f64(char *buf, proven_size_t bu
         return PROVEN_ERR_INVALID_ARG;
     }
 
+    /* The options are checked before any value is: an invalid mode or precision is refused for
+     * infinity and NaN too. */
+    if (opt.mode != PROVEN_FLOAT_FORMAT_MODE_FIXED && opt.mode != PROVEN_FLOAT_FORMAT_MODE_SHORTEST &&
+        opt.mode != PROVEN_FLOAT_FORMAT_MODE_SCIENTIFIC && opt.mode != PROVEN_FLOAT_FORMAT_MODE_GENERAL) {
+        return PROVEN_ERR_INVALID_ARG;
+    }
+    if (opt.mode != PROVEN_FLOAT_FORMAT_MODE_SHORTEST &&
+        (opt.precision < 0 || opt.precision > PROVEN_FLOAT_FMT_PRECISION_MAX)) {
+        return PROVEN_ERR_INVALID_ARG;
+    }
+    if (opt.mode == PROVEN_FLOAT_FORMAT_MODE_SHORTEST && policy != PROVEN_FLOAT_FORMAT_POLICY_RYU) {
+        return PROVEN_ERR_UNSUPPORTED;
+    }
     if (opt.printf_specials) {
         proven_u64 bits = proven_float_bits_f64(value);
         if (((bits >> 52) & 0x7ffull) == 0x7ffull) {
