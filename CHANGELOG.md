@@ -18,6 +18,38 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+printf's `%g` in the formatter (RFC-0046), asked for by a project that prints results with
+`%g` and compares them with the C library's. **One breaking change: `{:g}` now means printf's
+`%g`; the shortest round-trip form is `{:r}`.**
+
+### Changed
+
+- **`{:g}` is printf's `%g`**: six significant digits by default, `{:.Ng}` N of them (it used to
+  ignore N), the fixed or the scientific form by the exponent of the value rounded to them, trailing
+  zeros removed - 0.1 + 0.2 is `0.3`, 999999.5 is `1e+06`. It was the shortest form that reads
+  back (`0.30000000000000004`), which moves to `{:r}`. **Migrating:** a `{:g}` whose output is
+  read back by a program (serialization, a round-trip) becomes `{:r}`; one shown to a person can
+  stay.
+- Under the printf letters `f`, `e` and `g` infinity and NaN are printf's spellings, `inf`,
+  `-inf`, `nan`, and `-nan` for a NaN whose sign bit is set (they were `Inf`, `-Inf`, `NaN`,
+  which `{}` and `{:r}` keep). Under a `0` flag infinity and NaN are padded with spaces, as
+  printf pads them, in every float form (`{:08}` on infinity was `00000Inf`).
+
+### Added
+
+- `{:G}` and `{:E}` (printf's `%G` and `%E`: `E` in the exponent, `INF` and `NAN`).
+- `#` on `{:f}`, `{:e}` and `{:g}`: printf's alternative form (the point always written; `g` keeps
+  its trailing zeros). Where glibc 2.41's `%#g` loses the zeros because rounding carried into a new
+  digit (`%#g` on 999999.5 gives `1.e+06`), this library writes C17's `1.00000e+06`.
+- `{:r}`: the shortest form that reads back. A precision or `#` on it is refused.
+- `proven_float_format`: `PROVEN_FLOAT_FORMAT_MODE_GENERAL`, `proven_float_format_options_general()`,
+  and the option flags `alternate`, `uppercase` and `printf_specials`.
+- The scanner takes scanf's float letters `{:f}`, `{:e}`, `{:E}`, `{:g}`, `{:G}` on a double
+  argument, read as `{}` reads it; on any other argument they are `PROVEN_ERR_INVALID_FORMAT`.
+- `tests/test_unit_fmt_general`: 660 vectors against C17's rules (equal to glibc's), the
+  special values, the refusals, the GENERAL mode, and the scanner's letters with a write-read
+  round trip.
+
 ## [0.113.0] - 2026-11-10
 
 Cryptography, certificates and compression leave proven_base for two libraries of their own, as

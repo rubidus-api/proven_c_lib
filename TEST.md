@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 138 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 139 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -350,7 +350,7 @@ Last run, 2026-11-10, Windows 11 test VM (v0.113.0, the RFC-0045 split): x86-64 
 ## Test catalog
 
 
-The hosted full run builds and executes 209 registered tests plus the 194 runnable manual examples - 403 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 222 test files: the 209 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 210 registered tests plus the 194 runnable manual examples - 404 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 223 test files: the 210 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -563,7 +563,7 @@ Intent: verify precision, bases, case, alternate form, sign, `char` and `bool` -
 
 Sub-checks:
 
-- `{:.3}`, `{:.0}` (no decimals - the engine used to silently rewrite precision 0 to 6), `{:.3f}`, `{:g}`.
+- `{:.3}`, `{:.0}` (no decimals - the engine used to silently rewrite precision 0 to 6), `{:.3f}`, `{:g}` (printf's `%g`) and `{:r}` (the shortest form).
 - A float column actually lines up: `{:>9.2}` on 12.5, 100.0 and -3.125.
 - `{:x}` `{:X}` `{:#x}` `{:o}` `{:b}` `{:#b}` `{:08x}` `{:#010x}`.
 - `{:+}`, `{: }`, and that zero-padding lands **between** the sign and the digits.
@@ -642,6 +642,22 @@ Failure tip: inspect `fmt_utf8_whole`, the CSTR and STR_VIEW cases of `render_ar
 Intent: verify `{:e}` renders always-scientific notation (mantissa, default six fractional digits, signed two-digit-minimum exponent, half-to-even rounding) digit-for-digit like `printf %e`, that `{:.Ne}` honours a chosen precision, that it forces scientific where `{:f}`/`{:g}` would not, and that `{:e}` on a non-float is refused.
 
 Failure tip: inspect the `{:e}` branch in `src/proven/fmt.c` and `PROVEN_FLOAT_FORMAT_MODE_SCIENTIFIC` in `float_format.c`. Every expected value is exactly `printf %e`.
+
+### `tests/test_unit_fmt_general` - printf's `%g`, `{:r}`, and the scanner's float letters
+
+Intent: verify `{:g}`, `{:.Ng}`, `{:G}`, `{:E}` and `#` render as printf does, digit for digit; `{:r}` gives the shortest form that reads back; the printf letters spell infinity and NaN as printf does; the scanner reads a double under the float letters.
+
+Sub-checks:
+
+- 660 vectors (`tests/test_unit_fmt_general_vectors.h`, C17 7.21.6.1 as Python writes it, equal to glibc 2.41 on every row): the fixed/scientific boundaries, rounding that carries (999999.5, 9.9999995), zeros, subnormals, DBL_MAX, precisions 0 to 20, `G`, `#`, `E`.
+- `#g` where glibc loses the zeros (999999.5: C17's `1.00000e+06`, not glibc's `1.e+06`).
+- Width, sign and zero fill on the result.
+- `inf`, `-inf`, `nan`, `-nan`, `INF`, `NAN`; space padding under a `0` flag; `{}` and `{:r}` still `Inf`/`NaN`.
+- Refused: precision or `#` on `{:r}`, `#` on `{}`, a float letter on an integer, string or bool.
+- `PROVEN_FLOAT_FORMAT_MODE_GENERAL` directly: default, precision 0, `alternate`, `uppercase`, `printf_specials` off, a buffer too small, a negative precision.
+- The scanner: `{:g}`, `{:E}`, `{:f}`, `{:e}`, `{:G}` on doubles (`1e+06`, `-inf`, `nan`), refused into an `int`; 2,000 random doubles written with `{:r}` and read with `{:g}`, bit for bit.
+
+Failure tip: a vector row names its spec and value - compare with printf on the same double; inspect `proven_float_format_g_exact` in `src/proven/float_format.c`, the type letters in `src/proven/fmt.c`, `placeholder_len` in `src/proven/scan.c`.
 
 ### `tests/test_unit_fmt_fastpath` - formatter truncation comparison
 

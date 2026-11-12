@@ -64,6 +64,8 @@ int main(void) {
 
     /* Shortest round-trip. */
     EXPECT("{:g}",   PROVEN_ARG(0.1), "0.1");
+    EXPECT("{:r}",   PROVEN_ARG(0.1 + 0.2), "0.30000000000000004");
+    EXPECT("{:g}",   PROVEN_ARG(0.1 + 0.2), "0.3");
 
     /* And now a column actually lines up. This is the whole point. */
     EXPECT("{:>9.2}", PROVEN_ARG(12.5),   "    12.50");

@@ -25,7 +25,7 @@ alias 문서와 정본 API 문서를 섞지 마라. 이 인덱스는 철자 맵�
 
 ## Alias 표
 
-alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
+alias 1529개: 소문자 `xcv_` 이름 1138개와 대문자 `XCV_` 이름 391개. 표는 `include/proven/alias_xcv.h`에서 생성된다. 공개 함수에 alias가 없으면 `tests/test_docs_alias_completeness`가 빌드를 실패시킨다. 다만 그 게이트는 헤더끼리 비교할 뿐 이 부록과는 비교하지 않는다 — 재생성 전에 표는 헤더보다 61행 뒤처져 있었으므로, 행을 손으로 고치지 말고 헤더에서 재생성할 것.
 
 행 번호 열은 의도적으로 두지 않았다. 위에 alias가 삽입될 때마다 틀려졌고, 그건 열이 아예 없느니만 못했다.
 
@@ -599,6 +599,7 @@ alias 1333개: 소문자 `xcv_` 이름 982개와 대문자 `XCV_` 이름 351개.
 | `xcv_float_format_f64_policy` | `proven_float_format_f64_policy` |
 | `xcv_float_format_options_fixed_default` | `proven_float_format_options_fixed_default` |
 | `xcv_float_format_options_scientific` | `proven_float_format_options_scientific` |
+| `xcv_float_format_options_general` | `proven_float_format_options_general` |
 | `xcv_float_format_options_shortest` | `proven_float_format_options_shortest` |
 | `xcv_fmt_arg_count` | `proven_fmt_arg_count` |
 | `xcv_fmt_put` | `proven_fmt_put` |

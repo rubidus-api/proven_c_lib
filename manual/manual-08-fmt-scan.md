@@ -59,7 +59,7 @@ The formatting side and the scanning side solve opposite problems.
 The project keeps both sides intentionally small:
 
 - formatting supports a compact placeholder language, positional reuse, simple alignment, width, and hex rendering for numeric values;
-- scanning supports typed destination pointers, strict placeholder counting, `{:x}` for hexadecimal integers, and literal matching with whitespace collapsing;
+- scanning supports typed destination pointers, strict placeholder counting, `{:x}` for hexadecimal integers, scanf's float letters (`{:f}`, `{:e}`, `{:g}`), and literal matching with whitespace collapsing;
 - neither side tries to become a full `printf` or `scanf` clone.
 
 The practical result is that the APIs are easier to reason about than large general-purpose format engines, but the syntax is still expressive enough for common systems-code tasks.
@@ -338,9 +338,10 @@ form for finite values and switches to scientific notation when the magnitude is
 too large or too small for the compact form. Unlike earlier versions, this output
 is now computed by an **exact, integer-only** engine (no `double`/`long double`
 approximation): the digits are correctly rounded (round-half-to-even), so `{}`
-matches what `printf("%.6f")` / `%.6e` would print on the same value. For a
-shortest round-trippable form, or for a precision other than six, use the
-`proven_float_format_*` policy API described below.
+matches what `printf("%.6f")` / `%.6e` would print on the same value. The spec
+letters reach the other forms (`{:.3}`, `{:f}`, `{:e}`, `{:g}`, `{:r}` - section
+"Floats" below); the `proven_float_format_*` policy API described below gives them
+without the format grammar.
 
 ### Accuracy and limits
 
@@ -493,6 +494,13 @@ sci.precision = 2;
 (void)proven_float_format_f64_policy(buf, sizeof buf, 42.0,
     PROVEN_FLOAT_FORMAT_POLICY_DEFAULT, sci, &n);
 /* buf == "4.20e+01" - where fixed would give "42.00" and shortest "42" */
+
+/* printf's %g - this is what {:g} selects: significant digits (six by default), the fixed
+   or the scientific form by the rounded value's exponent, trailing zeros dropped. */
+proven_float_format_options_t gen = proven_float_format_options_general();
+(void)proven_float_format_f64_policy(buf, sizeof buf, 0.1 + 0.2,
+    PROVEN_FLOAT_FORMAT_POLICY_DEFAULT, gen, &n);
+/* buf == "0.3" - where shortest gives "0.30000000000000004" */
 ```
 
 - `PROVEN_FLOAT_FORMAT_POLICY_RYU` selects shortest output; `DEFAULT`/`SIMPLE`
@@ -553,7 +561,7 @@ spec copied from Python or Rust means here what it means there.
 | `0` | | zero-fill. `{:08}` on 42 is `00000042`. |
 | `width` | digits, up to 10000 | minimum field width. |
 | `.precision` | `.N` | a float's decimals (up to 60); a string's most bytes (up to 10000), cut back to a whole UTF-8 character. Not for integers. |
-| `type` | `x X o b d` (int), `f g e` (float) | base and case; `f` fixed, `g` shortest round-trip, `e` scientific (printf `%e`). |
+| `type` | `x X o b d` (int), `f e E g G r` (float) | base and case; `f` fixed, `e`/`E` scientific (printf `%e`/`%E`), `g`/`G` printf's `%g`/`%G`, `r` the shortest round-trip. |
 
 Two things are worth knowing because they used to be false:
 
@@ -566,12 +574,27 @@ Two things are worth knowing because they used to be false:
 
 ### Floats
 
-`{}` gives six decimals, correctly rounded. `{:.3}` gives three, `{:.0}` gives none,
-`{:e}` forces scientific notation - mantissa, `precision` fractional digits (six by
-default), a signed two-digit-minimum exponent, correctly rounded, exactly as printf's `%e` -
-which is the form `{:f}` and `{:g}` do not reach: `{:f}` never shows an exponent, and `{:g}`
-uses one only when it is shorter. `{:f}` forces the fixed form, and `{:g}` gives the shortest representation that
-round-trips.
+`{}` gives six decimals, correctly rounded. `{:.3}` gives three, `{:.0}` gives none.
+The type letters are printf's, and write what printf writes, digit for digit:
+
+| spec | printf | 0.1 + 0.2 | 1234567.0 | 1e-5 |
+|---|---|---|---|---|
+| `{:f}`, `{:.2f}` | `%f`, `%.2f` | `0.300000`, `0.30` | `1234567.000000` | `0.000010` |
+| `{:e}`, `{:E}` | `%e`, `%E` | `3.000000e-01` | `1.234567e+06` | `1.000000E-05` (`{:E}`) |
+| `{:g}`, `{:.3g}`, `{:G}` | `%g`, `%.3g`, `%G` | `0.3` | `1.23457e+06`, `1.23e+06` | `1e-05`, `1E-05` (`{:G}`) |
+| `{:r}` | none | `0.30000000000000004` | `1234567` | `1e-05` |
+
+- `{:g}` is printf's `%g`: `precision` **significant** digits (six by default, `{:.0g}` one),
+  the scientific form when the exponent of the value *rounded to them* is below -4 or not
+  below the precision, the fixed form otherwise, trailing zeros removed. 999999.5 is `1e+06`.
+- `{:r}` is the shortest representation that reads back to the same double - the form for
+  round-trip serialization. **Until v0.114.0 this was `{:g}`**; a precision or `#` on `{:r}`
+  is refused.
+- `#` on `f`, `e` and `g` is printf's alternative form: the point is always written, and `g`
+  keeps its trailing zeros (`{:#g}` on 2.0 is `2.00000`).
+- Under the letters `f`, `e`, `g`, infinity and NaN are printf's: `inf`, `-inf`, `nan`, `-nan`
+  (a NaN with its sign bit set, as glibc writes it), `INF` and `NAN` under `E` and `G`, padded
+  with spaces under a `0` flag. `{}` and `{:r}` write `Inf`, `-Inf` and `NaN`.
 
 Until v26.07.12i **none of these existed**: every float came out with exactly six
 decimals, forever. The exact engine could always do all of it - the `{}` grammar
@@ -604,6 +627,7 @@ For the integer and string conversions these are the only ones (each checked aga
 | `{}` on a NULL C string | `%s` | nothing | `(null)` (glibc; undefined in C) |
 | `{:.2}` on `"h\xc3\xa9llo"` | `%.2s` | `h` | `h\xc3` (half a character) |
 | `{:^5}` | none | centred | - |
+| `{:#g}` on 999999.5 | `%#g` | `1.00000e+06` (C17) | `1.e+06` (glibc 2.41: the zeros lost when rounding carries) |
 
 Everything else in this list gives the same bytes: `{}` as `%d`, `%u`, `%lld`, `%zu`, `%c` and
 `%s`; `{:5}` as `%5d` and `%5s` (strings, too, go right by default, and a width counts bytes, as
@@ -1171,9 +1195,10 @@ The scan format string is the formatter's, read backwards:
 - a placeholder consumes one argument, in order;
 - anything else is a **literal that must match the input exactly**.
 
-One spec exists on the scanning side: `{:x}` (or `{:X}`) reads an integer argument
-as hexadecimal (section 8); on a float or string argument it is
-`PROVEN_ERR_INVALID_FORMAT`, as in the formatter. Width, fill and alignment are
+Two kinds of spec exist on the scanning side: `{:x}` (or `{:X}`) reads an integer argument
+as hexadecimal (section 8), and scanf's float letters `{:f}`, `{:e}`, `{:E}`, `{:g}`, `{:G}`
+read a double as `{}` does - any spelling the formatter writes, `inf` and `nan` included.
+Each on another kind of argument is `PROVEN_ERR_INVALID_FORMAT`, as in the formatter. Width, fill and alignment are
 formatting concerns; the scanner reads what is there.
 
 Whitespace in the format is not special. The value scanners skip leading whitespace

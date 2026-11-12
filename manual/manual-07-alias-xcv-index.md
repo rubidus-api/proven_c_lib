@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1333 aliases: 982 lowercase `xcv_` names and 351 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1529 aliases: 1138 lowercase `xcv_` names and 391 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -597,6 +597,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_float_format_f64_policy` | `proven_float_format_f64_policy` |
 | `xcv_float_format_options_fixed_default` | `proven_float_format_options_fixed_default` |
 | `xcv_float_format_options_scientific` | `proven_float_format_options_scientific` |
+| `xcv_float_format_options_general` | `proven_float_format_options_general` |
 | `xcv_float_format_options_shortest` | `proven_float_format_options_shortest` |
 | `xcv_fmt_arg_count` | `proven_fmt_arg_count` |
 | `xcv_fmt_put` | `proven_fmt_put` |
