@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.114.0] - 2026-11-12
+
 printf's `%g` in the formatter (RFC-0046), asked for by a project that prints results with
 `%g` and compares them with the C library's. **One breaking change: `{:g}` now means printf's
 `%g`; the shortest round-trip form is `{:r}`.**
