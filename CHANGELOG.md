@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.114.1] - 2026-11-13
+
 ### Changed
 
 - The exact float engine multiplies 64 by 64 bits in one instruction where the compiler has a
