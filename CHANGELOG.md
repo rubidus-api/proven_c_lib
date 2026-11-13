@@ -18,6 +18,19 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- `%e` and `%g` round to their significant digits with one exact division at the estimated
+  decimal exponent; the exponent is no longer settled first by two exact comparisons, each of
+  which built a power of five as large as the division's. When the estimate is one too low, the
+  quotient's extra digit and the remainder decide the rounding (ties to even) without dividing
+  again. The quotient's last limb is written in decimal by machine division, not the general
+  big-integer one. 4,066 to 2,718 instructions a call on random bit patterns (0.76 of glibc
+  2.41's `snprintf`), 1,768 to 1,333 on everyday values (0.62). Output is unchanged: 32,000,000
+  random cases against glibc in four runs, and 250,734 values next to powers of ten, subnormals
+  and halfway cases at precisions 0 to 1000, all byte-identical.
+- The QUIC engine's receive step lost a statement that did nothing (`amp_rx += 0`).
+
 ## [0.114.1] - 2026-11-13
 
 ### Changed
