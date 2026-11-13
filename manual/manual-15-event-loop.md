@@ -1039,7 +1039,7 @@ than buffered.
 
 | Call | Returns |
 |---|---|
-| `proven_ws_stream_send`, `proven_ws_stream_send_piece` | `proven_err_t`: `AGAIN` when the output limit is reached, with nothing taken; `INVALID_STATE` after a close was sent, for `first` inside a message, or for a piece that is not `first` outside one; `RESET` when the connection is gone. |
+| `proven_ws_stream_send`, `proven_ws_stream_send_piece` | `proven_err_t`: `AGAIN` when the output limit is reached, with nothing taken; `INVALID_STATE` after a close was sent, for `first` inside a message, or for a piece that is not `first` outside one; `RESET` when the connection is gone - if it was lost during this call, `on_closed` has already been called inside it, and neither `ws` nor what `on_closed` freed may be used after the return. |
 | `proven_ws_stream_ping` | the same; `OUT_OF_BOUNDS` for more than 125 bytes. |
 | `proven_ws_stream_close` | nothing. Sends a close with `code` and `reason`, and ends the connection when the client answers or the close timeout passes; `on_closed` follows later. A code that may not be sent becomes 1000. |
 | `proven_ws_stream_abort` | nothing. Ends the connection at once with no close frame; `on_closed(1006, PROVEN_ERR_RESET)` is called inside the call. |

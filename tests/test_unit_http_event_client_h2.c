@@ -1508,7 +1508,8 @@ int main(void) {
         server = server_on(NULL, true, 1);
         PROVEN_TEST_ASSERT(proven_http_event_client_create(g_loop, &ccfg, &client) == PROVEN_OK, "a client", "");
         PROVEN_TEST_ASSERT(start(client, &many[0], "GET", "/never", mv(""), 0) == PROVEN_OK, "a request the server will sit on", "");
-        while (g_served < 1) spin(5);
+        for (int w = 0; g_served < 1 && w < 1000; w++) spin(5);
+        PROVEN_TEST_ASSERT(g_served == 1, "the server has the request", "");
         for (int i = 1; i < 3; i++) PROVEN_TEST_ASSERT(start(client, &many[i], "GET", "/hello", mv(""), 0) == PROVEN_OK, "and two that wait for its one stream", "");
         spin(30);
         proven_http_event_server_destroy(server);

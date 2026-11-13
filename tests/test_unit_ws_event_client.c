@@ -114,7 +114,10 @@ static void srv_request(void *ctx, proven_http_stream_t *stream, const proven_ht
     s->ws = ws;
     s->mode = strcmp(path, "/push") == 0 ? 'p' : strcmp(path, "/close") == 0 ? 'c' : strcmp(path, "/silent") == 0 || strcmp(path, "/pings") == 0 ? 's' : 'e';
     proven_ws_stream_set_user(ws, s);
-    if (strcmp(path, "/origin") == 0) (void)proven_ws_stream_send(ws, true, has_origin ? (proven_mem_view_t){ origin.ptr, origin.size } : mv("(none)"));
+    /* A send that answers RESET lost the connection inside the call: on_closed has run, and
+     * freed `s` - nothing of this connection may be touched after it (found by the oom sweep). */
+    if (strcmp(path, "/origin") == 0 &&
+        proven_ws_stream_send(ws, true, has_origin ? (proven_mem_view_t){ origin.ptr, origin.size } : mv("(none)")) == PROVEN_ERR_RESET) return;
     if (s->mode == 'p') proven_loop_timer_set(g_loop, &s->timer, 1, srv_push, s);
     if (s->mode == 'c') proven_ws_stream_close(ws, 4001, sv("bye"));
 }

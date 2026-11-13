@@ -1003,7 +1003,7 @@ HTTP 본문과 다른 점이다. 거기의 쓰기는 몇 바이트를 받았는�
 
 | 호출 | 반환 |
 |---|---|
-| `proven_ws_stream_send`, `proven_ws_stream_send_piece` | `proven_err_t`: 출력 한도에 닿았으면 `AGAIN`, 아무것도 받지 않는다. close를 보낸 뒤이거나, 메시지 안에서의 `first`이거나, 메시지 밖에서 `first`가 아닌 조각이면 `INVALID_STATE`. 연결이 사라졌으면 `RESET`. |
+| `proven_ws_stream_send`, `proven_ws_stream_send_piece` | `proven_err_t`: 출력 한도에 닿았으면 `AGAIN`, 아무것도 받지 않는다. close를 보낸 뒤이거나, 메시지 안에서의 `first`이거나, 메시지 밖에서 `first`가 아닌 조각이면 `INVALID_STATE`. 연결이 사라졌으면 `RESET` - 이 호출 도중에 잃었다면 `on_closed`가 이미 호출 안에서 불렸으므로, 돌아온 뒤에는 `ws`도 `on_closed`가 해제한 것도 쓰면 안 된다. |
 | `proven_ws_stream_ping` | 같다. 125바이트를 넘으면 `OUT_OF_BOUNDS`. |
 | `proven_ws_stream_close` | 없음. `code`와 `reason`으로 close를 보내고, 클라이언트가 답하거나 close 타임아웃이 지나면 연결을 끝낸다. `on_closed`는 나중에 따른다. 보낼 수 없는 코드는 1000이 된다. |
 | `proven_ws_stream_abort` | 없음. close 프레임 없이 곧바로 연결을 끝낸다. `on_closed(1006, PROVEN_ERR_RESET)`이 호출 안에서 불린다. |

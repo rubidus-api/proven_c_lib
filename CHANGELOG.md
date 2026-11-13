@@ -18,6 +18,27 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- The exact float engine multiplies 64 by 64 bits in one instruction where the compiler has a
+  128-bit integer (as the rest of that file already did): `%g` and `%e` on doubles of any
+  magnitude take about 40 % fewer instructions (6,850 to 4,060 a call on random bit patterns;
+  1,870 to 1,780 on everyday values), and the parsers' exact steps gain the same. Output is
+  unchanged. Targets without the type (i686) keep the four 32-bit products.
+
+### Documentation
+
+- `proven_ws_stream_send` (and `_send_piece`, `_ping`): a `PROVEN_ERR_RESET` from a connection
+  lost during the call means `on_closed` has already been called inside it; neither `ws` nor what
+  `on_closed` freed may be used after the return. This was the behaviour; the header and Chapter
+  15 did not say it.
+
+### Tests
+
+- `test_unit_ws_event_client` no longer touches its connection state after a send that answered
+  `RESET` (a use after free under an allocation failure, found by the allocation-failure sweep);
+  `test_unit_http_event_client_h2` waits for its server a bounded time.
+
 ## [0.114.0] - 2026-11-12
 
 printf's `%g` in the formatter (RFC-0046), asked for by a project that prints results with
