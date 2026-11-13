@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.114.2] - 2026-11-14
+
 ### Changed
 
 - `%e` and `%g` round to their significant digits with one exact division at the estimated
