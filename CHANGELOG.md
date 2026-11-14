@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.114.3] - 2026-11-14
+
 ### Fixed
 
 - Tests: `test_unit_http_server`'s graceful-end case no longer waits without end when the
