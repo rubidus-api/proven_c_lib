@@ -149,10 +149,13 @@ proven_rng_t proven_xoshiro256ss_rng(proven_xoshiro256ss_t *g) {
         c += d; b ^= c; b = rotl32(b, 7);            \
     } while (0)
 
-/* One 64-byte keystream block from the current state, then step the counter. */
-static void chacha_block(proven_chacha_rng_t *g) {
+/* The keystream block of `state` as it stands (word 12 not stepped) into `out`, 64 bytes. */
+static void chacha_block_to(const proven_u32 state[16], proven_byte_t *out) {
+#ifndef PROVEN_FREESTANDING
+    if (proven_sys_chacha_keystream_width() > 0) { proven_sys_chacha_keystream1(state, out); return; }
+#endif
     proven_u32 x[16];
-    for (int i = 0; i < 16; ++i) x[i] = g->state[i];
+    for (int i = 0; i < 16; ++i) x[i] = state[i];
 
     /* 20 rounds = 10 double rounds: a column round then a diagonal round. */
     for (int i = 0; i < 10; ++i) {
@@ -170,20 +173,28 @@ static void chacha_block(proven_chacha_rng_t *g) {
     /* Add the original state back in - this is what makes the block function non-invertible -
      * and serialise little-endian, as the standard specifies. */
     for (int i = 0; i < 16; ++i) {
-        proven_u32 v = x[i] + g->state[i];
-        g->block[4 * i + 0] = (proven_byte_t)(v      );
-        g->block[4 * i + 1] = (proven_byte_t)(v >>  8);
-        g->block[4 * i + 2] = (proven_byte_t)(v >> 16);
-        g->block[4 * i + 3] = (proven_byte_t)(v >> 24);
+        proven_u32 v = x[i] + state[i];
+        out[4 * i + 0] = (proven_byte_t)(v      );
+        out[4 * i + 1] = (proven_byte_t)(v >>  8);
+        out[4 * i + 2] = (proven_byte_t)(v >> 16);
+        out[4 * i + 3] = (proven_byte_t)(v >> 24);
     }
-    g->used = 0;
+}
 
-    /* Step the 32-bit block counter. 2^32 blocks is 256 GiB of keystream from one seed; past
-     * that the counter wraps and the stream would repeat, so carry into the first nonce word
-     * rather than silently reusing keystream. */
-    if (++g->state[12] == 0) {
-        ++g->state[13];
-    }
+/* Step the 32-bit block counter by `n` blocks. 2^32 blocks is 256 GiB of keystream from one
+ * seed; past that the counter wraps and the stream would repeat, so carry into the first nonce
+ * word rather than silently reusing keystream. */
+static void chacha_step(proven_chacha_rng_t *g, proven_u32 n) {
+    const proven_u32 before = g->state[12];
+    g->state[12] = before + n;
+    if (g->state[12] < before) ++g->state[13];
+}
+
+/* One 64-byte keystream block into the generator's buffer, then step the counter. */
+static void chacha_block(proven_chacha_rng_t *g) {
+    chacha_block_to(g->state, g->block);
+    g->used = 0;
+    chacha_step(g, 1);
 }
 
 void proven_chacha_rng_seed(proven_chacha_rng_t *g, const proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE]) {
@@ -226,16 +237,46 @@ void proven_chacha_rng_fill(proven_chacha_rng_t *g, void *buf, proven_size_t len
         return;
     }
 
-    while (len > 0) {
-        if (g->used >= 64) chacha_block(g);
-
-        proven_size_t avail = 64 - g->used;
-        proven_size_t take = (len < avail) ? len : avail;
+    /* What is left of the buffered block first. */
+    if (g->used < 64) {
+        proven_size_t take = 64 - g->used;
+        if (take > len) take = len;
         for (proven_size_t i = 0; i < take; ++i) p[i] = g->block[g->used + i];
-
         g->used += take;
         p += take;
         len -= take;
+    }
+
+    /* Whole blocks straight into the caller's buffer: the same bytes, in the same order, as
+     * through the buffer, without the copy. Several at once where the processor has vector
+     * lanes, never across a wrap of word 12 (which carries into word 13 between calls). */
+#ifndef PROVEN_FREESTANDING
+    if (len >= 256 && proven_sys_chacha_keystream_width() > 0) {
+        while (len >= 256) {
+            proven_size_t n = (len / 64) & ~(proven_size_t)3;
+            const proven_u32 to_wrap = 0u - g->state[12];   /* 0: 2^32 blocks before the wrap */
+            if (to_wrap != 0 && n > to_wrap) n = to_wrap & ~(proven_u32)3;
+            if (n == 0) break;                              /* within three blocks of it */
+            if (n > ((proven_size_t)1 << 24)) n = (proven_size_t)1 << 24;
+            proven_sys_chacha_keystream(g->state, p, n);
+            chacha_step(g, (proven_u32)n);
+            p += 64 * n;
+            len -= 64 * n;
+        }
+    }
+#endif
+    while (len >= 64) {
+        chacha_block_to(g->state, p);
+        chacha_step(g, 1);
+        p += 64;
+        len -= 64;
+    }
+
+    /* The tail through the buffer, whose rest the next draw takes. */
+    if (len > 0) {
+        chacha_block(g);
+        for (proven_size_t i = 0; i < len; ++i) p[i] = g->block[i];
+        g->used = len;
     }
 }
 
@@ -243,9 +284,15 @@ proven_u64 proven_chacha_rng_next(proven_chacha_rng_t *g) {
     if (!g || g->seeded != CHACHA_SEEDED) return 0;
 
     proven_byte_t b[8];
-    proven_chacha_rng_fill(g, b, sizeof b);
+    const proven_byte_t *q = b;
+    if (g->used <= 56) {            /* the common case: eight bytes still in the block */
+        q = g->block + g->used;
+        g->used += 8;
+    } else {
+        proven_chacha_rng_fill(g, b, sizeof b);
+    }
     proven_u64 v = 0;
-    for (int i = 0; i < 8; ++i) v |= (proven_u64)b[i] << (8 * i);
+    for (int i = 0; i < 8; ++i) v |= (proven_u64)q[i] << (8 * i);
     return v;
 }
 

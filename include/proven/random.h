@@ -176,7 +176,12 @@ void proven_chacha_rng_seed(proven_chacha_rng_t *g, const proven_byte_t seed[PRO
 /** @brief The next word of keystream. */
 proven_u64 proven_chacha_rng_next(proven_chacha_rng_t *g);
 
-/** @brief Fill `len` bytes. Faster than `next` in a loop: it copies whole 64-byte blocks. */
+/**
+ * @brief Fill `len` bytes. Faster than `next` in a loop: whole 64-byte blocks are written straight
+ *        into `buf` - on x86 with GCC or Clang, eight (AVX2) or four (SSE2) at once, detected at
+ *        run time. The bytes do not depend on how a stream is drawn: in one fill, in pieces of
+ *        any size, or as words.
+ */
 void proven_chacha_rng_fill(proven_chacha_rng_t *g, void *buf, proven_size_t len);
 
 /** @brief View this generator as a `proven_rng_t`, for the helpers below. */

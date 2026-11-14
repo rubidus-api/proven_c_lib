@@ -166,6 +166,41 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("large fills give the stream byte for byte",
+        "A fill of whole blocks writes them straight into the caller's buffer, several at once where the processor has vector lanes (AVX2: 8, SSE2: 4); the bytes must be those one-byte draws give, through every path, at any offset, and across the block counter's wrap into word 13.",
+        "Inspect proven_chacha_rng_fill in src/proven/random.c and proven_sys_chacha_keystream in platform/proven_sys_random.c.");
+    // ---------------------------------------------------------------
+    {
+        static proven_byte_t ref[20000], got[20000];
+        proven_byte_t key[PROVEN_CHACHA_SEED_SIZE];
+        for (int i = 0; i < PROVEN_CHACHA_SEED_SIZE; ++i) key[i] = (proven_byte_t)(0xA5 ^ (i * 7));
+        /* word 12 at 0 (a fresh seed) and three places near its wrap */
+        const proven_u32 starts[] = { 0, 0xFFFFFFF0u, 0xFFFFFFFEu, 0xFFFFFFFFu - 9 };
+        const proven_size_t sizes[] = { 5, 1000, 4096, 3, 777, 576, 511, 513, 256, 64, 2000, 63, 7000 };
+        for (size_t k = 0; k < sizeof starts / sizeof starts[0]; ++k) {
+            proven_chacha_rng_t a, b;
+            proven_chacha_rng_seed(&a, key); proven_chacha_rng_seed(&b, key);
+            a.state[12] = b.state[12] = starts[k];
+            for (size_t i = 0; i < sizeof ref; ++i) proven_chacha_rng_fill(&a, ref + i, 1);
+            proven_size_t off = 0;
+            for (size_t i = 0; off < sizeof got; i = (i + 1) % (sizeof sizes / sizeof sizes[0])) {
+                proven_size_t n = sizes[i];
+                if (n > sizeof got - off) n = sizeof got - off;
+                proven_chacha_rng_fill(&b, got + off, n);
+                off += n;
+            }
+            PROVEN_TEST_ASSERT(memcmp(ref, got, sizeof ref) == 0 && a.state[12] == b.state[12] && a.state[13] == b.state[13],
+                "fills of every size give what one-byte draws give, and leave the counter where they do", "");
+            PROVEN_TEST_ASSERT(proven_chacha_rng_next(&a) == proven_chacha_rng_next(&b), "and the next word after them is the same", "");
+        }
+        proven_chacha_rng_t w;
+        proven_chacha_rng_seed(&w, key);
+        w.state[12] = 0xFFFFFFFFu;
+        proven_chacha_rng_fill(&w, got, 64 * 8);
+        PROVEN_TEST_ASSERT(w.state[12] == 7 && w.state[13] == 1, "past the wrap of word 12 the count carries into word 13", "");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("proven_rng_below is unbiased, where `% n` is not",
         "A bound that does not divide 2^64 makes the modulo shortcut favour low values. Over enough draws the skew is measurable - and this must not have it.",
         "");
