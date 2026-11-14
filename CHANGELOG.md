@@ -18,6 +18,18 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Fixed
+
+- Tests: `test_unit_http_server`'s graceful-end case no longer waits without end when the
+  server could not take its `/shutdown` connection (seen when an allocation fails on purpose):
+  it turns the loop itself, at most 10 s, until the handler has begun the shutdown, and only
+  then calls `proven_http_server_run`. `test_unit_http_event_client_h2`'s mixed-limit case
+  waits up to 10 s, not 2, for the connection the idle HTTP/2 connection's close lets through
+  (it failed once on a loaded machine).
+- No library code changed. The Zstandard decoder's second bit reload in one sequence (long
+  offsets with long length codes), which no frame from libzstd was seen to need, is now
+  exercised by a private check with a hand-written frame; the decoder gives its content back.
+
 ## [0.114.2] - 2026-11-14
 
 ### Changed

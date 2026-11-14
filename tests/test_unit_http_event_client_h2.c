@@ -1032,13 +1032,15 @@ static void mixed_limit(void) {
     PROVEN_TEST_ASSERT(!early || two.done, "and no connection is made for it while the HTTP/2 connection is in use", "");
     spin_until(&two.done, 5000);
     PROVEN_TEST_ASSERT(two.done && two.why == PROVEN_OK && two.protocol == 2, "the HTTP/2 request is answered", "");
+    /* Waits of up to 10 s (2,000 rounds of at least 5 ms): the close and the connect it lets
+     * through follow from the client's state, but a loaded machine can take seconds to show it. */
     bool came = false;
-    for (int i = 0; i < 400 && !came; ++i) { spin(5); came = proven_net_accept(&plain, PROVEN_NET_DONT_WAIT, &x, NULL) == PROVEN_OK; }
+    for (int i = 0; i < 2000 && !came; ++i) { spin(5); came = proven_net_accept(&plain, PROVEN_NET_DONT_WAIT, &x, NULL) == PROVEN_OK; }
     PROVEN_TEST_ASSERT(came, "and the HTTP/2 connection, with nothing on it, is closed for the one that waited: its connection is made", "");
     static const char answer[] = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
     char req[512]; proven_size_t have = 0;
     memset(req, 0, sizeof req);
-    for (int i = 0; i < 400 && !strstr(req, "\r\n\r\n"); ++i) {
+    for (int i = 0; i < 2000 && !strstr(req, "\r\n\r\n"); ++i) {
         spin(5);
         proven_result_size_t r = proven_net_read(&x, (proven_mem_mut_t){ (proven_byte_t *)req + have, sizeof req - 1 - have }, PROVEN_NET_DONT_WAIT);
         if (r.err == PROVEN_OK) have += r.value;
@@ -1055,9 +1057,9 @@ static void mixed_limit(void) {
     one.plain = true;
     PROVEN_TEST_ASSERT(start(client, &one, "GET", "/h1-first", mv(""), 0) == PROVEN_OK, "an HTTP/1.1 request, which takes the one place", "");
     came = false;
-    for (int i = 0; i < 400 && !came; ++i) { spin(5); came = proven_net_accept(&plain, PROVEN_NET_DONT_WAIT, &x, NULL) == PROVEN_OK; }
+    for (int i = 0; i < 2000 && !came; ++i) { spin(5); came = proven_net_accept(&plain, PROVEN_NET_DONT_WAIT, &x, NULL) == PROVEN_OK; }
     have = 0; memset(req, 0, sizeof req);
-    for (int i = 0; came && i < 400 && !strstr(req, "\r\n\r\n"); ++i) {
+    for (int i = 0; came && i < 2000 && !strstr(req, "\r\n\r\n"); ++i) {
         spin(5);
         proven_result_size_t r = proven_net_read(&x, (proven_mem_mut_t){ (proven_byte_t *)req + have, sizeof req - 1 - have }, PROVEN_NET_DONT_WAIT);
         if (r.err == PROVEN_OK) have += r.value;

@@ -568,6 +568,12 @@ static void run_drain(proven_job_sys_t *jobs) {
         /* From a handler, with handlers on the loop's thread: run returns when it is over. */
         client_open(&ca, at);
         client_send(&ca, "GET /shutdown HTTP/1.1\r\nHost: t\r\n\r\n");
+        /* run waits for the handler's shutdown; if the server could not take the connection
+         * (refused for memory under the allocation-failure sweep), nothing would end it. So
+         * the loop is first turned here, bounded, until the handler has begun the shutdown. */
+        const proven_time_t asked = proven_time_monotonic_now();
+        while (!proven_http_server_shutting_down(g_server) && !ca.eof && proven_time_monotonic_now() - asked < 10000000000) pump(&ca);
+        PROVEN_TEST_ASSERT(proven_http_server_shutting_down(g_server), "the /shutdown request reaches its handler", "");
         proven_err_t e = proven_http_server_run(g_server);
         PROVEN_TEST_ASSERT(e == PROVEN_OK && proven_http_server_shutting_down(g_server) && proven_http_server_drained(g_server, &why) && why == PROVEN_OK,
             "a handler calls proven_http_server_shutdown; its answer goes out, and run returns PROVEN_OK when nothing is left", "");
