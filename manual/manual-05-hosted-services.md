@@ -2087,6 +2087,33 @@ cost before (2.9 against 1.5), because every such draw crosses an epoch's end. O
 blocks are made four at a time with NEON; that has been run under an emulator only, not timed
 on ARM hardware.
 
+### One seed, one use
+
+A generator is deterministic: the same seed gives the same stream. That is safe - NIST SP
+800-90A's DRBGs, OpenBSD's `arc4random` and the Linux kernel's generator are deterministic too,
+which is what makes their test vectors possible - as long as a seed is secret and **used
+once**. Used twice, it gives the same "random" bytes twice:
+
+- a **nonce** (a "number used once": a value that must never repeat under one key) repeated
+  under one AES-GCM or ChaCha20-Poly1305 key breaks both the secrecy and the integrity of what
+  it protects;
+- two ECDSA signatures made with one nonce give away the private key;
+- a token issued twice is valid twice.
+
+How a seed comes to be used twice, and what the library does about it:
+
+| How | What happens |
+|---|---|
+| A forked child | Handled since v0.116.0 for a generator seeded by `proven_chacha_rng_seed_from_entropy` and for `proven_random_fast_bytes`: the child takes a new key. A raw `clone` or `vfork` is not seen. |
+| A seed of your own (`proven_chacha_rng_seed`) | Reproducible by definition: a child replays it. Bytes from `proven_random_bytes` passed to it lose the fork protection - seed from entropy with `proven_chacha_rng_seed_from_entropy` instead. |
+| Copying the struct | Clones the stream. Nothing can detect it: do not copy a generator that makes secrets. |
+| A VM snapshot restored or cloned, a process checkpoint (CRIU) | The memory is copied, the key with it, and a generator in user space cannot tell. Not handled. `proven_random_bytes` is safe where the kernel reseeds on such an event (Linux's VM generation ID). |
+| A stored seed - in a log "for debugging", a file, an image | Every output is reproducible by whoever reads it. Never store a seed that made secrets. |
+
+So: for a key, a token or a nonce in a long-running process, `proven_random_bytes`; for bulk,
+or a target with no OS, a ChaCha generator seeded by `proven_chacha_rng_seed_from_entropy`; a
+seed of your own for tests and replays only.
+
 ### Reference
 
 | API | Intent | Return |

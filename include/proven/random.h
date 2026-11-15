@@ -37,6 +37,29 @@
  * Asking an operating system for entropy CAN fail, so that failure is confined to exactly one
  * place: seeding. You check it once, at startup, and every draw downstream is total.
  *
+ * ## One seed, one use
+ *
+ * A generator is deterministic: the same seed gives the same stream. That is safe - the
+ * standard generators (NIST SP 800-90A's DRBGs, OpenBSD's arc4random, the Linux kernel's) are
+ * the same - as long as a seed is secret and **used once**. Used twice, it gives the same
+ * "random" bytes twice: a nonce repeated under one AES-GCM or ChaCha20-Poly1305 key breaks
+ * both secrecy and integrity, two ECDSA signatures with one nonce give away the private key,
+ * and a token issued twice is valid twice. The ways a seed gets used twice:
+ *
+ * - **A seed of your own** (`proven_chacha_rng_seed`) is reproducible by definition: a forked
+ *   child replays it. Bytes from `proven_random_bytes` passed to it lose the fork protection
+ *   that `proven_chacha_rng_seed_from_entropy` gives - seed from entropy with that call.
+ * - **Copying a generator** (it is a plain struct) clones its stream. Nothing can detect it.
+ * - **A virtual machine snapshot restored, or cloned, and a process checkpoint (CRIU)** copy the
+ *   memory, the key with it; a generator in user space cannot tell. `proven_random_bytes` does
+ *   not have this problem where the kernel reseeds on such an event (Linux's VM generation ID).
+ * - **A stored seed** - written to a log "for debugging", a file, an image - makes every output
+ *   reproducible by whoever reads it.
+ *
+ * So: for a key, a token or a nonce in a long-running process, `proven_random_bytes`; for bulk,
+ * or a target with no OS, a ChaCha generator seeded by `proven_chacha_rng_seed_from_entropy`;
+ * a seed of your own for tests and replays only.
+ *
  * ## Freestanding, and where entropy comes from
  *
  * Everything here is pure arithmetic and works on a bare-metal target - the generators, the

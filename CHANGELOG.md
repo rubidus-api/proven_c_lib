@@ -18,6 +18,23 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- `proven_chacha_rng_fill` with key erasure: a whole epoch with room behind it in the buffer is
+  written straight into it - the key block lands where the next epoch's first block goes, is
+  read, and is overwritten by that block before the call returns - instead of half of it being
+  made aside, copied and wiped. Fills of 64 KiB and 1 MiB: 2.24-2.30 to 1.74 cycles a byte on the
+  build host (quiet; cycles:u, best of three; the plain stream 1.56-1.59). The stream is
+  unchanged.
+
+### Documentation
+
+- `random.h` and manual chapter 5 (both languages): "One seed, one use" - why a deterministic
+  generator is safe while its seed is secret and used once, what a repeated nonce, ECDSA nonce or
+  token costs, and the ways a seed gets used twice: a forked child (handled for generators seeded
+  from entropy), a seed of one's own (no fork protection), a copied struct, a restored or cloned
+  VM snapshot or a process checkpoint (not handled), a stored seed.
+
 ## [0.116.0] - 2026-11-15
 
 ### Changed
