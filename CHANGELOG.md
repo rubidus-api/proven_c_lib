@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.115.0] - 2026-11-15
+
 ### Changed
 
 - **Behaviour: a WebSocket send that loses the connection no longer calls `on_closed` inside
