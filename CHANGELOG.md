@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.116.0] - 2026-11-15
+
 ### Changed
 
 - **Behaviour: `proven_chacha_rng_t` erases its key** (RFC-0048; `random.h`). The stream is cut
