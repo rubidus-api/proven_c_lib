@@ -1003,10 +1003,10 @@ HTTP 본문과 다른 점이다. 거기의 쓰기는 몇 바이트를 받았는�
 
 | 호출 | 반환 |
 |---|---|
-| `proven_ws_stream_send`, `proven_ws_stream_send_piece` | `proven_err_t`: 출력 한도에 닿았으면 `AGAIN`, 아무것도 받지 않는다. close를 보낸 뒤이거나, 메시지 안에서의 `first`이거나, 메시지 밖에서 `first`가 아닌 조각이면 `INVALID_STATE`. 연결이 사라졌으면 `RESET` - 이 호출 도중에 잃었다면 `on_closed`가 이미 호출 안에서 불렸으므로, 돌아온 뒤에는 `ws`도 `on_closed`가 해제한 것도 쓰면 안 된다. |
-| `proven_ws_stream_ping` | 같다. 125바이트를 넘으면 `OUT_OF_BOUNDS`. |
+| `proven_ws_stream_send`, `proven_ws_stream_send_piece` | `proven_err_t`: 출력 한도에 닿았으면 `AGAIN`, 아무것도 받지 않는다. close를 보낸 뒤이거나, 메시지 안에서의 `first`이거나, 메시지 밖에서 `first`가 아닌 조각이면 `INVALID_STATE`. 연결이 사라졌으면 `RESET`. 이 호출 도중에 잃었다면(소켓 오류, 또는 출력에 쓸 메모리가 없음) `on_closed`는 호출 안에서 불리지 않는다: `ws`는 유효하게 남고, 그 위의 send, 조각, ping은 모두 `RESET`으로 답하며, close, pause, resume은 아무것도 하지 않고, `on_closed`는 루프의 다음 차례에 한 번, 1006(또는 이미 보낸 close의 코드)과 만난 오류로 불린다 - `proven_ws_stream_abort`나 서버 해제가 먼저 오면 그 안에서 곧바로. 같은 HTTP/2 연결 위의 다른 WebSocket이 그 손실로 끝날 때도 같다. v0.115.0 전에는 `on_closed`가 호출 안에서 불렸다. |
+| `proven_ws_stream_ping` | 같다(호출 도중에 잃은 연결도). 125바이트를 넘으면 `OUT_OF_BOUNDS`. |
 | `proven_ws_stream_close` | 없음. `code`와 `reason`으로 close를 보내고, 클라이언트가 답하거나 close 타임아웃이 지나면 연결을 끝낸다. `on_closed`는 나중에 따른다. 보낼 수 없는 코드는 1000이 된다. |
-| `proven_ws_stream_abort` | 없음. close 프레임 없이 곧바로 연결을 끝낸다. `on_closed(1006, PROVEN_ERR_RESET)`이 호출 안에서 불린다. |
+| `proven_ws_stream_abort` | 없음. close 프레임 없이 곧바로 연결을 끝낸다. `on_closed(1006, PROVEN_ERR_RESET)`이 호출 안에서 불린다 - send가 잃어 `on_closed`가 루프를 기다리던 연결이라면, 그 send가 만난 것으로 역시 호출 안에서 불린다. |
 | `proven_ws_stream_pause`, `proven_ws_stream_resume` | 없음. 메시지 전달과 연결 읽기를 멈추고 다시 시작한다. |
 | `proven_ws_stream_buffered` | `proven_size_t`: 클라이언트를 위해 큐에 있고 아직 받아 가지 않은 바이트. |
 | `proven_ws_stream_compressed` | `bool`: `compress`를 켰고 클라이언트가 동의했는가. |
@@ -2468,8 +2468,10 @@ TLS로, 7절과 9절 표의 모든 행에 걸쳐 돌린다: 즉시 하는 답, �
 답, pause와 resume이 있는 업로드, 쓰기가 한 번 거절될 때까지 읽지 않는 클라이언트로의 16 MB 다운로드,
 파이프라이닝, 각 거절, 각 타임아웃, 사라지는 클라이언트, 답하지 않은 요청을 둔 채 해제되는 서버 -
 `on_request`마다 `on_done`이 한 번 불렸는지 확인하면서. WebSocket은 12장의 블로킹 클라이언트와 날
-소켓을 상대로 11절 표들의 행에 걸쳐 돌린다 - `PROVEN_ERR_NOMEM`, 그리고 `proven_ws_event_accept`와
-보내기 호출의 `PROVEN_ERR_RESET`만 빼고. 이것들은 일으키지 않는다. 클라이언트는 같은 루프 위의 이
+소켓을 상대로 11절 표들의 행에 걸쳐 돌린다 - `PROVEN_ERR_NOMEM`과
+`proven_ws_event_accept`의 `PROVEN_ERR_RESET`만 빼고. 이것들은 일으키지 않는다. 연결을 잃는 send는
+서버와 클라이언트에서 send 동안 거절하는 할당기로 일으키고, 그 `on_closed`가 루프에서, abort에서,
+또는 서버 해제에서 한 번 오는지 확인한다. 클라이언트는 같은 루프 위의 이
 장의 서버와, 테스트가 직접 써 주는 답을 상대로 12절 표들의 행에 걸쳐 돌린다 -
 `PROVEN_ERR_UNREACHABLE`, `PROVEN_ERR_NOMEM`, 만료된 인증서, 그리고 네 시간 한도 가운데 셋만 빼고:
 지나가게 만드는 것은 응답 타임아웃뿐이다. 이 모두를 기계에 부하를 건 채 주소 검사와 미정의 동작 검사

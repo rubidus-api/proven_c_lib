@@ -114,8 +114,9 @@ static void srv_request(void *ctx, proven_http_stream_t *stream, const proven_ht
     s->ws = ws;
     s->mode = strcmp(path, "/push") == 0 ? 'p' : strcmp(path, "/close") == 0 ? 'c' : strcmp(path, "/silent") == 0 || strcmp(path, "/pings") == 0 ? 's' : 'e';
     proven_ws_stream_set_user(ws, s);
-    /* A send that answers RESET lost the connection inside the call: on_closed has run, and
-     * freed `s` - nothing of this connection may be touched after it (found by the oom sweep). */
+    /* A send that answers RESET lost the connection: there is nothing more to do here. (Before
+     * v0.115.0 on_closed had run inside it and freed `s`, found by the oom sweep; now it comes
+     * from the loop - RFC-0047.) */
     if (strcmp(path, "/origin") == 0 &&
         proven_ws_stream_send(ws, true, has_origin ? (proven_mem_view_t){ origin.ptr, origin.size } : mv("(none)")) == PROVEN_ERR_RESET) return;
     if (s->mode == 'p') proven_loop_timer_set(g_loop, &s->timer, 1, srv_push, s);
@@ -405,6 +406,60 @@ static void cases(bool tls) {
     turn(20);
 }
 
+/* RFC-0047 on a client: a send that loses the connection answers PROVEN_ERR_RESET, `ws` stays
+ * valid and answers RESET, and on_closed comes from the loop, once - or from abort, at once.
+ * Lost by refusing every allocation of the loop's (a client's output is the loop's memory)
+ * during a 16 MiB send that a server which is not being turned cannot take. */
+static bool g_lose_fail;
+static proven_result_mem_mut_t lose_alloc(void *ctx, proven_size_t size, proven_size_t align) {
+    const proven_allocator_t *h = ctx;
+    if (g_lose_fail) return (proven_result_mem_mut_t){ .err = PROVEN_ERR_NOMEM };
+    return h->alloc_fn(h->ctx, size, align);
+}
+static proven_result_mem_mut_t lose_realloc(void *ctx, void *old, proven_size_t old_size, proven_size_t new_size, proven_size_t align) {
+    const proven_allocator_t *h = ctx;
+    if (g_lose_fail) return (proven_result_mem_mut_t){ .err = PROVEN_ERR_NOMEM };
+    return h->realloc_fn(h->ctx, old, old_size, new_size, align);
+}
+static void lose_free(void *ctx, void *ptr) { const proven_allocator_t *h = ctx; h->free_fn(h->ctx, ptr); }
+
+static void lose_client_case(bool abort_it) {
+    const char *how = abort_it ? "then aborted" : "then left to the loop";
+    proven_allocator_t alloc = { .ctx = &g_heap, .alloc_fn = lose_alloc, .realloc_fn = lose_realloc, .free_fn = lose_free };
+    proven_loop_t *const kept = g_loop;
+    PROVEN_TEST_ASSERT(proven_loop_create(alloc, &g_loop) == PROVEN_OK, "a loop whose allocator can be made to refuse", how);
+    proven_http_event_server_t *server = NULL;
+    proven_http_event_server_config_t cfg = { .alloc = g_heap, .on = { .on_request = srv_request } };
+    proven_net_addr_t at;
+    PROVEN_TEST_ASSERT(proven_http_event_server_create(g_loop, &cfg, &server) == PROVEN_OK &&
+                       proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server on it", how);
+    static cli_t c;
+    proven_ws_event_connect_options_t plain = { 0 };
+    PROVEN_TEST_ASSERT(dial(&c, false, at.port, "/silent", plain) == PROVEN_OK && turn_until(&c.opens, 1, 5000), "a client, open", how);
+    enum { HUGE = 16 * 1024 * 1024 };
+    proven_byte_t *huge = calloc(1, HUGE);
+    PROVEN_TEST_ASSERT(huge != NULL, "16 MiB to send", "");
+    g_lose_fail = true;
+    const proven_err_t e = proven_ws_stream_send(c.ws, false, (proven_mem_view_t){ huge, HUGE });
+    g_lose_fail = false;
+    PROVEN_TEST_ASSERT(e == PROVEN_ERR_RESET && c.closes == 0, "the send answers PROVEN_ERR_RESET, and on_closed has not run inside it",
+                       "Check ws_on_closed's deferral in net/src/ws_event.c, reached from wsc_gone.");
+    PROVEN_TEST_ASSERT(proven_ws_stream_send(c.ws, true, mv("again")) == PROVEN_ERR_RESET && proven_ws_stream_ping(c.ws, mv("p")) == PROVEN_ERR_RESET && c.closes == 0,
+                       "ws is still valid: a send and a ping answer RESET, and nothing is called", how);
+    if (abort_it) {
+        proven_ws_stream_abort(c.ws);
+        PROVEN_TEST_ASSERT(c.closes == 1, "abort calls the pending on_closed inside the call", how);
+    }
+    turn(100);
+    PROVEN_TEST_ASSERT(c.closes == 1 && c.code == 1006 && (c.why == PROVEN_ERR_NOMEM || c.why == PROVEN_ERR_RESET),
+                       "on_closed is called once, from the loop or the abort, with 1006 and the error the send met", how);
+    free(huge);
+    proven_http_event_server_destroy(server);
+    turn(20);
+    proven_loop_destroy(g_loop);
+    g_loop = kept;
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("a WebSocket client on the loop",
         "proven_ws_event_connect against this library's event-driven server on the same loop - messages both ways at many sizes, compression agreed and not, subprotocols, pause, pings, closes from either side - plain and over TLS, and every way a connection can fail to become a WebSocket, each ending in exactly one on_closed.",
@@ -546,6 +601,11 @@ int main(void) {
         free(c.got);
         c.got = NULL;
     }
+
+    PROVEN_TEST_SECTION("a send that loses the connection", "RFC-0047: the send answers PROVEN_ERR_RESET, ws stays valid, and on_closed comes from the loop, or from abort at once, exactly once.",
+                        "Check ws_on_closed in net/src/ws_event.c and wsc_tr_send in net/src/ws_event_client.c.");
+    lose_client_case(false);
+    lose_client_case(true);
 
     turn(50);
     proven_loop_destroy(g_loop);

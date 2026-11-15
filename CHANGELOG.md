@@ -18,6 +18,35 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **Behaviour: a WebSocket send that loses the connection no longer calls `on_closed` inside
+  the call** (`ws_event.h`; on the server and on a client). When `proven_ws_stream_send`,
+  `_send_piece` or `_ping` answers `PROVEN_ERR_RESET` because the transport refused the frame
+  during the call (a socket error, or no memory for the output), `ws` stays valid: every send,
+  piece and ping on it answers `PROVEN_ERR_RESET`, close, pause and resume do nothing, and
+  `on_closed` is called once from the loop's next turn, with 1006 (or the code of a close
+  already sent) and the error met. `proven_ws_stream_abort` calls the waiting `on_closed` at
+  once, inside the call, and so does `proven_http_event_server_destroy`. Another WebSocket on
+  the same HTTP/2 connection that the loss ends is treated the same. Before, `on_closed` ran
+  inside the send, so a caller that did anything after a send had to ask whether its state had
+  just been freed (a deployed server re-entered its own flush that way, and this library's own
+  client test used freed state). **What to change:** code that, on `PROVEN_ERR_RESET` from a
+  send, treated the connection as already gone and freed its state must leave that to
+  `on_closed`; code that stopped using `ws` at that answer needs no change. Nothing is
+  allocated when a loss is put off (the loss is often a failed allocation): the pending end is
+  kept in fields a connection without its transport no longer reads, and one timer per server
+  (or client) runs them, so an idle connection holds what it held - 984 bytes plain, 1,016
+  compressed without takeover, measured by `test_unit_ws_event`.
+
+### Tests
+
+- `test_unit_ws_event`: a send that loses the connection, with an allocator that refuses during
+  a 16 MiB send - from outside the loop and from inside `on_message`; then left to the loop,
+  aborted, closed, or the server destroyed before the loop turns. `test_unit_ws_event_client`:
+  the same on a client, left to the loop and aborted. With the old behaviour the first fails
+  under AddressSanitizer (use after free) and the second fails its check.
+
 ## [0.114.4] - 2026-11-15
 
 ### Changed

@@ -1039,10 +1039,10 @@ than buffered.
 
 | Call | Returns |
 |---|---|
-| `proven_ws_stream_send`, `proven_ws_stream_send_piece` | `proven_err_t`: `AGAIN` when the output limit is reached, with nothing taken; `INVALID_STATE` after a close was sent, for `first` inside a message, or for a piece that is not `first` outside one; `RESET` when the connection is gone - if it was lost during this call, `on_closed` has already been called inside it, and neither `ws` nor what `on_closed` freed may be used after the return. |
-| `proven_ws_stream_ping` | the same; `OUT_OF_BOUNDS` for more than 125 bytes. |
+| `proven_ws_stream_send`, `proven_ws_stream_send_piece` | `proven_err_t`: `AGAIN` when the output limit is reached, with nothing taken; `INVALID_STATE` after a close was sent, for `first` inside a message, or for a piece that is not `first` outside one; `RESET` when the connection is gone. If it was lost during this call (a socket error, or no memory for the output), `on_closed` is not called inside it: `ws` stays valid, every send, piece and ping on it answers `RESET`, close, pause and resume do nothing, and `on_closed` comes once from the loop's next turn with 1006 (or the code of a close already sent) and the error met - at once instead from `proven_ws_stream_abort` or the server's destroy. A WebSocket on the same HTTP/2 connection that the loss ends is treated the same. Before v0.115.0 `on_closed` ran inside the call. |
+| `proven_ws_stream_ping` | the same, a connection lost during the call included; `OUT_OF_BOUNDS` for more than 125 bytes. |
 | `proven_ws_stream_close` | nothing. Sends a close with `code` and `reason`, and ends the connection when the client answers or the close timeout passes; `on_closed` follows later. A code that may not be sent becomes 1000. |
-| `proven_ws_stream_abort` | nothing. Ends the connection at once with no close frame; `on_closed(1006, PROVEN_ERR_RESET)` is called inside the call. |
+| `proven_ws_stream_abort` | nothing. Ends the connection at once with no close frame; `on_closed(1006, PROVEN_ERR_RESET)` is called inside the call - for a connection a send lost, whose `on_closed` waits for the loop, it is called inside the call too, with what the send met. |
 | `proven_ws_stream_pause`, `proven_ws_stream_resume` | nothing. Stop and restart the delivery of messages and the reading of the connection. |
 | `proven_ws_stream_buffered` | `proven_size_t`: bytes queued for the client and not yet accepted by it. |
 | `proven_ws_stream_compressed` | `bool`: whether `compress` was set and the client agreed. |
@@ -2556,9 +2556,11 @@ uploads with pause and resume, a 16 MB download to a client that does not read u
 has been refused, pipelining, each refusal, each timeout, clients that disappear, and a server
 destroyed under an unanswered request - checking that `on_done` was called once for every
 `on_request`. The WebSocket is run against the blocking client of Chapter 12 and against raw
-sockets, through the rows of the tables of section 11 - all but `PROVEN_ERR_NOMEM`, and
-`PROVEN_ERR_RESET` from `proven_ws_event_accept` and from the send calls, which are not
-provoked. The client is run against this chapter's server on the same loop and against answers
+sockets, through the rows of the tables of section 11 - all but `PROVEN_ERR_NOMEM` and
+`PROVEN_ERR_RESET` from `proven_ws_event_accept`, which are not provoked; a send that loses
+the connection is provoked on a server and on a client by an allocator that refuses during the
+send, and its `on_closed` is checked to come once, from the loop, from abort, or from the
+server's destroy. The client is run against this chapter's server on the same loop and against answers
 the test scripts itself, through the rows of the tables of section 12 - all but
 `PROVEN_ERR_UNREACHABLE`, `PROVEN_ERR_NOMEM`, an expired certificate, and three of the four
 time limits: only the response timeout is made to pass. All of them were run several hundred

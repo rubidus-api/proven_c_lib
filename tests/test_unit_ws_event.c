@@ -733,6 +733,113 @@ static void memory_case(void) {
     proven_loop_destroy(loop);
 }
 
+/* RFC-0047: a send, piece or ping that loses the connection answers PROVEN_ERR_RESET and leaves
+ * `ws` valid; on_closed comes from the loop, once - or at once from abort or the server's destroy.
+ * The connection is lost by refusing every allocation during the send (the loop's chunks for
+ * what the socket does not take: the client reads nothing, and the message is 16 MiB). */
+static bool g_lose_fail;
+static int g_lose_closed, g_lose_code, g_lose_why, g_lose_mode, g_lose_seen;
+static bool g_lose_in_handler;
+static proven_ws_stream_t *g_lose_ws;
+static proven_byte_t *g_lose_big;
+enum { LOSE_BIG = 16 * 1024 * 1024 };
+static proven_result_mem_mut_t lose_alloc(void *ctx, proven_size_t size, proven_size_t align) {
+    const proven_allocator_t *h = ctx;
+    if (g_lose_fail) return (proven_result_mem_mut_t){ .err = PROVEN_ERR_NOMEM };
+    return h->alloc_fn(h->ctx, size, align);
+}
+static proven_result_mem_mut_t lose_realloc(void *ctx, void *old, proven_size_t old_size, proven_size_t new_size, proven_size_t align) {
+    const proven_allocator_t *h = ctx;
+    if (g_lose_fail) return (proven_result_mem_mut_t){ .err = PROVEN_ERR_NOMEM };
+    return h->realloc_fn(h->ctx, old, old_size, new_size, align);
+}
+static void lose_free(void *ctx, void *ptr) { const proven_allocator_t *h = ctx; h->free_fn(h->ctx, ptr); }
+static void lose_closed(void *ctx, proven_ws_stream_t *ws, proven_u16 code, proven_err_t why) {
+    (void)ctx;
+    g_lose_closed++;
+    g_lose_code = code;
+    g_lose_why = (int)why;
+    if (ws == g_lose_ws) g_lose_ws = NULL;
+    if (g_lose_in_handler) g_lose_seen |= 0x100;     /* called inside the handler: the trap */
+}
+/* What every send answers while the end is pending, and that nothing was called. Bits 1..32. */
+static int lose_send_checks(proven_ws_stream_t *ws) {
+    int got = 0;
+    g_lose_fail = true;
+    if (proven_ws_stream_send(ws, false, (proven_mem_view_t){ .ptr = g_lose_big, .size = LOSE_BIG }) == PROVEN_ERR_RESET) got |= 1;
+    g_lose_fail = false;
+    if (g_lose_closed == 0) got |= 2;
+    if (proven_ws_stream_send(ws, true, mv("again")) == PROVEN_ERR_RESET && proven_ws_stream_ping(ws, mv("p")) == PROVEN_ERR_RESET &&
+        proven_ws_stream_send_piece(ws, true, mv("a"), true, false) == PROVEN_ERR_RESET) got |= 4;
+    proven_ws_stream_pause(ws);
+    proven_ws_stream_resume(ws);
+    proven_ws_stream_close(ws, 1000, sv("too late"));
+    if (g_lose_closed == 0 && proven_ws_stream_user(ws) == (void *)&g_lose_mode && proven_ws_stream_buffered(ws) == 0) got |= 8;
+    return got;
+}
+static void lose_message(void *ctx, proven_ws_stream_t *ws, bool text, proven_mem_view_t piece, bool first, bool last) {
+    (void)ctx; (void)text; (void)piece; (void)first; (void)last;
+    if (g_lose_mode != 4 || g_lose_seen) return;
+    g_lose_in_handler = true;
+    g_lose_seen = lose_send_checks(ws);
+    g_lose_in_handler = false;
+}
+static void lose_request(void *ctx, proven_http_stream_t *s, const proven_http_request_t *req) {
+    (void)ctx;
+    proven_ws_event_config_t cfg = { .on = { .on_message = lose_message, .on_closed = lose_closed } };
+    proven_ws_stream_t *ws = NULL;
+    if (proven_ws_event_accept(s, req, &cfg, &ws) != PROVEN_OK) { (void)proven_http_stream_respond(s, 400, NULL, 0, mv("")); return; }
+    proven_ws_stream_set_user(ws, &g_lose_mode);
+    g_lose_ws = ws;
+}
+static void lose_case(int mode) {
+    static const char *const what[] = { "the loop's next turn calls on_closed", "abort calls it at once", "the server's destroy calls it",
+                                        "close changes nothing, the loop calls it", "lost inside on_message: called after the handler returns" };
+    proven_allocator_t alloc = { .ctx = &g_heap, .alloc_fn = lose_alloc, .realloc_fn = lose_realloc, .free_fn = lose_free };
+    proven_loop_t *loop = NULL;
+    proven_http_event_server_t *server = NULL;
+    proven_http_event_server_config_t cfg = { .alloc = alloc, .on = { .on_request = lose_request } };
+    proven_net_addr_t at;
+    g_lose_mode = mode; g_lose_closed = 0; g_lose_code = 0; g_lose_why = 0; g_lose_seen = 0; g_lose_ws = NULL; g_lose_fail = false;
+    PROVEN_TEST_ASSERT(proven_loop_create(alloc, &loop) == PROVEN_OK && proven_http_event_server_create(loop, &cfg, &server) == PROVEN_OK &&
+                       proven_http_event_server_listen(server, proven_net_addr_loopback(PROVEN_NET_FAMILY_IPV4, 0), &at) == PROVEN_OK, "a server whose allocator can be made to refuse", what[mode]);
+    char req[256];
+    int rn = snprintf(req, sizeof req, UPGRADE, "/", "13");
+    proven_net_conn_t sock;
+    PROVEN_TEST_ASSERT(proven_net_connect(at, proven_net_deadline_in(5000), &sock) == PROVEN_OK &&
+                       proven_net_write_all(&sock, (proven_mem_view_t){ .ptr = (const proven_byte_t *)req, .size = (proven_size_t)rn }, proven_net_deadline_in(5000)).err == PROVEN_OK,
+        "a client that upgrades and then reads nothing", what[mode]);
+    proven_net_deadline_t until = proven_net_deadline_in(3000);
+    while (!g_lose_ws && proven_time_monotonic_now() < until) PROVEN_TEST_ASSERT(proven_loop_poll(loop, proven_net_deadline_in(20)) == PROVEN_OK, "a round", "");
+    proven_ws_stream_t *ws = g_lose_ws;
+    PROVEN_TEST_ASSERT(ws != NULL, "the WebSocket is accepted", what[mode]);
+    if (mode == 4) {
+        /* A message from the client; the handler sends into a refusing allocator. */
+        PROVEN_TEST_ASSERT(proven_net_write_all(&sock, (proven_mem_view_t){ .ptr = (const proven_byte_t *)"\x81\x82\x01\x02\x03\x04ik", .size = 8 }, proven_net_deadline_in(5000)).err == PROVEN_OK, "a message", "");
+        until = proven_net_deadline_in(3000);
+        while (!g_lose_seen && proven_time_monotonic_now() < until) PROVEN_TEST_ASSERT(proven_loop_poll(loop, proven_net_deadline_in(20)) == PROVEN_OK, "a round", "");
+    } else {
+        g_lose_seen = lose_send_checks(ws);
+    }
+    PROVEN_TEST_ASSERT((g_lose_seen & 15) == 15, "the send answers PROVEN_ERR_RESET; on_closed has not run; ws still answers - RESET to every send, ping and piece, close and pause ignored, its user pointer kept",
+                       "Check ws_on_closed's deferral in net/src/ws_event.c: on_closed must not run inside the program's send.");
+    if (mode == 1) {
+        proven_ws_stream_abort(ws);
+        PROVEN_TEST_ASSERT(g_lose_closed == 1, "abort, while the end is pending, calls on_closed inside the call", "");
+    } else if (mode == 2) {
+        proven_http_event_server_destroy(server);
+        server = NULL;
+        PROVEN_TEST_ASSERT(g_lose_closed == 1, "the server's destroy, before the loop's next turn, calls on_closed inside the call", "Check proven_ws_event_group_end_ in proven_http_event_server_destroy.");
+    }
+    until = proven_net_deadline_in(300);
+    while (proven_time_monotonic_now() < until) PROVEN_TEST_ASSERT(proven_loop_poll(loop, proven_net_deadline_in(20)) == PROVEN_OK, "a round", "");
+    PROVEN_TEST_ASSERT(g_lose_closed == 1 && g_lose_ws == NULL && g_lose_code == 1006 && (g_lose_why == PROVEN_ERR_NOMEM || g_lose_why == PROVEN_ERR_RESET) && !(g_lose_seen & 0x100),
+                       "on_closed is called once, never inside the handler, with 1006 and the error the send met", what[mode]);
+    (void)proven_net_close(&sock);
+    proven_http_event_server_destroy(server);
+    proven_loop_destroy(loop);
+}
+
 int main(void) {
     PROVEN_TEST_SUITE("WebSocket on the event-driven server",
         "Messages both ways in pieces, sends refused and resumed, pings, closes from either side, clients that break the protocol or vanish - plain and over TLS - and what an idle connection holds.",
@@ -771,6 +878,12 @@ int main(void) {
     memory_compressed_case(2);
     memory_compressed_case(3);
     peer_takes_over_case();
+    PROVEN_TEST_SECTION("a send that loses the connection", "RFC-0047: the send answers PROVEN_ERR_RESET, ws stays valid and answers RESET, and on_closed comes from the loop - or from abort, or the server's destroy, at once - exactly once.",
+                        "Check ws_on_closed, ws_late_fire and proven_ws_event_group_end_ in net/src/ws_event.c.");
+    g_lose_big = calloc(1, LOSE_BIG);
+    PROVEN_TEST_ASSERT(g_lose_big != NULL, "16 MiB to send", "");
+    for (int mode = 0; mode < 5; ++mode) lose_case(mode);
+    free(g_lose_big);
 
     proven_tls_config_destroy(g_client_tls); proven_tls_config_destroy(g_server_tls); proven_cert_store_destroy(anchors);
     proven_job_system_close(g_threads); proven_job_system_destroy(g_threads);
