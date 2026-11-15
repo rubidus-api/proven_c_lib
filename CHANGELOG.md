@@ -36,8 +36,9 @@ written; their tags still exist.
   `on_closed`; code that stopped using `ws` at that answer needs no change. Nothing is
   allocated when a loss is put off (the loss is often a failed allocation): the pending end is
   kept in fields a connection without its transport no longer reads, and one timer per server
-  (or client) runs them, so an idle connection holds what it held - 984 bytes plain, 1,016
-  compressed without takeover, measured by `test_unit_ws_event`.
+  (or client) runs them, so an idle connection on the server holds what it held - 984 bytes
+  plain, 1,016 compressed without takeover, measured by `test_unit_ws_event`; a client's
+  connection holds that timer and its count behind its struct, about 80 bytes more on 64-bit.
 
 ### Tests
 

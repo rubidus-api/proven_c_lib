@@ -118,14 +118,19 @@ static proven_ws_rx_t *ws_rx(const proven_ws_stream_t *ws) { return ws->deflate 
 static proven_chacha_rng_t *ws_masks(const proven_ws_stream_t *ws) {
     return (proven_chacha_rng_t *)(void *)((proven_byte_t *)(ws + 1) + (ws->may_deflate ? sizeof(proven_ws_z_t) : 0));
 }
+/* Where a client's group begins behind its struct: after the mask generator, rounded up to the
+ * group's alignment (8 on a 32-bit Windows target, where what comes before may end at 4). */
+static proven_size_t ws_group_at(bool may_deflate) {
+    const proven_size_t at = sizeof(proven_ws_stream_t) + (may_deflate ? sizeof(proven_ws_z_t) : 0) + sizeof(proven_chacha_rng_t);
+    return (at + alignof(proven_ws_group_t_) - 1) & ~(proven_size_t)(alignof(proven_ws_group_t_) - 1);
+}
 /* Who counts this stream's sends and keeps its pending end: a client's own, behind its struct;
  * the server's, reached through the connection - so only while there is one. */
 static proven_ws_group_t_ *ws_group(const proven_ws_stream_t *ws) {
-    if (ws->client) return (proven_ws_group_t_ *)(void *)((proven_byte_t *)ws_masks(ws) + sizeof(proven_chacha_rng_t));
+    if (ws->client) return (proven_ws_group_t_ *)(void *)((proven_byte_t *)(void *)ws + ws_group_at(ws->may_deflate));
     return &((const proven_ev_head_t *)ws->conn)->server->ws_group;
 }
-static_assert(sizeof(proven_ws_stream_t) % _Alignof(proven_ws_group_t_) == 0 && sizeof(proven_ws_z_t) % _Alignof(proven_ws_group_t_) == 0 &&
-              sizeof(proven_chacha_rng_t) % _Alignof(proven_ws_group_t_) == 0, "what follows a client's struct stays aligned");
+static_assert(alignof(proven_ws_group_t_) <= 16, "a client's allocation (aligned to 16) keeps its group aligned");
 
 static void ws_enter(proven_ws_stream_t *ws) { ws->depth++; }
 static void ws_rx_free(proven_ws_stream_t *ws) {
@@ -613,10 +618,9 @@ proven_err_t proven_ws_event_client_new_(proven_allocator_t alloc, proven_loop_t
         (config->compress_window_bits != 0 && (config->compress_window_bits < 9 || config->compress_window_bits > 15))) return PROVEN_ERR_INVALID_ARG;
     proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE];
     if (!proven_random_bytes(seed, sizeof seed)) return PROVEN_ERR_IO;
-    /* Behind the struct: room for the compression state, if it was offered, and the
-     * generator of mask keys - neither of which a server's connection carries. */
-    const proven_size_t z_bytes = config->compress ? sizeof(proven_ws_z_t) : 0;
-    proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, sizeof(proven_ws_stream_t) + z_bytes + sizeof(proven_chacha_rng_t) + sizeof(proven_ws_group_t_), 16);
+    /* Behind the struct: room for the compression state, if it was offered, the generator of
+     * mask keys and the group - none of which a server's connection carries. */
+    proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, ws_group_at(config->compress) + sizeof(proven_ws_group_t_), 16);
     if (m.err != PROVEN_OK) return PROVEN_ERR_NOMEM;
     proven_ws_stream_t *ws = (proven_ws_stream_t *)(void *)m.value.ptr;
     *ws = (proven_ws_stream_t){

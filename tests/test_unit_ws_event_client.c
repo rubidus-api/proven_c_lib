@@ -319,6 +319,9 @@ static void cases(bool tls) {
                        turn_until(&c.messages, 13, 5000) && c.got_len == 6001 && memcmp(c.got, g_msg, 6001) == 0, "a message sent in three pieces arrives at the server as one, and comes back", how);
     PROVEN_TEST_ASSERT(proven_ws_stream_ping(c.ws, mv("are you there")) == PROVEN_OK, "a ping of this side's own", how);
     turn(30);
+    /* Still open: an allocation that failed while the loop turned may have ended it, and then
+     * on_closed has freed `c.ws` (found by the oom sweep at its 891st allocation). */
+    PROVEN_TEST_ASSERT(c.closes == 0, "and the connection is still open after it", how);
     proven_ws_stream_close(c.ws, 1000, sv("done"));
     PROVEN_TEST_ASSERT(turn_until(&c.closes, 1, 5000) && c.closes == 1 && c.code == 1000 && c.why == PROVEN_OK && turn_until(&g_srv_closed, 1, 5000) && g_srv_last_code == 1000,
         "a close from this side: both ends report 1000, this one once and with PROVEN_OK", how);
