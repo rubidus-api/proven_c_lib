@@ -18,6 +18,57 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- **Behaviour: `proven_chacha_rng_t` erases its key** (RFC-0048; `random.h`). The stream is cut
+  into epochs of 16 blocks (1 KiB of keystream): the last block of each is not handed out - its
+  first 32 bytes become the next epoch's key, and it is wiped - and bytes handed out are wiped
+  from the generator's `block`. Whoever later reads the generator's memory can recompute at most
+  what the current epoch gave out (under 1 KiB), not what came before. The stream is still a
+  function of the seed alone, however it is drawn, and its first 15 blocks (960 bytes) are RFC
+  8439's keystream as before; **from byte 960 on, the same seed gives different bytes than in
+  earlier releases.** `PROVEN_CHACHA_RNG_NO_ERASURE` (with the new `proven_chacha_rng_seed_ex`)
+  gives the earlier stream exactly.
+- **Behaviour: a generator seeded by `proven_chacha_rng_seed_from_entropy` takes a new key in
+  a forked child** (POSIX, through `pthread_atfork`), at its first draw there, so parent and
+  child never hand out the same bytes; `PROVEN_CHACHA_RNG_NO_FORK_RESEED` turns it off. If the
+  entropy source fails in the child, the key is derived from the old one and the process id:
+  distinct from the parent's stream, not secret from it. A generator seeded with bytes of the
+  caller's own is reproducible and is not reseeded. A raw `clone` or `vfork` is not seen.
+- The library's own WebSocket clients (`ws_conn.c`, `ws_event.c`) seed their mask generators
+  with `proven_chacha_rng_seed_from_entropy`, so a forked child does not repeat its parent's
+  mask keys.
+- Cost, measured on the build host (AVX2, GCC 16 -O2, time-stamp counts per byte, a shared host
+  under load): 1 MiB fills about 1.8 against 1.7; 8 to 256-byte draws and
+  `proven_chacha_rng_next` within the noise; a draw of exactly 1 KiB about twice as long (2.9
+  against 1.5), since each crosses an epoch's end.
+
+### Added
+
+- `proven_chacha_rng_seed_ex` and `proven_chacha_rng_seed_from_entropy_ex`, with the options
+  `PROVEN_CHACHA_RNG_NO_ERASURE`, `PROVEN_CHACHA_RNG_NO_FORK_RESEED` and
+  `PROVEN_CHACHA_RNG_RESEED_EVERY_MIB` (off by default: mixes 32 bytes from the entropy source
+  into the key every 1 MiB of keystream, as OpenBSD's `arc4random` does).
+- `proven_random_fast_bytes(buf, len)`: cryptographically strong bytes from a ChaCha generator
+  of the calling thread's own, seeded from the entropy source at the thread's first call (key
+  erasure and the fork rule apply); no system call after that. For 1 KiB it took about a
+  quarter of `proven_random_bytes`'s time on the build host; on Linux with kernel 6.11 and
+  glibc 2.41 or later the two are close for a few bytes (`getrandom` runs in user space there).
+  In a freestanding build it is `proven_random_bytes`.
+- AArch64: ChaCha keystream four blocks at a time with NEON, and one block in its row form, for
+  `proven_chacha_rng_fill` and `_next` (little-endian, GCC or Clang, hosted;
+  `PROVEN_SYS_CHACHA_DISABLE` turns it off). Checked with `test_unit_rng` built by
+  aarch64-linux-gnu-gcc and run under qemu-aarch64; **not timed on ARM hardware** (none here).
+
+### Tests
+
+- `test_unit_rng`: the erasure stream against an independent model, drawn whole, in pieces of
+  fourteen sizes and as words; `NO_ERASURE` against the plain keystream; wiping of what was
+  handed out; the key replaced at an epoch's end; reseeding every MiB with and without the
+  option; `proven_random_fast_bytes`; and fork (POSIX): different bytes in parent and child when
+  seeded from entropy, the same with `NO_FORK_RESEED` or a seed of one's own. Switching off the
+  fork check or the wiping fails the test.
+
 ## [0.115.0] - 2026-11-15
 
 ### Changed

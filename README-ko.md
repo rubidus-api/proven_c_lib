@@ -694,7 +694,7 @@ base 위에만 서고, 네트워크 라이브러리는 셋 모두 위에 서며,
 - Text: `fmt`, `scan`.
 - Numbers: `float_parse`, `float_format`.
 - 해싱과 인코딩: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC, HKDF, PBKDF2), `deflate` (DEFLATE 압축과 풀기, 그대로 또는 zlib·gzip으로, 스트리밍, 풀 때 나올 양은 호출자가 한정), `zstd` (Zstandard 압축과 풀기 - 쓰는 쪽은 레벨 열아홉 개, 레벨 6은 gzip 6 크기에 세 배 속도, 19는 libzstd 크기의 약 1 % 안; 장거리 일치; 원시 사전과 형식 있는 사전(`zstd --train`이 쓰는 것)을 양쪽에서 -, 출력과 윈도는 호출자가 한정), `brotli` (Brotli 풀기, 출력과 윈도는 호출자가 한정; `PROVEN_NO_BROTLI`는 이것과 122,784바이트 사전을 뺍니다), `cert` (X.509 인증서: 읽기, 이름, 신뢰 앵커, 체인 검증, 코드 서명·타임스탬프 용도), `sign` (PEM, DER, 부품에서 만드는 개인 키 - RSA, P-256, P-384 -, 다이제스트에 대한 결정적 서명, PSS, 검증), `der` (엄격한 DER 읽개와 쓰개), `aes` (암호화된 키 파일을 위한 AES-CBC와 PKCS #7), `aead` (AES-GCM과 ChaCha20-Poly1305), `kex` (X25519, P-256·P-384 위의 ECDH, 고정 그룹 위의 유한체 Diffie-Hellman), `hash_legacy` (SHA-1과 MD5, 그것을 못 박은 형식용), `encode` (hex, Base64, Base64URL), `utf` (엄격한 UTF-8 <-> UTF-16).
-- 난수: `random` (xoshiro256** 재현 가능, ChaCha20 암호학적, 무편향 범위/셔플 헬퍼, 교체 가능한 엔트로피 소스 — 기본은 OS CSPRNG, 베어메탈은 보드의 하드웨어 TRNG).
+- 난수: `random` (xoshiro256** 재현 가능, ChaCha20 암호학적(키 삭제, fork한 자식에서 새 키), 스레드별 빠른 소스, 무편향 범위/셔플 헬퍼, 교체 가능한 엔트로피 소스 — 기본은 OS CSPRNG, 베어메탈은 보드의 하드웨어 TRNG).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
 - 네트워크 라이브러리 proven_net(`net/`)은 이어지는 네트워킹 항목입니다 - `net`, `http`와 그 곁의 코덱(`http_auth`, `http_cookie`, `sse`, `hpack`, `h2`), HTTP 서버와 클라이언트, 이벤트 모듈, WebSocket, `tls`. 이 목록의 나머지는 `url`을 포함해 모두 proven_base입니다.
 - 네트워킹: `net` (기다리는 모든 호출에 기한이 있는 TCP·UDP·유닉스 도메인 소켓, 여러 소켓의 준비 상태, 전송 인터페이스). Hosted 전용이며 `PROVEN_NO_NET`으로 뺄 수 있습니다.

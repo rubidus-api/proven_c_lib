@@ -616,8 +616,6 @@ proven_err_t proven_ws_event_client_new_(proven_allocator_t alloc, proven_loop_t
     if (!config || !config->on.on_message || config->subprotocol.size != 0) return PROVEN_ERR_INVALID_ARG;
     if (config->compress_level < -1 || config->compress_level > 9 ||
         (config->compress_window_bits != 0 && (config->compress_window_bits < 9 || config->compress_window_bits > 15))) return PROVEN_ERR_INVALID_ARG;
-    proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE];
-    if (!proven_random_bytes(seed, sizeof seed)) return PROVEN_ERR_IO;
     /* Behind the struct: room for the compression state, if it was offered, the generator of
      * mask keys and the group - none of which a server's connection carries. */
     proven_result_mem_mut_t m = alloc.alloc_fn(alloc.ctx, ws_group_at(config->compress) + sizeof(proven_ws_group_t_), 16);
@@ -635,7 +633,11 @@ proven_err_t proven_ws_event_client_new_(proven_allocator_t alloc, proven_loop_t
     if (config->compress) {
         *ws_z(ws) = (proven_ws_z_t){ .level = (proven_i8)config->compress_level, .window_bits = (proven_i8)config->compress_window_bits };
     }
-    proven_chacha_rng_seed(ws_masks(ws), seed);
+    /* From entropy, so that a forked child does not repeat the parent's mask keys (RFC-0048). */
+    if (!proven_chacha_rng_seed_from_entropy(ws_masks(ws))) {
+        alloc.free_fn(alloc.ctx, ws);
+        return PROVEN_ERR_IO;
+    }
     *ws_group(ws) = (proven_ws_group_t_){ .loop = loop };
     proven_ws_decoder_init(&ws->dec, false, ws->max_message);
     *out = ws;

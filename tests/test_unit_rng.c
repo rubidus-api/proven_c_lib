@@ -2,6 +2,12 @@
 #include "proven_test.h"
 #include <string.h>
 #include <stdint.h>
+#include <stdio.h>
+#if !defined(_WIN32) && !defined(_WIN64)
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#endif
 
 /*
  * Written from the contract in include/proven/random.h before the generators existed
@@ -34,6 +40,40 @@ static bool is_permutation_of_iota(const int *a, int n) {
     }
     return true;
 }
+
+/* RFC-0048: an independent model of the generator's stream - the RFC 8439 block function
+ * written out again here, and the erasure rule in its plainest form: blocks in order, counter
+ * from 0; every block whose counter is 15 mod 16 is not output, its first 32 bytes are the key
+ * from the next block on. */
+static uint32_t m_rotl(uint32_t x, int k) { return (x << k) | (x >> (32 - k)); }
+#define M_QR(a, b, c, d) (a += b, d ^= a, d = m_rotl(d, 16), c += d, b ^= c, b = m_rotl(b, 12), a += b, d ^= a, d = m_rotl(d, 8), c += d, b ^= c, b = m_rotl(b, 7))
+static void m_block(const uint32_t key[8], uint64_t ctr, uint8_t out[64]) {
+    uint32_t s[16] = { 0x61707865u, 0x3320646Eu, 0x79622D32u, 0x6B206574u }, x[16];
+    for (int i = 0; i < 8; ++i) s[4 + i] = key[i];
+    s[12] = (uint32_t)ctr; s[13] = (uint32_t)(ctr >> 32);
+    memcpy(x, s, sizeof x);
+    for (int i = 0; i < 10; ++i) {
+        M_QR(x[0], x[4], x[8], x[12]); M_QR(x[1], x[5], x[9], x[13]); M_QR(x[2], x[6], x[10], x[14]); M_QR(x[3], x[7], x[11], x[15]);
+        M_QR(x[0], x[5], x[10], x[15]); M_QR(x[1], x[6], x[11], x[12]); M_QR(x[2], x[7], x[8], x[13]); M_QR(x[3], x[4], x[9], x[14]);
+    }
+    for (int i = 0; i < 16; ++i) { uint32_t v = x[i] + s[i]; out[4 * i] = (uint8_t)v; out[4 * i + 1] = (uint8_t)(v >> 8); out[4 * i + 2] = (uint8_t)(v >> 16); out[4 * i + 3] = (uint8_t)(v >> 24); }
+}
+static void m_stream(const proven_byte_t seed[32], bool erasure, uint8_t *out, size_t len) {
+    uint32_t key[8];
+    for (int i = 0; i < 8; ++i) key[i] = (uint32_t)seed[4 * i] | ((uint32_t)seed[4 * i + 1] << 8) | ((uint32_t)seed[4 * i + 2] << 16) | ((uint32_t)seed[4 * i + 3] << 24);
+    uint8_t b[64];
+    for (uint64_t ctr = 0; len > 0; ++ctr) {
+        m_block(key, ctr, b);
+        if (erasure && ctr % 16 == 15) {
+            for (int i = 0; i < 8; ++i) key[i] = (uint32_t)b[4 * i] | ((uint32_t)b[4 * i + 1] << 8) | ((uint32_t)b[4 * i + 2] << 16) | ((uint32_t)b[4 * i + 3] << 24);
+            continue;
+        }
+        size_t n = len < 64 ? len : 64;
+        memcpy(out, b, n);
+        out += n; len -= n;
+    }
+}
+static bool all_zero(const proven_byte_t *p, size_t n) { for (size_t i = 0; i < n; ++i) if (p[i]) return false; return true; }
 
 int main(void) {
     PROVEN_TEST_SUITE("randomness by use case: reproducible, cryptographic, and unbiased",
@@ -194,11 +234,149 @@ int main(void) {
             PROVEN_TEST_ASSERT(proven_chacha_rng_next(&a) == proven_chacha_rng_next(&b), "and the next word after them is the same", "");
         }
         proven_chacha_rng_t w;
-        proven_chacha_rng_seed(&w, key);
+        proven_chacha_rng_seed_ex(&w, key, PROVEN_CHACHA_RNG_NO_ERASURE);
         w.state[12] = 0xFFFFFFFFu;
         proven_chacha_rng_fill(&w, got, 64 * 8);
         PROVEN_TEST_ASSERT(w.state[12] == 7 && w.state[13] == 1, "past the wrap of word 12 the count carries into word 13", "");
+        /* With erasure the last epoch before the wrap ends on its key block, 0xFFFFFFFF: 15 data
+         * blocks, the key, and the next epoch at 0 with word 13 carried. */
+        proven_chacha_rng_seed(&w, key);
+        w.state[12] = 0xFFFFFFF0u;
+        proven_chacha_rng_fill(&w, got, 64 * 16);
+        PROVEN_TEST_ASSERT(w.state[12] == 1 && w.state[13] == 1, "with erasure: 16 blocks from 0xFFFFFFF0 are 15, the key at 0xFFFFFFFF, then block 0 of word 13's next value", "");
     }
+
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("key erasure: the stream the model gives, however it is drawn",
+        "RFC-0048 E-1. Epochs of 16 blocks; the 16th is the next key and is never output. Against an independent model of RFC 8439 and that rule: 40 KiB drawn in one fill, in pieces of awkward sizes, and as words; the first 15 blocks are the plain keystream; PROVEN_CHACHA_RNG_NO_ERASURE gives the plain keystream throughout; bytes handed out are wiped from the generator; after the first epoch the key is no longer the seed.",
+        "Inspect chacha_rekey_from, chacha_after_block and the erasure branch of proven_chacha_rng_fill in src/proven/random.c.");
+    // ---------------------------------------------------------------
+    {
+        enum { N = 40960 };
+        static proven_byte_t model[N], plainm[N], got[N];
+        proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE];
+        for (int i = 0; i < PROVEN_CHACHA_SEED_SIZE; ++i) seed[i] = (proven_byte_t)(i * 29 + 3);
+        m_stream(seed, true, model, N);
+        m_stream(seed, false, plainm, N);
+        PROVEN_TEST_ASSERT(memcmp(model, plainm, 15 * 64) == 0 && memcmp(model + 15 * 64, plainm + 15 * 64, 64) != 0,
+            "the model: its first 15 blocks are the plain keystream, the 16th is not output", "");
+        proven_chacha_rng_t g;
+        proven_chacha_rng_seed(&g, seed);
+        proven_chacha_rng_fill(&g, got, N);
+        PROVEN_TEST_ASSERT(memcmp(got, model, N) == 0, "one fill of 40 KiB is the model's stream", "");
+        const proven_size_t sizes[] = { 1, 959, 1, 64, 3, 1024, 191, 192, 255, 960, 17, 4096, 61, 833 };
+        proven_chacha_rng_seed(&g, seed);
+        memset(got, 0, sizeof got);
+        for (proven_size_t off = 0, i = 0; off < N; i = (i + 1) % (sizeof sizes / sizeof sizes[0])) {
+            proven_size_t n = sizes[i] < N - off ? sizes[i] : N - off;
+            proven_chacha_rng_fill(&g, got + off, n);
+            off += n;
+        }
+        PROVEN_TEST_ASSERT(memcmp(got, model, N) == 0, "pieces of fourteen sizes, from 1 to 4096 bytes, give the same stream", "");
+        proven_chacha_rng_seed(&g, seed);
+        for (proven_size_t off = 0; off < N; off += 8) {
+            const proven_u64 v = proven_chacha_rng_next(&g);
+            for (int k = 0; k < 8; ++k) got[off + (proven_size_t)k] = (proven_byte_t)(v >> (8 * k));
+        }
+        PROVEN_TEST_ASSERT(memcmp(got, model, N) == 0, "and so do words from proven_chacha_rng_next", "");
+        proven_chacha_rng_seed_ex(&g, seed, PROVEN_CHACHA_RNG_NO_ERASURE);
+        proven_chacha_rng_fill(&g, got, N);
+        PROVEN_TEST_ASSERT(memcmp(got, plainm, N) == 0, "PROVEN_CHACHA_RNG_NO_ERASURE gives the plain keystream, as before v0.116.0", "");
+        proven_chacha_rng_seed_ex(&g, seed, PROVEN_CHACHA_RNG_NO_FORK_RESEED | PROVEN_CHACHA_RNG_RESEED_EVERY_MIB);
+        proven_chacha_rng_fill(&g, got, N);
+        PROVEN_TEST_ASSERT(memcmp(got, model, N) == 0, "a seed of its own ignores the two options that concern a seed from entropy", "");
+
+        proven_chacha_rng_seed(&g, seed);
+        (void)proven_chacha_rng_next(&g);
+        proven_chacha_rng_fill(&g, got, 13);
+        PROVEN_TEST_ASSERT(g.used == 21 && all_zero(g.block, 21), "the 21 bytes handed out are wiped from the generator's block", "Check the secure_zero calls in proven_chacha_rng_fill and _next.");
+        proven_chacha_rng_fill(&g, got, 960);
+        uint32_t k0[8];
+        for (int i = 0; i < 8; ++i) k0[i] = (uint32_t)seed[4 * i] | ((uint32_t)seed[4 * i + 1] << 8) | ((uint32_t)seed[4 * i + 2] << 16) | ((uint32_t)seed[4 * i + 3] << 24);
+        PROVEN_TEST_ASSERT(memcmp(&g.state[4], k0, sizeof k0) != 0 && g.state[12] >= 16, "a draw past the first epoch has replaced the key: the seed is no longer in the generator", "");
+        proven_chacha_rng_seed(&g, seed);
+        proven_chacha_rng_fill(&g, got, 15 * 64);
+        PROVEN_TEST_ASSERT(g.state[12] == 16 && memcmp(&g.state[4], k0, sizeof k0) != 0, "the key is replaced as soon as the epoch's last data block is made, not at the next draw", "Check chacha_after_block.");
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("reseeding every MiB, on request",
+        "RFC-0048 E-3. Two copies of one generator seeded from entropy give the same stream; with PROVEN_CHACHA_RNG_RESEED_EVERY_MIB they part at the first MiB of keystream, where each mixes in new entropy - and not before.",
+        "Inspect the CHACHA_MIB branch of chacha_rekey_from.");
+    // ---------------------------------------------------------------
+    {
+        static proven_byte_t a[1100000], b[1100000];
+        proven_chacha_rng_t x, y;
+        PROVEN_TEST_ASSERT(proven_chacha_rng_seed_from_entropy_ex(&x, PROVEN_CHACHA_RNG_RESEED_EVERY_MIB), "seeded from entropy with the option", "");
+        y = x;
+        proven_chacha_rng_fill(&x, a, sizeof a);
+        proven_chacha_rng_fill(&y, b, sizeof b);
+        /* 16,384 blocks of keystream, 1,024 of them keys: 15,360 output blocks before the reseed. */
+        const size_t at = (size_t)15360 * 64;
+        PROVEN_TEST_ASSERT(memcmp(a, b, at) == 0 && memcmp(a + at, b + at, 64) != 0, "the copies agree for 15,360 blocks (1 MiB of keystream) and part at once after it", "");
+        PROVEN_TEST_ASSERT(proven_chacha_rng_seed_from_entropy(&x), "and without the option", "");
+        y = x;
+        proven_chacha_rng_fill(&x, a, sizeof a);
+        proven_chacha_rng_fill(&y, b, sizeof b);
+        PROVEN_TEST_ASSERT(memcmp(a, b, sizeof a) == 0, "copies never part: no reseed unless asked for", "");
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("proven_random_fast_bytes",
+        "RFC-0048 E-4. Fills, of any size, from a generator of the thread's own; two draws differ.",
+        "Inspect proven_random_fast_bytes in src/proven/random.c.");
+    // ---------------------------------------------------------------
+    {
+        static proven_byte_t a[5000], b[5000];
+        PROVEN_TEST_ASSERT(proven_random_fast_bytes(a, 0) && !proven_random_fast_bytes(NULL, 4), "len 0 is true, no buffer is false", "");
+        PROVEN_TEST_ASSERT(proven_random_fast_bytes(a, sizeof a) && proven_random_fast_bytes(b, sizeof b) && memcmp(a, b, sizeof a) != 0 && !all_zero(a, sizeof a),
+            "two fills of 5,000 bytes, different and not zero", "");
+        for (int n = 1; n < 300; n += 37) PROVEN_TEST_ASSERT(proven_random_fast_bytes(a, (proven_size_t)n), "small fills too", "");
+    }
+
+#if !defined(_WIN32) && !defined(_WIN64)
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("fork: a generator seeded from entropy takes a new key in the child",
+        "RFC-0048 E-2. A generator that has handed out part of a block forks; parent and child each draw 64 bytes. Seeded from entropy: different. With PROVEN_CHACHA_RNG_NO_FORK_RESEED, or seeded with bytes of its own: the same (reproducible). proven_random_fast_bytes: different.",
+        "Inspect chacha_fork_check in src/proven/random.c and proven_sys_fork_watch in platform/proven_sys_random.c.");
+    // ---------------------------------------------------------------
+    {
+        proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE] = { 1, 2, 3 };
+        for (int mode = 0; mode < 4; ++mode) {
+            proven_chacha_rng_t g;
+            proven_byte_t mine[64], theirs[64];
+            if (mode == 0) PROVEN_TEST_ASSERT(proven_chacha_rng_seed_from_entropy(&g), "seeded", "");
+            if (mode == 1) PROVEN_TEST_ASSERT(proven_chacha_rng_seed_from_entropy_ex(&g, PROVEN_CHACHA_RNG_NO_FORK_RESEED), "seeded", "");
+            if (mode == 2) proven_chacha_rng_seed(&g, seed);
+            if (mode == 3) PROVEN_TEST_ASSERT(proven_random_fast_bytes(mine, 20), "the thread's generator is seeded", "");
+            if (mode != 3) (void)proven_chacha_rng_next(&g);       /* part of a block is buffered */
+            int fd[2];
+            PROVEN_TEST_ASSERT(pipe(fd) == 0, "a pipe", "");
+            fflush(NULL);
+            const pid_t pid = fork();
+            PROVEN_TEST_ASSERT(pid >= 0, "fork", "");
+            if (pid == 0) {
+                if (mode == 3) (void)proven_random_fast_bytes(theirs, sizeof theirs);
+                else proven_chacha_rng_fill(&g, theirs, sizeof theirs);
+                _exit(write(fd[1], theirs, sizeof theirs) == (ssize_t)sizeof theirs ? 0 : 1);
+            }
+            close(fd[1]);
+            if (mode == 3) (void)proven_random_fast_bytes(mine, sizeof mine);
+            else proven_chacha_rng_fill(&g, mine, sizeof mine);
+            size_t got = 0;
+            while (got < sizeof theirs) { ssize_t r = read(fd[0], theirs + got, sizeof theirs - got); if (r <= 0) break; got += (size_t)r; }
+            close(fd[0]);
+            int status = 0;
+            (void)waitpid(pid, &status, 0);
+            PROVEN_TEST_ASSERT(got == sizeof theirs && WIFEXITED(status) && WEXITSTATUS(status) == 0, "the child's 64 bytes", "");
+            const bool same = memcmp(mine, theirs, sizeof mine) == 0;
+            static const char *const what[] = { "seeded from entropy: parent and child differ", "PROVEN_CHACHA_RNG_NO_FORK_RESEED: the child replays the parent",
+                                                "seeded with bytes of its own: the child replays the parent (reproducible)", "proven_random_fast_bytes: parent and child differ" };
+            PROVEN_TEST_ASSERT(same == (mode == 1 || mode == 2), what[mode], "");
+        }
+    }
+#endif
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("proven_rng_below is unbiased, where `% n` is not",

@@ -57,12 +57,36 @@ bool proven_sys_random_bytes(void *buf, size_t len) {
     return true;
 }
 
+_Atomic unsigned proven_sys_fork_generation_;
+unsigned proven_sys_fork_watch(void) { return 0; }
+unsigned proven_sys_fork_generation(void) { return 0; }
+unsigned proven_sys_process_id(void) { return (unsigned)GetCurrentProcessId(); }
+
 #else
 
 #include <stddef.h>
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <stdatomic.h>
+
+/* RFC-0048: a generator seeded from entropy must not hand a forked child the parent's stream.
+ * The child's copy of this count is one more than the parent's, so a generator that recorded
+ * the count when it was seeded sees the difference at its next draw. */
+_Atomic unsigned proven_sys_fork_generation_;
+static pthread_once_t g_fork_once = PTHREAD_ONCE_INIT;
+static void fork_in_child(void) { atomic_fetch_add_explicit(&proven_sys_fork_generation_, 1u, memory_order_relaxed); }
+static void fork_register(void) { (void)pthread_atfork((void (*)(void))0, (void (*)(void))0, fork_in_child); }
+
+unsigned proven_sys_fork_watch(void) {
+    (void)pthread_once(&g_fork_once, fork_register);
+    return atomic_load_explicit(&proven_sys_fork_generation_, memory_order_relaxed);
+}
+
+unsigned proven_sys_fork_generation(void) { return atomic_load_explicit(&proven_sys_fork_generation_, memory_order_relaxed); }
+
+unsigned proven_sys_process_id(void) { return (unsigned)getpid(); }
 
 #if defined(__linux__)
 /* <sys/random.h> declares getrandom() on glibc 2.25+ and defines this guard macro; older
@@ -276,6 +300,82 @@ void proven_sys_chacha_keystream(const uint32_t state[16], uint8_t *out, size_t 
     uint32_t ctr = state[12];
     const int w = proven_sys_chacha_keystream_width();
     for (; w >= 8 && blocks >= 8; blocks -= 8, ctr += 8, out += 512) ks8(ctr, state, out);
+    for (; blocks >= 4; blocks -= 4, ctr += 4, out += 256) ks4(ctr, state, out);
+}
+
+#elif defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__)) && defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ && \
+    !defined(PROVEN_SYS_CHACHA_DISABLE)
+
+/* AArch64: NEON is in the baseline, so there is nothing to detect - four blocks at once, and the
+ * one-block row form, as the SSE2 code above (RFC-0048 section 7). Little-endian AArch64 only:
+ * the stores below write each word as its bytes in memory order. */
+#include <arm_neon.h>
+
+int proven_sys_chacha_keystream_width(void) { return 4; }
+
+static void ks_forget(void *p, size_t n) {
+    unsigned char *b = (unsigned char *)p;
+    for (size_t i = 0; i < n; ++i) b[i] = 0;
+    __asm__ __volatile__("" : : "r"(p) : "memory");
+}
+
+#define KN_R16(x) vreinterpretq_u32_u16(vrev32q_u16(vreinterpretq_u16_u32(x)))
+#define KN_R(x, n) vsliq_n_u32(vshrq_n_u32((x), 32 - (n)), (x), (n))
+#define KN_QR(a, b, c, d)                                                    \
+    do {                                                                     \
+        a = vaddq_u32(a, b); d = veorq_u32(d, a); d = KN_R16(d);             \
+        c = vaddq_u32(c, d); b = veorq_u32(b, c); b = KN_R(b, 12);           \
+        a = vaddq_u32(a, b); d = veorq_u32(d, a); d = KN_R(d, 8);            \
+        c = vaddq_u32(c, d); b = veorq_u32(b, c); b = KN_R(b, 7);            \
+    } while (0)
+#define KN_T4(v0, v1, v2, v3)                                                                          \
+    do {                                                                                               \
+        uint32x4_t t0 = vzip1q_u32(v0, v1), t1 = vzip1q_u32(v2, v3);                                   \
+        uint32x4_t t2 = vzip2q_u32(v0, v1), t3 = vzip2q_u32(v2, v3);                                   \
+        v0 = vreinterpretq_u32_u64(vzip1q_u64(vreinterpretq_u64_u32(t0), vreinterpretq_u64_u32(t1)));  \
+        v1 = vreinterpretq_u32_u64(vzip2q_u64(vreinterpretq_u64_u32(t0), vreinterpretq_u64_u32(t1)));  \
+        v2 = vreinterpretq_u32_u64(vzip1q_u64(vreinterpretq_u64_u32(t2), vreinterpretq_u64_u32(t3)));  \
+        v3 = vreinterpretq_u32_u64(vzip2q_u64(vreinterpretq_u64_u32(t2), vreinterpretq_u64_u32(t3)));  \
+    } while (0)
+
+static void ks4(uint32_t ctr, const uint32_t s[16], uint8_t *out) {
+    static const uint32_t lanes[4] = { 0, 1, 2, 3 };
+    uint32x4_t in_[16], x[16];
+    for (int j = 0; j < 16; ++j) in_[j] = vdupq_n_u32(s[j]);
+    in_[12] = vaddq_u32(vdupq_n_u32(ctr), vld1q_u32(lanes));
+    for (int j = 0; j < 16; ++j) x[j] = in_[j];
+    for (int i = 0; i < 10; ++i) {
+        KN_QR(x[0], x[4], x[8], x[12]); KN_QR(x[1], x[5], x[9], x[13]);
+        KN_QR(x[2], x[6], x[10], x[14]); KN_QR(x[3], x[7], x[11], x[15]);
+        KN_QR(x[0], x[5], x[10], x[15]); KN_QR(x[1], x[6], x[11], x[12]);
+        KN_QR(x[2], x[7], x[8], x[13]); KN_QR(x[3], x[4], x[9], x[14]);
+    }
+    for (int j = 0; j < 16; ++j) x[j] = vaddq_u32(x[j], in_[j]);
+    KN_T4(x[0], x[1], x[2], x[3]); KN_T4(x[4], x[5], x[6], x[7]);
+    KN_T4(x[8], x[9], x[10], x[11]); KN_T4(x[12], x[13], x[14], x[15]);
+    /* x[4g + k] is bytes 16g..16g+15 of block k. */
+    for (int k = 0; k < 4; ++k)
+        for (int g = 0; g < 4; ++g) vst1q_u8(out + 64 * k + 16 * g, vreinterpretq_u8_u32(x[4 * g + k]));
+    ks_forget(x, sizeof x); ks_forget(in_, sizeof in_);
+}
+
+void proven_sys_chacha_keystream1(const uint32_t state[16], uint8_t *out) {
+    const uint32x4_t s0 = vld1q_u32(state), s1 = vld1q_u32(state + 4), s2 = vld1q_u32(state + 8), s3 = vld1q_u32(state + 12);
+    uint32x4_t a = s0, b = s1, c = s2, d = s3;
+    for (int i = 0; i < 10; ++i) {
+        KN_QR(a, b, c, d);
+        b = vextq_u32(b, b, 1); c = vextq_u32(c, c, 2); d = vextq_u32(d, d, 3);
+        KN_QR(a, b, c, d);
+        b = vextq_u32(b, b, 3); c = vextq_u32(c, c, 2); d = vextq_u32(d, d, 1);
+    }
+    vst1q_u8(out, vreinterpretq_u8_u32(vaddq_u32(a, s0)));
+    vst1q_u8(out + 16, vreinterpretq_u8_u32(vaddq_u32(b, s1)));
+    vst1q_u8(out + 32, vreinterpretq_u8_u32(vaddq_u32(c, s2)));
+    vst1q_u8(out + 48, vreinterpretq_u8_u32(vaddq_u32(d, s3)));
+}
+
+void proven_sys_chacha_keystream(const uint32_t state[16], uint8_t *out, size_t blocks) {
+    uint32_t ctr = state[12];
     for (; blocks >= 4; blocks -= 4, ctr += 4, out += 256) ks4(ctr, state, out);
 }
 

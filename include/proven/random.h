@@ -156,6 +156,27 @@ proven_rng_t proven_xoshiro256ss_rng(proven_xoshiro256ss_t *g);
  *       on a hosted target, or from a hardware entropy source on a board. Seeding it from the
  *       clock, a serial number, or an uninitialised buffer yields something that looks random
  *       and is not - which is worse than an obvious failure, because nothing reports it.
+ *
+ * **Key erasure (from v0.116.0, on unless PROVEN_CHACHA_RNG_NO_ERASURE).** The stream is cut
+ * into epochs of 16 blocks (1 KiB of keystream): the last block of each is not handed out - its
+ * first 32 bytes become the next epoch's key, and it is wiped - and bytes already handed out
+ * are wiped from `block`. So someone who later reads the generator's memory can recompute at
+ * most what the current epoch gave out (under 1 KiB), not anything before it. The stream is
+ * still a function of the seed alone, whatever the sizes it is drawn in; its first 15 blocks
+ * are RFC 8439's keystream for the seed as key, counter 0, nonce 0, and from the 16th it
+ * differs from the plain keystream - which PROVEN_CHACHA_RNG_NO_ERASURE gives, as every release
+ * before v0.116.0 did. Erasure does not hide the future: whoever holds the state predicts what
+ * follows until a reseed.
+ *
+ * **Fork (from v0.116.0).** A generator seeded by proven_chacha_rng_seed_from_entropy notices,
+ * at its first draw in the child of a fork, that it is in a new process, and takes a new key
+ * from the entropy source there before drawing - so parent and child never hand out the same
+ * bytes (unless PROVEN_CHACHA_RNG_NO_FORK_RESEED). If the source fails in the child, the new key
+ * is derived from the old one and the child's process id: different from the parent's stream,
+ * but not secret from the parent. One seeded with proven_chacha_rng_seed is reproducible by
+ * definition, and a child replays it. POSIX only, through `pthread_atfork`: a raw `clone` or
+ * `vfork` that bypasses the C library is not seen; Windows has no fork; a freestanding build
+ * has none.
  */
 typedef struct {
     proven_u32 state[16];
@@ -170,8 +191,29 @@ typedef struct {
     proven_u32 seeded;
 } proven_chacha_rng_t;
 
-/** @brief Seed from 32 bytes of real entropy. The same seed replays the same stream. */
+/** @brief Options for proven_chacha_rng_seed_ex and proven_chacha_rng_seed_from_entropy_ex,
+ *         OR-ed together. 0 is the default: key erasure on; for a generator seeded from entropy,
+ *         a new key in a forked child; no periodic reseed. */
+enum {
+    /** The plain ChaCha20 keystream, as before v0.116.0: no key erasure, nothing wiped. */
+    PROVEN_CHACHA_RNG_NO_ERASURE = 1u,
+    /** Seeded from entropy: do not take a new key in a forked child (it replays the parent). */
+    PROVEN_CHACHA_RNG_NO_FORK_RESEED = 2u,
+    /** Seeded from entropy: mix 32 new bytes from the entropy source into the key every 1 MiB
+     *  of stream, as OpenBSD's arc4random does, so that whoever read the state stops predicting
+     *  the stream at the next MiB. A source that fails then is skipped (erasure still applies).
+     *  It calls the source from inside a draw. Needs key erasure; ignored with NO_ERASURE. */
+    PROVEN_CHACHA_RNG_RESEED_EVERY_MIB = 4u,
+};
+
+/** @brief Seed from 32 bytes of real entropy. The same seed replays the same stream. Options 0:
+ *         key erasure on. */
 void proven_chacha_rng_seed(proven_chacha_rng_t *g, const proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE]);
+
+/** @brief proven_chacha_rng_seed with options. The two that concern a generator seeded from
+ *         entropy (NO_FORK_RESEED, RESEED_EVERY_MIB) mean nothing here and are ignored: this
+ *         generator is reproducible. */
+void proven_chacha_rng_seed_ex(proven_chacha_rng_t *g, const proven_byte_t seed[PROVEN_CHACHA_SEED_SIZE], unsigned options);
 
 /** @brief The next word of keystream. */
 proven_u64 proven_chacha_rng_next(proven_chacha_rng_t *g);
@@ -179,7 +221,7 @@ proven_u64 proven_chacha_rng_next(proven_chacha_rng_t *g);
 /**
  * @brief Fill `len` bytes. Faster than `next` in a loop: whole 64-byte blocks are written straight
  *        into `buf` - on x86 with GCC or Clang, eight (AVX2) or four (SSE2) at once, detected at
- *        run time. The bytes do not depend on how a stream is drawn: in one fill, in pieces of
+ *        run time; on AArch64, four at once with NEON. The bytes do not depend on how a stream is drawn: in one fill, in pieces of
  *        any size, or as words.
  */
 void proven_chacha_rng_fill(proven_chacha_rng_t *g, void *buf, proven_size_t len);
@@ -340,5 +382,30 @@ bool proven_random_u64_checked(proven_u64 *out);
  */
 [[nodiscard]]
 bool proven_chacha_rng_seed_from_entropy(proven_chacha_rng_t *g);
+
+/** @brief proven_chacha_rng_seed_from_entropy with options (PROVEN_CHACHA_RNG_*). */
+[[nodiscard]]
+bool proven_chacha_rng_seed_from_entropy_ex(proven_chacha_rng_t *g, unsigned options);
+
+/**
+ * @brief Fill `buf` with `len` cryptographically strong bytes from a generator of this thread's
+ *        own, seeded from the entropy source the first time this thread calls it.
+ *
+ * The generator is a proven_chacha_rng_t seeded by proven_chacha_rng_seed_from_entropy with the
+ * default options - key erasure, a new key in a forked child - so after the first call no
+ * system call is made. Use it for bulk: on Linux with kernel 6.11 and glibc 2.41 or later,
+ * proven_random_bytes runs in user space too and is as fast for a few bytes (measured on the
+ * build host: 38 ns for 8 bytes, against 1.65 us for 1 KiB, where this takes about a quarter);
+ * on older systems proven_random_bytes makes a system call each time. For a long-term secret
+ * prefer proven_random_bytes: the operating system reseeds its generator; this one is reseeded
+ * only in a forked child. Its state stays in the thread's memory, not wiped when the thread
+ * ends.
+ *
+ * @return false when the entropy source failed at the first call (nothing is drawn then, and
+ *         the next call tries again); true and `buf` filled otherwise. len == 0 is true.
+ * @note In a freestanding build there are no threads to keep it for: this is proven_random_bytes.
+ */
+[[nodiscard]]
+bool proven_random_fast_bytes(void *buf, proven_size_t len);
 
 #endif /* PROVEN_RANDOM_H */

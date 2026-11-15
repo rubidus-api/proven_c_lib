@@ -1762,13 +1762,18 @@ Sub-checks:
 
 - xoshiro256**: the same seed replays the same 1000 words; a different seed does not. The seeds callers actually pass (0, 1, 2) are not degenerate - the bit balance over 512 output bits is near half, which a raw-counter seed fails badly. The first state word for seed 0 is SplitMix64(0), the published constant, so the expansion is checked against something the library did not invent.
 - ChaCha20: the first 64 bytes of keystream match the standard byte for byte. The expected block came from OpenSSL, which was itself first verified to reproduce RFC 8439 section 2.4.2's official ciphertext - a property test cannot establish that something *is* ChaCha20, and this is the generator that guards secrets. The keystream is also chunking-independent: drawn in pieces of 1, 7, 64, 3, 61 it equals the same bytes drawn at once, which is where a block-boundary bug hides.
+- Large fills (v0.114.4): whole blocks straight into the buffer, on vector lanes where there are any (AVX2, SSE2, AArch64 NEON); 13 sizes at four counter offsets near the wrap of word 12 give what one-byte draws give.
+- Key erasure (v0.116.0): 40 KiB from an independent model of RFC 8439 with the erasure rule (the 16th block of each epoch is the next key, never output) equals one fill, pieces of fourteen sizes from 1 to 4,096 bytes, and words from `next`; the first 15 blocks are the plain keystream; `PROVEN_CHACHA_RNG_NO_ERASURE` gives the plain keystream throughout; the two options for a seed from entropy are ignored for a seed of one's own; 21 bytes handed out are zero in `block`; the key is replaced as soon as an epoch's last data block is made; with erasure, 16 blocks from 0xFFFFFFF0 carry into word 13.
+- Reseeding every MiB (v0.116.0): two copies of a generator seeded from entropy with `PROVEN_CHACHA_RNG_RESEED_EVERY_MIB` agree for 15,360 blocks and part right after; without it two copies agree over 1.1 MB.
+- `proven_random_fast_bytes` (v0.116.0): 0 bytes is true, no buffer false; two 5,000-byte fills differ and are not zero.
+- Fork (v0.116.0, POSIX): after a word, a fork; parent and child draw 64 bytes each - different when seeded from entropy and from `proven_random_fast_bytes`, the same with `PROVEN_CHACHA_RNG_NO_FORK_RESEED` and with a seed of one's own.
 - `proven_rng_below`: every draw is strictly below the bound, and 70,000 draws over 7 buckets land near a seventh each. Bound 0 is 0; bound 1 is 0.
 - `proven_rng_range`: inside [lo, hi] inclusive; INT64_MIN..INT64_MAX (a span of 2^64-1) neither overflows nor hangs; an inverted range returns `lo`.
 - `proven_rng_f64`: always in [0, 1), never 1.0.
 - `proven_rng_shuffle`: a permutation at several sizes and element widths (including a 200-byte element, which catches a swap that assumes a word); count 0 and 1 are no-ops; all six orderings of three elements come up, which a biased shuffle cannot manage.
 - The trait: a zero-initialised `proven_rng_t` is inert (0, and a fill that fills nothing) rather than a crash; a valid one fills the tail of a length that is not a multiple of 8.
 
-Failure tip: inspect `src/proven/random.c`. A ChaCha keystream mismatch means a rotation, round count, or word order is wrong - it is not ChaCha20 and must not hold a key.
+Failure tip: inspect `src/proven/random.c`. A ChaCha keystream mismatch means a rotation, round count, or word order is wrong - it is not ChaCha20 and must not hold a key. A mismatch with the erasure model only past 960 bytes points at `chacha_rekey_from` or the erasure branch of `proven_chacha_rng_fill`; a fork mismatch at `chacha_fork_check` and `proven_sys_fork_watch` (platform/proven_sys_random.c).
 
 ### `tests/test_unit_ring` - bounded ring
 

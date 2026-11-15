@@ -2050,6 +2050,43 @@ typedef struct {
 } proven_chacha_rng_t;
 ```
 
+### Key erasure, fork and reseeding (v0.116.0)
+
+A generator's memory can be read later - a core dump, a swapped page, a bug elsewhere in the
+process. What the ChaCha generator does about it, and what it does not:
+
+- **Key erasure, on by default.** The stream is cut into epochs of 16 blocks (1 KiB of
+  keystream). The last block of each is never handed out: its first 32 bytes become the next
+  epoch's key, and it is wiped; bytes already handed out are wiped from `block` as they go.
+  Whoever reads the state can recompute at most what the current epoch gave out (under 1 KiB),
+  nothing before it. The stream is still a function of the seed alone, whatever sizes it is
+  drawn in: its first 15 blocks are RFC 8439's keystream, and after them it differs from the
+  plain keystream that every release before v0.116.0 gave - which
+  `PROVEN_CHACHA_RNG_NO_ERASURE` still gives. Erasure protects the past, not the future: whoever
+  holds the state predicts what follows.
+- **Fork, for a generator seeded from entropy.** At its first draw in a forked child it takes a
+  new key from the entropy source, so parent and child never hand out the same bytes
+  (`PROVEN_CHACHA_RNG_NO_FORK_RESEED` turns this off). If the source fails in the child, the key
+  is derived from the old one and the child's process id - different from the parent's stream,
+  not secret from the parent. A generator seeded with bytes of your own is reproducible, and a
+  child replays it. POSIX, through `pthread_atfork`: a raw `clone` or `vfork` is not seen.
+- **Reseeding every MiB, on request.** `PROVEN_CHACHA_RNG_RESEED_EVERY_MIB` mixes 32 new bytes from
+  the entropy source into the key every 1 MiB of keystream, as OpenBSD's `arc4random` does: a
+  reader of the state stops predicting at the next MiB. It calls the source from inside a draw.
+- **A generator of each thread's own.** `proven_random_fast_bytes(buf, len)` seeds one per
+  thread at its first call, with the defaults above, and draws from it - no system call after
+  that. On Linux with kernel 6.11 and glibc 2.41 or later `proven_random_bytes` runs in user
+  space as well (38 ns for 8 bytes on the build host) and the two are close for small draws;
+  for 1 KiB, `proven_random_fast_bytes` took about a quarter of the time. For a long-term secret
+  prefer `proven_random_bytes`: the operating system reseeds its generator.
+
+Cost, measured on the build host (x86-64, AVX2, GCC 16 -O2; time-stamp counts per byte, a shared
+host under load, so within about 20 %): 1 MiB fills about 1.8 against 1.7 before; 8 to 256-byte
+draws and `proven_chacha_rng_next` within the noise; a draw of exactly 1 KiB about twice its
+cost before (2.9 against 1.5), because every such draw crosses an epoch's end. On AArch64 the
+blocks are made four at a time with NEON; that has been run under an emulator only, not timed
+on ARM hardware.
+
 ### Reference
 
 | API | Intent | Return |
@@ -2063,7 +2100,10 @@ typedef struct {
 | `proven_xoshiro256ss_rng(&g)` | View it as a `proven_rng_t`, for the helpers. | `proven_rng_t`. |
 | `proven_chacha_rng_seed(&g, seed32)` | Seed the cryptographic generator from 32 bytes of **real entropy** you supply. | void. |
 | `proven_chacha_rng_seed_from_entropy(&g)` | Seed it from the installed source. **Check this.** | `bool`. On `false` the generator is left INERT - it yields zeros and an invalid trait. |
-| `proven_chacha_rng_next/_fill` | Draw. Cannot fail once seeded. | `proven_u64` / void. |
+| `proven_chacha_rng_seed_ex(&g, seed32, options)` | Seed with options: `PROVEN_CHACHA_RNG_NO_ERASURE` gives the plain keystream of releases before v0.116.0. The two options for a seed from entropy are ignored. | void. |
+| `proven_chacha_rng_seed_from_entropy_ex(&g, options)` | Seed from the installed source with options: `PROVEN_CHACHA_RNG_NO_ERASURE`, `_NO_FORK_RESEED`, `_RESEED_EVERY_MIB`, OR-ed; 0 is the default. | `bool`, as `proven_chacha_rng_seed_from_entropy`. |
+| `proven_chacha_rng_next/_fill` | Draw. Cannot fail once seeded. With erasure, what is handed out is wiped from the generator. | `proven_u64` / void. |
+| `proven_random_fast_bytes(buf, len)` | Fill from a ChaCha generator of this thread's own, seeded from the entropy source at the thread's first call. In a freestanding build it is `proven_random_bytes`. | `bool`: `false` when that first seeding failed. |
 | `proven_chacha_rng(&g)` | View it as a `proven_rng_t`. | `proven_rng_t` - **invalid** if the generator was never successfully seeded. |
 | `proven_rng_u64(rng)` / `proven_rng_fill(rng, buf, len)` | Draw through the trait, from whichever generator. | `proven_u64` / void. `0` / no-op for an invalid source. |
 | `proven_rng_below(rng, bound)` | Uniform in `[0, bound)`, **unbiased**. | `proven_u64`; `0` when `bound == 0`. |
@@ -2080,6 +2120,24 @@ if (!proven_random_u64_checked(&token)) {
 } else {
     proven_println("token {:x}", PROVEN_ARG(token));
 }
+```
+
+```c
+/* Bulk random bytes - padding, a test file, nonces for a load generator - from a generator of
+ * this thread's own: seeded once, then no system call. And a generator of one's own with the
+ * options: here the plain keystream of earlier releases, to match bytes recorded by them. */
+proven_byte_t pad[4096];
+if (!proven_random_fast_bytes(pad, sizeof pad)) {
+    proven_eprintln("no entropy source");
+}
+proven_chacha_rng_t bulk;
+if (proven_chacha_rng_seed_from_entropy_ex(&bulk, PROVEN_CHACHA_RNG_RESEED_EVERY_MIB)) {
+    proven_chacha_rng_fill(&bulk, pad, sizeof pad);    /* key erased every 1 KiB, reseeded every MiB */
+}
+static const proven_byte_t recorded_seed[PROVEN_CHACHA_SEED_SIZE] = { 7 };
+proven_chacha_rng_t old_stream;
+proven_chacha_rng_seed_ex(&old_stream, recorded_seed, PROVEN_CHACHA_RNG_NO_ERASURE);
+proven_println("first word {:x}", PROVEN_ARG(proven_chacha_rng_next(&old_stream)));
 ```
 
 ### Cautions, and what goes wrong

@@ -2003,6 +2003,38 @@ typedef struct {
 } proven_chacha_rng_t;
 ```
 
+### 키 삭제, fork, 재시딩 (v0.116.0)
+
+생성기의 메모리는 나중에 읽힐 수 있다 - 코어 덤프, 스왑된 페이지, 프로세스의 다른 곳에 있는 버그.
+ChaCha 생성기가 이에 대해 하는 일과 하지 않는 일:
+
+- **키 삭제, 기본으로 켜짐.** 스트림은 16블록(키스트림 1 KiB)씩 에포크로 나뉜다. 각 에포크의 마지막
+  블록은 내주지 않는다: 그 앞 32바이트가 다음 에포크의 키가 되고, 블록은 지워진다. 이미 내준 바이트도
+  내주는 대로 `block`에서 지워진다. 상태를 읽은 사람이 되살릴 수 있는 것은 현재 에포크가 내준 것(1 KiB
+  미만)까지이고, 그 전은 아니다. 스트림은 여전히 시드만의 함수이고, 어떤 크기로 뽑든 같다: 앞 15블록은
+  RFC 8439의 키스트림이고, 그 뒤로는 v0.116.0 전의 모든 릴리스가 내던 평범한 키스트림과 다르다 -
+  `PROVEN_CHACHA_RNG_NO_ERASURE`가 그것을 그대로 준다. 키 삭제는 과거를 지키지 미래를 지키지 않는다:
+  상태를 쥔 사람은 다음을 예측한다.
+- **fork, 엔트로피로 시딩한 생성기.** fork한 자식에서 처음 뽑을 때 엔트로피 source에서 새 키를 받는다.
+  그래서 부모와 자식은 같은 바이트를 내지 않는다(`PROVEN_CHACHA_RNG_NO_FORK_RESEED`가 이것을 끈다).
+  자식에서 source가 실패하면 키는 이전 키와 자식의 프로세스 id에서 유도된다 - 부모의 스트림과는 다르지만
+  부모에게 비밀은 아니다. 직접 준 바이트로 시딩한 생성기는 재현 가능하고, 자식은 그것을 다시 낸다.
+  POSIX에서 `pthread_atfork`로 한다: C 라이브러리를 거치지 않는 raw `clone`이나 `vfork`는 보이지 않는다.
+- **MiB마다 재시딩, 요청할 때.** `PROVEN_CHACHA_RNG_RESEED_EVERY_MIB`는 키스트림 1 MiB마다 엔트로피
+  source의 새 32바이트를 키에 섞는다. OpenBSD의 `arc4random`처럼, 상태를 읽은 사람은 다음 MiB에서 예측을
+  멈춘다. 뽑는 도중에 source를 부른다.
+- **스레드마다 자기 생성기.** `proven_random_fast_bytes(buf, len)`는 스레드의 첫 호출에서 위의 기본값으로
+  하나를 시딩하고 거기서 뽑는다 - 그 뒤로는 시스템 호출이 없다. 커널 6.11과 glibc 2.41 이상의 Linux에서는
+  `proven_random_bytes`도 사용자 공간에서 돌고(빌드 호스트에서 8바이트에 38 ns), 작은 요청에서는 둘이
+  비슷하다. 1 KiB에서는 `proven_random_fast_bytes`가 약 4분의 1의 시간이 걸렸다. 오래 쓸 비밀에는
+  `proven_random_bytes`가 낫다: 운영체제가 자기 생성기를 재시딩한다.
+
+비용, 빌드 호스트에서 측정(x86-64, AVX2, GCC 16 -O2; 바이트당 타임스탬프 카운트, 부하가 있는 공유
+호스트라 20 % 안팎의 오차): 1 MiB 채우기는 이전 1.7에 대해 약 1.8; 8~256바이트 요청과
+`proven_chacha_rng_next`는 잡음 범위 안; 정확히 1 KiB 요청은 이전의 약 두 배(1.5에 대해 2.9) - 그런
+요청마다 에포크의 끝을 넘기 때문이다. AArch64에서는 NEON으로 네 블록씩 만든다. 에뮬레이터에서만
+돌렸고, ARM 하드웨어에서 시간을 재지는 않았다.
+
 ### 레퍼런스
 
 | API | 의도 | 반환 |
@@ -2016,7 +2048,10 @@ typedef struct {
 | `proven_xoshiro256ss_rng(&g)` | 헬퍼를 위해 `proven_rng_t`로 본다. | `proven_rng_t`. |
 | `proven_chacha_rng_seed(&g, seed32)` | 당신이 공급하는 32바이트의 **실제 엔트로피**로부터 암호학적 생성기를 시드. | void. |
 | `proven_chacha_rng_seed_from_entropy(&g)` | 설치된 source로부터 시드. **이것을 검사하라.** | `bool`. `false`이면 생성기는 INERT 상태로 남는다—0을 낳고 invalid한 트레이트를 낳는다. |
-| `proven_chacha_rng_next/_fill` | draw. 일단 시드되면 실패할 수 없다. | `proven_u64` / void. |
+| `proven_chacha_rng_seed_ex(&g, seed32, options)` | 옵션과 함께 시드: `PROVEN_CHACHA_RNG_NO_ERASURE`는 v0.116.0 전 릴리스의 평범한 키스트림을 준다. 엔트로피 시드용 두 옵션은 무시된다. | void. |
+| `proven_chacha_rng_seed_from_entropy_ex(&g, options)` | 설치된 source로부터 옵션과 함께 시드: `PROVEN_CHACHA_RNG_NO_ERASURE`, `_NO_FORK_RESEED`, `_RESEED_EVERY_MIB`를 OR. 0이 기본값. | `bool`, `proven_chacha_rng_seed_from_entropy`와 같다. |
+| `proven_chacha_rng_next/_fill` | draw. 일단 시드되면 실패할 수 없다. 키 삭제가 켜져 있으면 내준 것은 생성기에서 지워진다. | `proven_u64` / void. |
+| `proven_random_fast_bytes(buf, len)` | 이 스레드 자신의 ChaCha 생성기에서 채움. 스레드의 첫 호출에서 엔트로피 source로 시딩된다. freestanding 빌드에서는 `proven_random_bytes`다. | `bool`: 첫 시딩이 실패하면 `false`. |
 | `proven_chacha_rng(&g)` | `proven_rng_t`로 본다. | `proven_rng_t`—생성기가 성공적으로 시드된 적이 없으면 **invalid**. |
 | `proven_rng_u64(rng)` / `proven_rng_fill(rng, buf, len)` | 어느 생성기로부터든 트레이트를 통해 draw. | `proven_u64` / void. invalid source에는 `0` / no-op. |
 | `proven_rng_below(rng, bound)` | `[0, bound)`에서 균일, **무편향**. | `proven_u64`; `bound == 0`일 때 `0`. |
@@ -2033,6 +2068,24 @@ if (!proven_random_u64_checked(&token)) {
 } else {
     proven_println("token {:x}", PROVEN_ARG(token));
 }
+```
+
+```c
+/* 대량의 무작위 바이트 - 패딩, 시험 파일, 부하 생성기의 논스 - 를 이 스레드 자신의 생성기에서:
+ * 한 번 시딩하고 그 뒤로는 시스템 호출이 없다. 그리고 옵션을 준 자기 생성기: 여기서는 이전
+ * 릴리스가 기록한 바이트와 맞추려고 그때의 평범한 키스트림. */
+proven_byte_t pad[4096];
+if (!proven_random_fast_bytes(pad, sizeof pad)) {
+    proven_eprintln("no entropy source");
+}
+proven_chacha_rng_t bulk;
+if (proven_chacha_rng_seed_from_entropy_ex(&bulk, PROVEN_CHACHA_RNG_RESEED_EVERY_MIB)) {
+    proven_chacha_rng_fill(&bulk, pad, sizeof pad);    /* 1 KiB마다 키 삭제, MiB마다 재시딩 */
+}
+static const proven_byte_t recorded_seed[PROVEN_CHACHA_SEED_SIZE] = { 7 };
+proven_chacha_rng_t old_stream;
+proven_chacha_rng_seed_ex(&old_stream, recorded_seed, PROVEN_CHACHA_RNG_NO_ERASURE);
+proven_println("first word {:x}", PROVEN_ARG(proven_chacha_rng_next(&old_stream)));
 ```
 
 ### 주의사항, 그리고 무엇이 잘못되는가

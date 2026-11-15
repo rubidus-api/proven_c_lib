@@ -542,7 +542,9 @@ alias 1529개: 소문자 `xcv_` 이름 1138개와 대문자 `XCV_` 이름 391개
 | `xcv_chacha_rng_fill` | `proven_chacha_rng_fill` |
 | `xcv_chacha_rng_next` | `proven_chacha_rng_next` |
 | `xcv_chacha_rng_seed` | `proven_chacha_rng_seed` |
+| `xcv_chacha_rng_seed_ex` | `proven_chacha_rng_seed_ex` |
 | `xcv_chacha_rng_seed_from_entropy` | `proven_chacha_rng_seed_from_entropy` |
+| `xcv_chacha_rng_seed_from_entropy_ex` | `proven_chacha_rng_seed_from_entropy_ex` |
 | `xcv_compare_fn_t` | `proven_compare_fn_t` |
 | `xcv_coro_t` | `proven_coro_t` |
 | `xcv_crc32` | `proven_crc32` |
@@ -1126,6 +1128,7 @@ alias 1529개: 소문자 `xcv_` 이름 1138개와 대문자 `XCV_` 이름 391개
 | `xcv_println` | `proven_println` |
 | `xcv_ptrdiff_t` | `proven_ptrdiff_t` |
 | `xcv_random_bytes` | `proven_random_bytes` |
+| `xcv_random_fast_bytes` | `proven_random_fast_bytes` |
 | `xcv_random_set_source` | `proven_random_set_source` |
 | `xcv_random_u64` | `proven_random_u64` |
 | `xcv_random_u64_checked` | `proven_random_u64_checked` |
