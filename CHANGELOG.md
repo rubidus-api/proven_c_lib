@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.114.4] - 2026-11-15
+
 ### Changed
 
 - `proven_chacha_rng_fill` writes whole blocks straight into the caller's buffer, and on x86
@@ -26,9 +28,12 @@ written; their tags still exist.
   under 256 bytes and for `proven_chacha_rng_next`. `proven_chacha_rng_next` reads its word from
   the buffered block directly. The stream is unchanged, byte for byte, however it is drawn. User
   cycles a byte on the build host (AVX2, GCC 16 -O2): 10.3 to 1.6 for 1 MiB fills, 12.0 to 3.8
-  for 256 bytes, 12.1 to 6.1 for 64; a word from `next`, 196 to 92. A freestanding build, or
+  for 256 bytes, 12.1 to 6.1 for 64; a word from `next`, 196 to 92 (best of three
+  on a shared, loaded host; repeat runs varied by up to about 20 %). A freestanding build, or
   another processor, keeps the portable block function. `PROVEN_SYS_CHACHA_DISABLE` turns the
   vector code off, as it does in proven_crypto.
+- Checked, no change: the Zstandard 2 GiB and 4 GiB cases (13, levels 1 to 19, dictionaries,
+  long-distance matching) all pass: encoded, decoded and compared byte for byte.
 
 ## [0.114.3] - 2026-11-14
 
