@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.116.1] - 2026-11-16
+
 ### Changed
 
 - `proven_chacha_rng_fill` with key erasure: a whole epoch with room behind it in the buffer is
