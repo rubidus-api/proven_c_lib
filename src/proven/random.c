@@ -378,7 +378,23 @@ void proven_chacha_rng_fill(proven_chacha_rng_t *g, void *buf, proven_size_t len
         const proven_u32 pos = g->state[12] & (CHACHA_EPOCH - 1);
         const proven_size_t left = (CHACHA_EPOCH - 1) - pos;           /* data blocks left in the epoch: 1..15 */
         const proven_u32 tail = w >= 8 ? CHACHA_EPOCH - 8 : CHACHA_EPOCH - 4;
-        if (pos == 0 && w >= 8 && len >= 64 * (CHACHA_EPOCH - 1)) {
+        if (pos == 0 && w >= 8 && len >= 64 * CHACHA_EPOCH) {
+            /* A whole epoch with room behind it: all 16 blocks straight into the buffer. The key
+             * block lands where the next epoch's first block goes; it is read, and that block -
+             * which there is room for, so it is written before this call returns - covers it. */
+            proven_sys_chacha_keystream(g->state, p, CHACHA_EPOCH);
+            chacha_step(g, CHACHA_EPOCH - 1);
+            chacha_set_key(g, p + 64 * (CHACHA_EPOCH - 1));
+            chacha_step(g, 1);
+            if ((g->seeded & CHACHA_MIB) && g->state[12] % CHACHA_MIB_BLOCKS == 0) {
+                proven_byte_t kb[64];
+                for (int i = 0; i < 64; ++i) kb[i] = p[64 * (CHACHA_EPOCH - 1) + i];
+                g->state[12] -= 1;                                          /* chacha_rekey_from steps past it again */
+                chacha_rekey_from(g, kb);
+            }
+            p += 64 * (CHACHA_EPOCH - 1);
+            len -= 64 * (CHACHA_EPOCH - 1);
+        } else if (pos == 0 && w >= 8 && len >= 64 * (CHACHA_EPOCH - 1)) {
             proven_byte_t t[512];
             proven_sys_chacha_keystream(g->state, p, 8);
             chacha_step(g, 8);
