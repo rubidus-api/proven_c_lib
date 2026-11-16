@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.117.0] - 2026-11-16
+
 ### Added
 
 - `proven_aes_rng_t` (`aes.h`, proven_crypto; RFC-0049): a cryptographic random generator on
