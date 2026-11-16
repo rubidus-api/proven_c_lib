@@ -779,6 +779,9 @@ const proven_mem_view_t xv = { x, proven_dh_exponent_len(p.size) };
 if (proven_dh_public(p, xv, gx) != PROVEN_OK || proven_dh_shared(p, xv, (proven_mem_view_t){ gx, p.size }, z, &z_len) != PROVEN_OK) return;
 ```
 
+`aes.h`에는 `proven_aes_rng_t`(v0.117.0)도 있다: 카운터 모드의 AES-256 위의 암호학적 난수 생성기로,
+ChaCha 생성기의 키 삭제와 fork 규칙을 따른다. 5장의 "AES 생성기"를 보라.
+
 The raw pieces, for constructions that authenticate elsewhere:
 
 ```c

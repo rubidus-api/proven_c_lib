@@ -214,6 +214,16 @@ typedef struct {
     proven_u32 seeded;
 } proven_chacha_rng_t;
 
+/**
+ * @brief The fork generation: a count that goes up by one in the child of every fork (POSIX,
+ *        through `pthread_atfork`, registered at the first call); always 0 on Windows and in a
+ *        freestanding build. For a generator kept outside this file that must notice, at a draw,
+ *        that it is in a forked child - proven_crypto's AES generator (aes.h) - as
+ *        proven_chacha_rng_t does: record it when seeding, compare it at every draw.
+ */
+[[nodiscard]]
+unsigned proven_random_fork_generation(void);
+
 /** @brief Options for proven_chacha_rng_seed_ex and proven_chacha_rng_seed_from_entropy_ex,
  *         OR-ed together. 0 is the default: key erasure on; for a generator seeded from entropy,
  *         a new key in a forked child; no periodic reseed. */

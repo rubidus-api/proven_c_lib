@@ -2087,6 +2087,49 @@ cost before (2.9 against 1.5), because every such draw crosses an epoch's end. O
 blocks are made four at a time with NEON; that has been run under an emulator only, not timed
 on ARM hardware.
 
+### An AES generator, in proven_crypto (v0.117.0)
+
+`proven_aes_rng_t` (`aes.h`, proven_crypto) is the same kind of generator on AES-256 in counter
+mode, under the same rules: key erasure every 1 KiB at fixed positions (blocks 62 and 63 of each
+64-block epoch are the next key; the first 992 bytes are the standard AES-256-CTR keystream with
+a zero IV), a new key in a forked child when seeded from entropy, the same three options
+(`PROVEN_AES_RNG_NO_ERASURE`, `_NO_FORK_RESEED`, `_RESEED_EVERY_MIB`), the stream a function of
+the seed alone. Where the processor has AES instructions (`proven_aes_hw_available()`: AES-NI on
+x86, the ARMv8 extension on AArch64) it is the faster one for bulk; without them it runs the
+bitsliced, constant-time AES - the same bytes, far slower - and the ChaCha generator is the one
+to use.
+
+Measured on the build host (AES-NI, GCC 16 -O2, cycles a byte, best of three):
+
+| Request | `proven_aes_rng_fill` | `proven_chacha_rng_fill` | kheiron | OpenSSL `RAND_bytes` |
+|---|---|---|---|---|
+| 16 bytes | 11.0 | 8.2 | 39 | 90 |
+| 256 bytes | 2.2 | 4.6 | 9.0 | 6.3 |
+| 1 KiB | 1.8 | 2.9 | 1.5 | 2.2 |
+| 1 MiB | 1.40 | 1.76 | 1.50 | 1.05 |
+| one word (`_next`) | 49 cycles | 67 cycles | 614 cycles | - |
+
+```c
+/* Bulk random bytes on AES-NI, if the processor has it; the ChaCha generator otherwise. */
+static proven_byte_t noise[1 << 16];
+proven_aes_rng_t aes_g;
+if (proven_aes_hw_available() && proven_aes_rng_seed_from_entropy(&aes_g)) {
+    proven_aes_rng_fill(&aes_g, noise, sizeof noise);
+    proven_println("a word {:x}, a die {}", PROVEN_ARG(proven_aes_rng_next(&aes_g)),
+                   PROVEN_ARG(proven_rng_range(proven_aes_rng(&aes_g), 1, 6)));
+}
+static const proven_byte_t fixed[32] = { 1 };
+proven_aes_rng_t replay;
+proven_aes_rng_seed(&replay, fixed);                                   /* reproducible: tests only */
+proven_aes_rng_seed_ex(&replay, fixed, PROVEN_AES_RNG_NO_ERASURE);     /* plain AES-256-CTR */
+proven_aes_rng_t bulk2;
+if (proven_aes_rng_seed_from_entropy_ex(&bulk2, PROVEN_AES_RNG_RESEED_EVERY_MIB)) proven_aes_rng_fill(&bulk2, noise, 64);
+proven_println("fork generation {}", PROVEN_ARG(proven_random_fork_generation()));
+```
+
+`proven_random_fork_generation()` (random.h) is what lets a generator outside the base library
+notice a fork: a count that goes up by one in every forked child (POSIX), 0 elsewhere.
+
 ### One seed, one use
 
 A generator is deterministic: the same seed gives the same stream. That is safe - NIST SP

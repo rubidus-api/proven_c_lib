@@ -18,6 +18,31 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- `proven_aes_rng_t` (`aes.h`, proven_crypto; RFC-0049): a cryptographic random generator on
+  AES-256 in counter mode, under the ChaCha generator's rules - key erasure every 1 KiB at fixed
+  positions (blocks 62 and 63 of each 64-block epoch are the next key; the first 992 bytes are
+  the standard AES-256-CTR keystream with a zero IV), handed-out bytes wiped, a new key in a
+  forked child when seeded from entropy, the stream a function of the seed alone whatever the
+  draw sizes. `proven_aes_rng_seed`, `_seed_ex`, `_seed_from_entropy`, `_seed_from_entropy_ex`,
+  `_next`, `_fill`, `proven_aes_rng` (the `proven_rng_t` view); options
+  `PROVEN_AES_RNG_NO_ERASURE` (plain AES-256-CTR), `_NO_FORK_RESEED`, `_RESEED_EVERY_MIB`. On
+  AES-NI (and the ARMv8 extension) it is the faster generator for bulk: on the build host 1.40
+  cycles a byte for 1 MiB fills against the ChaCha generator's 1.76 (kheiron 1.50, OpenSSL's
+  `RAND_bytes` 1.05), 2.2 for 256 bytes (ChaCha 4.6), 49 cycles a word from `_next` (ChaCha 67).
+  Without AES instructions it runs the bitsliced, constant-time AES: the same bytes, far slower.
+- `proven_random_fork_generation()` (`random.h`): a count that goes up by one in every forked
+  child (POSIX, `pthread_atfork`), 0 on Windows and freestanding - for a generator outside the
+  base library to notice a fork.
+
+### Tests
+
+- `test_unit_aes_rng`: OpenSSL's AES-256-CTR bytes, an independent model of the erasure stream
+  drawn whole, in pieces and as words, the plain stream across the 32-bit counter's wrap,
+  hardware and bitsliced giving the same bytes, wiping, the reseed every MiB, an inert zeroed
+  generator, and fork (POSIX).
+
 ## [0.116.1] - 2026-11-16
 
 ### Changed

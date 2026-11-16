@@ -2035,6 +2035,47 @@ ChaCha 생성기가 이에 대해 하는 일과 하지 않는 일:
 요청마다 에포크의 끝을 넘기 때문이다. AArch64에서는 NEON으로 네 블록씩 만든다. 에뮬레이터에서만
 돌렸고, ARM 하드웨어에서 시간을 재지는 않았다.
 
+### AES 생성기, proven_crypto에 (v0.117.0)
+
+`proven_aes_rng_t`(`aes.h`, proven_crypto)는 카운터 모드의 AES-256 위에서 같은 규칙을 따르는 같은 종류의
+생성기다: 고정 위치에서 1 KiB마다 키 삭제(64블록 에포크의 62번과 63번 블록이 다음 키; 앞 992바이트는
+IV가 0인 표준 AES-256-CTR 키스트림), 엔트로피로 시딩했으면 fork한 자식에서 새 키, 같은 세 옵션
+(`PROVEN_AES_RNG_NO_ERASURE`, `_NO_FORK_RESEED`, `_RESEED_EVERY_MIB`), 시드만의 함수인 스트림.
+프로세서에 AES 명령이 있으면(`proven_aes_hw_available()`: x86의 AES-NI, AArch64의 ARMv8 확장) 대량에는
+이쪽이 빠르다. 없으면 bitsliced 상수 시간 AES로 돈다 - 같은 바이트, 훨씬 느리게 - 그때는 ChaCha 생성기를
+쓴다.
+
+빌드 호스트에서 측정(AES-NI, GCC 16 -O2, 바이트당 사이클, 3회 중 최고):
+
+| 요청 | `proven_aes_rng_fill` | `proven_chacha_rng_fill` | kheiron | OpenSSL `RAND_bytes` |
+|---|---|---|---|---|
+| 16바이트 | 11.0 | 8.2 | 39 | 90 |
+| 256바이트 | 2.2 | 4.6 | 9.0 | 6.3 |
+| 1 KiB | 1.8 | 2.9 | 1.5 | 2.2 |
+| 1 MiB | 1.40 | 1.76 | 1.50 | 1.05 |
+| 워드 하나(`_next`) | 49사이클 | 67사이클 | 614사이클 | - |
+
+```c
+/* AES-NI가 있으면 그 위에서, 없으면 ChaCha 생성기로 대량의 무작위 바이트. */
+static proven_byte_t noise[1 << 16];
+proven_aes_rng_t aes_g;
+if (proven_aes_hw_available() && proven_aes_rng_seed_from_entropy(&aes_g)) {
+    proven_aes_rng_fill(&aes_g, noise, sizeof noise);
+    proven_println("a word {:x}, a die {}", PROVEN_ARG(proven_aes_rng_next(&aes_g)),
+                   PROVEN_ARG(proven_rng_range(proven_aes_rng(&aes_g), 1, 6)));
+}
+static const proven_byte_t fixed[32] = { 1 };
+proven_aes_rng_t replay;
+proven_aes_rng_seed(&replay, fixed);                                   /* 재현 가능: 테스트 전용 */
+proven_aes_rng_seed_ex(&replay, fixed, PROVEN_AES_RNG_NO_ERASURE);     /* 평범한 AES-256-CTR */
+proven_aes_rng_t bulk2;
+if (proven_aes_rng_seed_from_entropy_ex(&bulk2, PROVEN_AES_RNG_RESEED_EVERY_MIB)) proven_aes_rng_fill(&bulk2, noise, 64);
+proven_println("fork generation {}", PROVEN_ARG(proven_random_fork_generation()));
+```
+
+`proven_random_fork_generation()`(random.h)은 기반 라이브러리 밖의 생성기가 fork를 알아채게 하는
+것이다: fork한 자식마다 하나씩 올라가는 수(POSIX), 그 밖에서는 0.
+
 ### 시드 하나는 한 번만
 
 생성기는 결정적이다: 같은 시드는 같은 스트림을 낸다. 그것은 안전하다 - NIST SP 800-90A의 DRBG,

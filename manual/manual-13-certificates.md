@@ -807,6 +807,9 @@ const proven_mem_view_t xv = { x, proven_dh_exponent_len(p.size) };
 if (proven_dh_public(p, xv, gx) != PROVEN_OK || proven_dh_shared(p, xv, (proven_mem_view_t){ gx, p.size }, z, &z_len) != PROVEN_OK) return;
 ```
 
+`aes.h` also has `proven_aes_rng_t` (v0.117.0), a cryptographic random generator on AES-256 in
+counter mode with the ChaCha generator's key erasure and fork rules: chapter 5, "An AES generator".
+
 The raw pieces, for constructions that authenticate elsewhere:
 
 ```c

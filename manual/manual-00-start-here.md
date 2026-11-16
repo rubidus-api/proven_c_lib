@@ -1036,7 +1036,7 @@ Two things this table tells you that the file names do not:
 | `cert.h` | X.509 certificates: a strict reader, host-name matching, PEM, a store of trust anchors, chain verification. Only reading the system's roots is hosted. | Chapter 13 |
 | `sign.h` | Private keys (RSA, P-256, P-384) from PEM, DER or parts; signing a digest (PKCS #1 v1.5, PSS, deterministic ECDSA) and verifying | Chapter 13 |
 | `der.h` | The strict DER reader, and a writer with lengths fixed up and SET OF sorted | Chapter 13 |
-| `aes.h` | AES-CBC (128, 192, 256) and PKCS #7 padding, for reading encrypted key files | Chapter 13 |
+| `aes.h` | AES-CBC (128, 192, 256) and PKCS #7 padding, for reading encrypted key files; `proven_aes_rng_t`, an AES-256-CTR random generator | Chapters 13 and 5 |
 | `tls.h` | TLS 1.3 and a cut-down TLS 1.2, client and server: a config, an engine with no I/O, and (hosted-only) a transport wrapper and the HTTP wrap | Chapter 14 |
 | `loop.h` | An event loop: socket readiness, timers, work posted from other threads, a shared scratch buffer (hosted-only) | Chapter 15 |
 | `http_event.h` | HTTP server driven by events on a loop - HTTP/1.1, and HTTP/2 and HTTP/3 beside it when asked: callbacks, responses in pieces with backpressure, optional TLS, a response compressed when asked (hosted-only) | Chapters 15, 16, 17 |

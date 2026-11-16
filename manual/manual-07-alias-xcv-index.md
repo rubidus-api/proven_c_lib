@@ -433,6 +433,14 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_aes_gcm_t` | `proven_aes_gcm_t` |
 | `xcv_aes_hw_available` | `proven_aes_hw_available` |
 | `xcv_aes_init` | `proven_aes_init` |
+| `xcv_aes_rng` | `proven_aes_rng` |
+| `xcv_aes_rng_fill` | `proven_aes_rng_fill` |
+| `xcv_aes_rng_next` | `proven_aes_rng_next` |
+| `xcv_aes_rng_seed` | `proven_aes_rng_seed` |
+| `xcv_aes_rng_seed_ex` | `proven_aes_rng_seed_ex` |
+| `xcv_aes_rng_seed_from_entropy` | `proven_aes_rng_seed_from_entropy` |
+| `xcv_aes_rng_seed_from_entropy_ex` | `proven_aes_rng_seed_from_entropy_ex` |
+| `xcv_aes_rng_t` | `proven_aes_rng_t` |
 | `xcv_aes_t` | `proven_aes_t` |
 | `xcv_alloc_check_entry_t` | `proven_alloc_check_entry_t` |
 | `xcv_alloc_check_live` | `proven_alloc_check_live` |
@@ -1127,6 +1135,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_ptrdiff_t` | `proven_ptrdiff_t` |
 | `xcv_random_bytes` | `proven_random_bytes` |
 | `xcv_random_fast_bytes` | `proven_random_fast_bytes` |
+| `xcv_random_fork_generation` | `proven_random_fork_generation` |
 | `xcv_random_set_source` | `proven_random_set_source` |
 | `xcv_random_u64` | `proven_random_u64` |
 | `xcv_random_u64_checked` | `proven_random_u64_checked` |

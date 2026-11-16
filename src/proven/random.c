@@ -724,3 +724,11 @@ bool proven_random_fast_bytes(void *buf, proven_size_t len) {
 #else
 bool proven_random_fast_bytes(void *buf, proven_size_t len) { return proven_random_bytes(buf, len); }
 #endif
+
+unsigned proven_random_fork_generation(void) {
+#ifndef PROVEN_FREESTANDING
+    return proven_sys_fork_watch();
+#else
+    return 0;
+#endif
+}

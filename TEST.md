@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 139 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 140 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -350,7 +350,7 @@ Last run, 2026-11-16, Windows 11 test VM (v0.116.1): x86-64 394 PASS, 0 FAIL, 10
 ## Test catalog
 
 
-The hosted full run builds and executes 210 registered tests plus the 194 runnable manual examples - 404 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 223 test files: the 210 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 211 registered tests plus the 194 runnable manual examples - 405 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 224 test files: the 211 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -843,6 +843,21 @@ Sub-checks:
 - `proven_mem_equal_ct`: equal ranges, a flip of each of 512 bits, different lengths, empty and null ranges. `proven_mem_wipe`: zeroes exactly the bytes named - one range inside a pattern, then 1,040 ranges (sixteen alignments by lengths 0 to 64) each with a guard on both sides, then 5,000 bytes; a null or empty range is left alone.
 
 Failure tip: inspect the SHA-512 section of `src/proven/hash.c`, `crypto/src/hmac.c` and the end of `src/proven/memory.c`. The digests at boundary lengths and the HKDF values over SHA-384 and SHA-512 are not printed by any standard: they were computed with Python's `hashlib` and `hmac` by a script that first reproduced the published vectors. That `proven_mem_equal_ct` takes the same time whatever it finds, and that `proven_mem_wipe` survives optimisation, are properties of the source and are not observed by this test.
+
+### `tests/test_unit_aes_rng` - an AES-256-CTR random generator
+
+Intent: verify `proven_aes_rng_t` (`aes.h`, v0.117.0, RFC-0049) against OpenSSL and an independent model, and that it keeps the ChaCha generator's rules.
+
+Sub-checks:
+
+- The standard: an independent model (one block at a time through `proven_aes_encrypt_block`) gives OpenSSL's `aes-256-ctr` bytes 0..63 and 976..991 for the key 00..1f and a zero IV; the generator's first 64 bytes are OpenSSL's; the erasure model's first 992 bytes are plain AES-256-CTR, the next are not.
+- Key erasure: 40 KiB equal the model drawn in one fill, in pieces of fourteen sizes from 1 to 4,096 bytes, and as words; `PROVEN_AES_RNG_NO_ERASURE` is plain AES-256-CTR; a seed of one's own ignores the options for a seed from entropy; 13 bytes handed out are zero in `block`.
+- The plain stream across the 32-bit counter's wrap: eight blocks from 2^32 - 2 are the model's, and the counter is past the wrap.
+- The processor's AES instructions and the bitsliced cipher (forced) give the same 10,000 bytes, and the model's.
+- Seeding from entropy: with `PROVEN_AES_RNG_RESEED_EVERY_MIB` two copies agree for 1,024 epochs and part right after; without it they never part; a zeroed generator gives zeros, 0 and an invalid trait; `proven_rng_range` through the trait stays in range; `proven_random_fork_generation` is steady in one process.
+- Fork (POSIX): parent and child draw 64 bytes after a word - different when seeded from entropy, the same with `PROVEN_AES_RNG_NO_FORK_RESEED` and with a seed of one's own. Switching the fork check off fails this section.
+
+Failure tip: inspect the `proven_aes_rng_` functions at the end of `crypto/src/aes.c` and `proven_crypto_aes_ctr` in `crypto/src/crypto_aes.c`; the hardware path is `crypto/platform/proven_sys_aes.c`. A mismatch with OpenSSL in the first 64 bytes is the cipher; with the model only past byte 992, `aes_rng_blocks` or `aes_rng_rekey_with`.
 
 ### `tests/test_unit_crypto` - the cryptographic primitives under TLS
 
