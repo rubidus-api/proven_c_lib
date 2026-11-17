@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.117.1] - 2026-11-18
+
 ### Changed
 
 - Brotli decoder: each prefix code's table is built in one pass where there is room for the
