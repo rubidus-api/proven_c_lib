@@ -18,6 +18,16 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- Brotli decoder: each prefix code's table is built in one pass where there is room for the
+  largest any code can need (it was counted, then built), and a literal's context is two table
+  lookups whatever the mode, instead of a branch on the mode for each literal. User cycles on
+  the build host, -O2: 5.7 to 7.5 % fewer (text at qualities 5 and 9, C source at 9, a binary at
+  1 and 9); against libbrotli 1.2.1 in the same process, 0.79 to 0.95 of its speed. Output
+  unchanged: the private Brotli checks decode 2,242 streams byte for byte and agree with
+  libbrotli on 1.4 million changed ones.
+
 ## [0.117.0] - 2026-11-16
 
 ### Added
