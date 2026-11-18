@@ -18,6 +18,20 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.117.3] - 2026-11-18
+
+### Changed
+
+- DEFLATE encoder (deflate.h, and so gzip and zlib output): bits go out four bytes at a time,
+  the length and distance symbols are table lookups instead of searches, input, output, stored
+  blocks and the window's slide are bulk copies, the slide's position update has no branch,
+  and a match is compared eight bytes at a time. User cycles on the build host, gcc -O2: 53 to
+  57 % fewer at level 1, 22 to 30 % at 6, 1 to 26 % at 9 (a binary, C sources, text); against
+  zlib 1.3 in the same process 0.88 to 0.95 of its speed at level 1 (it was about 0.4), 0.76 to
+  0.93 at 6, 0.74 to 0.88 at 9 - at level 1 the output is 3 to 6 % smaller than zlib's. The
+  output is unchanged byte for byte: every level, format and window size, whole and streamed,
+  gives the same bytes and the same count from each call as before.
+
 ## [0.117.2] - 2026-11-18
 
 ### Changed
