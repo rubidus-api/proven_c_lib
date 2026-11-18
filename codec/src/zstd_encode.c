@@ -792,17 +792,6 @@ static proven_err_t block_room(proven_zstd_encoder_t *z) {
 // Matching
 // -----------------------------------------------------------------------------
 
-static inline unsigned ctz64(proven_u64 v) {
-#if ZSTD_BUILTINS
-    return (unsigned)__builtin_ctzll(v);
-#else
-    static const proven_u8 DEBRUIJN[64] = { 0, 1, 48, 2, 57, 49, 28, 3, 61, 58, 50, 42, 38, 29, 17, 4, 62, 55, 59, 36, 53, 51, 43, 22,
-                                            45, 39, 33, 30, 24, 18, 12, 5, 63, 47, 56, 27, 60, 41, 37, 16, 54, 35, 52, 21, 44, 32, 23, 11,
-                                            46, 26, 40, 15, 34, 20, 31, 10, 25, 14, 19, 9, 13, 8, 7, 6 };
-    return DEBRUIJN[((v & (0 - v)) * 0x03F79D71B4CB0A89ull) >> 58];
-#endif
-}
-
 /* How many bytes from `a` equal those from `b` (which is before it), stopping at `end`. */
 ZSTD_HOT proven_size_t count_same(const proven_byte_t *a, const proven_byte_t *b, const proven_byte_t *end) {
     const proven_byte_t *const from = a;

@@ -592,6 +592,62 @@ int main(void) {
         proven_zstd_decoder_reset(NULL);
     }
 
+    PROVEN_TEST_SECTION("literal sections and matches of every shape", "Made by this library's encoder: four Huffman streams of every length from a few bytes up, and matches from 1 to 40 back, decoded whole and in steps.",
+        "Check huf_four's fast loop (it must not start unless every stream has 15 bytes) and the sequence fast path's copies (copy_lit, match_fast) in codec/src/zstd.c.");
+    for (int plain = 0; plain < 2; ++plain) {
+        proven_zstd_decode_force_plain_(plain != 0);
+        int failed = 0, runs = 0;
+        /* Literals: 256 bytes and up go into four streams; from an alphabet of two, nearly all one
+         * byte, a stream is a few bytes long; from 256 it is as long as it can be. */
+        static const proven_size_t sizes[] = { 256, 263, 300, 420, 700, 1500, 5000, 40000 };
+        static const unsigned alphabets[] = { 2, 3, 16, 64, 256 };
+        for (proven_size_t si = 0; si < sizeof sizes / sizeof sizes[0]; ++si) {
+            for (proven_size_t ai = 0; ai < sizeof alphabets / sizeof alphabets[0]; ++ai) {
+                g_x = (proven_u32)(si * 31 + ai + 7);
+                const proven_size_t n = sizes[si];
+                for (proven_size_t i = 0; i < n; ++i) {
+                    const proven_u32 r = xs();
+                    g_plain[i] = (proven_byte_t)(alphabets[ai] == 2 ? ((r & 31) == 0 ? 'b' : 'a') : 'A' + r % alphabets[ai]);
+                }
+                for (int level = 1; level <= 19; level += 18) {
+                    proven_zstd_encoder_options_t eo = { .alloc = g_heap, .level = level };
+                    proven_size_t clen = 0, made = 0;
+                    bool ended = false;
+                    bool ok = proven_zstd_encode_all(&eo, (proven_mem_view_t){ g_plain, n }, (proven_mem_mut_t){ g_in, sizeof g_in }, &clen) == PROVEN_OK &&
+                              proven_zstd_decode_all(g_heap, (proven_mem_view_t){ g_in, clen }, (proven_mem_mut_t){ g_out, n }, &made) == PROVEN_OK &&
+                              made == n && memcmp(g_out, g_plain, n) == 0 &&
+                              decode_steps(g_heap, 0, g_in, clen, 1000, 777, g_out2, sizeof g_out2, &made, &ended) == PROVEN_OK && ended && made == n && memcmp(g_out2, g_plain, n) == 0;
+                    runs++;
+                    if (!ok) { failed++; printf("literals: %u bytes from %u symbols, level %d, differ\n", (unsigned)n, alphabets[ai], level); }
+                }
+            }
+        }
+        /* Matches: noise, then a run of period `off` for `len`, then noise, for every offset to 40
+         * and lengths around the copies' steps of 8, 16 and 32. */
+        static const proven_size_t lens[] = { 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 100, 1000 };
+        for (proven_size_t off = 1; off <= 40; ++off) {
+            proven_size_t n = 0;
+            g_x = (proven_u32)(off + 100);
+            for (proven_size_t li = 0; li < sizeof lens / sizeof lens[0]; ++li) {
+                for (int k = 0; k < 50; ++k) g_plain[n++] = (proven_byte_t)xs();
+                for (proven_size_t k = 0; k < off; ++k) g_plain[n++] = (proven_byte_t)xs();
+                for (proven_size_t k = 0; k < lens[li]; ++k, ++n) g_plain[n] = g_plain[n - off];
+            }
+            proven_zstd_encoder_options_t eo = { .alloc = g_heap, .level = 3 };
+            proven_size_t clen = 0, made = 0;
+            bool ended = false;
+            bool ok = proven_zstd_encode_all(&eo, (proven_mem_view_t){ g_plain, n }, (proven_mem_mut_t){ g_in, sizeof g_in }, &clen) == PROVEN_OK &&
+                      proven_zstd_decode_all(g_heap, (proven_mem_view_t){ g_in, clen }, (proven_mem_mut_t){ g_out, n }, &made) == PROVEN_OK &&
+                      made == n && memcmp(g_out, g_plain, n) == 0 &&
+                      decode_steps(g_heap, 0, g_in, clen, 13, 64, g_out2, sizeof g_out2, &made, &ended) == PROVEN_OK && ended && made == n && memcmp(g_out2, g_plain, n) == 0;
+            runs++;
+            if (!ok) { failed++; printf("matches %u back differ\n", (unsigned)off); }
+        }
+        PROVEN_TEST_ASSERT(failed == 0 && runs == 120, "40 literal shapes at two levels and 40 offsets: each decodes to its input, into a buffer of exactly its size and in steps",
+                           plain ? "The plain build (no BMI2)." : "The build the processor gets.");
+    }
+    proven_zstd_decode_force_plain_(false);
+
     PROVEN_TEST_PASS("Zstandard: reads what libzstd writes, refuses what libzstd refuses, and stays inside its bounds.");
     return 0;
 }
