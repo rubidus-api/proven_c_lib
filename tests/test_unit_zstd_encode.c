@@ -340,7 +340,7 @@ int main(void) {
     }
 
     PROVEN_TEST_SECTION("a stream is the whole buffer", "300,000 bytes at every level, with windows of 1 KiB and 64 KiB: streamed in pieces of 100,000, the input buffer sliding many times, the blocks are byte for byte those of the same bytes compressed whole - only the frame headers differ.",
-        "Check slide in codec/src/zstd_encode.c: the hash tables, and the chain of levels 4 to 12 and the trees of 13 to 19 (indexed by position modulo their size, so rotated), and the three-byte table of the optimal parse, must move with the buffer.");
+        "Check slide in codec/src/zstd_encode.c: the hash tables and the rows of levels 4 to 12 (positions, moved down), the trees of 13 to 19 (indexed by position modulo their size, so rotated), and the three-byte table of the optimal parse, must move with the buffer.");
     {
         corpus(4, g_in);
         const proven_size_t n = 300000;
@@ -586,8 +586,9 @@ int main(void) {
         const proven_size_t n = corpus(4, g_in);
         for (int level = 1; level <= 19; ++level) {
             /* At 16 to 19 the tables, and the parse's state: its path and its three-byte table. */
-            static const proven_size_t HASH[20] = { 0, 64 * 1024, 96 * 1024, 768 * 1024, 768 * 1024, 1024 * 1024, 1024 * 1024, 1024 * 1024, 1024 * 1024, 1024 * 1024,
-                                                    8 << 20, 8 << 20, 8 << 20, 8 << 20, 8 << 20, 8 << 20, (8 << 20) + 400 * 1024, (8 << 20) + 400 * 1024,
+            /* At 4 to 12 rows: 5 bytes a position and a byte a row (RFC-0051). */
+            static const proven_size_t HASH[20] = { 0, 64 * 1024, 96 * 1024, 768 * 1024, 648 * 1024, 648 * 1024, 648 * 1024, 648 * 1024, 648 * 1024, 648 * 1024,
+                                                    5136 * 1024, 5136 * 1024, 5136 * 1024, 8 << 20, 8 << 20, 8 << 20, (8 << 20) + 400 * 1024, (8 << 20) + 400 * 1024,
                                                     (8 << 20) + 400 * 1024, (8 << 20) + 400 * 1024 };
             proven_zstd_encoder_options_t o = { .alloc = counting(0), .level = level };
             proven_zstd_encoder_t *z = NULL;
@@ -603,10 +604,10 @@ int main(void) {
             /* From 13 on a short input is parsed optimally (as libzstd does below 256 KiB): its path and three-byte table too. */
             PROVEN_TEST_ASSERT(g_count.peak <= (level >= 13 ? 160u : 64u) * 1024 && g_count.live == 0, "a whole buffer of 2,000 bytes needs less than 64 KiB (160 KiB from level 13)", "");
         }
-        /* Levels 6 to 9 over a known input above 256 KiB: libzstd's larger tables (a stream keeps
-         * the 1 MiB of 5; so does level 5 here). */
+        /* Levels 6 to 9 over a known input above 256 KiB: libzstd's larger tables, as rows (a
+         * stream keeps the 648 KiB of 5; so does level 5 here). */
         for (int level = 5; level <= 9; ++level) {
-            static const proven_size_t BIG[10] = { 0, 0, 0, 0, 0, 1 << 20, 3 << 20, 6 << 20, 6 << 20, 8 << 20 };
+            static const proven_size_t BIG[10] = { 0, 0, 0, 0, 0, 663552, 2654208, 5308416, 5275648, 5275648 };
             proven_size_t made = 0;
             const proven_err_t e = proven_zstd_encode_all(&(proven_zstd_encoder_options_t){ .alloc = counting(0), .level = level }, (proven_mem_view_t){ g_in, n },
                                                           (proven_mem_mut_t){ g_enc, sizeof g_enc }, &made);
@@ -649,8 +650,8 @@ int main(void) {
         static const struct { int input, level; proven_size_t size; proven_u32 crc; } PIN[] = {
             { 3, 1, 91849, 0xd24793b3u }, { 3, 2, 97612, 0x7367ffaeu }, { 3, 3, 97699, 0xb8b0492eu },
             { 4, 1, 107904, 0x77238193u }, { 4, 3, 99452, 0xd3c79d20u }, { 6, 1, 40820, 0x86ab3620u },
-            { 3, 6, 88222, 0x81458322u }, { 3, 9, 84218, 0x41e43c5du },
-            { 3, 10, 83394, 0x1e7e8206u }, { 3, 11, 82273, 0x5c6b3433u }, { 3, 12, 82196, 0xce1ef842u },
+            { 3, 6, 88275, 0xd48a1975u }, { 3, 9, 84272, 0x16063511u },
+            { 3, 10, 83380, 0x022f338bu }, { 3, 11, 82291, 0xbbd3ccc9u }, { 3, 12, 82203, 0x8cba0b55u },
             { 3, 13, 82203, 0x75d59277u }, { 3, 14, 82200, 0xcccab3e5u }, { 3, 15, 82208, 0x492a6348u },
             { 3, 16, 64346, 0x2c10a426u }, { 3, 17, 64346, 0x2c10a426u }, { 3, 18, 64528, 0x4688e29au }, { 3, 19, 64528, 0x4688e29au },
             { 6, 13, 42025, 0xce9fe149u },
@@ -672,9 +673,9 @@ int main(void) {
         }
         /* Streamed with a 64 KiB window, so that the input buffer slides, by an encoder that
          * made a frame of the same input before: what its reset clears and what its slides move
-         * - the hash chain of levels 4 to 9 among them - are in the bytes. */
+         * - the rows of levels 4 to 12 among them - are in the bytes. */
         static const struct { int input, level; proven_size_t size; proven_u32 crc; } SPIN[] = {
-            { 4, 3, 144686, 0x39bbe145u }, { 3, 3, 94238, 0x14701dceu }, { 3, 4, 91302, 0x9ee82c05u }, { 3, 6, 87870, 0x4f3e8d3fu }, { 3, 8, 83613, 0x688406a3u },
+            { 4, 3, 144686, 0x39bbe145u }, { 3, 3, 94238, 0x14701dceu }, { 3, 4, 91417, 0xe6891b08u }, { 3, 6, 87911, 0xc5bbdb5cu }, { 3, 8, 83595, 0x1ad60e24u },
             { 3, 13, 82106, 0x552de691u },
             { 3, 16, 63363, 0x4fbebaa1u },
         };

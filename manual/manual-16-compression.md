@@ -331,24 +331,25 @@ set what you want changed:
 | `window_bits` | How far back a repeat may be, as a power of two: 9 (512 bytes) to 15 (32 KiB). **0 is the default, 15** |
 
 **The level trades time for size, and the trade is lopsided.** On the development machine,
-compressing this library's own sources and manual (3.2 MiB of text):
+compressing this library's own sources and manual (3.2 MiB of text), on one core, at the
+release flags (v0.118.0):
 
 | Level | Compressed to | Compressing | Decompressing |
 |---|---|---|---|
-| 1 | 29.4% | 34 MiB/s | 330 MiB/s |
-| 6 (default) | 25.2% | 16 MiB/s | 375 MiB/s |
-| 9 | 25.0% | 9 MiB/s | 380 MiB/s |
+| 1 | 27.8% | 93 MiB/s | 280 MiB/s |
+| 6 (default) | 23.3% | 28 MiB/s | 313 MiB/s |
+| 9 | 23.1% | 12 MiB/s | 315 MiB/s |
 
-From 1 to 6 buys a seventh off the size for half the speed. From 6 to 9 buys almost nothing
-for nearly half the speed again. Decompression does not care what level was used.
+From 1 to 6 buys a sixth off the size for under a third of the speed. From 6 to 9 buys almost
+nothing for less than half the speed again. Decompression does not care what level was used.
 
 zlib, the implementation everybody else uses, compresses the same data to the same sizes -
-within a quarter of a percent at levels 6 and 9, and it is a little larger at level 1 - and is
-about twice as fast at compressing, nearly three times at level 1. At decompressing the two
-are about the same: zlib 1.3.1, called from Python on the same data, gave between 190 and
-310 MiB/s as the machine's load moved. (Before v0.42.0 this library's decompressor read a
-bit at a time and gave 75 to 90 MiB/s.) The compressor was written to be read; if its
-figures are too slow for a program, that program wants zlib.
+within a third of a percent at levels 6 and 9; at level 1 this library's output is 6 % smaller -
+and, since v0.117.3, at about the same speed: zlib 1.3 in the same process gave 90, 29.5 and
+11 MiB/s (this library 1.03, 0.95 and 1.07 of that; before v0.117.3 about half, and a third at
+level 1). At decompressing the two are about the same: zlib 1.3.1, called from Python on the
+same data, gave between 190 and 310 MiB/s as the machine's load moved. (Before v0.42.0 this
+library's decompressor read a bit at a time and gave 75 to 90 MiB/s.)
 
 **The window is mostly a question of memory.** A compressor holds twice its window and
 tables beside it; a decompressor always holds 32 KiB, because it cannot know what window the
@@ -443,11 +444,11 @@ weighs zstd at least as high as gzip, and as gzip otherwise, as before. curl, an
 browsers that take zstd, send the two at one weight - `gzip, deflate, br, zstd` - so they get
 zstd; a client that writes `gzip;q=1, zstd;q=0.5` gets gzip, and one that does not name zstd
 gets what it got before. The tie goes to zstd because it is the cheaper of the two to make
-(section 7: six times the speed of gzip at level 1, at gzip 1's size or less). The level and
+(section 7: two and a half to three times the speed of gzip at level 1, at gzip 1's size or less). The level and
 the window are `compress_zstd_level` (1 to 9, zero is 1) and `compress_zstd_window_log` (10 to
 23, zero is 17, 128 KiB); a body sent in one piece is compressed with tables sized to it
 whatever the window, a streamed one holds about 0.8 MiB at those defaults until it ends.
-Level 6 gives gzip 6's size or less at about three times its speed, for a server that wants
+Level 6 gives gzip 6's size or less at about twice its speed, for a server that wants
 gzip 6's size; its tables make a streamed response about 1.8 MiB.
 `proven_http_accept_weight` gives you the same weights, for a choice of your own.
 
@@ -1034,39 +1035,47 @@ the frame. Its frames are read by any Zstandard decoder; they are not the bytes 
 have written for the same input.
 
 **Levels as libzstd's.** Level 1 finds matches through one hash table,
-levels 2 and 3 through two (libzstd's "fast" and "double fast"); levels 4 to 9 keep every
-position in a hash chain and look at the first 4 to 32 of it, taking the best match found
-(levels 4 and 5) or first looking one byte on (6) or two (7 to 9) for a better one. Every
+levels 2 and 3 through two (libzstd's "fast" and "double fast"); levels 4 to 12 keep every
+position in **rows**, as libzstd's row match finder does (since v0.118.0; a hash chain before):
+a position's hash names a row of the last 16 to 128 positions with the same hash, and one byte
+more of the hash, kept beside each position, lets a search compare a whole row at once - sixteen
+bytes to an instruction where the processor has SSE2, eight to a 64-bit word elsewhere, with the
+same result - and read the bytes of the input only where that byte agrees. Levels 4 to 9 compare
+at most 4 to 32 of a row, newest first, taking the best match found (levels 4 and 5) or first
+looking one byte on (6) or two (7 to 9) for a better one. Every
 block's literals get a Huffman code and its sequences FSE tables, each chosen for the block by
-what it would cost. Measured on the three files of section 4, on one core of the development
-machine, at the release flags:
+what it would cost. Measured on chapter 14 of this manual as HTML (155 KB) and as Markdown
+(82 KB) and on a C source (85 KB), on one core of the development machine, at the release flags
+(v0.118.0):
 
 | | HTML page | Markdown | C source |
 |---|---|---|---|
-| this library, gzip level 1 | 26.25 % at 45 MiB/s | 36.77 % at 33 | 27.24 % at 43 |
-| this library, gzip level 6 | 22.62 % at 25 | 32.89 % at 16 | 22.88 % at 21 |
-| this library, Zstandard level 1 | 24.93 % at 263 | 36.19 % at 191 | 26.71 % at 234 |
-| this library, Zstandard level 3 | 23.83 % at 193 | 34.58 % at 132 | 25.50 % at 172 |
-| this library, Zstandard level 6 | 21.66 % at 67 | 32.68 % at 49 | 22.79 % at 64 |
-| this library, Zstandard level 9 | 21.22 % at 37 | 32.11 % at 28 | 22.21 % at 36 |
-| libzstd 1.5.7, level 1 | 25.27 % at 312 | 36.68 % at 231 | 26.91 % at 273 |
-| libzstd 1.5.7, level 3 | 23.76 % at 232 | 34.42 % at 161 | 25.42 % at 213 |
-| libzstd 1.5.7, level 6 | 21.93 % at 74 | 32.65 % at 54 | 22.97 % at 67 |
-| libzstd 1.5.7, level 9 | 21.25 % at 48 | 32.12 % at 36 | 22.22 % at 43 |
+| this library, gzip level 1 | 25.34 % at 103 MiB/s | 35.85 % at 81 | 27.74 % at 96 |
+| this library, gzip level 6 | 21.66 % at 39 | 31.65 % at 25 | 23.31 % at 30 |
+| this library, Zstandard level 1 | 22.65 % at 294 | 34.52 % at 209 | 27.09 % at 243 |
+| this library, Zstandard level 3 | 21.61 % at 215 | 32.77 % at 144 | 25.77 % at 179 |
+| this library, Zstandard level 6 | 19.59 % at 71 | 30.97 % at 55 | 23.10 % at 61 |
+| this library, Zstandard level 9 | 19.14 % at 38 | 30.35 % at 28 | 22.46 % at 31 |
+| libzstd 1.5.7, level 1 | 22.64 % at 328 | 35.06 % at 240 | 27.37 % at 269 |
+| libzstd 1.5.7, level 3 | 21.73 % at 236 | 32.71 % at 167 | 25.69 % at 208 |
+| libzstd 1.5.7, level 6 | 19.74 % at 82 | 30.95 % at 57 | 23.26 % at 68 |
+| libzstd 1.5.7, level 9 | 19.12 % at 46 | 30.35 % at 34 | 22.46 % at 40 |
 
-Level 1 is between five and six times as fast as this library's gzip at level 1, and smaller;
-level 6 is no larger than gzip at level 6 and between 2.6 and 3.2 times as fast. Against
-libzstd, levels 1 to 3 and 5 to 8 run at 0.8 to 1.0 of the speed and level 9 at about 0.8,
-within a third of a point of the size. Level 6 looks at 12 candidates where libzstd's looks at
-8, which keeps it at or below gzip 6 on all three files (libzstd 6 is slightly larger than gzip
-6 on the C source). Level 4 is not libzstd's method at that level: smaller by about a point, at
-about half the speed.
+Level 1 is between 2.5 and 2.9 times as fast as this library's gzip at level 1, and smaller;
+level 6 is smaller than gzip at level 6 and between 1.8 and 2.3 times as fast. Against libzstd,
+levels 1 to 3 run at 0.8 to 1.0 of the speed and 6 to 10 at 0.8 to 0.95 on these files, within a
+fifth of a point of the size; on megabytes (a 5 MB executable, 1 MB of C, 1.7 MB of Markdown) 6
+to 10 run at 0.6 to 0.9 of libzstd's speed - level 9 at 0.63 to 0.65, where it was at 0.37 to
+0.46 before v0.118.0. Level 6 looks at 12 candidates where libzstd's looks at 8, which keeps
+it at or below gzip 6 on all three files. Level 4 is not libzstd's method at that level: smaller
+by about a point, at about 0.6 of the speed.
 
 Since v0.103.0, proven_zstd_encode_all of more than 256 KiB gives levels 6 to 9 libzstd's larger tables
-for such inputs: a hash of 2^19 to 2^21 entries and a chain of 2^18 to 2^20, each cut to the window
-(3 MiB at level 6, 6 MiB at 7 and 8, 8 MiB at 9 with the default window, 12 MiB with the largest). A
-stream - the servers' - keeps the 1 MiB above. Against libzstd at the same level and the same window,
-on a 3.9 MB executable, 2.7 MB of C sources, 3.7 MB of JSON and 395 KB of text:
+for such inputs: 2^19 to 2^21 positions, cut to the window (2.6 MiB at level 6, 5.1 MiB at 7 to 9
+with the default window, 10.1 MiB at 9 with the largest; before v0.118.0 the hash chains took 3, 6,
+8 and 12 MiB). A stream - the servers' - keeps the 648 KiB above. Against libzstd at the same level
+and the same window, on a 3.9 MB executable, 2.7 MB of C sources, 3.7 MB of JSON and 395 KB of text
+(v0.103.0; the rows of v0.118.0 change sizes at these levels by -0.5 to +0.2 %):
 
 | this library / libzstd | executable | C sources | JSON | text |
 |---|---|---|---|---|
@@ -1076,28 +1085,29 @@ on a 3.9 MB executable, 2.7 MB of C sources, 3.7 MB of JSON and 395 KB of text:
 
 The output is about 1 % smaller on megabyte inputs, 2 % with the largest window.
 
-**Levels 10 to 12** (since v0.101.0) are lazy2 again with libzstd's larger tables for them - a hash of
-2^22, 2^22 and 2^23 entries and a chain of 2^21, 2^21 and 2^22, each cut to the window - and 48, 96
-and 128 candidates: for a file compressed once and sent many times. Against libzstd's same levels,
-on four other inputs at the largest window (`window_log` 23; one run each, on a loaded machine, so
-the speeds are rough):
+**Levels 10 to 12** (since v0.101.0) are lazy2 again with libzstd's larger tables for them -
+2^22, 2^22 and 2^23 positions, each cut to the window, in rows of 64 at 10 and of 128 at 11 and 12 -
+and 48, 96 and 128 candidates: for a file compressed once and sent many times. Against libzstd's
+same levels, on four other inputs at the largest window (`window_log` 23; v0.118.0, best of three
+runs):
 
-| | C sources, 3.0 MB | HTML page, 330 KB | JSON, 191 KB | an executable, 2.0 MB |
+| | C sources, 3.0 MB | HTML page, 356 KB | JSON, 142 KB | an executable, 2.0 MB |
 |---|---|---|---|---|
-| level 9, this library / libzstd | 1.020 of its size | 0.990 | 1.003 | 0.987 |
-| level 10 | 1.001 | 0.991 | 1.002 | 0.974 |
-| level 11 | 1.001 | 0.991 | 1.007 | 0.973 |
-| level 12 | 0.997 | 0.988 | 1.013 | 0.973 |
-| speed at level 12, this library / libzstd | 4.7 / 23 MB/s | 21 / 50 | 41 / 23 | 4.6 / 19 |
+| level 9, this library / libzstd | 0.995 of its size | 0.983 | 1.001 | 0.985 |
+| level 10 | 1.001 | 0.992 | 1.002 | 0.987 |
+| level 11 | 1.000 | 0.992 | 1.008 | 0.987 |
+| level 12 | 0.998 | 0.989 | 1.015 | 0.986 |
+| speed at level 9, this library / libzstd | 23 / 46 MB/s | 42 / 76 | 54 / 65 | 20 / 39 |
+| speed at level 12, this library / libzstd | 9.9 / 24 MB/s | 25 / 54 | 33 / 22 | 8.7 / 23 |
 
-Level 12 is 2 to 5 % smaller than level 9, at a fifth to a half of its speed. libzstd finds its
-candidates faster (it keeps them in rows) and, below 256 KiB, switches to a binary tree at level 11 -
-the JSON row's point. With the default window (19) the tables are 2^20 each and the C sources 2
-points larger than libzstd's, which uses 4 MiB at these levels.
+Level 12 is 0.6 to 2.2 % smaller than level 9 here, at 0.4 to 0.6 of its speed; before v0.118.0,
+whose hash chains had its candidates read one after another from memory, it was at about half the
+speed it has now. libzstd, below 256 KiB, switches to a binary tree at level 11 - the JSON row's
+point.
 
 **Levels 13 to 19** (since v0.102.0). 13 to 15 parse the same way over binary trees: every position
 is kept in a tree of the positions before it with the same hash, ordered by the bytes that follow, so
-the longest matches are found by a walk down the tree instead of along a chain (trees of 2^21 to 2^22
+the longest matches are found by a walk down the tree instead of through a row of candidates (trees of 2^21 to 2^22
 positions, 32, 64 and 128 nodes compared). 16 to 19 parse **optimally** over the same trees: every
 match found at a position, and the three repeat offsets, priced at what they would cost to write -
 their offset, their length, their sequence's literal length, each literal byte, from what the frame
@@ -1149,7 +1159,7 @@ its own buffer, and at most holds:
 
 | | Memory |
 |---|---|
-| Hash tables (zeroed when an encoder is made or reset) | 64 KiB at level 1, 96 KiB at 2, 768 KiB at 3 and 4, 1 MiB at 5 to 9; at 10 to 19 8 MiB with the default window, and with the largest 24 MiB at 10 and 11, 32 MiB at 13 and 16, 48 MiB at 12, 14, 17 and 18, 64 MiB at 15, 80 MiB at 19 (less when a whole buffer is short) |
+| Hash tables (zeroed when an encoder is made or reset) | 64 KiB at level 1, 96 KiB at 2, 768 KiB at 3, 648 KiB at 4 to 9; at 10 to 12 5.1 MiB with the default window, and with the largest 20.1 MiB at 10 and 11 and 40.1 MiB at 12; at 13 to 19 8 MiB with the default window, and with the largest 32 MiB at 13 and 16, 48 MiB at 14, 17 and 18, 64 MiB at 15, 80 MiB at 19 (less when a whole buffer is short) |
 | The optimal parse's path and three-byte table (levels 16 to 19, and 13 to 15 on a whole buffer of 256 KiB or less) | about 380 KiB (less for a short whole buffer) |
 | One block's work: its sequences, literals and output | about 500 KiB |
 | The input buffer of a stream | the window and half a window, or the window and 128 KiB if that is more: 768 KiB at the default 512 KiB |

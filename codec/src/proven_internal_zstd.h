@@ -47,9 +47,11 @@ static inline proven_u32 le32(const proven_byte_t *p) {
 #if ZSTD_BUILTINS
 #define ZSTD_LIKELY(x) __builtin_expect(!!(x), 1)
 #define ZSTD_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#define ZSTD_PREFETCH(p) __builtin_prefetch((const void *)(p))   /* a hint only: what is computed is the same without it */
 #else
 #define ZSTD_LIKELY(x) (x)
 #define ZSTD_UNLIKELY(x) (x)
+#define ZSTD_PREFETCH(p) ((void)0)
 #endif
 
 /* The position of the lowest set bit of a nonzero value. */
