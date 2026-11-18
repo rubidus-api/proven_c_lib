@@ -18,6 +18,35 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.118.0] - 2026-11-19
+
+### Changed
+
+- Zstandard encoder levels 4 to 12 (zstd.h; RFC-0051): every position is kept in rows, as
+  libzstd's row match finder, in place of the hash chains - a hash names a row of the last 16
+  to 128 positions with that hash (16 where a level compares up to 16 candidates, 32, 64, and
+  128 at 11 and 12), a byte more of the hash kept beside each position is compared for a whole
+  row at once (SSE2 where the compiler targets it, 64-bit words elsewhere, with the same result),
+  and only the positions whose byte agrees are compared, newest first; at the lazy levels (6 to
+  12) the row of the position eight ahead is fetched before it is needed. **The output of these
+  levels changes** (the format, and levels 1 to 3 and 13 to 19, do not; every frame is decoded
+  by libzstd in the private checks); sizes are within -1.1 to +0.6 % of before on seven files
+  at the default and the largest window, mostly within 0.2 %. User cycles on the build host,
+  gcc -O2, against before (a 5 MB executable, 1 MB of C, 1.7 MB of Markdown): 26 to 42 % fewer
+  at level 9 (0.63 to 0.65 of libzstd 1.5.7's speed, from 0.37 to 0.46), 32 to 43 % at 10, 35
+  to 50 % at 11, 40 to 53 % at 12, 3 to 29 % at 5 to 8; level 4 19 % fewer on the executable
+  and 2 to 4 % more on the C and the Markdown, where its output is 0.4 % smaller. The tables are
+  smaller: 648 KiB at levels 4 to 9 (768 KiB at 4 and 1 MiB at 5 to 9 before); for
+  proven_zstd_encode_all above 256 KiB 2.6 MiB at 6 and 5.1 MiB at 7 to 9 (3, 6, 6 and 8 MiB);
+  at 10 to 12 5.1 MiB with the default window (8 MiB), 20.1 MiB at 10 and 11 and 40.1 MiB at
+  12 with the largest (24, 24 and 48 MiB).
+
+### Documentation
+
+- Chapter 16 (en/ko): the DEFLATE speed table and the comparison with zlib measured again -
+  since v0.117.3 the compressor runs at 0.95 to 1.07 of zlib's speed, where the text still said
+  zlib was about twice as fast; the Zstandard tables and memory at levels 4 to 12 as above.
+
 ## [0.117.3] - 2026-11-18
 
 ### Changed
