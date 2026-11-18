@@ -18,6 +18,25 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.117.2] - 2026-11-18
+
+### Changed
+
+- Zstandard decoder (RFC-0050): a sequence whose literals, match and offset lie well inside
+  the buffers, the block's limit and the window passes one combined test and is copied as
+  libzstd copies (32 bytes at a time; offsets under 8 without a byte loop); the rest take the
+  checks there were. Four Huffman streams are decoded five symbols a round with no checks
+  inside, as many rounds as every stream has room for; table entries are one load; the
+  sequence tables a block describes are built in one pass. User cycles on the build host, gcc
+  -O3: 18.6 to 28.1 % fewer (a binary, C sources and text at levels 1, 3, 9 and 19), -O2: 17
+  to 28 %; against libzstd 1.5.7 in the same process, 0.89 to 1.07 of its speed (it was 0.72
+  to 0.80). Output and verdicts unchanged: the private checks decode 130 streams six ways under
+  the sanitizers, and on 60,432 changed streams give libzstd's verdict exactly as before.
+
+### Tests
+
+- `test_unit_zstd`: literal sections and matches of every shape, from this library's encoder.
+
 ## [0.117.1] - 2026-11-18
 
 ### Changed
