@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.119.1] - 2026-11-19
+
 ### Fixed
 
 - `proven_chacha_rng_t` with `PROVEN_CHACHA_RNG_RESEED_EVERY_MIB`: where an epoch drawn whole on
