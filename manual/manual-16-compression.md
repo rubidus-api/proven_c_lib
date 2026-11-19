@@ -786,7 +786,7 @@ int main(void) {
 | `compress_level` (both server configurations) | 1 (fastest) to 9 (smallest); -1 stores without compressing. Zero is 6. Section 4 has the measurements. | `INVALID_ARG` from `create` outside that range. |
 | `compress_window_bits` (both) | 9 to 15: the memory a streamed response holds while it is written (section 4's table). Zero is 15. | the same. |
 | `compress_zstd` (both server configurations) | Compress in `zstd` for a request that weighs it at least as high as gzip; gzip otherwise. False: gzip only. | - |
-| `compress_zstd_level`, `compress_zstd_window_log` (both) | Section 7's encoder level (1 to 9 - not 10 to 19, which are for files compressed in advance - zero is 1) and window (10 to 23, zero is 17). | `INVALID_ARG` from `create` outside those ranges. |
+| `compress_zstd_level`, `compress_zstd_window_log` (both) | Section 7's encoder level (1 to 9 - not 10 to 22, which are for files compressed in advance - zero is 1) and window (10 to 23, zero is 17). | `INVALID_ARG` from `create` outside those ranges. |
 | `decompress` (both client configurations) | Send `Accept-Encoding: gzip` and decode `gzip` and `deflate` bodies. | - |
 | `decompress_zstd` (both client configurations) | With `decompress`: send `Accept-Encoding: zstd, gzip` and decode `zstd` bodies too. | `INVALID_ARG` from `create` without `decompress`. |
 | `decompress_brotli` (both client configurations) | With `decompress`: ask for `br` too and decode `br` bodies (since v0.60.0). | `INVALID_ARG` from `create` without `decompress`; `UNSUPPORTED` in a build with `PROVEN_NO_BROTLI`. |
@@ -1125,10 +1125,32 @@ as libzstd does. The same four inputs and window:
 | level 19 | 1.005 | 1.003 | 1.006 | 1.010 |
 | speed at level 19, this library / libzstd | 3.0 / 2.7 MB/s | 3.8 / 2.1 | 4.0 / 1.8 | 3.7 / 3.9 |
 
-Level 19 is 7 to 13 % smaller than level 9 on these four inputs (a quarter on numbered lines). It
-differs from libzstd's in one known way: libzstd's level 19 makes a first pass over the first block to
-learn its statistics; this one starts from the block's own bytes and the format's predefined
-distributions.
+Level 19 is 7 to 13 % smaller than level 9 on these four inputs (a quarter on numbered lines). (The
+table was measured before v0.119.0.)
+
+**Levels 19 to 22** (v0.119.0). From level 19 a frame's first block is parsed twice, as libzstd's
+level 19 does: the first time only to learn what each literal, length and offset costs, the second
+with those prices, where otherwise the first block starts from its own bytes and the format's
+predefined distributions. It is done when nothing comes before the block - not with a dictionary.
+On inputs of 16 to 256 KiB this makes level 19 0.02 to 1.8 % smaller, most often 0.2 to 0.6 % (in
+twice the time: the whole input is that one block); on 1 to 5 MB 0.01 to 0.04 % (2 to 21 % more time). Levels 20 to 22 are
+19 with libzstd's larger tables for them - hashes of 2^23 to 2^25 entries, trees of 2^24 to 2^26
+positions, 128, 128 and 512 nodes compared - and, with `window_log` 0, its windows: 32, 64 and 128
+MiB. Their use is a large input that repeats from further back than 8 MiB; on a smaller one they
+are 19 with the window the input needs. On the build host (gcc -O2, cycles, a loaded machine - a
+direction only):
+
+| | an executable, 5.0 MB | C sources, 1.0 MB | Markdown, 1.7 MB | C sources, 3.0 MB |
+|---|---|---|---|---|
+| level 22 / level 19 (512 KiB window), size | 0.990 | 0.996 | 0.973 | 0.976 |
+| level 22 / libzstd's level 22, size | 1.013 | 1.008 | 1.003 | 1.004 |
+| level 22's speed / libzstd's | 1.14 | 1.17 | 1.35 | 1.18 |
+
+40 MiB of random pieces that repeat from 20 MiB back: level 19 leaves it as it is, 20 to 22 halve it.
+Their memory is in the table below: 160 to 640 MiB of tables, and for a stream an input buffer of
+48 to 192 MiB. A frame made at 20 to 22 with their own window needs a decoder made with a
+`window_max` of 32 to 128 MiB (section 7): the default decoder and `proven_zstd_decode_all` refuse it
+when it states more than 8 MiB.
 
 **Long-distance matching** (`long_distance`, since v0.103.0), as libzstd's `--long`: a rolling hash of
 the last 64 bytes picks about one position in 128; those positions are kept in buckets for the whole
@@ -1159,14 +1181,17 @@ its own buffer, and at most holds:
 
 | | Memory |
 |---|---|
-| Hash tables (zeroed when an encoder is made or reset) | 64 KiB at level 1, 96 KiB at 2, 768 KiB at 3, 648 KiB at 4 to 9; at 10 to 12 5.1 MiB with the default window, and with the largest 20.1 MiB at 10 and 11 and 40.1 MiB at 12; at 13 to 19 8 MiB with the default window, and with the largest 32 MiB at 13 and 16, 48 MiB at 14, 17 and 18, 64 MiB at 15, 80 MiB at 19 (less when a whole buffer is short) |
-| The optimal parse's path and three-byte table (levels 16 to 19, and 13 to 15 on a whole buffer of 256 KiB or less) | about 380 KiB (less for a short whole buffer) |
+| Hash tables (zeroed when an encoder is made or reset) | 64 KiB at level 1, 96 KiB at 2, 768 KiB at 3, 648 KiB at 4 to 9; at 10 to 12 5.1 MiB with the default window, and with the largest 20.1 MiB at 10 and 11 and 40.1 MiB at 12; at 13 to 19 8 MiB with the default window, and with the largest 32 MiB at 13 and 16, 48 MiB at 14, 17 and 18, 64 MiB at 15, 80 MiB at 19; at 20, 21 and 22 160, 320 and 640 MiB (8 MiB with a window of 512 KiB; 96, 128 and 128 MiB with 8 MiB) (less when a whole buffer is short) |
+| The optimal parse's path and three-byte table (levels 16 to 22, and 13 to 15 on a whole buffer of 256 KiB or less) | about 380 KiB (less for a short whole buffer) |
 | One block's work: its sequences, literals and output | about 500 KiB |
-| The input buffer of a stream | the window and half a window, or the window and 128 KiB if that is more: 768 KiB at the default 512 KiB |
+| The input buffer of a stream | the window and half a window, or the window and 128 KiB if that is more: 768 KiB at the default 512 KiB; 48, 96 and 192 MiB at the windows of levels 20 to 22; 1.5 GiB at the largest |
 
-The window (`window_log`, 10 to 23, zero is 19) is what a decoder must hold to read the frame,
-so it is the reader's memory too: 23 (8 MiB) is the most RFC 9659 asks an HTTP client to
-accept. A whole buffer no larger than the window states its own size as the window.
+The window (`window_log`, 10 to 30, zero is 19 - and at levels 20 to 22 libzstd's 25 to 27) is
+what a decoder must hold to read the frame, so it is the reader's memory too: 23 (8 MiB) is the
+most RFC 9659 asks an HTTP client to accept, and the default of this library's decoder and of
+`proven_zstd_decode_all`. A frame with a larger window needs a decoder made with a `window_max`
+that large (libzstd takes up to 128 MiB unless told more: `--memory`, `ZSTD_d_windowLogMax`). A
+whole buffer no larger than the window states its own size as the window.
 
 ### Example: written whole, in a stream with a flush, and the weights of a request
 
@@ -1248,7 +1273,7 @@ int main(void) {
 
 | API | Intent | Return |
 |---|---|---|
-| `proven_zstd_encoder_create(&options, &z)` | An encoder: `level` 1 to 19 (zero is 3, libzstd's default), `window_log` 10 to 23 (zero is 19), `checksum`. Allocates its hash tables; its buffers come with input. | `INVALID_ARG`, `NOMEM`. |
+| `proven_zstd_encoder_create(&options, &z)` | An encoder: `level` 1 to 22 (zero is 3, libzstd's default), `window_log` 10 to 30 (zero is 19; at levels 20 to 22, 25 to 27), `checksum`. Allocates its hash tables; its buffers come with input. | `INVALID_ARG`, `NOMEM`. |
 | `proven_zstd_encode(z, in, &consumed, out, &produced, flush, &done)` | Take some of `in`, give some of `out`. With a flush, call again until all input is taken and nothing more comes (for FINISH, until `done`). | `INVALID_STATE` for input after FINISH (reset first); `NOMEM`, after which every call says so until a reset; `INVALID_ARG`. |
 | `proven_zstd_encoder_reset(z)` | Start a new frame with the same options; the buffers are kept. | none. |
 | `proven_zstd_encoder_destroy(z)` | Free it. NULL is allowed. | none. |

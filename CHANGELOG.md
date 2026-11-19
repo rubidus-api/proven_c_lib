@@ -18,6 +18,30 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Added
+
+- Zstandard encoder levels 20 to 22 (zstd.h; RFC-0052): level 19 with libzstd 1.5.7's larger
+  tables for them (hashes of 2^23 to 2^25 entries, trees of 2^24 to 2^26 positions, 128, 128 and
+  512 nodes compared; for a whole buffer of 256 KiB or less its 1,024 to 8,192) and, with a
+  `window_log` of 0, its windows of 32, 64 and 128 MiB. A frame streamed at those levels with their
+  own window - or a whole buffer above 8 MiB - states a window that the default decoder and
+  `proven_zstd_decode_all` (8 MiB) refuse: it needs a decoder made with a `window_max` that large.
+  Memory: 160, 320 and 640 MiB of tables (8 MiB with a 512 KiB window) and, for a stream, an input
+  buffer of 48 to 192 MiB. Sizes, at level 22 against level 19 at its default window: 0.973 to
+  0.996 on 1 to 5 MB inputs, half on 40 MiB repeating from 20 MiB back; against libzstd's level 22,
+  1.003 to 1.013.
+- `window_log` up to 30 (1 GiB; it was 23). Offsets past 2^28 take codes 29 and 30, which the
+  format's predefined table cannot write: the table choice no longer picks a table that cannot
+  write every code of a block. The HTTP servers keep 10 to 23 and levels 1 to 9.
+
+### Changed
+
+- Zstandard level 19 and up parse a frame's first block twice, as libzstd's level 19 does - the
+  first time only for what its symbols cost, the second with those prices - when nothing precedes
+  the block (no dictionary). **The output of level 19 changes** (1 to 18 do not; every frame is
+  decoded by libzstd in the private checks): on 16 to 256 KiB 0.02 to 1.8 % smaller, mostly 0.2
+  to 0.6 %, in about twice the time; on 1 to 5 MB 0.01 to 0.04 % smaller, 2 to 21 % more cycles.
+
 ## [0.118.0] - 2026-11-19
 
 ### Changed

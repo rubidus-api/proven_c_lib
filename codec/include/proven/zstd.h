@@ -150,7 +150,7 @@ proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t 
  * step with a flush. Its output is a Zstandard frame that any decoder reads - libzstd's, this
  * library's - and not the bytes libzstd would have written for the same input.
  *
- * Nineteen levels, as libzstd's first nineteen. Levels 1 to 3 are single-pass: level 1 looks up one
+ * Twenty-two levels, as libzstd's. Levels 1 to 3 are single-pass: level 1 looks up one
  * earlier position per position, by a hash of the next six bytes in a table of 2^14 entries;
  * levels 2 and 3 look up two, by hashes of eight bytes and of six (2^14 and 2^13 entries) or
  * five (2^17 and 2^16). Levels 4 to 12 keep every position in rows, as libzstd's "row" match
@@ -175,7 +175,14 @@ proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t 
  * so far - and the cheapest path through each stretch of up to 4,096 bytes taken; 18 and 19 also
  * take three-byte matches. A whole buffer of 256 KiB or less is parsed so from level 13, as libzstd
  * does. A few megabytes a second; 7 to 13 % smaller than level 9 on four kinds of input, more on
- * some (a quarter on numbered lines).
+ * some (a quarter on numbered lines). From level 19 a frame's first block is parsed twice, the first
+ * time only to learn what its symbols cost (libzstd's "btultra2"), unless a dictionary is used: the
+ * block is smaller, at twice its time.
+ * Levels 20 to 22 are 19 with libzstd's larger tables for them (hashes of 2^23 to 2^25 entries,
+ * trees of 2^24 to 2^26 positions, 128 to 512 nodes compared) and, with a `window_log` of 0, its
+ * windows: 32, 64 and 128 MiB. For inputs larger than 8 MiB that repeat from that far back; slower
+ * than 19, and the frame needs a decoder made with a window limit that large (see
+ * proven_zstd_decoder_create; proven_zstd_decode_all keeps the default limit).
  * All try the repeat offsets first and skip ahead faster the longer they find nothing. Each block's
  * literals are Huffman-coded and its sequences FSE-coded, each table chosen per block by what
  * it would cost: the predefined one, one written for the block, the previous block's, or a
@@ -185,12 +192,14 @@ proven_err_t proven_zstd_decode_all(proven_allocator_t alloc, proven_mem_view_t 
  * 4 to 9 - and for proven_zstd_encode_all of more than 256 KiB 2.6 MiB at 6, 5.1 MiB at 7 to 9 with
  * the default window and 10.1 MiB at 9 with the largest; at 10 to 12 5.1 MiB with the default window,
  * and with the largest 20.1 MiB at 10 and 11 and 40.1 MiB at 12; at 13 to 19 8 MiB with the default
- * window, and with the largest 32 MiB at 13 and 16, 48 MiB at 14, 17 and 18, 64 MiB at 15, 80 MiB at 19 - and
- * zeroed when an encoder is made or reset), at 16 to 19 about 380 KiB more for the parse (less for
+ * window, and with the largest 32 MiB at 13 and 16, 48 MiB at 14, 17 and 18, 64 MiB at 15, 80 MiB at 19,
+ * and at 20, 21 and 22 160, 320 and 640 MiB (with a window of 2^19 8 MiB, of 2^23 96 MiB at 20 and 128 MiB at 21 and 22) - and
+ * zeroed when an encoder is made or reset), from 16 on about 380 KiB more for the parse (less for
  * a short whole buffer), with `long_distance` 8 bytes for each 128 bytes of window, about
  * 500 KiB for one block (its sequences, literals and output), and, for a stream, an input
  * buffer of the window and half a window (or of the window and 128 KiB, if that is more):
- * 768 KiB at the default window. Buffers grow with the input. proven_zstd_encode_all needs no
+ * 768 KiB at the default window, 48, 96 and 192 MiB at the windows of 20 to 22, 1.5 GiB at the
+ * largest. Buffers grow with the input. proven_zstd_encode_all needs no
  * input buffer, and sizes its tables and block buffers to the input: a few kilobytes for a
  * short one.
  */
@@ -205,8 +214,8 @@ typedef enum {
 /** @brief What an encoder is made with. Zero-initialise, set `alloc`, and set what applies. */
 typedef struct {
     proven_allocator_t alloc;      /**< required */
-    int level;                     /**< 1 (fastest) to 19 (smallest); 0: 3, as libzstd's default. (The HTTP servers' `compress_zstd_level` stays 1 to 9: they compress as they send.) */
-    int window_log;                /**< how far back a match may reach, as a power of two: 10 to 23 (8 MiB, the most RFC 9659 lets an HTTP client be asked for); 0: 19 (512 KiB) */
+    int level;                     /**< 1 (fastest) to 22 (smallest); 0: 3, as libzstd's default. (The HTTP servers' `compress_zstd_level` stays 1 to 9: they compress as they send.) */
+    int window_log;                /**< how far back a match may reach, as a power of two: 10 to 30 (1 GiB). A frame's window above 8 MiB - 23, the most RFC 9659 lets an HTTP client be asked for, and the HTTP servers' limit - needs a decoder made with a larger `window_max`. 0: 19 (512 KiB); at levels 20, 21 and 22 libzstd's 25, 26 and 27 (32 to 128 MiB). Either way a whole buffer's frame states no more window than its size needs */
     bool checksum;                 /**< end each frame with the low 32 bits of its XXH64 */
     proven_mem_view_t dictionary; /**< a dictionary, raw or formatted (see proven_zstd_decoder_use_dictionary): every frame starts from its content as from earlier input, and a formatted one's repeat offsets and tables - which its first block may repeat without writing them - and states its ID (a raw one's is 0). The bytes stay the caller's, read while the encoder exists. A frame made with one needs it to be decoded. Costs the content's size more in the input buffer, a copy of the content into it for each frame, and for proven_zstd_encode_all a copy of the input after it. Empty: none */
     bool long_distance;            /**< long-distance matching, as libzstd's `--long`: matches of 64 bytes or more found anywhere in the window by a hash kept for one position in about 128, the level's own matching between them. Levels 1 to 5 only: from 6 the level's own matching finds about as much, and from 9 a long match forced into the parse costs more than it saves - there the option does nothing. For large inputs that repeat from far back (archives, logs, several versions of a file): the fast levels' tables reach a few hundred kilobytes, this the whole window. Costs 8 bytes for each 128 bytes of window (512 KiB at `window_log` 23, 32 KiB at 19) and some speed. false: none */

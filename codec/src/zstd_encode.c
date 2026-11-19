@@ -28,9 +28,9 @@
  * kept here exactly as a decoder will have it, and put back when a block goes out stored. */
 
 #define WINDOW_LOG_MIN 10
-#define WINDOW_LOG_MAX 23
-#define WINDOW_LOG_DEFAULT 19
-#define LEVEL_MAX 19
+#define WINDOW_LOG_MAX 30                /* 1 GiB (RFC-0052); positions stay below 2^32: the buffer is a window and a half */
+#define LEVEL_MAX 22
+#define LEVEL_TWO_PASS 19               /* from here the frame's first block is parsed twice (libzstd's btultra2) */
 #define LEVEL_DEFAULT 3
 #define SEQ_MAX 16384u                  /* sequences in one block; a block ends early when they run out */
 #define HUF_MAX_BITS 11
@@ -502,7 +502,7 @@ typedef struct {
 #define LDM_LEVEL_MAX 5                 /* the levels it is used at */
 struct proven_ldm_match { proven_u32 at, off, len; };
 
-/* Optimal parsing (levels 16 to 19). Prices are in 1/256 of a bit. */
+/* Optimal parsing (levels 16 to 22). Prices are in 1/256 of a bit. */
 #define OPT_NUM 4096                   /* positions one stretch of the path may cover */
 #define OPT_MATCHES 72                 /* matches found at one position: three repeats, a three-byte one, and the trees' */
 #define OPT_H3_LOG 16                  /* the table of three-byte matches (levels whose `depth` is 1) */
@@ -511,6 +511,7 @@ typedef struct { proven_u32 price, dist, mlen, litlen, rep[3]; } proven_opt_node
 typedef struct { proven_u32 offv, dist, len; } proven_opt_match_t;
 struct proven_opt {
     bool ready;                        /* statistics carried over from an earlier block of the frame */
+    bool seeded;                       /* they are a first parse's of this block (opt_first_pass): taken as they are */
     proven_u32 lit[256], ll[36], ml[53], of[32];
     proven_u32 lit_sum, ll_sum, ml_sum, of_sum;
     proven_u32 lit_w, ll_w, ml_w, of_w;   /* the sums' weights */
@@ -550,7 +551,7 @@ struct proven_zstd_encoder {
     proven_u32 hc_pos[8], hc[8];       /* rows: the hashes of the next positions, computed ahead (hc_pos NONE: none) */
     bool fresh;                        /* the hash tables hold nothing of the current frame */
     proven_u32 next_update;            /* rows and trees: the first position not yet in the tables */
-    struct proven_opt *optp;           /* optimal parsing (levels 16 to 19): its statistics and its path */
+    struct proven_opt *optp;           /* optimal parsing (levels 16 to 22): its statistics and its path */
     proven_seq_t *seqs;
     proven_byte_t *codes;              /* each sequence's literal-length, offset and match-length codes */
     proven_size_t nseq;
@@ -616,7 +617,19 @@ static const proven_params_t LEVELS[LEVEL_MAX + 1] = {
     { 4, 22, 23, 4, 32, 0, 64 },
     { 4, 22, 23, 4, 64, 1, 64 },
     { 4, 22, 24, 4, 128, 1, 256 },
+    /* 20 to 22 (RFC-0052): libzstd's tables and searches for them; a `window_log` of 0 is their
+     * window, 2^25 to 2^27 (WINDOW_LOG_LEVEL), and the tables are cut to the window as every level's. */
+    { 4, 23, 25, 4, 128, 1, 256 },
+    { 4, 24, 26, 4, 128, 1, 512 },
+    { 4, 25, 27, 4, 512, 1, 999 },
 };
+
+/* A `window_log` of 0: 19 (512 KiB), and at 20 to 22 libzstd's windows for them. */
+static const unsigned WINDOW_LOG_LEVEL[LEVEL_MAX + 1] = { 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 25, 26, 27 };
+
+/* Levels 20 to 22 over a known input of 256 KiB or less: libzstd's candidates and match length for
+ * such inputs (16 to 19 take four times their candidates and twice their length, make). */
+static const unsigned SMALL_TRIES[3] = { 1024, 4096, 8192 }, SMALL_TARGET[3] = { 512, 512, 999 };
 
 /* Levels 6 to 9 for a known input above 256 KiB (proven_zstd_encode_all): libzstd's hash sizes for
  * such inputs, cut to the window as every level's. The servers, which stream at these levels, keep
@@ -634,7 +647,7 @@ static proven_err_t grow(proven_zstd_encoder_t *z, void **buf, proven_size_t *ca
 }
 
 static void frame_start(proven_zstd_encoder_t *z) {
-    if (z->optp) z->optp->ready = false;      /* a new frame starts its statistics again */
+    if (z->optp) { z->optp->ready = false; z->optp->seeded = false; }     /* a new frame starts its statistics again */
     z->header_done = false;
     z->finished = false;
     z->failed = false;
@@ -682,7 +695,7 @@ static proven_err_t make(const proven_zstd_encoder_options_t *o, proven_u64 size
     proven_zstd_encoder_t *z = (proven_zstd_encoder_t *)(void *)m.value.ptr;
     *z = (proven_zstd_encoder_t){ .alloc = o->alloc, .opt = *o };
     if (z->opt.level == 0) z->opt.level = LEVEL_DEFAULT;
-    z->wlog = o->window_log ? (unsigned)o->window_log : WINDOW_LOG_DEFAULT;
+    z->wlog = o->window_log ? (unsigned)o->window_log : WINDOW_LOG_LEVEL[z->opt.level];
     z->p = LEVELS[z->opt.level];
     proven_zstd_dict_t_ dr;
     proven_size_t dlen = 0;
@@ -702,6 +715,7 @@ static proven_err_t make(const proven_zstd_encoder_options_t *o, proven_u64 size
      * as libzstd's table for such inputs has it (its trees and lazy parse only pay on more). */
     if (size_hint <= ((proven_u64)256 << 10) && z->p.strategy >= 3) {
         if (z->p.strategy == 3) z->p.target = 48;
+        else if (z->opt.level > 19) { z->p.tries = SMALL_TRIES[z->opt.level - 20]; z->p.target = SMALL_TARGET[z->opt.level - 20]; }
         else { z->p.tries *= 4; z->p.target *= 2; }   /* 16 to 19 look further than 13 to 15 */
         z->p.strategy = 4;
         z->p.depth = 1;
@@ -740,6 +754,7 @@ static proven_err_t make(const proven_zstd_encoder_options_t *o, proven_u64 size
         if (om.err != PROVEN_OK) { o->alloc.free_fn(o->alloc.ctx, z->hash); o->alloc.free_fn(o->alloc.ctx, z); return PROVEN_ERR_NOMEM; }
         z->optp = (struct proven_opt *)(void *)om.value.ptr;
         z->optp->ready = false;
+        z->optp->seeded = false;
         z->optp->span_max = span;
         z->optp->h3_log = h3_log;
         z->optp->node = (proven_opt_node_t *)(void *)(om.value.ptr + sizeof(struct proven_opt));
@@ -1254,7 +1269,7 @@ ZSTD_HOT proven_size_t bt_find(proven_zstd_encoder_t *z, const proven_byte_t *ba
     return bt_put(z, base, cur, iend, low, off, mls);
 }
 
-/* ---- Optimal parsing (levels 16 to 19, RFC-0038 Z-3) ----
+/* ---- Optimal parsing (levels 16 to 22, RFC-0038 Z-3, RFC-0052) ----
  *
  * Every match the trees find at a position, and the three repeat offsets, each weighed by what it
  * would cost to write - its offset code and extra bits, its length's, the literal length's of its
@@ -1285,9 +1300,11 @@ static void opt_prices(struct proven_opt *o) {
 static proven_u32 opt_sum(const proven_u32 *t, unsigned n) { proven_u32 s = 0; for (unsigned i = 0; i < n; ++i) s += t[i]; return s; }
 
 /* A block begins: its counts are the last block's scaled down, or - first in the frame - its own
- * bytes' and the predefined distributions'. */
+ * bytes' and the predefined distributions', or a first parse's of the same block whole. */
 static void opt_begin(struct proven_opt *o, const proven_byte_t *src, proven_size_t n) {
-    if (!o->ready) {
+    if (o->seeded) {
+        o->seeded = false;           /* scaled down they price about 0.1 to 0.3 % worse (RFC-0052) */
+    } else if (!o->ready) {
         for (unsigned i = 0; i < 256; ++i) o->lit[i] = 0;
         for (proven_size_t i = 0; i < n; ++i) o->lit[src[i]]++;
         for (unsigned i = 0; i < 256; ++i) o->lit[i] = 1 + (o->lit[i] >> 4);
@@ -1578,7 +1595,34 @@ ZSTD_HOT proven_size_t match_lazy_mls(proven_zstd_encoder_t *z, const proven_byt
     return full ? (proven_size_t)(anchor - base) : end;
 }
 
+/* From LEVEL_TWO_PASS on, a frame's first block is parsed once only to learn what it costs to write -
+ * its statistics then price the real parse, which otherwise starts from the block's bytes and the
+ * predefined distributions (libzstd's btultra2: about half a percent on that block, twice its time).
+ * Only where the tables hold nothing from before the block: no dictionary, the frame's start. What the
+ * first parse wrote is dropped, and what it put in the tables taken out again - every entry it wrote
+ * is a position of the block, so the positions it reached find them all - so that the second parse
+ * sees the tables as the first did. */
+static void opt_first_pass(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end, proven_size_t low) {
+    const proven_u32 rep[3] = { z->rep[0], z->rep[1], z->rep[2] };
+    const proven_size_t nseq = z->nseq, nlit = z->nlit;
+    proven_size_t lf = 0;
+    (void)match_opt(z, base, start, end, low, &lf);
+    z->nseq = nseq; z->nlit = nlit;
+    z->rep[0] = rep[0]; z->rep[1] = rep[1]; z->rep[2] = rep[2];
+    struct proven_opt *const o = z->optp;
+    const proven_u32 upto = z->next_update, nodes = (proven_u32)(z->hash2_size / 2);
+    for (proven_u32 i = (proven_u32)start; i < upto; ++i) z->hash[hash_at(base + i, z->p.hlog, z->p.mls)] = 0;
+    if (upto - (proven_u32)start >= nodes) { for (proven_size_t i = 0; i < z->hash2_size; ++i) z->hash2[i] = 0; }
+    else for (proven_u32 i = (proven_u32)start; i < upto; ++i) { z->hash2[2 * (i & (nodes - 1))] = 0; z->hash2[2 * (i & (nodes - 1)) + 1] = 0; }
+    for (proven_u32 i = (proven_u32)start; i < o->h3_next; ++i)
+        o->h3[(((proven_u32)base[i] | (proven_u32)base[i + 1] << 8 | (proven_u32)base[i + 2] << 16) * 506832829u) >> (32 - o->h3_log)] = 0;
+    z->next_update = (proven_u32)start;
+    o->h3_next = (proven_u32)start;
+    o->seeded = true;
+}
+
 ZSTD_HOT proven_size_t match_block(proven_zstd_encoder_t *z, const proven_byte_t *base, proven_size_t start, proven_size_t end, proven_size_t low, proven_size_t *last_from) {
+    if (z->p.strategy == 4 && z->opt.level >= LEVEL_TWO_PASS && z->fresh && !z->optp->ready && !z->cd && start == 0) opt_first_pass(z, base, start, end, low);
     z->fresh = false;
     if (z->p.strategy == 0) {
         return match_fast_mls(z, base, start, end, low, last_from, 6);
@@ -1763,8 +1807,10 @@ static int choose_table(proven_zstd_encoder_t *z, int kind, const proven_u32 *co
         c_new = fse_cost(count, maxsym, norm, maxsym + 1, log);
         c_new += (proven_u64)k * 8 * 256;
     }
-    if (c_def <= c_new && c_def <= c_old) { *use = def; *next = 2; return 0; }
-    if (c_old <= c_new) { *use = old; return 3; }
+    /* ~0: the table cannot say every symbol (the predefined offsets stop at code 28, a window of
+     * 2^29 or more needs more). */
+    if (c_def != ~(proven_u64)0 && c_def <= c_new && c_def <= c_old) { *use = def; *next = 2; return 0; }
+    if (c_old != ~(proven_u64)0 && c_old <= c_new) { *use = old; return 3; }
     if (k == 0) return -1;
     fse_tab_build(&e->tab[kind][slot], norm, maxsym + 1, log);
     *dlen = k;
