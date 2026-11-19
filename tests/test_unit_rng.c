@@ -323,6 +323,24 @@ int main(void) {
     }
 
     // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("reseeding every MiB where word 12 wraps",
+        "With PROVEN_CHACHA_RNG_RESEED_EVERY_MIB, an epoch that ends where the block counter (word 12) wraps carries into word 13 once, whatever sizes the draw comes in - in whole epochs (eight lanes) or a block at a time.",
+        "Inspect the whole-epoch branch of proven_chacha_rng_fill in src/proven/random.c: it must not step the counter past the key block twice.");
+    // ---------------------------------------------------------------
+    {
+        static proven_byte_t a[4096];
+        proven_chacha_rng_t x, y;
+        PROVEN_TEST_ASSERT(proven_chacha_rng_seed_from_entropy_ex(&x, PROVEN_CHACHA_RNG_RESEED_EVERY_MIB), "seeded from entropy with the option", "");
+        x.state[12] = 0u - 16u;                    /* an epoch's first block, the wrap at its end */
+        y = x;
+        const proven_u32 w13 = x.state[13];
+        proven_chacha_rng_fill(&x, a, sizeof a);
+        for (int i = 0; i < 64; ++i) proven_chacha_rng_fill(&y, a, 64);
+        PROVEN_TEST_ASSERT(x.state[13] == w13 + 1u && y.state[13] == w13 + 1u && x.state[12] == y.state[12],
+                           "one carry into word 13, in one draw and in 64-byte draws alike, and the same counter after", "");
+    }
+
+    // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("proven_random_fast_bytes",
         "RFC-0048 E-4. Fills, of any size, from a generator of the thread's own; two draws differ.",
         "Inspect proven_random_fast_bytes in src/proven/random.c.");

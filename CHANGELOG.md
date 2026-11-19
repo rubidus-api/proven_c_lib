@@ -18,6 +18,26 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Fixed
+
+- `proven_chacha_rng_t` with `PROVEN_CHACHA_RNG_RESEED_EVERY_MIB`: where an epoch drawn whole on
+  eight lanes (AVX2) ended at the wrap of the block counter's low word - once in 2^32 blocks,
+  256 GiB - the high word was stepped twice, so the counter no longer matched the one of the
+  same draw made in smaller pieces. It is stepped once. Found by rubrapack's review; a test sets
+  the counter there.
+- The exact `%e`/`%g` digits (internal `proven_float_scaled_round_sig_digits`) need room for
+  one digit more than asked, which since v0.114.2 the single division builds whenever the
+  exponent's estimate is one low (10, 12, 100, ...), not only on a rounding carry: the check
+  asked for one byte too few, so a buffer of exactly digits + NUL failed for some values and
+  not others. It now asks for digits + 2. The formatters' own buffers were always far larger:
+  no output changes. Found by rubrapack's review.
+
+### Changed
+
+- The vector ChaCha keystream (`proven_sys_random.c`) wipes its state with `memset` and a
+  barrier, as `secure_zero` does, instead of a byte loop the compiler had to widen (it did at
+  -O1 and up; not at -O0).
+
 ## [0.119.0] - 2026-11-19
 
 ### Added
