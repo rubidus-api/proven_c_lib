@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.119.0] - 2026-11-19
+
 ### Added
 
 - Zstandard encoder levels 20 to 22 (zstd.h; RFC-0052): level 19 with libzstd 1.5.7's larger
@@ -30,7 +32,7 @@ written; their tags still exist.
   buffer of 48 to 192 MiB. Sizes, at level 22 against level 19 at its default window: 0.973 to
   0.996 on 1 to 5 MB inputs, half on 40 MiB repeating from 20 MiB back; against libzstd's level 22,
   1.003 to 1.013.
-- `window_log` up to 30 (1 GiB; it was 23). Offsets past 2^28 take codes 29 and 30, which the
+- `window_log` up to 30 (1 GiB; it was 23). Offsets from 2^29 take codes 29 and 30, which the
   format's predefined table cannot write: the table choice no longer picks a table that cannot
   write every code of a block. The HTTP servers keep 10 to 23 and levels 1 to 9.
 
