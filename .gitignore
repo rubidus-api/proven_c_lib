@@ -46,7 +46,7 @@ widedir/
 test_fs_perms.d/
 deeptree/
 
-# agy-only customization layer (local; see rootsator RFC-0001)
+# agy-only customization layer (local)
 /.agents/
 
 # Release artefacts are uploaded, not tracked: the PDFs are 4 MB each and the tag they belong
