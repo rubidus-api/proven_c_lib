@@ -18,6 +18,26 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Changed
+
+- Zstandard decoder (`codec/src/zstd.c`, `codec/src/proven_internal_zstd.h`): eliminated Clang 23
+  `-O2` register spills and improved GCC 16 `-O2` across all 12 benchmark streams (best of 7
+  interleaved `perf stat` cycles vs `libzstd 1.5.7`, byte-identical output; public API, wire
+  format, and memory bounds unchanged): force-inlined hot bit-reader, table, and copy helpers
+  (`ZSTD_HOT`/`ZDEC_HOT`), moved sequence decoding into a fast branchless loop while >= 24 source
+  bytes remain (with four separate `ZSTD_UNLIKELY` bounds checks, GCC `b.used <= 64` loop guard,
+  and Clang preheader guard), and kept `literals`/`sequences` non-inlined under Clang to avoid
+  combined-frame spills (`0.89-0.98x` of `libzstd` on Clang 23, `-12.1%` to `-16.6%`; `0.89-1.09x`
+  on GCC 16, `-1.6%` to `-4.9%`).
+- Brotli decoder (`codec/src/brotli.c`): reduced cycles per byte by `17.0-25.2%` on GCC 16 `-O2`
+  (`1.00-1.20x` of `libbrotli 1.2.1`) and `19.4-27.2%` on Clang 23 `-O2` (`1.01-1.24x`; text q5/q9
+  now `1.00-1.02x` on both compilers; byte-identical output; public API, wire format, and memory
+  bounds unchanged) via a 704-entry `CMD_LUT` with single-shift extra-bit extraction, `mask_bits()`
+  (`bzhi` under BMI2), hoisted hot state locals, fast skip when `insert == 0`, 3-literal fast
+  batching with conditional tail refill, branchless `dx_bits` distance extra lookup and conditional
+  refill, inline non-wrapping `d >= 16` copy loops, root-table store unrolling for 6-8-bit codes
+  in `build()`, `STEP8` copy step lookup, and `realloc_fn` buffer growth in `room()`/`tab_room()`.
+
 ## [0.119.2] - 2026-11-21
 
 ### Fixed
