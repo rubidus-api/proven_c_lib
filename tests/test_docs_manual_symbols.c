@@ -33,12 +33,13 @@
  * exists, so a trailing `_` or `*` is treated as a wildcard and ignored.
  */
 
-#define MAX_SYMS 1200
+#define MAX_SYMS 4096
 #define MAX_NAME 96
 
 static char g_real[MAX_SYMS][MAX_NAME];   /* every real function: public API + PAL */
 static bool g_real_public[MAX_SYMS];      /* true if declared in include/proven (not the PAL) */
 static int  g_real_n = 0;
+static bool g_real_overflow = false;
 
 /* Two sets, because the two directions are not the same question.
  *
@@ -52,9 +53,11 @@ static int  g_real_n = 0;
 static char g_call[MAX_SYMS][MAX_NAME];
 static char g_call_where[MAX_SYMS][64];
 static int  g_call_n = 0;
+static bool g_call_overflow = false;
 
 static char g_mention[MAX_SYMS][MAX_NAME];
 static int  g_mention_n = 0;
+static bool g_mention_overflow = false;
 
 static char *read_text_file(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -106,10 +109,14 @@ static void collect_real_from(const char *dir, bool is_public) {
                 char name[MAX_NAME];
                 memcpy(name, p, (size_t)(q - p));
                 name[q - p] = '\0';
-                if (!have(g_real, g_real_n, name) && g_real_n < MAX_SYMS) {
-                    g_real_public[g_real_n] = is_public;
-                    snprintf(g_real[g_real_n], MAX_NAME, "%s", name);
-                    ++g_real_n;
+                if (!have(g_real, g_real_n, name)) {
+                    if (g_real_n < MAX_SYMS) {
+                        g_real_public[g_real_n] = is_public;
+                        snprintf(g_real[g_real_n], MAX_NAME, "%s", name);
+                        ++g_real_n;
+                    } else {
+                        g_real_overflow = true;
+                    }
                 }
             }
             p = q;
@@ -178,13 +185,21 @@ static void collect_claimed(void) {
                 memcpy(name, p, (size_t)(q - p));
                 name[q - p] = '\0';
 
-                if (!have(g_mention, g_mention_n, name) && g_mention_n < MAX_SYMS) {
-                    snprintf(g_mention[g_mention_n++], MAX_NAME, "%s", name);
+                if (!have(g_mention, g_mention_n, name)) {
+                    if (g_mention_n < MAX_SYMS) {
+                        snprintf(g_mention[g_mention_n++], MAX_NAME, "%s", name);
+                    } else {
+                        g_mention_overflow = true;
+                    }
                 }
-                if (*q == '(' && !have(g_call, g_call_n, name) && g_call_n < MAX_SYMS) {
-                    snprintf(g_call[g_call_n], MAX_NAME, "%s", name);
-                    snprintf(g_call_where[g_call_n], sizeof g_call_where[0], "%.60s", n);
-                    ++g_call_n;
+                if (*q == '(' && !have(g_call, g_call_n, name)) {
+                    if (g_call_n < MAX_SYMS) {
+                        snprintf(g_call[g_call_n], MAX_NAME, "%s", name);
+                        snprintf(g_call_where[g_call_n], sizeof g_call_where[0], "%.60s", n);
+                        ++g_call_n;
+                    } else {
+                        g_call_overflow = true;
+                    }
                 }
                 p = q;
             }
@@ -207,6 +222,9 @@ int main(void) {
         "A near-empty scan means this test is being run from the wrong directory and is checking nothing.");
     PROVEN_TEST_ASSERT(g_mention_n > 100,
         "the manual scan must actually find documented symbols", "");
+    PROVEN_TEST_ASSERT(!g_real_overflow && !g_call_overflow && !g_mention_overflow,
+        "symbol tables must not truncate",
+        "Raise MAX_SYMS in tests/test_docs_manual_symbols.c; silent truncation drops symbols depending on readdir order.");
 
     // ---------------------------------------------------------------
     PROVEN_TEST_SECTION("the manual does not document a function that does not exist",

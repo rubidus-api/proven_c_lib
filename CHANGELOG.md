@@ -31,6 +31,9 @@ written; their tags still exist.
   `utf8_to_utf16_lossy_run` and `utf16_to_utf8_lossy_run` also enforce `out_cap` during their
   conversion pass, closing an out-of-bounds write risk when an overlapping buffer changed unread
   input between the measuring and writing passes.
+- `tests/test_docs_manual_symbols`: raise `MAX_SYMS` from 1200 to 4096 and assert that none of
+  the symbol tables overflow (at 1205 distinct `manual/` mentions, the 1200 cap silently
+  dropped symbols depending on directory-read order).
 
 ## [0.119.1] - 2026-11-19
 
