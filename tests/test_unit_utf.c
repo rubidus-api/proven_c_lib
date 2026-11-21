@@ -530,6 +530,297 @@ int main(void) {
 #endif
     }
 
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("overlapping buffers and byte-size overflow are refused",
+        "All six fixed-buffer converters reject any byte overlap between input and declared [out, out + out_cap * sizeof(elem)) with PROVEN_ERR_INVALID_ARG without modifying out, allow immediately adjacent buffers and empty ranges, and return PROVEN_ERR_OVERFLOW when proven_u16 byte sizing overflows.",
+        "Inspect utf8_to_utf16_check_args, utf16_to_utf8_check_args, and *_lossy_run in src/proven/utf.c.");
+    // ---------------------------------------------------------------
+    {
+        proven_u16 buf[16];
+        proven_u16 orig[16];
+        proven_size_t nw = 99;
+        proven_utf_step_t st;
+
+        /* 1a. UTF-8 -> UTF-16 lossy reproducer: output shrinks/grows over unread UTF-8 bytes. */
+        memset(buf, 0xA5, sizeof buf);
+        memcpy(buf, "A\xE2\x82\xAC\xE2\x82\xAC", 7);
+        memcpy(orig, buf, sizeof buf);
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16_lossy(bv(buf, 7), buf, 3, &nw) == PROVEN_ERR_INVALID_ARG &&
+                           nw == 0 && memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-8 -> UTF-16 lossy rejects exact-base overlap and leaves out untouched", "");
+
+        /* 1b. UTF-16 -> UTF-8 lossy reproducer: +1 byte and +0 byte overlaps. */
+        for (size_t i = 0; i < 16; ++i) buf[i] = 0x5A5A;
+        buf[0] = 0x00E9; buf[1] = 0x0041; buf[2] = 0x0041; buf[3] = 0x0041;
+        memcpy(orig, buf, sizeof buf);
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8_lossy(buf, 4, (proven_byte_t *)buf + 1, 5, &nw) == PROVEN_ERR_INVALID_ARG &&
+                           nw == 0 && memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-16 -> UTF-8 lossy rejects +1 byte overlap and leaves out untouched", "");
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8_lossy(buf, 4, (proven_byte_t *)buf, 5, &nw) == PROVEN_ERR_INVALID_ARG &&
+                           nw == 0 && memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-16 -> UTF-8 lossy rejects +0 byte overlap and leaves out untouched", "");
+
+        /* 1c. Overlap only in the unused tail of declared out_cap (strict, lossy, partial). */
+        for (size_t i = 0; i < 16; ++i) buf[i] = 0x5A5A;
+        ((proven_byte_t *)buf)[15] = 'Z';
+        memcpy(orig, buf, sizeof buf);
+        proven_u8str_view_t tail8 = bv((const proven_byte_t *)buf + 15, 1);
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16_lossy(tail8, buf, 8, &nw) == PROVEN_ERR_INVALID_ARG &&
+                           nw == 0 && memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-8 -> UTF-16 lossy checks full declared out_cap, not just needed units", "");
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16(tail8, buf, 8, &nw) == PROVEN_ERR_INVALID_ARG &&
+                           nw == 0 && memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-8 -> UTF-16 strict checks full declared out_cap", "");
+        st = proven_utf8_to_utf16_partial(tail8, buf, 8);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_ERR_INVALID_ARG && st.consumed == 0 && st.written == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-8 -> UTF-16 partial checks full declared out_cap", "");
+
+        for (size_t i = 0; i < 16; ++i) buf[i] = 0x5A5A;
+        buf[7] = 'Z';
+        memcpy(orig, buf, sizeof buf);
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8_lossy(buf + 7, 1, (proven_byte_t *)buf, 15, &nw) == PROVEN_ERR_INVALID_ARG &&
+                           nw == 0 && memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-16 -> UTF-8 lossy checks full declared out_cap, not just needed bytes", "");
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8(buf + 7, 1, (proven_byte_t *)buf, 15, &nw) == PROVEN_ERR_INVALID_ARG &&
+                           nw == 0 && memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-16 -> UTF-8 strict checks full declared out_cap", "");
+        st = proven_utf16_to_utf8_partial(buf + 7, 1, (proven_byte_t *)buf, 15);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_ERR_INVALID_ARG && st.consumed == 0 && st.written == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-16 -> UTF-8 partial checks full declared out_cap", "");
+
+        /* 1d. Partial overlap where out starts at the last byte of src. */
+        for (size_t i = 0; i < 16; ++i) buf[i] = 0x5A5A;
+        memcpy((proven_byte_t *)buf + 1, "abcd", 4);
+        memcpy(orig, buf, sizeof buf);
+        proven_u8str_view_t part8 = bv((const proven_byte_t *)buf + 1, 4);
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16_lossy(part8, buf + 2, 4, &nw) == PROVEN_ERR_INVALID_ARG &&
+                           nw == 0 && memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-8 -> UTF-16 lossy rejects single-byte tail overlap", "");
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16(part8, buf + 2, 4, &nw) == PROVEN_ERR_INVALID_ARG &&
+                           nw == 0 && memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-8 -> UTF-16 strict rejects single-byte tail overlap", "");
+        st = proven_utf8_to_utf16_partial(part8, buf + 2, 4);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_ERR_INVALID_ARG && st.consumed == 0 && st.written == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-8 -> UTF-16 partial rejects single-byte tail overlap", "");
+
+        for (size_t i = 0; i < 16; ++i) buf[i] = 0x5A5A;
+        buf[0] = 'a'; buf[1] = 'b';
+        memcpy(orig, buf, sizeof buf);
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8_lossy(buf, 2, (proven_byte_t *)buf + 3, 8, &nw) == PROVEN_ERR_INVALID_ARG &&
+                           nw == 0 && memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-16 -> UTF-8 lossy rejects single-byte tail overlap", "");
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8(buf, 2, (proven_byte_t *)buf + 3, 8, &nw) == PROVEN_ERR_INVALID_ARG &&
+                           nw == 0 && memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-16 -> UTF-8 strict rejects single-byte tail overlap", "");
+        st = proven_utf16_to_utf8_partial(buf, 2, (proven_byte_t *)buf + 3, 8);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_ERR_INVALID_ARG && st.consumed == 0 && st.written == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-16 -> UTF-8 partial rejects single-byte tail overlap", "");
+
+        /* 1e. Malformed input overlapping out reports INVALID_ARG before decoding (strict & partial). */
+        for (size_t i = 0; i < 16; ++i) buf[i] = 0x5A5A;
+        ((proven_byte_t *)buf)[0] = 0xFF;
+        memcpy(orig, buf, sizeof buf);
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16(bv(buf, 1), buf, 4, &nw) == PROVEN_ERR_INVALID_ARG &&
+                           nw == 0 && memcmp(buf, orig, sizeof buf) == 0,
+            "malformed overlapping UTF-8 still reports INVALID_ARG for strict", "");
+        st = proven_utf8_to_utf16_partial(bv(buf, 1), buf, 4);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_ERR_INVALID_ARG && st.consumed == 0 && st.written == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "malformed overlapping UTF-8 still reports INVALID_ARG for partial", "");
+
+        for (size_t i = 0; i < 16; ++i) buf[i] = 0x5A5A;
+        buf[0] = 0xD800;
+        memcpy(orig, buf, sizeof buf);
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8(buf, 1, (proven_byte_t *)buf, 4, &nw) == PROVEN_ERR_INVALID_ARG &&
+                           nw == 0 && memcmp(buf, orig, sizeof buf) == 0,
+            "malformed overlapping UTF-16 still reports INVALID_ARG for strict", "");
+        st = proven_utf16_to_utf8_partial(buf, 1, (proven_byte_t *)buf, 4);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_ERR_INVALID_ARG && st.consumed == 0 && st.written == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "malformed overlapping UTF-16 still reports INVALID_ARG for partial", "");
+
+        /* 1f. Exact-base overlap with written == NULL. */
+        memcpy(buf, "ab", 2);
+        memcpy(orig, buf, sizeof buf);
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16(bv(buf, 2), buf, 2, NULL) == PROVEN_ERR_INVALID_ARG &&
+                           proven_utf8_to_utf16_lossy(bv(buf, 2), buf, 2, NULL) == PROVEN_ERR_INVALID_ARG &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-8 -> UTF-16 overlap with written == NULL is safe and rejected", "");
+        buf[0] = 'a'; buf[1] = 'b';
+        memcpy(orig, buf, sizeof buf);
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8(buf, 2, (proven_byte_t *)buf, 2, NULL) == PROVEN_ERR_INVALID_ARG &&
+                           proven_utf16_to_utf8_lossy(buf, 2, (proven_byte_t *)buf, 2, NULL) == PROVEN_ERR_INVALID_ARG &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "UTF-16 -> UTF-8 overlap with written == NULL is safe and rejected", "");
+
+        /* 2. Immediately adjacent non-overlapping buffers succeed in both orders (all 6). */
+        const proven_u16 adj16[] = { 'A', 0xD55C };
+        memset(buf, 0, sizeof buf);
+        memcpy(buf + 4, "A\xED\x95\x9C", 4);
+        nw = 0;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16(bv(buf + 4, 4), buf, 4, &nw) == PROVEN_OK &&
+                           nw == 2 && memcmp(buf, adj16, sizeof adj16) == 0,
+            "adjacent out-before-src succeeds for strict UTF-8 -> UTF-16", "");
+        buf[0] = buf[1] = 0; nw = 0;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16_lossy(bv(buf + 4, 4), buf, 4, &nw) == PROVEN_OK &&
+                           nw == 2 && memcmp(buf, adj16, sizeof adj16) == 0,
+            "adjacent out-before-src succeeds for lossy UTF-8 -> UTF-16", "");
+        buf[0] = buf[1] = 0;
+        st = proven_utf8_to_utf16_partial(bv(buf + 4, 4), buf, 4);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_OK && st.consumed == 4 && st.written == 2 &&
+                           memcmp(buf, adj16, sizeof adj16) == 0,
+            "adjacent out-before-src succeeds for partial UTF-8 -> UTF-16", "");
+
+        memset(buf, 0, sizeof buf);
+        memcpy(buf, "A\xED\x95\x9C", 4);
+        nw = 0;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16(bv(buf, 4), buf + 2, 4, &nw) == PROVEN_OK &&
+                           nw == 2 && memcmp(buf + 2, adj16, sizeof adj16) == 0,
+            "adjacent src-before-out succeeds for strict UTF-8 -> UTF-16", "");
+        buf[2] = buf[3] = 0; nw = 0;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16_lossy(bv(buf, 4), buf + 2, 4, &nw) == PROVEN_OK &&
+                           nw == 2 && memcmp(buf + 2, adj16, sizeof adj16) == 0,
+            "adjacent src-before-out succeeds for lossy UTF-8 -> UTF-16", "");
+        buf[2] = buf[3] = 0;
+        st = proven_utf8_to_utf16_partial(bv(buf, 4), buf + 2, 4);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_OK && st.consumed == 4 && st.written == 2 &&
+                           memcmp(buf + 2, adj16, sizeof adj16) == 0,
+            "adjacent src-before-out succeeds for partial UTF-8 -> UTF-16", "");
+
+        memset(buf, 0, sizeof buf);
+        buf[3] = 'A'; buf[4] = 0xD55C;
+        nw = 0;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8(buf + 3, 2, (proven_byte_t *)buf, 6, &nw) == PROVEN_OK &&
+                           nw == 4 && memcmp(buf, "A\xED\x95\x9C", 4) == 0,
+            "adjacent out-before-src succeeds for strict UTF-16 -> UTF-8", "");
+        memset(buf, 0, 6); nw = 0;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8_lossy(buf + 3, 2, (proven_byte_t *)buf, 6, &nw) == PROVEN_OK &&
+                           nw == 4 && memcmp(buf, "A\xED\x95\x9C", 4) == 0,
+            "adjacent out-before-src succeeds for lossy UTF-16 -> UTF-8", "");
+        memset(buf, 0, 6);
+        st = proven_utf16_to_utf8_partial(buf + 3, 2, (proven_byte_t *)buf, 6);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_OK && st.consumed == 2 && st.written == 4 &&
+                           memcmp(buf, "A\xED\x95\x9C", 4) == 0,
+            "adjacent out-before-src succeeds for partial UTF-16 -> UTF-8", "");
+
+        memset(buf, 0, sizeof buf);
+        buf[0] = 'A'; buf[1] = 0xD55C;
+        nw = 0;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8(buf, 2, (proven_byte_t *)(buf + 2), 6, &nw) == PROVEN_OK &&
+                           nw == 4 && memcmp(buf + 2, "A\xED\x95\x9C", 4) == 0,
+            "adjacent src-before-out succeeds for strict UTF-16 -> UTF-8", "");
+        memset(buf + 2, 0, 6); nw = 0;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8_lossy(buf, 2, (proven_byte_t *)(buf + 2), 6, &nw) == PROVEN_OK &&
+                           nw == 4 && memcmp(buf + 2, "A\xED\x95\x9C", 4) == 0,
+            "adjacent src-before-out succeeds for lossy UTF-16 -> UTF-8", "");
+        memset(buf + 2, 0, 6);
+        st = proven_utf16_to_utf8_partial(buf, 2, (proven_byte_t *)(buf + 2), 6);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_OK && st.consumed == 2 && st.written == 4 &&
+                           memcmp(buf + 2, "A\xED\x95\x9C", 4) == 0,
+            "adjacent src-before-out succeeds for partial UTF-16 -> UTF-8", "");
+
+        /* 3. Empty ranges sharing a pointer are not overlapping. */
+        for (size_t i = 0; i < 16; ++i) buf[i] = 0x5A5A;
+        buf[0] = 'a';
+        memcpy(orig, buf, sizeof buf);
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16(bv(buf, 0), buf, 4, &nw) == PROVEN_OK && nw == 0 &&
+                           (nw = 99, proven_utf8_to_utf16_lossy(bv(buf, 0), buf, 4, &nw) == PROVEN_OK) && nw == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "empty UTF-8 input sharing out pointer succeeds", "");
+        st = proven_utf8_to_utf16_partial(bv(buf, 0), buf, 4);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_OK && st.consumed == 0 && st.written == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "empty UTF-8 input sharing out pointer succeeds for partial", "");
+
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8(buf, 0, (proven_byte_t *)buf, 4, &nw) == PROVEN_OK && nw == 0 &&
+                           (nw = 99, proven_utf16_to_utf8_lossy(buf, 0, (proven_byte_t *)buf, 4, &nw) == PROVEN_OK) && nw == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "empty UTF-16 input sharing out pointer succeeds", "");
+        st = proven_utf16_to_utf8_partial(buf, 0, (proven_byte_t *)buf, 4);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_OK && st.consumed == 0 && st.written == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "empty UTF-16 input sharing out pointer succeeds for partial", "");
+
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16(bv(buf, 1), buf, 0, &nw) == PROVEN_ERR_OUT_OF_BOUNDS && nw == 0 &&
+                           (nw = 99, proven_utf8_to_utf16_lossy(bv(buf, 1), buf, 0, &nw) == PROVEN_ERR_OUT_OF_BOUNDS) && nw == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "zero out_cap sharing src pointer returns OUT_OF_BOUNDS", "");
+        st = proven_utf8_to_utf16_partial(bv(buf, 1), buf, 0);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_ERR_OUT_OF_BOUNDS && st.consumed == 0 && st.written == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "zero out_cap sharing src pointer returns OUT_OF_BOUNDS for partial UTF-8 -> UTF-16", "");
+
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8(buf, 1, (proven_byte_t *)buf, 0, &nw) == PROVEN_ERR_OUT_OF_BOUNDS && nw == 0 &&
+                           (nw = 99, proven_utf16_to_utf8_lossy(buf, 1, (proven_byte_t *)buf, 0, &nw) == PROVEN_ERR_OUT_OF_BOUNDS) && nw == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "zero out_cap sharing UTF-16 src pointer returns OUT_OF_BOUNDS", "");
+        st = proven_utf16_to_utf8_partial(buf, 1, (proven_byte_t *)buf, 0);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_ERR_OUT_OF_BOUNDS && st.consumed == 0 && st.written == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "zero out_cap sharing UTF-16 src pointer returns OUT_OF_BOUNDS for partial", "");
+
+        /* 4. Byte-size multiplication overflow returns PROVEN_ERR_OVERFLOW; NULL runs first. */
+        const proven_size_t huge_u16 = (((proven_size_t)-1) / sizeof(proven_u16)) + 1;
+        for (size_t i = 0; i < 16; ++i) buf[i] = 0x5A5A;
+        buf[0] = 'a';
+        memcpy(orig, buf, sizeof buf);
+        memset(u8, 0x5A, sizeof u8);
+        proven_byte_t orig8[64];
+        memcpy(orig8, u8, sizeof u8);
+
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16(bv("a", 1), buf, huge_u16, &nw) == PROVEN_ERR_OVERFLOW && nw == 0 &&
+                           (nw = 99, proven_utf8_to_utf16_lossy(bv("a", 1), buf, huge_u16, &nw) == PROVEN_ERR_OVERFLOW) && nw == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "out_cap byte-size overflow returns OVERFLOW for atomic UTF-8 -> UTF-16", "");
+        st = proven_utf8_to_utf16_partial(bv("a", 1), buf, huge_u16);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_ERR_OVERFLOW && st.consumed == 0 && st.written == 0 &&
+                           memcmp(buf, orig, sizeof buf) == 0,
+            "out_cap byte-size overflow returns OVERFLOW for partial UTF-8 -> UTF-16", "");
+
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8(buf, huge_u16, u8, sizeof u8, &nw) == PROVEN_ERR_OVERFLOW && nw == 0 &&
+                           (nw = 99, proven_utf16_to_utf8_lossy(buf, huge_u16, u8, sizeof u8, &nw) == PROVEN_ERR_OVERFLOW) && nw == 0 &&
+                           memcmp(u8, orig8, sizeof u8) == 0,
+            "src unit byte-size overflow returns OVERFLOW for atomic UTF-16 -> UTF-8", "");
+        st = proven_utf16_to_utf8_partial(buf, huge_u16, u8, sizeof u8);
+        PROVEN_TEST_ASSERT(st.err == PROVEN_ERR_OVERFLOW && st.consumed == 0 && st.written == 0 &&
+                           memcmp(u8, orig8, sizeof u8) == 0,
+            "src unit byte-size overflow returns OVERFLOW for partial UTF-16 -> UTF-8", "");
+
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf8_to_utf16(bv("a", 1), NULL, huge_u16, &nw) == PROVEN_ERR_INVALID_ARG && nw == 0 &&
+                           (nw = 99, proven_utf8_to_utf16_lossy(bv("a", 1), NULL, huge_u16, &nw) == PROVEN_ERR_INVALID_ARG) && nw == 0 &&
+                           proven_utf8_to_utf16_partial(bv("a", 1), NULL, huge_u16).err == PROVEN_ERR_INVALID_ARG,
+            "NULL out with huge out_cap returns INVALID_ARG before OVERFLOW", "");
+        nw = 99;
+        PROVEN_TEST_ASSERT(proven_utf16_to_utf8(NULL, huge_u16, u8, sizeof u8, &nw) == PROVEN_ERR_INVALID_ARG && nw == 0 &&
+                           (nw = 99, proven_utf16_to_utf8_lossy(NULL, huge_u16, u8, sizeof u8, &nw) == PROVEN_ERR_INVALID_ARG) && nw == 0 &&
+                           proven_utf16_to_utf8_partial(NULL, huge_u16, u8, sizeof u8).err == PROVEN_ERR_INVALID_ARG,
+            "NULL src with huge n returns INVALID_ARG before OVERFLOW", "");
+    }
+
     PROVEN_TEST_PASS("UTF-8 and UTF-16 transcoding");
     return 0;
 }

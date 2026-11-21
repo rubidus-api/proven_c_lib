@@ -683,6 +683,12 @@ you own, all or nothing; grow an owned string, all or nothing; and a partial for
 whole characters until the input, the output or the valid text runs out. A partial conversion
 never writes half a surrogate pair or half a UTF-8 sequence.
 
+**Disjoint buffers.** All converting functions (strict, `_lossy`, `_partial`, and `_append_to_*`)
+require non-overlapping input and output storage: any byte overlap between `src` and the
+declared output `[out, out + out_cap * sizeof(elem))` (or `dst`'s buffer) is refused with
+`PROVEN_ERR_INVALID_ARG` without writing, and a `proven_u16` count whose byte size overflows
+`proven_size_t` returns `PROVEN_ERR_OVERFLOW`.
+
 | API | Intent | Return |
 |---|---|---|
 | `proven_utf8_to_utf16_size(src)` | Code units `src` converts to; validates. | `proven_result_size_t` |
@@ -718,7 +724,9 @@ proven_size_t units = 0;
 ```text
 typedef struct {
     proven_err_t  err;       /* OK, OUT_OF_BOUNDS (output full), NEED_MORE (input ends
-                                mid-character), INVALID_ENCODING (malformed at `consumed`) */
+                                mid-character), INVALID_ENCODING (malformed at `consumed`),
+                                INVALID_ARG (null pointer or overlapping buffers),
+                                OVERFLOW (`proven_u16` byte count overflows) */
     proven_size_t consumed;  /* input units used: bytes for UTF-8, code units for UTF-16 */
     proven_size_t written;   /* output units written */
 } proven_utf_step_t;

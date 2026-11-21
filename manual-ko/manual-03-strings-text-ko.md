@@ -667,6 +667,12 @@ UTF-16인데 프로그램의 나머지는 그것을 UTF-8로 원한다. 이 경�
 다할 때까지 온전한 문자만 변환하는 부분 변환. 부분 변환은 서로게이트 쌍의 반쪽이나 UTF-8 시퀀스의
 일부를 절대 쓰지 않는다.
 
+**서로 겹치지 않는 버퍼.** 모든 변환 함수(엄격, `_lossy`, `_partial`, `_append_to_*`)는 입력과
+출력 버퍼가 겹치지 않을 것을 요구한다. `src`와 선언된 출력 `[out, out + out_cap * sizeof(elem))`
+(또는 `dst`의 저장소) 사이에 바이트 중첩이 있으면 아무것도 쓰지 않고 `PROVEN_ERR_INVALID_ARG`로
+거부하며, `proven_u16` 개수의 바이트 크기가 `proven_size_t`를 넘기면 `PROVEN_ERR_OVERFLOW`를
+돌려준다.
+
 | API | 의도 | 반환 |
 |---|---|---|
 | `proven_utf8_to_utf16_size(src)` | `src`가 변환될 코드 유닛 수; 검증을 겸한다. | `proven_result_size_t` |
@@ -702,7 +708,9 @@ proven_size_t units = 0;
 ```text
 typedef struct {
     proven_err_t  err;       /* OK, OUT_OF_BOUNDS (output full), NEED_MORE (input ends
-                                mid-character), INVALID_ENCODING (malformed at `consumed`) */
+                                mid-character), INVALID_ENCODING (malformed at `consumed`),
+                                INVALID_ARG (null pointer or overlapping buffers),
+                                OVERFLOW (`proven_u16` byte count overflows) */
     proven_size_t consumed;  /* input units used: bytes for UTF-8, code units for UTF-16 */
     proven_size_t written;   /* output units written */
 } proven_utf_step_t;

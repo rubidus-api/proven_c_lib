@@ -18,6 +18,18 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed-buffer UTF converters (`utf.h`, all six: `proven_utf8_to_utf16`, `proven_utf16_to_utf8`,
+  `proven_utf8_to_utf16_lossy`, `proven_utf16_to_utf8_lossy`, `proven_utf8_to_utf16_partial`,
+  `proven_utf16_to_utf8_partial`) now reject any byte overlap between `src` and the declared output
+  `[out, out + out_cap * sizeof(elem))` with `PROVEN_ERR_INVALID_ARG` (leaving `out` untouched and
+  output counts at 0), returning `PROVEN_ERR_OVERFLOW` when `proven_u16` byte sizing overflows
+  `proven_size_t`, matching the disjoint-buffer contract of the growable `_append_to_*` forms.
+  `utf8_to_utf16_lossy_run` and `utf16_to_utf8_lossy_run` also enforce `out_cap` during their
+  conversion pass, closing an out-of-bounds write risk when an overlapping buffer changed unread
+  input between the measuring and writing passes.
+
 ## [0.119.1] - 2026-11-19
 
 ### Fixed
