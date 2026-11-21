@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.119.3] - 2026-11-21
+
 ### Changed
 
 - Zstandard decoder (`codec/src/zstd.c`, `codec/src/proven_internal_zstd.h`): eliminated Clang 23
