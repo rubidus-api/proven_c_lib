@@ -26,7 +26,6 @@ HANDOFF.md
 SPEC.md
 MAP.md
 REQUIREMENTS.md
-DECISIONS.md
 LESSONS.md
 TESTS.md
 WORKLOG.md
@@ -53,28 +52,5 @@ deeptree/
 # to already carries them.
 /dist/
 
-# ── Private layout (links into the private sibling; kit 0.10.0) ──
-/scripts/project-check.sh
-/scripts/gate.sh
-/scripts/gate.conf
-/scripts/context-budget.sh
-/scripts/brief.sh
-/scripts/worklog.sh
-/docs/agents
-/docs/rfc
-/docs/research
-/docs/benchmark
-/docs/backlogs
-/docs/plans
-/docs/requirements
-/docs/resources
-/docs/tests
-/scripts/sot-check.sh
-/scripts/claim.sh
-/scripts/install-hook.sh
-/scripts/readme-topline.sh
-/scripts/commit-both.sh
-/scripts/gh-push.sh
-/scripts/gh-release.sh
-/scripts/code-map.py
-/scripts/doc-toc.py
+# ── Private layout and local tooling (zero symlinks; kit 0.16.0) ──────
+/.cache/
