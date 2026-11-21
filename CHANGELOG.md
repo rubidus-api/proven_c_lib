@@ -18,6 +18,8 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.119.2] - 2026-11-21
+
 ### Fixed
 
 - Fixed-buffer UTF converters (`utf.h`, all six: `proven_utf8_to_utf16`, `proven_utf16_to_utf8`,
