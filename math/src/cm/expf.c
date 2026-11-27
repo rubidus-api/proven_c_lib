@@ -27,9 +27,11 @@ SOFTWARE.
 /* proven_math (RFC-0056): ported from CORE-MATH 03948b7170fe, src/binary32/exp/expf.c. Changed: the
  * headers of fenv, errno, stdio, stdlib, math, inttypes and x86intrin are not included
  * (cm_shim.h: rounding to nearest, no flags); x86-64 MXCSR and intrinsic branches take the
- * portable one; unreachable exits return the integer path's result; sqrt, round, fmax,
- * fmin and nanf builtins are float_ops.h's functions (the same bits, no libm); cr_NAME is
- * proven_cm_NAME_; non-ASCII letters in comments transliterated. Nothing else. */
+ * portable one; unreachable exits return the integer path's result; the sqrt and nanf
+ * builtins are float_ops.h's functions and round, fmax, fmin cm_shim.h's inline ones (the
+ * same bits, no libm); cr_NAME is
+ * proven_cm_NAME_; FENV_ACCESS left out on wasm; non-ASCII letters in comments
+ * transliterated. Nothing else. */
 
 #include "cm_shim.h"
 #if PROVEN_CM
@@ -45,8 +47,9 @@ SOFTWARE.
 #pragma GCC diagnostic ignored "-Wunknown-pragmas"
 #endif
 
+#if !defined(__wasm__) /* proven_math: no floating-point environment there */
 #pragma STDC FENV_ACCESS ON
-
+#endif
 typedef union {float f; uint32_t u;} b32u32_u;
 typedef union {double f; uint64_t u;} b64u64_u;
 
@@ -89,7 +92,7 @@ float proven_cm_expf_(float x){
     }
     if(t.u>0xc2ce8ec0u){ // x < -0x1.9d1d8p+6
       double y = 0x1p-149 + (z + 0x1.9d1d9fccf477p+6)*0x1.71547652b82edp-150;
-      y = proven_float_fmax(y, 0x1p-151);
+      y = proven_cm_fmax(y, 0x1p-151);
       float r = y;
 #ifdef CORE_MATH_SUPPORT_ERRNO
       errno = ERANGE;

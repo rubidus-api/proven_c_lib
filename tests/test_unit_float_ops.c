@@ -41,8 +41,6 @@ static double D(uint64_t u) { double x; memcpy(&x, &u, sizeof x); return x; }
 typedef double (*f1_t)(double);
 typedef struct { uint64_t in, out; } row1_t;
 
-static int g_bad;
-
 static void table1(const char *name, f1_t f, const row1_t *rows, size_t n) {
     int bad = 0;
     for (size_t i = 0; i < n; i++) {
@@ -50,7 +48,6 @@ static void table1(const char *name, f1_t f, const row1_t *rows, size_t n) {
         if (got != rows[i].out) bad++;
     }
     PROVEN_TEST_ASSERT(bad == 0, name, "A row of the table gave other bits: run the table by hand and compare bit by bit.");
-    g_bad += bad;
 }
 
 static uint64_t g_seed = 0x9e3779b97f4a7c15u;

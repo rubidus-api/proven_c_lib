@@ -16,7 +16,8 @@
  * A NaN given comes back quieted with its payload (of two, the first in argument order); a NaN
  * made (log of a negative number, sin of an infinity, pow of a negative number to a
  * non-integer) is 0x7FF8000000000000 (binary32 0x7FC00000). No errno, no flags, no state, no
- * allocation, no libm; freestanding. Integer arithmetic only on a target without an FPU.
+ * allocation, no libm; freestanding. The FPU path (CORE-MATH's code) on x86-64 with FMA and AVX2,
+ * AArch64 and WebAssembly; integer arithmetic only elsewhere, with the same bits.
  */
 
 [[nodiscard]] double proven_float_exp(double x);

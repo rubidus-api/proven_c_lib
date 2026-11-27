@@ -483,9 +483,9 @@ proven_result_size_t r = proven_u8str_append_partial(&s, huge);
 
 ## 6. 의도와 설계 철학
 
-`proven`은 컴팩트한 C23 시스템 기반 라이브러리입니다. 메모리 ownership, 에러 제어 흐름, 플랫폼 접근을 전역 상태 뒤에 숨기지 않으면서 실용적인 인프라를 원하는 C 프로그램을 위한 것입니다.
+`proven`은 C 라이브러리를 C23과 그 뒤의 표준에 맞는 현대적인 스타일로 밑바닥부터 다시 쌓으려는 시도입니다. 메모리 ownership, 에러 제어 흐름, 플랫폼 접근을 전역 상태 뒤에 숨기지 않으면서 실용적인 인프라를 원하는 C 프로그램을 위한 것입니다.
 
-libc 대체품이 아닙니다. 할당자(allocator) 기반 메모리 도구, 바이트 뷰(view), 컨테이너, 문자열, 형식화(formatting), 파싱(scanning), 해싱(FNV, SipHash, CRC-32, SHA-256), hex/Base64 인코딩, OS 강도 난수, 파일시스템 헬퍼, 버퍼드 스트림, 시간 헬퍼, 메모리 매핑, 스택리스 코루틴 매크로, bounded 작업(job) system을 집중적으로 제공합니다.
+처음에는 평범한 C 프로그램에 섞어 쓰는 부품들이었고(Zig처럼 넘겨받는 할당자, NUL로 끝나지 않고 길이를 들고 다니는 문자열과 그 위의 view), 그때는 "libc 대체품이 아니다"라고 소개했습니다. 목표는 그 뒤 C 라이브러리 전체를 다시 설계하는 것으로 커졌습니다. 할당자(allocator) 기반 메모리 도구, 바이트 뷰(view), 컨테이너, 문자열, 형식화(formatting), 파싱(scanning), 부동소수점(`float_ops.h`, `float_math.h`), 해싱, 인코딩, OS 강도 난수, 파일, 버퍼드 스트림, 시간, 메모리 매핑, 코루틴과 작업(job)이 있고, 그 위에 압축, 암호, 네트워킹이 있습니다(proven_base, proven_crypto, proven_codec, proven_net, proven_math 다섯 라이브러리). 여전히 C 라이브러리와 섞어 쓸 수 있고, 곳곳에서 여전히 C 라이브러리에 기댑니다. 기본 할당자는 `malloc`과 그 가족이고, `memcpy`, `memmove`, `memset`을 부르며, 프로그램은 C 런타임을 거쳐 시작하고, 스레드는 플랫폼의 것입니다. 파일, 콘솔, 시간, 소켓, 난수는 운영체제로 바로 갑니다.
 
 핵심 설계 원칙:
 
@@ -1037,11 +1037,13 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `strlen` | `view.size` | 길이가 이미 거기 있습니다. 아무것도 스캔하지 않습니다. [챕터 3](manual-03-strings-text-ko.md) |
 | 동등 비교용 `strcmp` | `proven_u8str_view_eq` | 중간에 NUL이 박힌 텍스트에서도 동작하고, 끝을 넘어가지 않습니다. [챕터 3](manual-03-strings-text-ko.md) |
 | `strstr` | `proven_u8str_view_find` | 인덱스 또는 `PROVEN_INDEX_NOT_FOUND`를 반환하며, 탐색이 단순 무식하지 않습니다. [챕터 3](manual-03-strings-text-ko.md) |
-| `strtok` | *(아직 대응물 없음)* | `strtok`은 입력을 변경하고 중첩해서 쓸 수 없습니다. view 기반 분할기가 `RFC-0004`에 설계되어 있습니다. |
+| `strtok` | `proven_u8str_view_split`, `_split_next` | 입력을 가리키는 view를 돌려주므로 입력에 아무것도 쓰지 않고, 두 분할을 동시에 진행할 수 있습니다. [챕터 3](manual-03-strings-text-ko.md) |
 | `printf` | `proven_println("{}", PROVEN_ARG(x))` | 타입이 포맷 문자열이 아니라 인자에서 옵니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `sprintf` | `proven_u8str_append_fmt` | 크기가 정해진 목적지에 쓰고, 그것을 넘기기를 거부합니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `sscanf` | `proven_scan_*`, `proven_scan_fmt` | 어느 필드가 실패했고 커서가 어디서 멈췄는지 알려 줍니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `strtod` | `proven_parse_f64_ascii` | 올바르게 반올림하고, 로케일에 영향받지 않으며, `errno`를 쓰지 않습니다. [챕터 8](manual-08-fmt-scan-ko.md) |
+| `sqrt`, `floor`, `fmod`, `fma`, `+ - * /` | `proven_float_sqrt`, `_floor`, `_fmod`, `_fma`, `_add` ... (`float_ops.h`) | FPU가 있든 없든, 어떤 타깃과 컴파일러 플래그에서든 같은 비트를 냅니다. [챕터 8](manual-08-fmt-scan-ko.md) |
+| `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2` | `proven_float_exp` ... (`float_math.h`), `float`에는 `proven_float32_*` | 올바르게 반올림하므로 모든 빌드가 같은 비트를 내며, `errno`를 쓰지 않습니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `fopen` / `fread` / `fclose` | `proven_fs_open`, `_read`, `_close`, 또는 `proven_fs_read_all_u8str` | 명시적인 에러, 숨은 버퍼링 없음, 파일 전체를 한 번의 호출로. [챕터 5](manual-05-hosted-services-ko.md) |
 | `fgets` | `proven_sysio_read_line`, `proven_reader_read_line` | 버퍼를 정확히 꽉 채우는 줄도 잃어버리지 않고 반환합니다. [챕터 5](manual-05-hosted-services-ko.md) |
 | `qsort` | `proven_array_sort` | introsort입니다: 퀵소트의 최악 경우가 아니라 *O(n log n)* 보장. [챕터 4](manual-04-containers-algorithms-ko.md) |

@@ -1,18 +1,29 @@
-**한국어** | [English](README.md) — **Proven C library v0.120.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.120.0/proven_c_lib-v0.120.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.120.0/proven_c_lib-v0.120.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.120.0/proven_c_lib-v0.120.0-ko-manual.pdf)
+**한국어** | [English](README.md) — **Proven C library v0.121.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.0/proven_c_lib-v0.121.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.0/proven_c_lib-v0.121.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.0/proven_c_lib-v0.121.0-ko-manual.pdf)
 
 # Proven C library
 
 📖 **[매뉴얼 웹으로 읽기](https://rubidus-api.github.io/proven_c_lib/ko/)** · [English manual](https://rubidus-api.github.io/proven_c_lib/en/) · [PDF](https://github.com/rubidus-api/proven_c_lib/releases/latest)
 
-> 하나의 생각 위에 세운 C23 시스템 라이브러리: **메모리는 자기가 어디서 왔는지 알아야 합니다.**
+> C 라이브러리 전체를 C23과 그 뒤의 표준에 맞는 현대적인 스타일로 밑바닥부터 다시 쌓으려는
+> 시도입니다. 바탕에 있는 생각은 하나입니다: **메모리는 자기가 어디서 왔는지 알아야 합니다.**
+
+`proven`은 작게 시작했습니다. Zig처럼 넘겨받는 allocator, NUL로 끝나지 않고 길이를 들고 다니는
+문자열, 그리고 그 위의 string view였습니다. 평범한 C 프로그램에 그 프로그램의 C 라이브러리와 섞어
+쓰라고 만든 부품들이었습니다. 그 뒤로 목표가 커졌습니다. 이제는 C 라이브러리 전체를 C23 이후의
+표준을 위한 현대적인 스타일로 다시 설계하는 큰 프로젝트입니다. 메모리, 텍스트, 포맷팅과 파싱,
+컨테이너, 파일과 스트림, 시간, 스레드, 수와 부동소수점이 그 대상이고, 그 위에 압축, 암호, 네트워킹이
+있습니다. 이 라이브러리를 쓰면서 이 라이브러리가 지키는 새로운 모던 C 관습에 익숙해지면 더 단단한
+C 프로그램을 더 편하게 쓸 수 있습니다. 중요한 사실은 모두 눈앞의 시그니처에 있으므로, 같은 관습
+덕분에 AI 도구와 함께 그 코드를 다룰 때 더 편리하고 강력합니다.
 
 C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도, `char *`도 압니다. 그리고 처음으로 진짜
 프로그램을 쓰다가 책이 다루지 않은 부분을 만납니다 — `strcpy`는 당신의 버퍼가 얼마나 큰지 전혀 모르고,
 `malloc`이 `NULL`을 돌려주는 것은 그냥 기억해야 하는 일이며, `printf("%d", 3.0)`은 컴파일된다는 것.
 
 `proven`은 그 문제들에 하나씩 답을 낸 결과입니다. 순수한 C이고, 프레임워크가 아닙니다. C 프로젝트가
-결국 매번 다시 짜게 되는 그 계층입니다 — 넘겨받는 allocator, 자기 길이를 들고 다니는 문자열, 컨테이너,
-포맷팅과 스캐닝, 파일, 해시, 난수 — 소유권과 실패가 모든 시그니처에 드러난 채로.
+결국 매번 다시 짜게 되는 계층(넘겨받는 allocator, 자기 길이를 들고 다니는 문자열, 컨테이너, 포맷팅과
+스캐닝, 파일, 해시, 난수)에 그치지 않고, C 라이브러리 자체가 주는 것도 점점 더 많이 다룹니다.
+소유권과 실패는 모든 시그니처에 드러나 있습니다.
 
 **처음이라면 [0장](manual-ko/manual-00-start-here-ko.md)부터** — 또는
 [웹 판](https://rubidus-api.github.io/proven_c_lib/ko/manual-00-start-here.html)으로 읽으십시오.
@@ -24,7 +35,7 @@ C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도
 짧은 프로그램 아홉 개가 출력, 길이를 아는 문자열, 값으로 오는 오류, allocator, arena, 컨테이너, 파일을
 하나씩 더해 갑니다. 다 읽은 뒤에는 0장으로 가면 됩니다.
 
-- 버전: proven_c_lib-v0.120.0 · 표준: C23 · 라이선스: MIT
+- 버전: proven_c_lib-v0.121.0 · 표준: C23 · 라이선스: MIT
 - 버전은 시맨틱 버전 `MAJOR.MINOR.PATCH`이며 v0.0.1(2026-09-04)부터 시작합니다. 그 이전 릴리스는
   날짜 기반 번호(`v26.MM.DDx`)이고, 발표된 그대로 둡니다.
 - `*_internal`이나 `*_impl`로 끝나는 함수 일곱 개는 매크로가 호출하기 때문에 공개 헤더에 있습니다.
@@ -362,15 +373,23 @@ Luca Sas의 ACCU 2021 발표 **Modern C and What We Can Learn From It**
 
 ## 이 라이브러리는 무엇을 위한 것인가
 
-**표준 라이브러리의 낡은 부분을 밑바닥부터 대체하되, 배제하지 않기 위해서.** `strcpy`, `strtok`,
-`sprintf`, `errno`, `qsort`, `rand`, `atoi` — 각각에 대해 크기를 알고, 검사하고, 명시적인 답이 여기
-있습니다. 그러나 `proven`은 libc 대체물이 아니며 당신의 `main`을 차지하려 하지 않습니다. 전역 상태가
-없고, 스레드를 띄우지 않으며, `atexit` 핸들러를 등록하지 않고, 당신이 allocator를 건네지 않은 것은
-아무것도 할당하지 않습니다. 모듈 하나만 써도 되고, 이미 링크하고 있는 무엇과든 나란히 쓰면 됩니다.
+**C 라이브러리를 밑바닥부터 현대적인 스타일로 다시 설계하기 위해서.** `strcpy`, `strtok`, `sprintf`,
+`errno`, `qsort`, `rand`, `atoi`, `strtod`, `fopen`, `exp` — 각각에 대해 크기를 알고, 검사하고, 명시적인
+답이 여기 있으며, 그 범위는 라이브러리 전체를 향해 계속 넓어지고 있습니다.
 [부록 D](manual-ko/manual-00-start-here-ko.md#15-부록-d-libc-대응표)가 당신이 아는 libc 호출을 무엇으로
 바꿔 쓸지, 그리고 왜 다른지를 대응시켜 줍니다.
 
-**사람이 쓰기에 편하고, 사람이 AI와 함께 쓸 때 안전하도록.** 명시적인 쪽이 더 장황하며, 그것이
+예전 판은 `proven`을 "libc 대체물이 아니다"라고 소개했고, 도우미 모음이던 때에는 맞는 말이었습니다.
+목표는 이제 더 넓지만 두 가지는 그대로입니다. 먼저, 여전히 C 라이브러리와 섞어 쓸 수 있습니다.
+당신의 `main`을 차지하려 하지 않고, 전역 상태가 없고, 스레드를 띄우지 않으며, `atexit` 핸들러를
+등록하지 않고, 당신이 allocator를 건네지 않은 것은 아무것도 할당하지 않습니다. 그래서 모듈 하나든
+전부든, 이미 링크하고 있는 무엇과도 나란히 둘 수 있습니다. 다음으로, 여전히 곳곳에서 C 라이브러리에
+기대고 있습니다. 기본 allocator는 `malloc`, `aligned_alloc`, `realloc`, `free`입니다. `memcpy`,
+`memmove`, `memset`을 부르고, freestanding 빌드에서는 컴파일러도 이것들을 부릅니다. 프로그램은 C
+런타임을 거쳐 시작하고, 스레드는 플랫폼의 것(POSIX에서는 `pthread`)입니다. 파일, 콘솔, 시간, 소켓,
+난수는 stdio를 거치지 않고 운영체제로 바로 갑니다.
+
+**더 단단한 C를 더 쉽게 쓰도록 — 사람에게도, AI와 함께 일하는 사람에게도.** 명시적인 쪽이 더 장황하며, 그것이
 거래입니다. 그 대가로 얻는 것은 중요한 사실이 전부 **국소적**이라는 점입니다 — 어떤 호출이 할당하는지는
 매개변수 목록에, 실패할 수 있는지는 반환 타입에, 커지는지는 이름에 적혀 있습니다. 이것은 지친 사람도,
 언어 모델도 주변 코드에서 안정적으로 복원해 내지 못하는 종류의 맥락이며, 문서를 성실함이 아니라 빌드
@@ -713,7 +732,7 @@ crypto, codec, math는 base 위에만 서고, 네트워크 라이브러리는 ba
 
 ## 이 라이브러리가 아닌 것
 
-`proven`은 libc 대체품도 아니고, garbage collector도 아니고, 프레임워크도 아닙니다. 프로세스, build graph, error policy를 대신 소유하려고 하지도 않습니다. 읽기 쉽고, 테스트하기 쉽고, 한 경계씩 포팅할 수 있도록 만든 C 컴포넌트 모음입니다.
+`proven`은 garbage collector도 프레임워크도 아니며, 목표로 하는 C 라이브러리 전체에는 아직 이르지 못했습니다. 무엇을 다루는지는 위에 있고, 아직 C 라이브러리를 쓰는 곳은 "이 라이브러리는 무엇을 위한 것인가"에 적었습니다. 프로세스, build graph, error policy를 대신 소유하려고 하지도 않습니다. 읽기 쉽고, 테스트하기 쉽고, 한 경계씩 포팅할 수 있도록 만든 C 컴포넌트 모음입니다.
 
 플랫폼 경계가 **어디서 끝나는지**도 적어 둘 가치가 있습니다. 적어 두지 않으면 부딪혀 봐야 알게 되기 때문입니다. PAL이 덮는 범위는 메모리, 파일시스템, 시간, 메모리 매핑, 환경 변수, 콘솔 I/O, 스레드, 소켓입니다. 프로세스 제어(`fork` / `exec` / 파이프)와 터미널 제어(raw 모드, job control)는 **덮지 않습니다**. 프로그램의 본질이 그 중 하나라면 POSIX나 Win32를 직접 부르게 되고, "플랫폼 `#ifdef` 없음"이라는 성질은 거기까지 확장되지 않습니다. 소켓 계층은 단계적으로 짓고 있는 네트워킹 스택의 첫 걸음입니다. 소켓(`epoll`/`kqueue`/IOCP selector 포함), HTTP/1.1 메시지 코덱, HTTP 클라이언트와 서버, WebSocket, 인증서, TLS(1.3과 줄인 1.2), DEFLATE 코덱이 들어왔고, 그 뒤로 HTTP 콘텐츠 코딩·`permessage-deflate`·HTTP/2·HTTP/3도 들어왔습니다.
 

@@ -1,10 +1,21 @@
-[한국어](README-ko.md) | **English** - **Proven C library v0.120.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.120.0/proven_c_lib-v0.120.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.120.0/proven_c_lib-v0.120.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.120.0/proven_c_lib-v0.120.0-ko-manual.pdf)
+[한국어](README-ko.md) | **English** - **Proven C library v0.121.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.0/proven_c_lib-v0.121.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.0/proven_c_lib-v0.121.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.0/proven_c_lib-v0.121.0-ko-manual.pdf)
 
 # Proven C library
 
 **[Read the manual online](https://rubidus-api.github.io/proven_c_lib/en/)** | [한국어 매뉴얼](https://rubidus-api.github.io/proven_c_lib/ko/) | [PDF](https://github.com/rubidus-api/proven_c_lib/releases/latest)
 
-> A C23 systems library built on one idea: **memory should know where it came from.**
+> An attempt to rebuild the C library, all of it, from the bottom up in a modern style for C23
+> and the standards after it - on one idea: **memory should know where it came from.**
+
+`proven` began small: allocators you pass in, as Zig does, and strings that carry their length
+instead of ending in a NUL, with string views over them - pieces meant to be mixed into an
+ordinary C program beside its C library. The goal has grown since. It is now a larger project:
+to redesign the C library as a whole - memory, text, formatting and parsing, containers, files
+and streams, time, threads, numbers and floating point, and on top of them compression,
+cryptography and networking - in a modern style for C23 and what comes after it. Using it, and
+getting used to the conventions it keeps, makes sturdier C programs easier to write; and because
+every important fact sits in the signature in front of you, the same conventions make it
+convenient and effective to work on that code with AI tools.
 
 You have finished a C book. You know pointers, `malloc`, `printf`, and `char *`. And then you
 wrote your first real program and discovered the part the book did not cover - that `strcpy` has
@@ -12,9 +23,10 @@ no idea how big your buffer is, that `malloc` returning `NULL` is something you 
 remember, and that `printf("%d", 3.0)` compiles.
 
 `proven` is what those problems look like when someone answers them one at a time, in plain C,
-without a framework. It is the everyday layer C projects end up rewriting: allocators you pass in,
-strings that carry their own length, containers, formatting and scanning, files, hashing,
-randomness - with ownership and failure visible in every signature.
+without a framework - not only the everyday layer C projects end up rewriting (allocators you
+pass in, strings that carry their own length, containers, formatting and scanning, files,
+hashing, randomness), but more and more of what the C library itself provides, with ownership
+and failure visible in every signature.
 
 **New here? Start with [Chapter 0](manual/manual-00-start-here.md)** - or read it
 [on the web](https://rubidus-api.github.io/proven_c_lib/en/manual-00-start-here.html), where the
@@ -27,7 +39,7 @@ than looked up.
 programs, each adding one idea: printing, text with a length, errors as values, allocators, arenas,
 a container and a file. Chapter 0 is the place to go after it.
 
-- Version: proven_c_lib-v0.120.0 | Standard: C23 | License: MIT
+- Version: proven_c_lib-v0.121.0 | Standard: C23 | License: MIT
 - Versions are semantic, `MAJOR.MINOR.PATCH`, from v0.0.1 (2026-09-04); the releases before it carry
   date-based numbers (`v26.MM.DDx`) and stay as they were published.
 - Seven functions named `*_internal` or `*_impl` sit in public headers because macros call them;
@@ -384,15 +396,23 @@ result was mostly a list of things already done and one genuine gap.
 
 ## What this library is for
 
-**To replace the tired parts of the standard library, from the bottom up - without excluding it.**
-`strcpy`, `strtok`, `sprintf`, `errno`, `qsort`, `rand`, `atoi`: each is answered here by something
-sized, checked, and explicit. But `proven` is not a libc replacement and does not want your
-`main`. It has no global state, starts no threads, registers no `atexit` handler, and allocates
-nothing you did not hand it an allocator for. Use one module, or all of them, beside whatever else
-you already link. [Appendix D](manual/manual-00-start-here.md#15-appendix-d-the-libc-map) maps the
-libc call you know to what to use instead - and why it differs.
+**To redesign the C library, from the bottom up, in a modern style.** `strcpy`, `strtok`,
+`sprintf`, `errno`, `qsort`, `rand`, `atoi`, `strtod`, `fopen`, `exp`: each is answered here by
+something sized, checked, and explicit, and the set keeps growing toward the whole library.
+[Appendix D](manual/manual-00-start-here.md#15-appendix-d-the-libc-map) maps the libc call you
+know to what to use instead - and why it differs.
 
-**To be pleasant for a person and safe for a person working with an AI.** Explicit is more
+Earlier versions described `proven` as "not a libc replacement", and for a library of helpers
+that was true. The aim is wider now, but two things have not changed. It still mixes with the C
+library: it does not want your `main`, has no global state, starts no threads, registers no
+`atexit` handler, and allocates nothing you did not hand it an allocator for, so one module or
+all of them can sit beside whatever else you already link. And it still stands on the C library
+in places: the default allocator is `malloc`, `aligned_alloc`, `realloc` and `free`; `memcpy`,
+`memmove` and `memset` are called (by the compiler, too, in freestanding builds); the program
+starts through the C runtime; and threads are the platform's (`pthread` on POSIX). Files,
+consoles, time, sockets and randomness go to the operating system directly, not through stdio.
+
+**To make sturdier C easier to write - for a person, and for a person working with an AI.** Explicit is more
 verbose, and that is the trade. What it buys is that every important fact is *local*: whether a
 call allocates is in its parameter list, whether it can fail is in its return type, and whether it
 grows is in its name. That is exactly the kind of context that neither a tired human nor a
@@ -743,7 +763,7 @@ step and checkable: [docs/migrating-to-proven-crypto-and-codec.md](docs/migratin
 
 ## What it is not
 
-`proven` is not a libc replacement, a garbage collector, or a framework. It does not try to own your process, your build graph, or your error policy. It is a set of C components that are meant to be easy to read, easy to test, and possible to port one boundary at a time.
+`proven` is not a garbage collector or a framework, and it is not yet the whole C library it aims to replace: what it covers is listed above, and where it still uses the C library is said under "What this library is for". It does not try to own your process, your build graph, or your error policy. It is a set of C components that are meant to be easy to read, easy to test, and possible to port one boundary at a time.
 
 It is also worth saying where the platform boundary **stops**, because otherwise you find out by running into it. The PAL covers memory, the filesystem, time, memory mapping, environment variables, console I/O, threads and sockets. It does **not** cover process control (`fork` / `exec` / pipes) or terminal control (raw mode, job control) - a program whose substance is one of those will reach for POSIX or Win32 directly, and the "no platform `#ifdef`s" property does not extend to it. The socket layer is the first step of a networking stack that is being built in stages: sockets (with an `epoll`/`kqueue`/IOCP selector), the HTTP/1.1 message codec, an HTTP client and server, WebSocket, certificates, TLS (1.3 and a cut-down 1.2) and the DEFLATE codec are here, and so, since, are HTTP content coding, `permessage-deflate`, HTTP/2 and HTTP/3.
 

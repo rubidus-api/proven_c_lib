@@ -28,9 +28,11 @@ SOFTWARE.
 /* proven_math (RFC-0056): ported from CORE-MATH 03948b7170fe, src/binary64/pow/pow.c. Changed: the
  * headers of fenv, errno, stdio, stdlib, math, inttypes and x86intrin are not included
  * (cm_shim.h: rounding to nearest, no flags); x86-64 MXCSR and intrinsic branches take the
- * portable one; unreachable exits return the integer path's result; sqrt, round, fmax,
- * fmin and nanf builtins are float_ops.h's functions (the same bits, no libm); cr_NAME is
- * proven_cm_NAME_; non-ASCII letters in comments transliterated. Nothing else. */
+ * portable one; unreachable exits return the integer path's result; the sqrt and nanf
+ * builtins are float_ops.h's functions and round, fmax, fmin cm_shim.h's inline ones (the
+ * same bits, no libm); cr_NAME is
+ * proven_cm_NAME_; FENV_ACCESS left out on wasm; non-ASCII letters in comments
+ * transliterated. Nothing else. */
 
 #include "cm_shim.h"
 #if PROVEN_CM
@@ -84,8 +86,9 @@ SOFTWARE.
 #pragma GCC diagnostic ignored "-Wunknown-pragmas"
 #endif
 
+#if !defined(__wasm__) /* proven_math: no floating-point environment there */
 #pragma STDC FENV_ACCESS ON
-
+#endif
 #ifndef POW_ITERATION
 #define POW_ITERATION 15
 #endif
@@ -1473,7 +1476,7 @@ is_exact (double x, double y)
     if (e&1) return 0;
     e = e / 2;
     double dm = (double) m;
-    double s = proven_float_round (proven_float_sqrt (dm));
+    double s = proven_cm_round (proven_float_sqrt (dm));
     if (s * s != dm)
       return 0;
     /* The above call of sqrt() might set the inexact flag, but in case

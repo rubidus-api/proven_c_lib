@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v0.120.0)
+# Chapter 8: Formatting and Scanning (v0.121.0)
 
 **Part IV - Text in and out. Prerequisite: [Chapter 3](manual-03-strings-text.md) section 3-section 4.**
 **After this chapter** you can format any value, teach the formatter a type of your own, parse
@@ -657,9 +657,14 @@ exactly, so `sin(1e22)` is right too.
 
 Two paths give these bits:
 
-- **The FPU path.** On x86-64 with FMA and AVX2 (chosen at run time) and on AArch64, the
-  CORE-MATH project's code (MIT; `THIRD_PARTY_NOTICES.md`) does the work, at about the speed of
-  glibc's libm, which is not correctly rounded.
+- **The FPU path.** On x86-64 with FMA and AVX2 (chosen at run time), on AArch64 and on
+  WebAssembly, the CORE-MATH project's code (MIT; `THIRD_PARTY_NOTICES.md`) does the work: on
+  x86-64 at 6-36 ns a call, 0.65-1.9 times glibc's libm, which is not correctly rounded.
+  WebAssembly has no fused multiply-add, so fma is computed exactly without one there (binary32
+  about 10-35 ns a call under Node.js, binary64 30 ns to 2 us); a wasm module grows by about
+  200 KB, which `PROVEN_FLOAT_MATH_SMALL=1` saves. On wasm proven_math also supplies, as weak
+  definitions, the three 128-bit integer helpers clang calls there (`__multi3`, `__lshrti3`,
+  `__ashlti3`), so a `-nostdlib` link needs nothing more; a toolchain's own win.
 - **The integer path.** On every other target, and with `PROVEN_FLOAT_SOFT=1` or
   `PROVEN_FLOAT_MATH_SMALL=1`, the library's own multiple-precision integer arithmetic does it.
   It uses no FPU and no soft-float runtime, and it is slower: microseconds, not nanoseconds.
@@ -669,8 +674,8 @@ bound counted for each function, and the rounding test allows 4 units of the las
 error measured at every precision level is at most 1 unit. A result still undecided at 768 bits
 would be rounded to nearest without the test: no input has needed that. Both paths are tested
 against GNU MPFR and against each other, on about nine million hard-to-round inputs and on
-binary32 inputs sampled across the whole format, natively and, for the integer path, under
-WebAssembly.
+binary32 inputs sampled across the whole format, natively (each of gcc 14 and 16, clang 19 and
+23) and under WebAssembly.
 
 | Function | Special values (C23 Annex F) |
 |---|---|

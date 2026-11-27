@@ -490,9 +490,9 @@ lives here now so that the front page is nothing but the table of contents.
 
 ## 6. Intent and design philosophy
 
-`proven` is a compact C23 systems foundation library. It is intended for C programs that want practical infrastructure without hiding memory ownership, error control flow, or platform access behind global state.
+`proven` is an attempt to rebuild the C library from the bottom up in a modern style for C23 and the standards after it, for C programs that want practical infrastructure without hiding memory ownership, error control flow, or platform access behind global state.
 
-It is not a libc replacement. It provides a focused set of allocator-driven memory tools, byte views, containers, strings, formatting, scanning, hashing (FNV, SipHash, CRC-32, SHA-256), hex/Base64 encoding, OS-strength randomness, filesystem helpers, buffered streams, time helpers, memory mapping, stackless coroutine macros, and a bounded job system.
+It began as a set of pieces to mix into an ordinary C program - allocators passed in, as Zig does, and strings that carry their length rather than ending in a NUL, with views over them - and was then described as "not a libc replacement". The goal has since grown into redesigning the C library as a whole: allocator-driven memory tools, byte views, containers, strings, formatting, scanning, floating point (`float_ops.h`, `float_math.h`), hashing, encoding, OS-strength randomness, files, buffered streams, time, memory mapping, coroutines and jobs, and above them compression, cryptography and networking (five libraries: proven_base, proven_crypto, proven_codec, proven_net and proven_math). It still mixes with the C library, and still stands on it in places: the default allocator is `malloc` and its family, `memcpy`, `memmove` and `memset` are called, the program starts through the C runtime, and threads are the platform's. Files, consoles, time, sockets and randomness go to the operating system directly.
 
 Core design principles:
 
@@ -1065,11 +1065,13 @@ the trade.
 | `strlen` | `view.size` | The length is already there; nothing scans. [Ch 3](manual-03-strings-text.md) |
 | `strcmp` for equality | `proven_u8str_view_eq` | Works on text with embedded NULs, and does not walk past the end. [Ch 3](manual-03-strings-text.md) |
 | `strstr` | `proven_u8str_view_find` | Returns an index or `PROVEN_INDEX_NOT_FOUND`; the search is not naive. [Ch 3](manual-03-strings-text.md) |
-| `strtok` | *(no equivalent yet)* | `strtok` mutates its input and cannot be nested. A view-based splitter is designed in `RFC-0004`. |
+| `strtok` | `proven_u8str_view_split`, `_split_next` | Views into the input: nothing is written into it, and two splits can run at once. [Ch 3](manual-03-strings-text.md) |
 | `printf` | `proven_println("{}", PROVEN_ARG(x))` | Types come from the arguments, not from the format string. [Ch 8](manual-08-fmt-scan.md) |
 | `sprintf` | `proven_u8str_append_fmt` | Writes into a sized destination and refuses to overrun it. [Ch 8](manual-08-fmt-scan.md) |
 | `sscanf` | `proven_scan_*`, `proven_scan_fmt` | Reports which field failed and where the cursor stopped. [Ch 8](manual-08-fmt-scan.md) |
 | `strtod` | `proven_parse_f64_ascii` | Correctly rounded, locale-independent, no `errno`. [Ch 8](manual-08-fmt-scan.md) |
+| `sqrt`, `floor`, `fmod`, `fma`, `+ - * /` | `proven_float_sqrt`, `_floor`, `_fmod`, `_fma`, `_add` ... (`float_ops.h`) | The same bits on every target and compiler flag, with or without an FPU. [Ch 8](manual-08-fmt-scan.md) |
+| `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2` | `proven_float_exp` ... (`float_math.h`), `proven_float32_*` for `float` | Correctly rounded, so every build gives the same bits; no `errno`. [Ch 8](manual-08-fmt-scan.md) |
 | `fopen` / `fread` / `fclose` | `proven_fs_open`, `_read`, `_close`, or `proven_fs_read_all_u8str` | Explicit errors, no hidden buffering, one call for whole files. [Ch 5](manual-05-hosted-services.md) |
 | `fgets` | `proven_sysio_read_line`, `proven_reader_read_line` | A line that exactly fills the buffer is returned, not lost. [Ch 5](manual-05-hosted-services.md) |
 | `qsort` | `proven_array_sort` | Introsort: *O(n log n)* guaranteed, not quicksort's worst case. [Ch 4](manual-04-containers-algorithms.md) |

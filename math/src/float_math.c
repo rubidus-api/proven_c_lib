@@ -1197,10 +1197,16 @@ static u64 fm_pow(u64 xb, u64 yb, bool s) {
     return mp_round_nearest(&r, s);
 }
 
-#define F64B(x) proven_float_to_bits(x)
-#define F64D(u) proven_float_from_bits(u)
-#define F32B(x) ((u64)proven_float32_to_bits(x))
-#define F32D(u) proven_float32_from_bits((proven_u32)(u))
+/* The bits of a value and back, inline: these sit on the FPU path's every call, and a call to
+ * float_ops.c's functions there cost more than CORE-MATH's own work in log. */
+static inline u64 fm_d2b(double x) { union { double d; u64 u; } v = { .d = x }; return v.u; }
+static inline double fm_b2d(u64 u) { union { u64 u; double d; } v = { .u = u }; return v.d; }
+static inline u64 fm_f2b(float x) { union { float f; proven_u32 u; } v = { .f = x }; return v.u; }
+static inline float fm_b2f(u64 u) { union { proven_u32 u; float f; } v = { .u = (proven_u32)u }; return v.f; }
+#define F64B(x) fm_d2b(x)
+#define F64D(u) fm_b2d(u)
+#define F32B(x) fm_f2b(x)
+#define F32D(u) fm_b2f(u)
 
 // -----------------------------------------------------------------------------
 // The FPU path (math/src/cm, CORE-MATH): where it is compiled and the processor has what it needs

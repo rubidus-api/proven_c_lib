@@ -28,9 +28,11 @@ SOFTWARE.
 /* proven_math (RFC-0056): ported from CORE-MATH 03948b7170fe, src/binary64/pow/pow.h. Changed: the
  * headers of fenv, errno, stdio, stdlib, math, inttypes and x86intrin are not included
  * (cm_shim.h: rounding to nearest, no flags); x86-64 MXCSR and intrinsic branches take the
- * portable one; unreachable exits return the integer path's result; sqrt, round, fmax,
- * fmin and nanf builtins are float_ops.h's functions (the same bits, no libm); cr_NAME is
- * proven_cm_NAME_; non-ASCII letters in comments transliterated. Nothing else. */
+ * portable one; unreachable exits return the integer path's result; the sqrt and nanf
+ * builtins are float_ops.h's functions and round, fmax, fmin cm_shim.h's inline ones (the
+ * same bits, no libm); cr_NAME is
+ * proven_cm_NAME_; FENV_ACCESS left out on wasm; non-ASCII letters in comments
+ * transliterated. Nothing else. */
 
 #include "cm_shim.h"
 
@@ -86,7 +88,7 @@ roundeven_finite (double x)
    __asm__("roundsd $0x8,%1,%0":"=x"(ix):"x"(x));
 #  endif
 # else
-  ix = proven_float_round (x); /* nearest, away from 0 */
+  ix = proven_cm_round (x); /* nearest, away from 0 */
   if (__builtin_fabs (ix - x) == 0.5)
   {
     /* if ix is odd, we should return ix-1 if x>0, and ix+1 if x<0 */

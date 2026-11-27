@@ -18,6 +18,46 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.121.0] - 2026-11-27
+
+### Changed
+
+- README (both languages), chapter 0 section 6 and the manual's first page say what the project
+  is now: an attempt to rebuild the C library as a whole, from the bottom up, in a modern style
+  for C23 and after - begun as allocators passed in and strings with a length, mixed into
+  ordinary C programs, and once described as "not a libc replacement". They also say where it
+  still stands on the C library: the default allocator (`malloc` and its family), `memcpy`,
+  `memmove` and `memset`, the C runtime's startup, and the platform's threads.
+
+- `float_math.h` on WebAssembly takes the FPU path (CORE-MATH's code) instead of the integer
+  path: the same bits, under Node.js binary32 about 10-35 ns a call (was 1.0-5.4 us) and
+  binary64 30 ns to 1.9 us (was 1.4-6.9 us). wasm has no fused multiply-add: fma(a, b, -a*b) is
+  computed exactly by Dekker's product, any other fma by `float_ops.h`'s integers. A wasm module
+  grows by about 200 KB (`PROVEN_FLOAT_MATH_SMALL=1` leaves the path out). clang lowers the
+  code's `__int128` arithmetic to `__multi3`, `__lshrti3` and `__ashlti3` there; the new
+  `math/src/cm/cm_rt_wasm.c` defines them, weak, for a `-nostdlib` link (a hand-listed build
+  takes it with `math/src/cm/*.c`). Checked in the wasm module against GNU MPFR on every list
+  of hard-to-round inputs and every 509th binary32 input, and by a hash of the output bits of
+  3.25 billion inputs (every 7th binary32 pattern, 20 million random ones of each binary64
+  function and of binary32 atan2 and pow) against the native gcc and clang builds: equal.
+- `float_math.h`'s FPU path is compiled with contraction within an expression
+  (`-ffp-contract=on`), which CORE-MATH's code allows: x86-64, gcc, binary32 pow 21.2 to 15.2
+  ns, atan2 15.8 to 11.8, binary64 exp 10.3 to 8.7; now 0.65-1.9 times glibc's libm in both
+  formats. The same bits: every list of hard-to-round inputs and every 61st binary32 input
+  checked against MPFR with gcc 14 and 16 and clang 19 and 23.
+- `float_math.h` on its FPU path (x86-64 with FMA and AVX2, AArch64): the arguments' and
+  results' bits are taken inline, no longer by calls into `float_ops.c`, and CORE-MATH's
+  `round`, `fmax` and `fmin` are inline functions with `float_ops.h`'s results. The same bits;
+  x86-64, ns a call, binary64: exp 12.8 to 10.3, log 16.9 to 8.6, sin 15.0 to 13.9, cos 14.9 to
+  13.6, tan 38.1 to 36.3, atan2 27.6 to 18.8, pow 30.6 to 29.0; binary32 5 to 29 % less. Checked
+  again against GNU MPFR on every list of hard-to-round inputs and every 61st binary32 input,
+  gcc and clang builds.
+
+### Fixed
+
+- `tests/test_unit_float_ops` did not build under Clang 23's `-Werror` (`-Wunused-but-set-global`
+  on an unused counter). Tests only.
+
 ## [0.120.0] - 2026-11-27
 
 ### Added

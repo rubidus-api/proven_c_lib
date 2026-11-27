@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v0.120.0)
+# Chapter 8: Formatting and Scanning (v0.121.0)
 
 이 장은 `fmt.h`와 `scan.h`에 대한 상세 레퍼런스다.
 Chapter 3은 더 짧은 개요와 일상적인 예제를 제공한다.
@@ -628,9 +628,13 @@ proven_err_t e7 = proven_float32_to_u64(h, &u64);
 
 두 경로가 같은 비트를 낸다.
 
-- **FPU 경로.** FMA와 AVX2가 있는 x86-64(실행 중에 고른다)와 AArch64에서는 CORE-MATH 프로젝트의
-  코드(MIT; `THIRD_PARTY_NOTICES.md`)가 계산한다. 속도는 올바르게 반올림하지 않는 glibc libm과
-  비슷하다.
+- **FPU 경로.** FMA와 AVX2가 있는 x86-64(실행 중에 고른다), AArch64, WebAssembly에서는 CORE-MATH
+  프로젝트의 코드(MIT; `THIRD_PARTY_NOTICES.md`)가 계산한다. x86-64에서는 호출당 6~36 ns로, 올바르게
+  반올림하지 않는 glibc libm의 0.65~1.9배다. WebAssembly에는 융합 곱셈-덧셈이 없어서 그곳에서는 fma를
+  그 명령 없이 정확하게 계산한다(Node.js에서 binary32 호출당 약 10~35 ns, binary64 30 ns~2 us).
+  wasm 모듈은 약 200 KB 커지며, `PROVEN_FLOAT_MATH_SMALL=1`로 줄일 수 있다. wasm에서는 clang이 부르는
+  128비트 정수 헬퍼 세 개(`__multi3`, `__lshrti3`, `__ashlti3`)도 proven_math가 weak 정의로 넣어 두므로
+  `-nostdlib` 링크에 더 필요한 것이 없다. 툴체인이 자기 것을 링크하면 그쪽이 쓰인다.
 - **정수 경로.** 그 밖의 모든 타깃과 `PROVEN_FLOAT_SOFT=1` 또는 `PROVEN_FLOAT_MATH_SMALL=1`
   빌드에서는 이 라이브러리의 다정밀도 정수 연산이 계산한다. FPU도 soft-float 런타임도 쓰지 않으며,
   더 느리다. 나노초가 아니라 마이크로초 단위다.
@@ -639,7 +643,7 @@ FPU 경로는 CORE-MATH가 공개한 오차 분석에 기댄다. 정수 경로�
 반올림 검사는 마지막 자리의 4단위를 허용한다. 정밀도 단계마다 잰 오차는 최대 1단위다. 768비트에서도
 결정되지 않는 결과는 검사 없이 가장 가까운 쪽으로 반올림하는데, 그런 입력은 아직 없었다. 두 경로는
 반올림하기 어려운 입력 약 9백만 개와 형식 전체에서 고르게 뽑은 binary32 입력으로 GNU MPFR과, 그리고
-서로 비교해 검증했다. 정수 경로는 WebAssembly에서도 돌렸다.
+서로 비교해 검증했다. 네이티브(gcc 14와 16, clang 19와 23 각각)와 WebAssembly에서 모두 돌렸다.
 
 | 함수 | 특수값(C23 Annex F) |
 |---|---|

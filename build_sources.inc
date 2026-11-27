@@ -115,6 +115,7 @@ PROVEN_BUILD_SOURCE("math/src/cm/cosf.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("math/src/cm/tanf.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("math/src/cm/atan2f.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("math/src/cm/powf.c", PROVEN_SOURCE_FREESTANDING)
+PROVEN_BUILD_SOURCE("math/src/cm/cm_rt_wasm.c", PROVEN_SOURCE_FREESTANDING)   /* the 128-bit helpers on wasm (weak) */
 PROVEN_BUILD_SOURCE("src/proven/panic.c", PROVEN_SOURCE_FREESTANDING)
 PROVEN_BUILD_SOURCE("platform/proven_sys_mem.c", PROVEN_SOURCE_HOSTED_ONLY)   /* the freestanding build uses the inline fallbacks */
 PROVEN_BUILD_SOURCE("platform/proven_sys_fs.c", PROVEN_SOURCE_HOSTED_ONLY)

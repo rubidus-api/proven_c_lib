@@ -27,9 +27,11 @@ SOFTWARE.
 /* proven_math (RFC-0056): ported from CORE-MATH 03948b7170fe, src/binary64/atan2/atan2.c. Changed: the
  * headers of fenv, errno, stdio, stdlib, math, inttypes and x86intrin are not included
  * (cm_shim.h: rounding to nearest, no flags); x86-64 MXCSR and intrinsic branches take the
- * portable one; unreachable exits return the integer path's result; sqrt, round, fmax,
- * fmin and nanf builtins are float_ops.h's functions (the same bits, no libm); cr_NAME is
- * proven_cm_NAME_; non-ASCII letters in comments transliterated. Nothing else. */
+ * portable one; unreachable exits return the integer path's result; the sqrt and nanf
+ * builtins are float_ops.h's functions and round, fmax, fmin cm_shim.h's inline ones (the
+ * same bits, no libm); cr_NAME is
+ * proven_cm_NAME_; FENV_ACCESS left out on wasm; non-ASCII letters in comments
+ * transliterated. Nothing else. */
 
 #include "cm_shim.h"
 #if PROVEN_CM
@@ -56,8 +58,9 @@ SOFTWARE.
 #pragma GCC diagnostic ignored "-Wunknown-pragmas"
 #endif
 
+#if !defined(__wasm__) /* proven_math: no floating-point environment there */
 #pragma STDC FENV_ACCESS ON
-
+#endif
 typedef union { double f; uint64_t u; } d64u64;
 
 #include "atan2_tint.h"
@@ -551,7 +554,7 @@ double proven_cm_atan2_ (double y0, double x0){
   u64 aix = ix.u & MASK;
   if(__builtin_expect( aix==0 || aix>=0x7ffull<<52, 0)) return as_atan2_special(y0,x0);
   double ax = __builtin_fabs(x0), ay = __builtin_fabs(y0);
-  double x = proven_float_fmax(ax, ay), y = proven_float_fmin(ax, ay);
+  double x = proven_cm_fmax(ax, ay), y = proven_cm_fmin(ax, ay);
   u64 sy = iy.u>>63, sx = ix.u>>63;
   u64 GT = aix<aiy;
   u64 dxy = (aix-aiy)^-GT;
