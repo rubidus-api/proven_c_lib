@@ -485,7 +485,7 @@ proven_result_size_t r = proven_u8str_append_partial(&s, huge);
 
 `proven`은 C 라이브러리를 C23과 그 뒤의 표준에 맞는 현대적인 스타일로 밑바닥부터 다시 쌓으려는 시도입니다. 메모리 ownership, 에러 제어 흐름, 플랫폼 접근을 전역 상태 뒤에 숨기지 않으면서 실용적인 인프라를 원하는 C 프로그램을 위한 것입니다.
 
-처음에는 평범한 C 프로그램에 섞어 쓰는 부품들이었고(Zig처럼 넘겨받는 할당자, NUL로 끝나지 않고 길이를 들고 다니는 문자열과 그 위의 view), 그때는 "libc 대체품이 아니다"라고 소개했습니다. 목표는 그 뒤 C 라이브러리 전체를 다시 설계하는 것으로 커졌습니다. 할당자(allocator) 기반 메모리 도구, 바이트 뷰(view), 컨테이너, 문자열, 형식화(formatting), 파싱(scanning), 부동소수점(`float_ops.h`, `float_math.h`), 해싱, 인코딩, OS 강도 난수, 파일, 버퍼드 스트림, 시간, 메모리 매핑, 코루틴과 작업(job)이 있고, 그 위에 압축, 암호, 네트워킹이 있습니다(proven_base, proven_crypto, proven_codec, proven_net, proven_math 다섯 라이브러리). 여전히 C 라이브러리와 섞어 쓸 수 있고, 곳곳에서 여전히 C 라이브러리에 기댑니다. 기본 할당자는 `malloc`과 그 가족이고, `memcpy`, `memmove`, `memset`을 부르며, 프로그램은 C 런타임을 거쳐 시작하고, 스레드는 플랫폼의 것입니다. 파일, 콘솔, 시간, 소켓, 난수는 운영체제로 바로 갑니다.
+처음에는 평범한 C 프로그램에 섞어 쓰는 부품들이었고(Zig처럼 넘겨받는 할당자, NUL로 끝나지 않고 길이를 들고 다니는 문자열과 그 위의 view), 그때는 "libc 대체품이 아니다"라고 소개했습니다. 목표는 그 뒤 C 라이브러리 전체를 다시 설계하는 것으로 커졌습니다. 할당자(allocator) 기반 메모리 도구, 바이트 뷰(view), 컨테이너, 문자열, 형식화(formatting), 파싱(scanning), 부동소수점(`float_ops.h`, `float_math.h`), 해싱, 인코딩, OS 강도 난수, 파일, 버퍼드 스트림, 시간, 메모리 매핑, 코루틴과 작업(job)이 있고, 그 위에 압축, 암호, 네트워킹이 있습니다(proven_base, proven_crypto, proven_codec, proven_net, proven_math 다섯 라이브러리). 여전히 C 라이브러리와 섞어 쓸 수 있고, 곳곳에서 여전히 C 라이브러리에 기댑니다. 주된 것은 이렇습니다. 기본 할당자는 `malloc`과 그 가족이고, `memcpy`, `memmove`, `memset`, `memcmp`, `memchr`, `strlen`을 부르며, `getenv`, `remove`, `rename`, `errno`를 쓰고, 프로그램은 C 런타임을 거쳐 시작하고, 스레드는 플랫폼의 것입니다. 파일, 콘솔, 시간, 소켓, 난수는 stdio가 아니라 시스템 호출입니다(POSIX에서는 C 라이브러리의 얇은 래퍼를 거칩니다).
 
 핵심 설계 원칙:
 

@@ -18,7 +18,11 @@ set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 publish=no
+zip_only=no
 [ "${1:-}" = "--publish" ] && publish=yes
+# --zip-only: build only the source archive again, from HEAD - after the site commit that also
+# carries TEST.md's Windows line, so the archive has that line (and nothing untracked).
+[ "${1:-}" = "--zip-only" ] && zip_only=yes
 
 version=$(sed -n 's/^#define PROVEN_VERSION_STRING "\(.*\)"$/\1/p' "$root/include/proven/version.h")
 [ -n "$version" ] || { echo "release: cannot read the version" >&2; exit 1; }
@@ -26,6 +30,32 @@ tag=${version#proven_c_lib-}          # the tags here are v0.0.1, not proven_c_l
 repo=rubidus-api/proven_c_lib
 
 echo "release: $version (tag $tag)"
+
+make_zip() {
+    # The source archive, matching what earlier releases shipped: the library, its headers, its
+    # tests and its manual - not the generated site, and not the build directory. Tracked files
+    # only, from HEAD (git archive), so nothing untracked (a __pycache__) gets in.
+    stage="$root/build/release/$version"
+    rm -rf "$root/build/release"; mkdir -p "$stage"
+    git -C "$root" archive HEAD include src platform crypto codec net math tests manual manual-ko scripts site \
+        nob.c nob.h build_headers.inc build_tests.inc build_sources.inc README.md README-ko.md LICENSE \
+        THIRD_PARTY_NOTICES.md CHANGELOG.md TEST.md \
+        docs/migrating-to-proven-net.md docs/migrating-to-proven-crypto-and-codec.md | tar -x -C "$stage"
+    rm -f "$dist/$version.zip"
+    # zip where it exists; Python's zipfile where it does not (same archive layout).
+    if command -v zip >/dev/null 2>&1; then
+        ( cd "$root/build/release" && zip -qr "$dist/$version.zip" "$version" )
+    else
+        ( cd "$root/build/release" && python3 -m zipfile -c "$dist/$version.zip" "$version" )
+    fi
+    rm -rf "$root/build/release"
+}
+if [ "$zip_only" = yes ]; then
+    dist="$root/dist"; mkdir -p "$dist"
+    make_zip
+    ls -la "$dist/$version.zip" | awk '{print "  " $9 "  " $5 " bytes"}'
+    exit 0
+fi
 
 # ── the gates ──────────────────────────────────────────────────────────────────
 # The full suite: every test, every manual example compiled and run, and every documentation
@@ -94,25 +124,7 @@ for lang in en ko; do
     cp "$root/docs/$lang/manual.pdf" "$dist/$version-$lang-manual.pdf"
 done
 
-# The source archive, matching what earlier releases shipped: the library, its headers, its
-# tests and its manual - not the generated site, and not the build directory.
-stage="$root/build/release/$version"
-rm -rf "$root/build/release"; mkdir -p "$stage"
-for item in include src platform crypto codec net math tests manual manual-ko scripts site nob.c nob.h \
-            build_headers.inc build_tests.inc build_sources.inc README.md README-ko.md LICENSE \
-            THIRD_PARTY_NOTICES.md CHANGELOG.md TEST.md; do
-    [ -e "$root/$item" ] && cp -r "$root/$item" "$stage/"
-done
-# The migration guide the READMEs link to (RFC-0043).
-mkdir -p "$stage/docs" && cp "$root/docs/migrating-to-proven-net.md" "$root/docs/migrating-to-proven-crypto-and-codec.md" "$stage/docs/"
-# zip where it exists; Python's zipfile where it does not (same archive layout).
-if command -v zip >/dev/null 2>&1; then
-    ( cd "$root/build/release" && zip -qr "$dist/$version.zip" "$version" )
-else
-    rm -f "$dist/$version.zip"
-    ( cd "$root/build/release" && python3 -m zipfile -c "$dist/$version.zip" "$version" )
-fi
-rm -rf "$root/build/release"
+make_zip
 
 ls -la "$dist"/$version* | awk '{print "  " $9 "  " $5 " bytes"}'
 [ "$publish" = "yes" ] || { echo "release: artefacts in dist/ (pass --publish to upload)"; exit 0; }

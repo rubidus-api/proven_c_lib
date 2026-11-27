@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>proven_c_lib — manual</title>
 <link rel="stylesheet" href="en/manual.css">
+<script>(function(){try{var s=JSON.parse(localStorage.getItem('rubidus-api.site')||'{}'),r=document.documentElement;if(s.theme==='light'||s.theme==='dark')r.setAttribute('data-theme',s.theme);if(s.width==='fit')r.setAttribute('data-width','fit');if(s.layout==='wide'||s.layout==='narrow')r.setAttribute('data-layout',s.layout);}catch(e){}})();</script>
 <style>
 /* Landing-page only: two editions on one page, each a full table of contents. */
 .edition { margin-top:2.6rem; }
@@ -14,10 +15,11 @@
 nav.contents { margin-top:1.2rem; }
 </style>
 </head>
-<body>
+<body id="top">
+<nav class="bar" aria-label="Menu"><details class="menu"><summary aria-label="Menu">☰</summary><div class="panel"><nav class="goto"><a href="#en">English</a><a href="#ko">한국어</a><a href="https://github.com/rubidus-api/proven_c_lib" title="This project on GitHub">Repo</a><a href="https://rubidus-api.github.io/" title="rubidus-api.github.io — every published project">rubidus-api</a></nav><fieldset><legend>Theme</legend><label><input type="radio" name="theme" id="theme-system" checked> System</label><label><input type="radio" name="theme" id="theme-light"> Light</label><label><input type="radio" name="theme" id="theme-dark"> Dark</label></fieldset><fieldset><legend>Text width</legend><label><input type="radio" name="width" id="width-960" checked> 960</label><label><input type="radio" name="width" id="width-fit"> Fit the window</label></fieldset><fieldset><legend>Layout</legend><label><input type="radio" name="layout" id="layout-auto" checked> Auto</label><label><input type="radio" name="layout" id="layout-wide"> Wide</label><label><input type="radio" name="layout" id="layout-narrow"> Narrow</label></fieldset><p class="ver">proven_c_lib-v0.121.1</p></div></details><a class="back" href="https://rubidus-api.github.io/" aria-label="Back" title="Back">←</a><a class="here" href="#top">proven_c_lib</a><div class="items"><a href="#en">English</a><a href="#ko">한국어</a><a href="https://github.com/rubidus-api/proven_c_lib" title="This project on GitHub">Repo</a><a href="https://rubidus-api.github.io/" title="rubidus-api.github.io — every published project">rubidus-api</a></div></nav>
 <div class="page"><main id="content"><div class="content">
 <h1>proven_c_lib</h1>
-<div class="masthead">proven_c_lib-v0.121.0 · the manual, generated from the Markdown sources in the repository</div>
+<div class="masthead">proven_c_lib-v0.121.1 · the manual, generated from the Markdown sources in the repository</div>
 <p class="switch"><a href="#en">English</a> · <a href="#ko">한국어</a></p>
 <section class="edition" id="en" lang="en"><h2 class="edition-title">English<span class="edition-links"><a href="en/index.html">Read the English manual</a> · <a href="en/manual.pdf">PDF</a></span></h2>
 <nav class="contents" aria-label="English — Contents">
@@ -600,5 +602,6 @@ nav.contents { margin-top:1.2rem; }
 </nav>
 </section>
 </div></main></div>
+<script>(function(){var K='rubidus-api.site',d=document,r=d.documentElement,m=d.querySelector('.menu'),s={};try{s=JSON.parse(localStorage.getItem(K))||{};}catch(e){}['theme','width','layout'].forEach(function(g){var v=s[g]||({theme:'system',width:'960',layout:'auto'})[g],x=d.getElementById(g+'-'+v);if(x)x.checked=true;});function apply(){var t=s.theme;if(t==='light'||t==='dark')r.setAttribute('data-theme',t);else r.removeAttribute('data-theme');if(s.width==='fit')r.setAttribute('data-width','fit');else r.removeAttribute('data-width');if(s.layout==='wide'||s.layout==='narrow')r.setAttribute('data-layout',s.layout);else r.removeAttribute('data-layout');}d.addEventListener('change',function(e){var t=e.target;if(t.type!=='radio'||!m||!m.contains(t))return;s[t.name]=t.id.slice(t.name.length+1);try{localStorage.setItem(K,JSON.stringify(s));}catch(e){}apply();});if(!m)return;d.addEventListener('keydown',function(e){if(e.key==='Escape'&&m.open){m.open=false;m.querySelector('summary').focus();}});d.addEventListener('click',function(e){if(m.open&&!m.contains(e.target))m.open=false;});m.addEventListener('click',function(e){var a=e.target.closest('a');if(a&&(a.getAttribute('href')||'').charAt(0)==='#')m.open=false;});var b=d.querySelector('.bar .back');if(b)b.addEventListener('click',function(e){if(history.length>1){e.preventDefault();history.back();}});})();</script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-# proven Test Matrix (v0.121.0)
+# proven Test Matrix (v0.121.1)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -350,7 +350,7 @@ Last run, 2026-11-27, Windows 11 test VM (v0.121.0): x86-64 398 PASS, 0 FAIL, 10
 ## Test catalog
 
 
-The hosted full run builds and executes 214 registered tests plus the 194 runnable manual examples - 408 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 227 test files: the 214 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 214 registered tests plus the 196 runnable manual examples - 410 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 227 test files: the 214 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a

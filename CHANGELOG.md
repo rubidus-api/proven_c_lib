@@ -18,6 +18,44 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.121.1] - 2026-11-27
+
+### Changed
+
+- The web edition of the manual (`scripts/site_pages.py`, `scripts/site_root.py`,
+  `site/manual.css`) takes the site's menu bar and settings, as the landing page
+  rubidus-api.github.io has them (the site's design rules): from the left the menu button, back and where the
+  reader is, then the items (contents, previous, next, PDF, the repository, the site), which move
+  into the menu on a window of 900 or less; in the menu the search, this page's sections, the
+  language, the theme (system, light, dark), the text width (960 by default, or the window's)
+  and the layout (auto, wide, narrow), kept under the site's storage key so a choice holds
+  across the site. The colours are the site's document palette; focus is a visible 2 px outline;
+  only short background changes move, none with reduced motion. The colour pickers of the old
+  settings are gone. What it does not follow, and why, is at the head of `site/manual.css`.
+
+### Fixed
+
+- `PROVEN_CORO_AWAIT` (`coro.h`) warned under `-Wextra` (`-Wimplicit-fallthrough`, gcc and
+  clang), and so failed a `-Werror` build: storing the resume line falls into its `case`
+  label on purpose, now marked `[[fallthrough]]`. The expansion is otherwise the same. Found by
+  the new chapter 6 example; `tests/test_unit_coro` now uses `AWAIT`, which the strict modes
+  build with `-Werror`.
+
+### Changed
+
+- README (both languages) and chapter 0 section 6: the list of what proven still takes from the C
+  library made complete from the built objects' undefined symbols (v0.121.0 named only part of
+  it): also `calloc`, `memcmp`, `memchr`, `strlen`, `getenv`, `remove`, `rename`, `errno`, and the
+  system-call wrappers on POSIX.
+
+### Added
+
+- Manual chapter 6 (both editions): waiting for another coroutine - a parent that puts the
+  child's step in its `PROVEN_CORO_AWAIT`, the two rules (one driver; done is sticky) and the
+  trap (`AWAIT(PROVEN_CORO_IS_DONE(&child))` never steps it), with a runnable example
+  (`manual/examples/{en,ko}/ex_06_coro_await.c`, a reader of a two-byte length that takes its
+  bytes as they arrive). `tests/test_unit_coro` checks the step counts and the sticky done.
+
 ## [0.121.0] - 2026-11-27
 
 ### Changed

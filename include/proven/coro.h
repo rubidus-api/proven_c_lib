@@ -50,6 +50,7 @@ typedef struct {
 #define PROVEN_CORO_AWAIT(c, cond) \
     do { \
         (c)->state = __LINE__; \
+        [[fallthrough]]; /* into the resume label: the condition is tested at once too */ \
         case __LINE__: \
         if (!(cond)) return 0; \
     } while (0)

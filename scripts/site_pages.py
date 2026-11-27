@@ -96,7 +96,10 @@ STR = {
                source='generated from the Markdown manual', skip='Skip to content',
                repo='Repo', repo_t='This project on GitHub',
                home='All projects', home_t='rubidus-api.github.io — every published project',
-               repos='All repos', repos_t='github.com/rubidus-api — every repository'),
+               repos='All repos', repos_t='github.com/rubidus-api — every repository',
+               back='Back', lang='Language', width='Text width', w960='960',
+               wfit='Fit the window', layout='Layout', l_auto='Auto', l_wide='Wide',
+               l_narrow='Narrow', site='rubidus-api'),
     'ko': dict(short='proven_c_lib 매뉴얼', contents='목차', here='이 페이지 안에서',
                prev='이전', next='다음', top='목차', menu='메뉴', settings='설정',
                set_width='가로폭 제한', set_theme='테마', th_auto='시스템',
@@ -110,7 +113,10 @@ STR = {
                source='마크다운 매뉴얼에서 생성됨', skip='본문으로 건너뛰기',
                repo='저장소', repo_t='이 프로젝트의 GitHub 저장소',
                home='전체 사이트', home_t='rubidus-api.github.io — 공개된 모든 프로젝트',
-               repos='저장소 목록', repos_t='github.com/rubidus-api — 모든 저장소'),
+               repos='저장소 목록', repos_t='github.com/rubidus-api — 모든 저장소',
+               back='이전', lang='언어', width='본문 폭', w960='960', wfit='창에 맞춤',
+               layout='배치', l_auto='자동', l_wide='넓게', l_narrow='좁게',
+               site='rubidus-api'),
 }
 
 REPO = 'https://github.com/rubidus-api/proven_c_lib'
@@ -121,62 +127,44 @@ REPOS_ROOT = 'https://github.com/rubidus-api'
 # chapter that owns the call, so these lose to any chapter that also uses the name.
 LAST_RESORT = ('index', 'manual-00-start-here')
 
+# The site's design rules N-W2/N-W4: the menu bar and its settings are the site's (rubidus-api.github.io): the
+# same storage key and the same values, so a theme or width chosen on the landing page holds here.
+SITE_KEY = 'rubidus-api.site'
+
 # Applied in <head>, before the body is painted. A theme applied afterwards shows the light
 # page first and then repaints - the flash of unstyled content the book documents.
 APPLY_JS = (
-    "(function(){try{var s=JSON.parse(localStorage.getItem('pcl-read')||'{}');"
-    "var r=document.documentElement;"
-    "if(s.theme&&s.theme!=='auto')r.setAttribute('data-theme',s.theme);"
-    "if(s.fg)r.style.setProperty('--fg',s.fg);"
-    "if(s.bg)r.style.setProperty('--bg',s.bg);"
-    "if(s.link)r.style.setProperty('--link',s.link);"
-    "if(s.width)r.setAttribute('data-measure','on');"
+    "(function(){try{var s=JSON.parse(localStorage.getItem('" + SITE_KEY + "')||'{}'),"
+    "r=document.documentElement;"
+    "if(s.theme==='light'||s.theme==='dark')r.setAttribute('data-theme',s.theme);"
+    "if(s.width==='fit')r.setAttribute('data-width','fit');"
+    "if(s.layout==='wide'||s.layout==='narrow')r.setAttribute('data-layout',s.layout);"
     "}catch(e){}})();"
 )
 
+# The menu (a <details>): its radios show and change the settings; Escape and a click outside
+# close it, and so does following a link to a section of this page. The back button goes back
+# in the history when there is one, and to the contents otherwise.
 PANEL_JS = (
-    "(function(){"
-    "var b=document.querySelector('.here-btn'),p=document.getElementById('here-panel');"
-    "function open(o){if(!p)return;p.hidden=!o;if(b)b.setAttribute('aria-expanded',o);}"
-    "if(b)b.addEventListener('click',function(){open(p.hidden);});"
-    "if(p)p.addEventListener('click',function(e){"
-    "if(e.target.tagName==='A'&&(e.target.getAttribute('href')||'').charAt(0)==='#')open(false);});"
-    "document.addEventListener('keydown',function(e){if(e.key==='Escape')open(false);});"
-    "var box=document.getElementById('setbox'),so=document.getElementById('set-open');"
-    "if(!box||!so)return;var r=document.documentElement;"
-    "function load(){try{return JSON.parse(localStorage.getItem('pcl-read')||'{}');}"
-    "catch(e){return {};}}"
-    "function save(s){try{localStorage.setItem('pcl-read',JSON.stringify(s));}catch(e){}}"
-    "function css(n){return getComputedStyle(r).getPropertyValue(n).trim();}"
-    "function hex(v){var m=v.match(/^rgba?\\((\\d+)[ ,]+(\\d+)[ ,]+(\\d+)/);"
-    "if(!m)return v.charAt(0)==='#'?v:'#000000';"
-    "return '#'+[1,2,3].map(function(i){"
-    "return ('0'+parseInt(m[i],10).toString(16)).slice(-2);}).join('');}"
-    "function paint(){var s=load();"
-    "document.getElementById('s-width').checked=!!s.width;"
-    "var t=s.theme||'auto';"
-    "[].forEach.call(box.querySelectorAll('.segb'),function(x){"
-    "x.setAttribute('aria-pressed',x.dataset.theme===t);});"
-    "document.getElementById('s-fg').value=s.fg||hex(css('--fg'));"
-    "document.getElementById('s-bg').value=s.bg||hex(css('--bg'));"
-    "document.getElementById('s-link').value=s.link||hex(css('--link'));}"
-    "so.addEventListener('click',function(){box.hidden=!box.hidden;"
-    "so.setAttribute('aria-expanded',!box.hidden);if(!box.hidden)paint();});"
-    "document.getElementById('s-width').addEventListener('change',function(){"
-    "var s=load();s.width=this.checked;save(s);"
-    "if(s.width)r.setAttribute('data-measure','on');else r.removeAttribute('data-measure');});"
-    # Choosing a theme is also letting go of hand-picked colours: leaving them set would
-    # override the theme, and the button would appear to do nothing.
-    "[].forEach.call(box.querySelectorAll('.segb'),function(x){"
-    "x.addEventListener('click',function(){var s=load();s.theme=x.dataset.theme;"
-    "delete s.fg;delete s.bg;delete s.link;save(s);"
-    "['--fg','--bg','--link'].forEach(function(n){r.style.removeProperty(n);});"
-    "if(s.theme==='auto')r.removeAttribute('data-theme');"
-    "else r.setAttribute('data-theme',s.theme);setTimeout(paint,0);});});"
-    "[['s-fg','--fg','fg'],['s-bg','--bg','bg'],['s-link','--link','link']]"
-    ".forEach(function(a){document.getElementById(a[0]).addEventListener('input',"
-    "function(){var s=load();s[a[2]]=this.value;save(s);"
-    "r.style.setProperty(a[1],this.value);});});"
+    "(function(){var K='" + SITE_KEY + "',d=document,r=d.documentElement,m=d.querySelector('.menu'),s={};"
+    "try{s=JSON.parse(localStorage.getItem(K))||{};}catch(e){}"
+    "['theme','width','layout'].forEach(function(g){var v=s[g]||({theme:'system',width:'960',layout:'auto'})[g],"
+    "x=d.getElementById(g+'-'+v);if(x)x.checked=true;});"
+    "function apply(){var t=s.theme;if(t==='light'||t==='dark')r.setAttribute('data-theme',t);"
+    "else r.removeAttribute('data-theme');"
+    "if(s.width==='fit')r.setAttribute('data-width','fit');else r.removeAttribute('data-width');"
+    "if(s.layout==='wide'||s.layout==='narrow')r.setAttribute('data-layout',s.layout);"
+    "else r.removeAttribute('data-layout');}"
+    "d.addEventListener('change',function(e){var t=e.target;if(t.type!=='radio'||!m||!m.contains(t))return;"
+    "s[t.name]=t.id.slice(t.name.length+1);try{localStorage.setItem(K,JSON.stringify(s));}catch(e){}apply();});"
+    "if(!m)return;"
+    "d.addEventListener('keydown',function(e){if(e.key==='Escape'&&m.open){m.open=false;"
+    "m.querySelector('summary').focus();}});"
+    "d.addEventListener('click',function(e){if(m.open&&!m.contains(e.target))m.open=false;});"
+    "m.addEventListener('click',function(e){var a=e.target.closest('a');"
+    "if(a&&(a.getAttribute('href')||'').charAt(0)==='#')m.open=false;});"
+    "var b=d.querySelector('.bar .back');if(b)b.addEventListener('click',function(e){"
+    "if(history.length>1){e.preventDefault();history.back();}});"
     "})();"
 )
 
@@ -344,64 +332,72 @@ def search_index(lang, pages, bodies, outlines, symbols):
     return entries
 
 
-def bar(lang, name, pages, version):
+def settings_html(lang):
+    """N-W4: theme, text width (960 by default), and layout (N-W1) - the landing page's set."""
+    s = STR[lang]
+    def group(name, legend, opts, default):
+        rows = ''.join('<label><input type="radio" name="%s" id="%s-%s"%s> %s</label>'
+                       % (name, name, v, ' checked' if v == default else '', html.escape(t))
+                       for v, t in opts)
+        return '<fieldset><legend>%s</legend>%s</fieldset>' % (html.escape(legend), rows)
+    return (group('theme', s['set_theme'], [('system', s['th_auto']), ('light', s['th_light']),
+                                            ('dark', s['th_dark'])], 'system')
+            + group('width', s['width'], [('960', s['w960']), ('fit', s['wfit'])], '960')
+            + group('layout', s['layout'], [('auto', s['l_auto']), ('wide', s['l_wide']),
+                                            ('narrow', s['l_narrow'])], 'auto'))
+
+
+def language_html(lang, other_href):
+    """N-W4's language: the two editions; the one being read is marked, the other is a link."""
+    s = STR[lang]
+    rows = []
+    for code, label in (('en', 'English'), ('ko', '한국어')):
+        if code == lang:
+            rows.append('<span class="cur" aria-current="true">%s</span>' % label)
+        else:
+            rows.append('<a href="%s" hreflang="%s">%s</a>' % (other_href, code, label))
+    return '<fieldset class="langs"><legend>%s</legend>%s</fieldset>' % (s['lang'], ''.join(rows))
+
+
+def bar_html(lang, here_text, here_href, items, panel_inner, back_href):
+    """N-W2: from the left, the menu (N-W4's settings inside), back, where the reader is; on a
+    wide window the items spread to the right, on a narrow one (N-L3: 900) they move into the
+    menu. The same bar as the site's landing page."""
+    s = STR[lang]
+    links = ''.join('<a href="%s"%s>%s</a>' % (h, (' title="%s"' % html.escape(t)) if t else '', html.escape(x))
+                    for x, h, t in items)
+    return ('<nav class="bar" aria-label="%s">'
+            '<details class="menu"><summary aria-label="%s">☰</summary>'
+            '<div class="panel"><nav class="goto">%s</nav>%s</div></details>'
+            '<a class="back" href="%s" aria-label="%s" title="%s">←</a>'
+            '<a class="here" href="%s">%s</a>'
+            '<div class="items">%s</div></nav>'
+            % (s['menu'], s['menu'], links, panel_inner, back_href, s['back'], s['back'],
+               here_href, html.escape(here_text), links))
+
+
+def bar(lang, name, pages, outline, version, pdf_url):
     s = STR[lang]
     i = pages.index(name)
     prev = pages[i - 1] if i > 0 else None
     nxt = pages[i + 1] if i + 1 < len(pages) else None
-    parts = ['<span class="bar-nav">']
-    parts.append('<a href="%s.html" title="%s" aria-label="%s">←</a>' % (prev, s['prev'], s['prev'])
-                 if prev else '<span class="off" aria-hidden="true">←</span>')
-    parts.append('<a href="index.html" title="%s" aria-label="%s">↑</a>' % (s['top'], s['top']))
-    parts.append('<a href="%s.html" title="%s" aria-label="%s">→</a>' % (nxt, s['next'], s['next'])
-                 if nxt else '<span class="off" aria-hidden="true">→</span>')
-    parts.append('</span>')
-    btn = ('<button class="here-btn" type="button" aria-expanded="false" aria-controls="here-panel">'
-           '%s <span class="caret">▾</span></button>' % html.escape(TITLES[lang][name]))
-    return ('<div class="bar"><strong><a href="index.html">%s</a></strong>%s%s</div>'
-            % (html.escape(s['short']), btn, ''.join(parts)))
-
-
-def panel(lang, name, outline, version, pdf_url):
-    s = STR[lang]
     other = 'ko' if lang == 'en' else 'en'
-    tools = (
-        '<span class="ver">%s</span>'
-        '<button class="tool" type="button" id="set-open" aria-expanded="false">⚙ %s</button>'
-        '<a class="tool" href="../%s/%s.html">%s</a>'
-        '<a class="tool" href="%s">⤓ %s</a>'
-        '<a class="tool" href="%s" title="%s">⌥ %s</a>'
-        '<a class="tool" href="%s" title="%s">⌂ %s</a>'
-        '<a class="tool" href="%s" title="%s">≡ %s</a>'
-        % (html.escape(version), s['settings'], other, name, s['other'], pdf_url, s['pdf'],
-           REPO, s['repo_t'], s['repo'],
-           SITE_ROOT, s['home_t'], s['home'],
-           REPOS_ROOT, s['repos_t'], s['repos']))
-    settings = (
-        '<div class="setbox" id="setbox" hidden>'
-        '<label class="setrow"><input type="checkbox" id="s-width"><span>%s</span></label>'
-        '<div class="setrow"><span class="setlbl">%s</span><span class="seg">'
-        '<button type="button" class="segb" data-theme="auto">%s</button>'
-        '<button type="button" class="segb" data-theme="light">%s</button>'
-        '<button type="button" class="segb" data-theme="dark">%s</button>'
-        '</span></div>'
-        '<div class="setrow"><span class="setlbl">%s</span>'
-        '<label class="col"><span>%s</span><input type="color" id="s-fg"></label>'
-        '<label class="col"><span>%s</span><input type="color" id="s-bg"></label>'
-        '<label class="col"><span>%s</span><input type="color" id="s-link"></label></div>'
-        '<p class="setnote">%s</p></div>'
-        % (s['set_width'], s['set_theme'], s['th_auto'], s['th_light'], s['th_dark'],
-           s['set_colors'], s['c_fg'], s['c_bg'], s['c_link'], s['set_note']))
+    items = [(s['contents'], 'index.html', '')]
+    if prev:
+        items.append(('← ' + s['prev'], prev + '.html', TITLES[lang][prev]))
+    if nxt:
+        items.append((s['next'] + ' →', nxt + '.html', TITLES[lang][nxt]))
+    items += [(s['pdf'], pdf_url, ''), (s['repo'], REPO, s['repo_t']), (s['site'], SITE_ROOT, s['home_t'])]
     search = ('<div class="search"><label class="setlbl" for="q">%s</label> '
               '<input type="search" id="q" placeholder="%s" autocomplete="off">'
               '<p class="hint">%s</p><ul id="qr"></ul></div>'
               % (s['search'], html.escape(s['search_ph']), s['search_hint']))
-    rows = ''.join('<a href="#%s">%s</a>' % (a, html.escape(t))
-                   for lv, a, t in outline if lv == 2)
-    here = ('<div class="here-head"><strong>%s</strong></div><div class="here-body">%s</div>'
-            % (s['here'], rows)) if rows else ''
-    return ('<div id="here-panel" class="here-panel" hidden><div class="tools">%s</div>%s%s%s</div>'
-            % (tools, settings, search, here))
+    rows = ''.join('<a href="#%s">%s</a>' % (a, html.escape(t)) for lv, a, t in outline if lv == 2)
+    here = ('<div class="here-sec"><div class="setlbl">%s</div>%s</div>' % (s['here'], rows)) if rows else ''
+    inner = (search + here + language_html(lang, '../%s/%s.html' % (other, name))
+             + settings_html(lang) + '<p class="ver">%s</p>' % html.escape(version))
+    here_text = TITLES[lang][name] if name != 'index' else s['short']
+    return bar_html(lang, here_text, '#top', items, inner, 'index.html')
 
 
 def full_contents(lang, pages, outlines):
@@ -470,10 +466,9 @@ def build(lang, srcdir, outdir, version, pdf_url, root):
 <link rel="stylesheet" href="manual.css">
 <script>{APPLY_JS}</script>
 </head>
-<body>
+<body id="top">
 <a class="skip" href="#content">{s['skip']}</a>
-{bar(lang, name, pages, version)}
-{panel(lang, name, outlines[name], version, pdf_url)}
+{bar(lang, name, pages, outlines[name], version, pdf_url)}
 <div class="page">
 <main id="content"><div class="content">
 <div class="masthead">{html.escape(version)} · {s['source']}</div>

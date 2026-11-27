@@ -1,4 +1,4 @@
-[한국어](README-ko.md) | **English** - **Proven C library v0.121.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.0/proven_c_lib-v0.121.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.0/proven_c_lib-v0.121.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.0/proven_c_lib-v0.121.0-ko-manual.pdf)
+[한국어](README-ko.md) | **English** - **Proven C library v0.121.1** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.1/proven_c_lib-v0.121.1.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.1/proven_c_lib-v0.121.1-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.1/proven_c_lib-v0.121.1-ko-manual.pdf)
 
 # Proven C library
 
@@ -39,7 +39,7 @@ than looked up.
 programs, each adding one idea: printing, text with a length, errors as values, allocators, arenas,
 a container and a file. Chapter 0 is the place to go after it.
 
-- Version: proven_c_lib-v0.121.0 | Standard: C23 | License: MIT
+- Version: proven_c_lib-v0.121.1 | Standard: C23 | License: MIT
 - Versions are semantic, `MAJOR.MINOR.PATCH`, from v0.0.1 (2026-09-04); the releases before it carry
   date-based numbers (`v26.MM.DDx`) and stay as they were published.
 - Seven functions named `*_internal` or `*_impl` sit in public headers because macros call them;
@@ -407,10 +407,13 @@ that was true. The aim is wider now, but two things have not changed. It still m
 library: it does not want your `main`, has no global state, starts no threads, registers no
 `atexit` handler, and allocates nothing you did not hand it an allocator for, so one module or
 all of them can sit beside whatever else you already link. And it still stands on the C library
-in places: the default allocator is `malloc`, `aligned_alloc`, `realloc` and `free`; `memcpy`,
-`memmove` and `memset` are called (by the compiler, too, in freestanding builds); the program
-starts through the C runtime; and threads are the platform's (`pthread` on POSIX). Files,
-consoles, time, sockets and randomness go to the operating system directly, not through stdio.
+in places, mainly these: the default allocator is `malloc`, `calloc`, `realloc` and `free`
+(`aligned_alloc` or `posix_memalign` for wider alignment); `memcpy`, `memmove`, `memset`,
+`memcmp`, `memchr` and `strlen` are called (the first four by the compiler, too, in freestanding
+builds); `getenv`, `remove`, `rename` and `errno` are used; the program starts through the C
+runtime; and threads are the platform's (`pthread` on POSIX). Files, consoles, time, sockets and
+randomness do not go through stdio: they are system calls, made on POSIX through the C library's
+thin wrappers (`open`, `read`, `socket`, ...).
 
 **To make sturdier C easier to write - for a person, and for a person working with an AI.** Explicit is more
 verbose, and that is the trade. What it buys is that every important fact is *local*: whether a
@@ -420,8 +423,8 @@ language model reliably reconstructs from surrounding code - and it is why the d
 gated by the build rather than kept up to date by intention.
 
 **To test whether modern C actually holds up.** That is the honest third reason. This is a
-working experiment in whether C23, used deliberately and without a framework, can carry a real
-support layer - and the experiment is run in public: every design decision is an RFC in
+working experiment in whether C23, used deliberately and without a framework, can carry a C
+library rebuilt from the bottom up - and the experiment is run in public: every design decision is an RFC in
 [`docs/`](docs/), including the ones that were wrong and got corrected.
 
 ---
@@ -443,8 +446,8 @@ support layer - and the experiment is run in public: every design decision is an
 - The build system is one C file, `nob.c`. No CMake, no Meson, no npm, no external test framework.
 
 That makes it useful for command-line tools, embedded-adjacent code, experiments that may later
-need a stricter platform boundary, and C projects that want a compact support layer without giving
-up control.
+need a stricter platform boundary, and C projects that want a modern C library without giving up
+control.
 
 ## Quick start
 

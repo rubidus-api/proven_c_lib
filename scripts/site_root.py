@@ -18,6 +18,9 @@ import json
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from site_pages import APPLY_JS, PANEL_JS, REPO, SITE_ROOT, bar_html, settings_html  # noqa: E402
+
 
 STR = {
     'en': dict(name='English', contents='Contents', pdf='PDF', read='Read the English manual'),
@@ -62,6 +65,12 @@ def edition(lang, data):
 
 def page(version, editions):
     switch = ' · '.join('<a href="#%s">%s</a>' % (lang, STR[lang]['name']) for lang in ORDER)
+    # The same menu bar as every page of the manual and the site's landing page (the site's design rule N-W2):
+    # the two editions are the items, and the menu holds the settings (N-W4).
+    items = [('English', '#en', ''), ('한국어', '#ko', ''), ('Repo', REPO, 'This project on GitHub'),
+             ('rubidus-api', SITE_ROOT, 'rubidus-api.github.io — every published project')]
+    inner = settings_html('en') + '<p class="ver">%s</p>' % html.escape(version)
+    menubar = bar_html('en', 'proven_c_lib', '#top', items, inner, SITE_ROOT)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -69,6 +78,7 @@ def page(version, editions):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>proven_c_lib — manual</title>
 <link rel="stylesheet" href="en/manual.css">
+<script>{APPLY_JS}</script>
 <style>
 /* Landing-page only: two editions on one page, each a full table of contents. */
 .edition {{ margin-top:2.6rem; }}
@@ -78,13 +88,15 @@ def page(version, editions):
 nav.contents {{ margin-top:1.2rem; }}
 </style>
 </head>
-<body>
+<body id="top">
+{menubar}
 <div class="page"><main id="content"><div class="content">
 <h1>proven_c_lib</h1>
 <div class="masthead">{html.escape(version)} · the manual, generated from the Markdown sources in the repository</div>
 <p class="switch">{switch}</p>
 {editions}
 </div></main></div>
+<script>{PANEL_JS}</script>
 </body>
 </html>
 """

@@ -1,4 +1,4 @@
-**한국어** | [English](README.md) — **Proven C library v0.121.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.0/proven_c_lib-v0.121.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.0/proven_c_lib-v0.121.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.0/proven_c_lib-v0.121.0-ko-manual.pdf)
+**한국어** | [English](README.md) — **Proven C library v0.121.1** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.1/proven_c_lib-v0.121.1.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.1/proven_c_lib-v0.121.1-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.1/proven_c_lib-v0.121.1-ko-manual.pdf)
 
 # Proven C library
 
@@ -35,7 +35,7 @@ C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도
 짧은 프로그램 아홉 개가 출력, 길이를 아는 문자열, 값으로 오는 오류, allocator, arena, 컨테이너, 파일을
 하나씩 더해 갑니다. 다 읽은 뒤에는 0장으로 가면 됩니다.
 
-- 버전: proven_c_lib-v0.121.0 · 표준: C23 · 라이선스: MIT
+- 버전: proven_c_lib-v0.121.1 · 표준: C23 · 라이선스: MIT
 - 버전은 시맨틱 버전 `MAJOR.MINOR.PATCH`이며 v0.0.1(2026-09-04)부터 시작합니다. 그 이전 릴리스는
   날짜 기반 번호(`v26.MM.DDx`)이고, 발표된 그대로 둡니다.
 - `*_internal`이나 `*_impl`로 끝나는 함수 일곱 개는 매크로가 호출하기 때문에 공개 헤더에 있습니다.
@@ -384,10 +384,12 @@ Luca Sas의 ACCU 2021 발표 **Modern C and What We Can Learn From It**
 당신의 `main`을 차지하려 하지 않고, 전역 상태가 없고, 스레드를 띄우지 않으며, `atexit` 핸들러를
 등록하지 않고, 당신이 allocator를 건네지 않은 것은 아무것도 할당하지 않습니다. 그래서 모듈 하나든
 전부든, 이미 링크하고 있는 무엇과도 나란히 둘 수 있습니다. 다음으로, 여전히 곳곳에서 C 라이브러리에
-기대고 있습니다. 기본 allocator는 `malloc`, `aligned_alloc`, `realloc`, `free`입니다. `memcpy`,
-`memmove`, `memset`을 부르고, freestanding 빌드에서는 컴파일러도 이것들을 부릅니다. 프로그램은 C
-런타임을 거쳐 시작하고, 스레드는 플랫폼의 것(POSIX에서는 `pthread`)입니다. 파일, 콘솔, 시간, 소켓,
-난수는 stdio를 거치지 않고 운영체제로 바로 갑니다.
+기대고 있습니다. 주된 것은 이렇습니다. 기본 allocator는 `malloc`, `calloc`, `realloc`, `free`이고 더 큰
+정렬에는 `aligned_alloc`이나 `posix_memalign`을 씁니다. `memcpy`, `memmove`, `memset`, `memcmp`,
+`memchr`, `strlen`을 부르고, freestanding 빌드에서는 앞의 넷을 컴파일러도 부릅니다. `getenv`,
+`remove`, `rename`, `errno`도 씁니다. 프로그램은 C 런타임을 거쳐 시작하고, 스레드는 플랫폼의
+것(POSIX에서는 `pthread`)입니다. 파일, 콘솔, 시간, 소켓, 난수는 stdio를 거치지 않습니다. 시스템 호출이며,
+POSIX에서는 C 라이브러리의 얇은 래퍼(`open`, `read`, `socket`, ...)를 거쳐 부릅니다.
 
 **더 단단한 C를 더 쉽게 쓰도록 — 사람에게도, AI와 함께 일하는 사람에게도.** 명시적인 쪽이 더 장황하며, 그것이
 거래입니다. 그 대가로 얻는 것은 중요한 사실이 전부 **국소적**이라는 점입니다 — 어떤 호출이 할당하는지는
@@ -396,7 +398,7 @@ Luca Sas의 ACCU 2021 발표 **Modern C and What We Can Learn From It**
 게이트로 지키는 이유이기도 합니다.
 
 **모던 C가 실제로 버티는지 시험하기 위해서.** 정직하게 말하면 이것이 세 번째 이유입니다. C23을 프레임워크
-없이 의도적으로 썼을 때 진짜 지원 계층을 감당할 수 있는지에 대한 살아 있는 실험이고, 그 실험은 공개로
+없이 의도적으로 썼을 때 밑바닥부터 다시 쌓은 C 라이브러리를 감당할 수 있는지에 대한 살아 있는 실험이고, 그 실험은 공개로
 진행됩니다. 모든 설계 결정이 [`docs/`](docs/)의 RFC로 남아 있습니다 — 틀렸다가 정정된 것들까지 포함해서.
 
 ---
@@ -415,7 +417,7 @@ Luca Sas의 ACCU 2021 발표 **Modern C and What We Can Learn From It**
 - 빌드 시스템은 C 파일 하나, `nob.c`입니다. CMake도, Meson도, npm도, 외부 테스트 프레임워크도 없습니다.
 
 그래서 명령줄 도구, 임베디드에 가까운 코드, 나중에 더 엄격한 플랫폼 경계가 필요해질 수 있는 실험
-코드, 그리고 제어를 포기하지 않으면서 간결한 지원 계층을 원하는 C 프로젝트에 쓸 만합니다.
+코드, 그리고 제어를 포기하지 않으면서 현대적인 C 라이브러리를 원하는 C 프로젝트에 쓸 만합니다.
 
 ## 빠른 시작
 
