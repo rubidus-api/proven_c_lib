@@ -1,6 +1,7 @@
 #include "proven.h"
 #include "proven_test.h"
 #include "../net/src/proven_internal_http_event.h"
+#include "../net/src/proven_internal_h2.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -216,6 +217,35 @@ static proven_h2_conn_t *opened(const proven_h2_config_t *cfg) {
     drain(c, &seen);
     PROVEN_TEST_ASSERT(seen.settings == 1 && seen.acks == 1, "a connection opens with its settings and acknowledges the peer's", "");
     return c;
+}
+
+/* A server whose application answers every request with a body that never ends, offered
+ * whenever it may send: what a peer's windows make of it. Returns whether the connection ended,
+ * with its code. */
+typedef struct { int closed; proven_u32 code; long data_frames, small; } feeder_t;
+static void serve_endless(proven_h2_conn_t *c, const proven_byte_t *p, proven_size_t n, feeder_t *f) {
+    static const proven_byte_t body[16384];
+    proven_size_t pos = 0;
+    while (!f->closed) {
+        proven_size_t used = 0;
+        proven_h2_event_t ev;
+        if (proven_h2_conn_feed(c, (proven_mem_view_t){ n ? p + pos : (void *)0, n - pos }, &used, &ev) != PROVEN_OK) break;
+        pos += used;
+        if (ev.kind == PROVEN_H2_EVENT_CLOSED) { f->closed = 1; f->code = ev.code; break; }
+        if (ev.kind == PROVEN_H2_EVENT_HEADERS && ev.end_stream) {
+            PROVEN_TEST_ASSERT(proven_h2_conn_submit_response(c, ev.stream_id, OK200, 2, false) == PROVEN_OK, "a request is answered", "");
+            (void)proven_h2_conn_send_data(c, ev.stream_id, (proven_mem_view_t){ body, sizeof body }, false);
+        }
+        if (ev.kind == PROVEN_H2_EVENT_STREAM_WRITABLE) (void)proven_h2_conn_send_data(c, ev.stream_id, (proven_mem_view_t){ body, sizeof body }, false);
+        if (ev.kind == PROVEN_H2_EVENT_NONE && pos == n) break;
+    }
+    proven_mem_view_t out = proven_h2_conn_pending_output(c);
+    for (proven_size_t i = 0; i + 9 <= out.size;) {
+        const proven_size_t len = (proven_size_t)out.ptr[i] << 16 | (proven_size_t)out.ptr[i + 1] << 8 | out.ptr[i + 2];
+        if (out.ptr[i + 3] == PROVEN_H2_DATA) { f->data_frames++; if (len < 256) f->small++; }
+        i += 9 + len;
+    }
+    proven_h2_conn_output_sent(c, out.size);
 }
 
 typedef enum { V_IGNORED, V_STREAM, V_CONN } verdict_t;
@@ -597,6 +627,43 @@ static void put_data(buf_t *b, proven_u32 id, proven_size_t n) {
         n -= k;
     }
 }
+
+/* A body lent to the engine (RFC-0053): what comes back is poisoned at once, so that an engine
+ * that read it again would send something else than the one that copied. */
+typedef struct { proven_h2_lend_t base; proven_byte_t *body; proven_size_t lent, back; } t_lend_t;
+
+static void t_returned(proven_h2_lend_t *l, proven_size_t n) {
+    t_lend_t *t = (t_lend_t *)(void *)l;
+    t->back += n;
+    PROVEN_TEST_ASSERT(t->back <= t->lent, "no more comes back than was lent", "");
+    memset(t->body, 0xEE, t->back);
+}
+
+/* Up to `k` bytes of what a connection has pending, appended to `rec` and marked as sent - read
+ * as pieces (at most four, so that the cap is met) or as the first piece only. */
+static proven_size_t t_take(proven_h2_conn_t *c, bool pieces, proven_byte_t *rec, proven_size_t *n, proven_size_t k) {
+    proven_size_t got = 0;
+    while (got < k) {
+        proven_mem_view_t parts[4];
+        proven_size_t count = 0;
+        if (pieces) count = proven_h2_conn_pending_vec_(c, parts, 4);
+        else { parts[0] = proven_h2_conn_pending_output(c); count = parts[0].size > 0; }
+        if (count == 0) break;
+        proven_size_t now = 0;
+        for (proven_size_t i = 0; i < count && got + now < k; i++) {
+            const proven_size_t m = parts[i].size < k - got - now ? parts[i].size : k - got - now;
+            PROVEN_TEST_ASSERT(parts[i].size > 0 && parts[i].ptr, "a piece has bytes", "");
+            memcpy(rec + *n, parts[i].ptr, m);
+            *n += m;
+            now += m;
+        }
+        proven_h2_conn_output_sent(c, now);
+        got += now;
+    }
+    return got;
+}
+
+static proven_byte_t g_rec_a[1 << 18], g_rec_b[1 << 18];
 
 int main(void) {
     PROVEN_TEST_SUITE("h2_conn: an HTTP/2 connection without a socket",
@@ -1490,6 +1557,188 @@ int main(void) {
         }
         g_cfg.max_buffered_output = 0;
 
+        /* The same for SETTINGS, which must each be acknowledged (CVE-2019-9515). */
+        g_cfg.max_buffered_output = 1024;
+        {
+            proven_h2_conn_t *c = opened(&g_cfg);
+            log_t log = { 0 };
+            g_buf.n = 0; put_frame(&g_buf, PROVEN_H2_SETTINGS, 0, 0, (void *)0, 0);
+            for (int i = 0; i < 113; i++) feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+            PROVEN_TEST_ASSERT(!log.closed && proven_h2_conn_pending_output(c).size == 113 * 9, "a hundred and thirteen unread acknowledgements of SETTINGS fit a bound of 1,024 bytes", "");
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+            PROVEN_TEST_ASSERT(log.closed == 1 && log.close_code == PROVEN_H2_ENHANCE_YOUR_CALM, "the next ends the connection", "");
+            proven_h2_conn_destroy(c);
+            c = opened(&g_cfg);
+            log = (log_t){ 0 };
+            for (int i = 0; i < 5000; i++) { feed(c, g_buf.b, g_buf.n, g_buf.n, &log); drain(c, (void *)0); }
+            PROVEN_TEST_ASSERT(!log.closed, "five thousand that are read are no trouble", "");
+            proven_h2_conn_destroy(c);
+            g_buf.n = 0;
+        }
+        g_cfg.max_buffered_output = 0;
+
+        /* PRIORITY is read and forgotten: a flood of it builds nothing (CVE-2019-9513). */
+        {
+            proven_h2_conn_t *c = opened(&g_cfg);
+            log_t log = { 0 };
+            g_buf.n = 0;
+            for (proven_u32 i = 0; i < 10000; i++) {
+                const proven_u32 dep = (i * 7919u) % 20001u + 1u;
+                const proven_byte_t p[5] = { (proven_byte_t)(dep >> 24), (proven_byte_t)(dep >> 16), (proven_byte_t)(dep >> 8), (proven_byte_t)dep, (proven_byte_t)i };
+                put_frame(&g_buf, PROVEN_H2_PRIORITY, 0, 2 * i + 1 == dep ? 2 * i + 3 : 2 * i + 1, p, 5);
+            }
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+            PROVEN_TEST_ASSERT(!log.closed && log.n == 0 && proven_h2_conn_stream_count(c) == 0 && proven_h2_conn_pending_output(c).size == 0,
+                "ten thousand PRIORITY frames on streams never opened: no event, no stream, nothing to send", "");
+            g_buf.n = 0;
+            put_get(&g_buf, 20003, true);
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+            PROVEN_TEST_ASSERT(!log.closed && log.headers == 1, "and a request after them is taken", "");
+            proven_h2_conn_destroy(c);
+            g_buf.n = 0;
+        }
+
+        /* Fields with nothing in them (CVE-2019-9516): an empty name is a malformed request; empty
+         * values are fields like others, each counted with its 32 bytes, so many of them pass the
+         * limit and end only their stream. */
+        {
+            proven_size_t len = block_of(GET, 4);
+            g_block[len++] = 0x00; g_block[len++] = 0x00; g_block[len++] = 0x00;
+            put_frame(&g_buf, PROVEN_H2_HEADERS, EH | ES, 1, g_block, len);
+        }
+        verdict("a field with an empty name is PROTOCOL_ERROR for the stream", V_STREAM, PROVEN_H2_PROTOCOL_ERROR);
+        {
+            proven_size_t len = block_of(GET, 4);
+            for (int i = 0; i < 100; i++) { g_block[len++] = 0x00; g_block[len++] = 0x01; g_block[len++] = 'x'; g_block[len++] = 0x00; }
+            put_frame(&g_buf, PROVEN_H2_HEADERS, EH | ES, 1, g_block, len);
+        }
+        verdict("a hundred fields with empty values are taken", V_IGNORED, 0);
+        {
+            proven_size_t len = block_of(GET, 4);
+            for (int i = 0; i < 600; i++) { g_block[len++] = 0x00; g_block[len++] = 0x01; g_block[len++] = 'x'; g_block[len++] = 0x00; }
+            put_frame(&g_buf, PROVEN_H2_HEADERS, EH | ES, 1, g_block, len);
+            put_get(&g_buf, 3, true);
+        }
+        verdict("six hundred are over 16 KiB as HPACK counts them: PROTOCOL_ERROR for that stream only", V_STREAM, PROVEN_H2_PROTOCOL_ERROR);
+
+        /* An empty HEADERS frame without END_HEADERS starts the same count as empty CONTINUATIONs (CVE-2019-9518). */
+        put_frame(&g_buf, PROVEN_H2_HEADERS, 0, 1, (void *)0, 0);
+        for (int i = 0; i < 15; i++) put_frame(&g_buf, PROVEN_H2_CONTINUATION, 0, 1, g_zero, 0);
+        { proven_size_t len = block_of(GET, 4); put_frame(&g_buf, PROVEN_H2_CONTINUATION, EH, 1, g_block, len); }
+        verdict("an empty HEADERS and fifteen empty CONTINUATIONs, then the block: taken", V_IGNORED, 0);
+        put_frame(&g_buf, PROVEN_H2_HEADERS, 0, 1, (void *)0, 0);
+        for (int i = 0; i < 16; i++) put_frame(&g_buf, PROVEN_H2_CONTINUATION, 0, 1, g_zero, 0);
+        verdict("an empty HEADERS and sixteen empty CONTINUATIONs end the connection", V_CONN, PROVEN_H2_ENHANCE_YOUR_CALM);
+
+        /* Resets this side is made to send (CVE-2025-8671, "MadeYouReset") count as the peer's own. */
+        for (proven_u32 i = 0; i < 101; i++) { put_get(&g_buf, 2 * i + 1, false); put_u32_frame(&g_buf, PROVEN_H2_WINDOW_UPDATE, 2 * i + 1, 0); }
+        verdict("a hundred and one streams each made to fail by a WINDOW_UPDATE of zero end the connection", V_CONN, PROVEN_H2_ENHANCE_YOUR_CALM);
+        for (proven_u32 i = 0; i < 101; i++) { put_get(&g_buf, 2 * i + 1, true); put_frame(&g_buf, PROVEN_H2_DATA, 0, 2 * i + 1, "x", 1); }
+        verdict("and so do a hundred and one requests each followed by DATA after their END_STREAM", V_CONN, PROVEN_H2_ENHANCE_YOUR_CALM);
+        for (proven_u32 i = 0; i < 60; i++) { put_get(&g_buf, 2 * i + 1, true); put_frame(&g_buf, PROVEN_H2_DATA, 0, 2 * i + 1, "x", 1); }
+        verdict("sixty are borne, each its stream's error", V_STREAM, PROVEN_H2_STREAM_CLOSED);
+
+        /* Windows opened a byte at a time for every stream at once (CVE-2019-9511, "data dribble"):
+         * each SETTINGS frame that raises INITIAL_WINDOW_SIZE by one gets a one-byte DATA frame
+         * on every waiting stream. Small frames a window cut, less the frames the peer sends, are
+         * allowed four a stream and 64 more: 464 at a hundred streams. */
+        g_cfg.max_concurrent_streams = 100;
+        for (int balanced = 0; balanced < 2; balanced++) {
+            proven_h2_conn_t *c = conn_new(&g_cfg);
+            feeder_t f = { 0 };
+            g_buf.n = 0;
+            memcpy(g_buf.b, PROVEN_H2_PREFACE, 24); g_buf.n = 24;
+            put_setting(&g_buf, PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, 0);
+            put_frame(&g_buf, PROVEN_H2_SETTINGS, PROVEN_H2_FLAG_ACK, 0, (void *)0, 0);
+            put_u32_frame(&g_buf, PROVEN_H2_WINDOW_UPDATE, 0, 0x7fffffffu - 65535u);
+            for (proven_u32 i = 0; i < 100; i++) put_get(&g_buf, 2 * i + 1, true);
+            serve_endless(c, g_buf.b, g_buf.n, &f);
+            PROVEN_TEST_ASSERT(!f.closed && f.data_frames == 0, "a hundred requests answered, nothing sent: the windows are 0", "");
+            int raises = 0;
+            for (proven_u32 w = 1; w <= 40 && !f.closed; w++, raises++) {
+                g_buf.n = 0;
+                if (balanced) for (proven_u32 i = 0; i < 100; i++) put_u32_frame(&g_buf, PROVEN_H2_WINDOW_UPDATE, 2 * i + 1, 1);
+                else put_setting(&g_buf, PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, w);
+                serve_endless(c, g_buf.b, g_buf.n, &f);
+            }
+            if (!balanced)
+                PROVEN_TEST_ASSERT(f.closed && f.code == PROVEN_H2_ENHANCE_YOUR_CALM && raises <= 5 && f.small >= 400,
+                    "a peer that raises INITIAL_WINDOW_SIZE by one, a frame at a time, is ended with ENHANCE_YOUR_CALM within five frames", "");
+            else
+                PROVEN_TEST_ASSERT(!f.closed && f.small == 4000,
+                    "one that opens each stream's window with a WINDOW_UPDATE of its own gets as many one-byte frames as it asks for: four thousand, and goes on", "");
+            proven_h2_conn_destroy(c);
+            g_buf.n = 0;
+        }
+        /* Pieces the application offers that are small are not cut by a window, and never count. */
+        {
+            proven_h2_conn_t *c = opened(&g_cfg);
+            log_t log = { 0 };
+            g_buf.n = 0; put_get(&g_buf, 1, true);
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+            PROVEN_TEST_ASSERT(proven_h2_conn_submit_response(c, 1, OK200, 2, false) == PROVEN_OK, "a response begun", "");
+            int taken = 0;
+            for (int i = 0; i < 3000; i++) { if (proven_h2_conn_send_data(c, 1, (proven_mem_view_t){ g_zero, 10 }, false).value == 10) taken++; drain(c, (void *)0); }
+            PROVEN_TEST_ASSERT(taken == 3000 && !proven_h2_conn_is_closed(c), "three thousand ten-byte pieces, as an event stream writes them, all go", "");
+            proven_h2_conn_destroy(c);
+            g_buf.n = 0;
+        }
+
+        /* A change of INITIAL_WINDOW_SIZE moves every open stream (CVE-2020-11080): thirty-two
+         * changes' worth with every allowed stream open, and a stream that ends properly gives
+         * back sixteen moves. Entries that change nothing cost nothing. */
+        g_cfg.max_concurrent_streams = 50;
+        {
+            proven_h2_conn_t *c = opened(&g_cfg);
+            log_t log = { 0 };
+            g_buf.n = 0;
+            for (proven_u32 i = 0; i < 50; i++) put_get(&g_buf, 2 * i + 1, false);
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+            g_buf.n = 0;
+            for (int i = 0; i < 1000; i++) put_setting(&g_buf, PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, 65535);
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log); drain(c, (void *)0);
+            PROVEN_TEST_ASSERT(!log.closed, "a thousand entries that change nothing are borne", "");
+            g_buf.n = 0;
+            for (int i = 0; i < 32; i++) put_setting(&g_buf, PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, 65534 + (proven_u32)(i & 1));
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log); drain(c, (void *)0);
+            PROVEN_TEST_ASSERT(!log.closed, "thirty-two changes with fifty streams open: 1,600 moves, the allowance", "");
+            g_buf.n = 0; put_setting(&g_buf, PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, 65534);
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+            PROVEN_TEST_ASSERT(log.closed == 1 && log.close_code == PROVEN_H2_ENHANCE_YOUR_CALM, "the thirty-third ends the connection", "");
+            proven_h2_conn_destroy(c);
+            g_buf.n = 0;
+        }
+        {
+            g_cfg.max_concurrent_streams = 60;
+            proven_h2_conn_t *c = opened(&g_cfg);
+            log_t log = { 0 };
+            g_buf.n = 0;
+            for (proven_u32 i = 0; i < 60; i++) put_get(&g_buf, 2 * i + 1, false);
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+            g_buf.n = 0;
+            for (int i = 0; i < 32; i++) put_setting(&g_buf, PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, 65534 + (proven_u32)(i & 1));
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log); drain(c, (void *)0);
+            PROVEN_TEST_ASSERT(!log.closed, "thirty-two changes with sixty streams open: 1,920 moves, the allowance", "");
+            /* ten of the sixty finish properly: a hundred and sixty moves back */
+            for (proven_u32 i = 0; i < 10; i++) {
+                g_buf.n = 0; put_frame(&g_buf, PROVEN_H2_DATA, ES, 2 * i + 1, "x", 1);
+                feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+                PROVEN_TEST_ASSERT(proven_h2_conn_submit_response(c, 2 * i + 1, OK200, 2, true) == PROVEN_OK, "and is answered", "");
+                drain(c, (void *)0);
+            }
+            PROVEN_TEST_ASSERT(proven_h2_conn_stream_count(c) == 50, "fifty are left", "");
+            g_buf.n = 0;
+            for (int i = 0; i < 3; i++) put_setting(&g_buf, PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, 65534 + (proven_u32)(i & 1));   /* from 65535: 65534, 65535, 65534 */
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log); drain(c, (void *)0);
+            PROVEN_TEST_ASSERT(!log.closed, "three changes with fifty open fit what came back (1,760 + 150)", "");
+            g_buf.n = 0; put_setting(&g_buf, PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE, 65535);
+            feed(c, g_buf.b, g_buf.n, g_buf.n, &log);
+            PROVEN_TEST_ASSERT(log.closed == 1 && log.close_code == PROVEN_H2_ENHANCE_YOUR_CALM, "the fourth (1,960) ends the connection with ENHANCE_YOUR_CALM", "");
+            proven_h2_conn_destroy(c);
+            g_buf.n = 0;
+        }
+        g_cfg.max_concurrent_streams = 0;
+
         /* Output for a peer that does not read: the application is refused, the connection lives. */
         {
             static pair_t p;
@@ -2169,6 +2418,93 @@ int main(void) {
         proven_h2_conn_destroy(c);
     }
 
+
+    PROVEN_TEST_SECTION("bodies lent", "proven_h2_conn_send_data_ref_ (RFC-0053, internal): a server whose bodies are lent sends what one that copies them sends, byte for byte, read a byte at a time, 9 at a time and 4,096 at a time, as pieces and as first pieces, with pings and a reset between; every lent byte comes back once, after it was sent, and what is lent and never sent comes back when the connection is destroyed.", "Check proven_h2c_seg_t and its users in net/src/h2_conn.c: h2c_rebase in h2c_out_reserve, proven_h2_conn_output_sent's walk, proven_h2_conn_pending_vec_ and proven_h2_conn_destroy.");
+    {
+        static const proven_size_t sizes[4] = { 1, 16384, 16385, 40000 };
+        static const proven_u32 ids[4] = { 1, 3, 5, 7 };
+        static const proven_size_t steps[3] = { 1, 9, 4096 };
+        static proven_byte_t src[4][40000];
+        for (int k = 0; k < 4; k++) for (proven_size_t i = 0; i < sizes[k]; i++) src[k][i] = pat(ids[k], i, 7);
+        const proven_size_t blocks0 = g_mem.blocks;
+        for (int v = 0; v < 3; v++) {
+            proven_h2_config_t sc = base; sc.server = true;
+            proven_h2_conn_t *ca = opened(&sc), *cb = opened(&sc);
+            g_buf.n = 0;
+            for (int k = 0; k < 4; k++) put_get(&g_buf, ids[k], true);
+            log_t la = { 0 }, lb = { 0 };
+            feed(ca, g_buf.b, g_buf.n, g_buf.n, &la);
+            feed(cb, g_buf.b, g_buf.n, g_buf.n, &lb);
+            PROVEN_TEST_ASSERT(la.err == PROVEN_OK && lb.err == PROVEN_OK, "both servers take the four requests", "");
+            t_lend_t lend[4];
+            proven_size_t off_a[4] = { 0 }, off_b[4] = { 0 };
+            for (int k = 0; k < 4; k++) {
+                lend[k] = (t_lend_t){ .base = { .returned = t_returned }, .body = malloc(sizes[k]) };
+                memcpy(lend[k].body, src[k], sizes[k]);
+                PROVEN_TEST_ASSERT(proven_h2_conn_submit_response(ca, ids[k], OK200, 2, false) == PROVEN_OK
+                    && proven_h2_conn_submit_response(cb, ids[k], OK200, 2, false) == PROVEN_OK, "both answer", "");
+            }
+            proven_size_t na = 0, nb = 0;
+            bool same = true;
+            for (int round = 0; round < 12; round++) {
+                for (int k = 0; k < 4; k++) {
+                    /* In pieces of 7,000: the last with the end. */
+                    if (off_a[k] == sizes[k] && off_b[k] == sizes[k]) continue;
+                    const proven_size_t want = sizes[k] - off_a[k] < 7000 ? sizes[k] - off_a[k] : 7000;
+                    const bool end = off_a[k] + want == sizes[k];
+                    proven_result_size_t ra = proven_h2_conn_send_data(ca, ids[k], (proven_mem_view_t){ src[k] + off_a[k], want }, end);
+                    proven_result_size_t rb = proven_h2_conn_send_data_ref_(cb, ids[k], (proven_mem_view_t){ lend[k].body + off_b[k], want }, end, &lend[k].base);
+                    if (ra.err != rb.err || ra.value != rb.value) same = false;
+                    if (rb.err == PROVEN_OK) { lend[k].lent += rb.value; off_b[k] += rb.value; }
+                    if (ra.err == PROVEN_OK) off_a[k] += ra.value;
+                }
+                if (round == 3) {
+                    const proven_byte_t eight[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+                    PROVEN_TEST_ASSERT(proven_h2_conn_ping(ca, eight) == PROVEN_OK && proven_h2_conn_ping(cb, eight) == PROVEN_OK, "a ping between", "");
+                }
+                if (round == 5) PROVEN_TEST_ASSERT(proven_h2_conn_reset(ca, 7, PROVEN_H2_CANCEL) == PROVEN_OK && proven_h2_conn_reset(cb, 7, PROVEN_H2_CANCEL) == PROVEN_OK, "a reset between, of the stream the windows keep open", "");
+                if (proven_h2_conn_pending_bytes_(ca) != proven_h2_conn_pending_bytes_(cb)) same = false;
+                /* Some of it goes, not all. */
+                for (int t = 0; t < 3; t++) {
+                    const proven_size_t ka = t_take(ca, false, g_rec_a, &na, steps[v] * 5);
+                    const proven_size_t kb = t_take(cb, (t + round) % 2 == 0, g_rec_b, &nb, steps[v] * 5);
+                    (void)ka; (void)kb;
+                }
+            }
+            /* The rest, `step` at a time. */
+            for (int t = 0; proven_h2_conn_pending_bytes_(ca) + proven_h2_conn_pending_bytes_(cb) > 0 && t < 1000000; t++) {
+                (void)t_take(ca, false, g_rec_a, &na, steps[v]);
+                (void)t_take(cb, t % 3 != 0, g_rec_b, &nb, steps[v]);
+            }
+            PROVEN_TEST_ASSERT(same, "each call takes as much from a lent body as from a copied one, and the same is pending", "");
+            PROVEN_TEST_ASSERT(na == nb && na > 30000 && memcmp(g_rec_a, g_rec_b, na) == 0, "the lent bodies go out byte for byte as the copied ones", "");
+            for (int k = 0; k < 4; k++) PROVEN_TEST_ASSERT(lend[k].back == lend[k].lent, "every lent byte came back once it was sent", "");
+            PROVEN_TEST_ASSERT(off_b[3] < sizes[3], "the windows cut the last body short: not all of it was lent", "");
+            proven_h2_conn_destroy(ca);
+            proven_h2_conn_destroy(cb);
+            for (int k = 0; k < 4; k++) free(lend[k].body);
+        }
+        /* Lent and not sent: back when the connection goes. */
+        proven_h2_config_t sc = base; sc.server = true;
+        proven_h2_conn_t *c = opened(&sc);
+        g_buf.n = 0; put_get(&g_buf, 1, true);
+        log_t l = { 0 };
+        feed(c, g_buf.b, g_buf.n, g_buf.n, &l);
+        t_lend_t one = { .base = { .returned = t_returned }, .body = malloc(30000) };
+        PROVEN_TEST_ASSERT(proven_h2_conn_submit_response(c, 1, OK200, 2, false) == PROVEN_OK, "a response", "");
+        proven_result_size_t r = proven_h2_conn_send_data_ref_(c, 1, (proven_mem_view_t){ one.body, 30000 }, true, &one.base);
+        one.lent = r.value;
+        PROVEN_TEST_ASSERT(r.err == PROVEN_OK && r.value == 30000 && proven_h2_conn_pending_bytes_(c) > 30000, "30,000 bytes lent and pending", "");
+        proven_size_t n = 0;
+        (void)t_take(c, true, g_rec_a, &n, 100);
+        PROVEN_TEST_ASSERT(one.back < 100, "a part of it sent", "");
+        PROVEN_TEST_ASSERT(proven_h2_conn_send_data_ref_(c, 1, (proven_mem_view_t){ one.body, 1 }, false, (void *)0).err == PROVEN_ERR_INVALID_ARG,
+            "bytes lent with no one to give them back to are refused", "");
+        proven_h2_conn_destroy(c);
+        PROVEN_TEST_ASSERT(one.back == 30000, "and the rest comes back when the connection is destroyed", "");
+        free(one.body);
+        PROVEN_TEST_ASSERT(g_mem.blocks == blocks0, "the connections gave back all they took", "");
+    }
 
     PROVEN_TEST_SECTION("memory", "What an idle connection keeps, what a stream costs, and that an allocation failing anywhere is survived.", "Check the release at the end of proven_h2_conn_feed and the paths that set `oom`.");
     {

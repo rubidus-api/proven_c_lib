@@ -579,6 +579,22 @@ proven_size_t proven_http_stream_buffered(const proven_http_stream_t *stream);
 대신 써 주며 `headers`에 들어 있어서는 안 된다. `on_request` 안에서, 또는 스트림이 유효한 동안 그
 뒤 어느 때든 루프의 스레드에서 부를 수 있다.
 
+**복사 없이 빌려주기.** `proven_http_stream_respond_borrowed`는 같은 인자를 받고 본문을 복사하지
+않는다. 본문은 그 스트림의 `on_done`까지 유효하고 바뀌지 않아야 한다. 평문 HTTP/2에서는 바이트가
+여러분의 메모리에서 바로 소켓으로 가고, `on_done`은 서버가 더는 그 바이트를 쓰지 않을 때 - 마지막
+바이트를 쓴 뒤, 또는 연결이 사라졌을 때 - 온다. 응답이 끝난 시점보다 늦을 수 있다. HTTP/1.1, TLS,
+HTTP/3, 압축된 응답에서는 `proven_http_stream_respond`처럼 복사하며 규칙은 같다. 본문이 어차피
+응답보다 오래 사는 경우 - 매핑한 파일, 캐시한 페이지, `on_done`에서 해제하는 버퍼 - 에 쓴다.
+
+```c
+/* A page that lives as long as the server - cached once, lent to every response that sends it. */
+static const proven_byte_t page[] = "<!doctype html><title>cached</title>";
+proven_http_stream_t *stream = (void *)0;    /* in a handler: the stream on_request was given */
+proven_err_t e = proven_http_stream_respond_borrowed(stream, 200, (void *)0, 0,
+                                                    (proven_mem_view_t){ page, sizeof page - 1 });
+(void)e;                                      /* here PROVEN_ERR_INVALID_ARG: there is no stream */
+```
+
 **조각조각.** `proven_http_stream_begin`은 헤드를 보내고 `content_length` 바이트의 본문을, 또는 -
 `PROVEN_HTTP_EVENT_LENGTH_UNKNOWN`을 주면 - 아직 아무도 길이를 모르는, chunked로 보내는 본문을
 약속한다. 그다음 `proven_http_stream_write`가 바이트를 내놓고 `proven_http_stream_end`가 끝낸다.

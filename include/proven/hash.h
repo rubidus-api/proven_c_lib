@@ -15,6 +15,7 @@
  * | hashing keys into YOUR OWN hash table, trusted input | `proven_hash_bytes` (FNV-1a) | fast; a cryptographic hash would be 50x slower for no benefit |
  * | hashing keys from UNTRUSTED input into a table | `proven_hash_keyed` (SipHash-2-4) | FNV lets an attacker collide every key into one bucket and turn your O(1) table into O(n^2) |
  * | checking data did not get CORRUPTED in transit or on disk | `proven_crc32` | a checksum, not a hash; interoperates with gzip/zlib/PNG, which all use this exact CRC |
+ * | the same, for xz's check or a longer CRC | `proven_crc64` | CRC-64/XZ (ECMA-182), as xz and its `.xz` files carry it |
  * | fingerprinting content: dedup, content-addressing, "are these two files the same" | `proven_sha256` - in proven_crypto's `sha2.h` since v0.113.0 | the only one safe against a deliberately-constructed collision |
  *
  * The line that matters most: **CRC-32 and FNV are not security functions.** They detect
@@ -101,5 +102,25 @@ proven_u32 proven_crc32(proven_mem_view_t data);
  */
 [[nodiscard]]
 proven_u32 proven_crc32_update(proven_u32 crc, proven_mem_view_t data);
+
+/**
+ * @brief CRC-64/XZ of a byte range (since v0.120.0).
+ *
+ * ECMA-182's polynomial, reflected (0xC96C5795D7870F42), with the register started and ended
+ * inverted: the check xz writes into `.xz` files. "123456789" gives 0x995DC9BBDF1939FA. Like
+ * CRC-32 it detects accidents, never attacks.
+ *
+ * Where the processor has a carry-less multiply (PCLMULQDQ, PMULL), long inputs are folded with
+ * it, as for CRC-32; the result is the same on every target.
+ */
+[[nodiscard]]
+proven_u64 proven_crc64(proven_mem_view_t data);
+
+/**
+ * @brief Streaming CRC-64/XZ: start from 0, feed each result back in; the final value equals
+ *        proven_crc64 over the concatenation (since v0.120.0).
+ */
+[[nodiscard]]
+proven_u64 proven_crc64_update(proven_u64 crc, proven_mem_view_t data);
 
 #endif /* PROVEN_HASH_H */

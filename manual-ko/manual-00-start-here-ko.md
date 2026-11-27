@@ -332,14 +332,15 @@ gcc -std=c2x -Iinclude -Iplatform your_program.c src/proven/*.c platform/*.c -o 
 전부 거기에 있고 다른 어디에도 없으며, 그래서 나머지 라이브러리를 운영체제가 전혀 없는 대상용으로
 컴파일할 수 있습니다.
 
-이것이 기본 라이브러리 **proven_base**입니다. 그 위에 라이브러리 셋이 더 있고, 프로그램이 쓸 때 함께
-컴파일합니다. `crypto/` 아래의 **proven_crypto** - SHA-2, HMAC, 암호, 키 교환, 서명, DER, 인증서 - 와
+이것이 기본 라이브러리 **proven_base**입니다. 그 위에 라이브러리 넷이 더 있고, 프로그램이 쓸 때 함께
+컴파일합니다. `math/` 아래의 **proven_math** - `float_ops.h`와 `float_math.h`, 모든 타깃에서 같은 비트를 내는
+부동소수점 연산과 `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2`(8장) - 는 아래 둘처럼 base 위에만 섭니다. `crypto/` 아래의 **proven_crypto** - SHA-2, HMAC, 암호, 키 교환, 서명, DER, 인증서 - 와
 `codec/` 아래의 **proven_codec** - DEFLATE/gzip, Zstandard, Brotli - 은 v0.113.0부터, `net/` 아래의
 **proven_net** - 소켓, 이벤트 루프, TLS, HTTP/1.1·2·3, WebSocket, server-sent events(9~12장, 14장,
 15장, 17장) - 은 v0.111.0부터이며, 나머지 둘 위에 섭니다.
 
 ```text
-gcc -std=c2x -Iinclude -Iplatform -Icrypto/include -Icodec/include -Inet/include your_program.c src/proven/*.c platform/*.c crypto/src/*.c crypto/platform/*.c codec/src/*.c codec/platform/*.c net/src/*.c net/platform/*.c -o your_program
+gcc -std=c2x -Iinclude -Iplatform -Icrypto/include -Icodec/include -Inet/include -Imath/include your_program.c src/proven/*.c platform/*.c crypto/src/*.c crypto/platform/*.c codec/src/*.c codec/platform/*.c net/src/*.c net/platform/*.c math/src/*.c math/src/cm/*.c -o your_program
 ```
 
 헤더 이름은 같고(`#include "proven/sign.h"`, `#include "proven/http.h"`), 디렉터리가 경로에 있으면
@@ -977,6 +978,8 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `scan.h` | 구조적 scanner와 타입 있는 scan 목적지 | 챕터 3 |
 | `float_parse.h` | 로케일 없는 십진수·16진수 → `double`/`float` 파서 (`proven_strtod`, `proven_parse_double_ascii`) | 챕터 8 |
 | `float_format.h` | `double`/`float` → 십진수 formatter (고정 `%f`/`%e`, shortest) | 챕터 8 |
+| `float_ops.h` | 모든 타깃에서 같은 비트를 내는 binary64·binary32 연산: `add`/`sub`/`mul`/`div`/`fma`, 비교, `sqrt`, `floor`/`ceil`/`trunc`/`round`/`rint`, `fmod`, `frexp`/`ldexp`, 정수·binary32 변환, 분류; 명령 또는 정수 구현, FPU 없이도 | 챕터 8 |
+| `float_math.h` | binary64·binary32 `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2`, 올바른 반올림: 모든 타깃에서 같은 비트 | 챕터 8 |
 | `float_config.h` | Float 엔진 튜닝 (`PROVEN_FLOAT_BIGINT_LIMBS`, 정밀도 상한) | 챕터 6, 8 |
 | `array.h` | 제네릭 growable 벡터 | 챕터 4 |
 | `list.h` | 침입형(intrusive) 이중 연결 리스트 | 챕터 4 |

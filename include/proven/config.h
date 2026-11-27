@@ -22,4 +22,12 @@
 #define PROVEN_CRC32_SMALL 0
 #endif
 
+/*
+ * PROVEN_CRC64_SMALL does the same for CRC-64: 0 (the default) slicing-by-8 (16 KiB of
+ * read-only data), 1 the single 2 KiB table. It follows PROVEN_CRC32_SMALL unless set itself.
+ */
+#ifndef PROVEN_CRC64_SMALL
+#define PROVEN_CRC64_SMALL PROVEN_CRC32_SMALL
+#endif
+
 #endif /* PROVEN_CONFIG_H */

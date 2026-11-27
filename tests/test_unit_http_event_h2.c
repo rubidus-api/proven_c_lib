@@ -173,6 +173,12 @@ static void on_request(void *ctx, proven_http_stream_t *s, const proven_http_req
     } else if (path_starts(req, "/big/")) {
         a->total = (proven_size_t)strtoul(a->path + 5, NULL, 10);
         if (proven_http_stream_begin(s, 200, plain, 1, a->total) == PROVEN_OK) app_pump(a);
+    } else if (path_starts(req, "/borrow/")) {      /* a body of N bytes, lent (RFC-0053 phase 2): poisoned and freed in on_done */
+        const proven_size_t n = (proven_size_t)strtoul(a->path + 8, NULL, 10);
+        a->echo = malloc(n ? n : 1);
+        a->echo_cap = n;
+        for (proven_size_t i = 0; i < n; i++) a->echo[i] = pat(i);
+        if (proven_http_stream_respond_borrowed(s, 200, plain, 1, (proven_mem_view_t){ a->echo, n }) != PROVEN_OK) atomic_fetch_add(&g_dispatch_bad, 1);
     } else if (path_starts(req, "/whole/")) {       /* a body of N bytes, given whole */
         static proven_byte_t body[400000];
         if (body[1] == 0) for (proven_size_t i = 0; i < sizeof body; i++) body[i] = pat(i);
@@ -301,7 +307,9 @@ static void on_done(void *ctx, proven_http_stream_t *s, proven_err_t why) {
     else if (why == PROVEN_ERR_RESET || why == PROVEN_ERR_EOF) atomic_fetch_add(&g_done_reset, 1);
     else if (why == PROVEN_ERR_TIMEOUT) atomic_fetch_add(&g_done_timeout, 1);
     else atomic_fetch_add(&g_done_other, 1);
-    if (a) { proven_loop_timer_cancel(g_loop, &a->timer); free(a->echo); free(a); }
+    /* What the server was lent is overwritten before it goes: a byte sent after this would not
+     * be the pattern the client checks (and under ASan the free makes it a report). */
+    if (a) { proven_loop_timer_cancel(g_loop, &a->timer); if (a->echo) memset(a->echo, 0xEE, a->echo_cap); free(a->echo); free(a); }
 }
 
 /* The resume timer clears the flag just before it resumes, so that on_body can tell a
@@ -1175,6 +1183,121 @@ int main(void) {
             "two large responses side by side arrive whole and in order", tls ? "over TLS" : "in the clear");
         PROVEN_TEST_ASSERT(atomic_load(&g_reentered) == 0, "and on_writable is never called from inside the handler's own write", "");
         cl_close(&c);
+        server_stop();
+    }
+
+    PROVEN_TEST_SECTION("a body the handler lends", "proven_http_stream_respond_borrowed (RFC-0053 phase 2): the body is sent from the handler's memory, which on_done overwrites and frees - to a slow reader, several at once beside copied ones, to a client that resets the stream and one that closes the connection mid-body; over TLS it is copied.", "Check h2_respond's borrowed branch, s_finish's wait and d_fire in net/src/http_event_h2.c: on_done must not come while the engine still has lent bytes, and must come once the connection is gone.");
+    for (int tls = 0; tls < 2; tls++) {
+        const char *how = tls ? "over TLS (copied)" : "in the clear (lent)";
+        proven_http_event_server_config_t cfg = { .tls = tls ? g_server_tls : NULL };
+        proven_u16 port = server_start(cfg);
+        cl_t c;
+        PROVEN_TEST_ASSERT(cl_open_with(&c, tls ? g_client_tls : NULL, port, 1u << 30), "a client whose windows are a gigabyte", how);
+        reset_counts();
+        proven_u32 id = cl_ask(&c, "GET", "/borrow/3000000", true);
+        (void)cl_pump(&c, 20);
+        proven_time_sleep(200);                    /* it reads nothing for a while: the body waits in the engine, lent */
+        PROVEN_TEST_ASSERT(done_total() == 0, "on_done does not come while the lent body is still to be sent", how);
+        PROVEN_TEST_ASSERT(cl_wait(&c, id, 20000u * PROVEN_TEST_BULK_SCALE) && cl_res(&c, id)->end && cl_res(&c, id)->got == 3000000 && !cl_res(&c, id)->bad,
+            "then all three megabytes arrive, every byte the pattern", how);
+        PROVEN_TEST_ASSERT(settled(1) && atomic_load(&g_done_ok) == 1, "and on_done comes once, with PROVEN_OK", how);
+        /* Lent and copied side by side. */
+        proven_u32 ids[8];
+        for (int i = 0; i < 8; i++) ids[i] = cl_ask(&c, "GET", i % 2 ? "/borrow/700000" : "/whole/300000", true);
+        bool all = true;
+        for (int i = 0; i < 8; i++) all = all && cl_wait(&c, ids[i], 20000u * PROVEN_TEST_BULK_SCALE) && cl_res(&c, ids[i])->got == (proven_size_t)(i % 2 ? 700000 : 300000) && !cl_res(&c, ids[i])->bad;
+        PROVEN_TEST_ASSERT(all && settled(9), "eight at once, lent and copied in turn, arrive whole", how);
+        /* The client resets one mid-body. */
+        id = cl_ask(&c, "GET", "/borrow/20000000", true);
+        for (int i = 0; i < 200 && cl_res(&c, id)->got < 100000; i++) (void)cl_pump(&c, 5);
+        PROVEN_TEST_ASSERT(proven_h2_conn_reset(c.e, id, PROVEN_H2_CANCEL) == PROVEN_OK, "the client resets it after some of it", how);
+        for (int i = 0; i < 400 && done_total() < 10; i++) (void)cl_pump(&c, 5);
+        PROVEN_TEST_ASSERT(settled(10), "its on_done comes, the lent bytes given back or never to be sent", how);
+        proven_u32 after = cl_ask(&c, "GET", "/borrow/50000", true);
+        PROVEN_TEST_ASSERT(cl_wait(&c, after, 10000) && cl_res(&c, after)->got == 50000 && !cl_res(&c, after)->bad && settled(11), "and the connection goes on", how);
+        cl_close(&c);
+        /* One that closes the connection with a lent body under way. */
+        cl_t d;
+        PROVEN_TEST_ASSERT(cl_open_with(&d, tls ? g_client_tls : NULL, port, 1u << 30), "another client", how);
+        id = cl_ask(&d, "GET", "/borrow/20000000", true);
+        for (int i = 0; i < 200 && cl_res(&d, id)->got < 100000; i++) (void)cl_pump(&d, 5);
+        cl_close(&d);
+        PROVEN_TEST_ASSERT(settled(12), "a connection closed mid-body: on_done comes, once", how);
+        PROVEN_TEST_ASSERT(atomic_load(&g_dispatch_bad) == 0, "respond_borrowed was taken every time", how);
+        server_stop();
+    }
+
+    PROVEN_TEST_SECTION("windows opened a byte at a time", "CVE-2019-9511, data dribble: a client whose stream windows are 0 asks for a hundred bodies, streamed and lent, then raises INITIAL_WINDOW_SIZE by one a frame. The engine ends the connection from inside a write; the server must send its GOAWAY, close, and tell every handler once.", "Check that d_pump feeds the engine again after s_push (the CLOSED event comes from there), and d_end_streams for lent bodies.");
+    {
+        proven_http_event_server_config_t cfg = { 0 };
+        proven_u16 port = server_start(cfg);
+        cl_t c;
+        PROVEN_TEST_ASSERT(cl_open_with(&c, NULL, port, 65535), "a client", "");
+        reset_counts();
+        (void)cl_pump(&c, 20);                     /* its preface and settings */
+        /* Then, behind its engine's back, stream windows of 0 and a connection window wide open. */
+        static proven_byte_t raw[64];
+        proven_size_t n = 0;
+        proven_h2_frame_t f = { .length = 6, .type = PROVEN_H2_SETTINGS };
+        (void)proven_h2_frame_write((proven_mem_mut_t){ raw, sizeof raw }, &n, &f);
+        raw[n++] = 0; raw[n++] = 4; raw[n++] = 0; raw[n++] = 0; raw[n++] = 0; raw[n++] = 0;
+        f = (proven_h2_frame_t){ .length = 4, .type = PROVEN_H2_WINDOW_UPDATE };
+        (void)proven_h2_frame_write((proven_mem_mut_t){ raw, sizeof raw }, &n, &f);
+        raw[n++] = 0x7f; raw[n++] = 0xfe; raw[n++] = 0xff; raw[n++] = 0xff;
+        PROVEN_TEST_ASSERT(proven_transport_write_all(c.t, (proven_mem_view_t){ raw, n }, proven_net_deadline_in(5000)).err == PROVEN_OK, "the windows are set", "");
+        for (int i = 0; i < 100; i++) (void)cl_ask(&c, "GET", i % 2 ? "/borrow/1000000" : "/big/1000000", true);
+        (void)cl_pump(&c, 50);
+        for (int i = 0; i < 200 && atomic_load(&g_requests) < 100; i++) (void)cl_pump(&c, 10);
+        PROVEN_TEST_ASSERT(atomic_load(&g_requests) == 100 && done_total() == 0, "a hundred requests reach their handlers, half streamed and half lent; none can be answered yet", "");
+        int raises = 0;
+        for (proven_u32 w = 1; w <= 50 && !c.gone && !c.goaway; w++, raises++) {
+            n = 0;
+            f = (proven_h2_frame_t){ .length = 6, .type = PROVEN_H2_SETTINGS };
+            (void)proven_h2_frame_write((proven_mem_mut_t){ raw, sizeof raw }, &n, &f);
+            raw[n++] = 0; raw[n++] = 4; raw[n++] = 0; raw[n++] = 0; raw[n++] = (proven_byte_t)(w >> 8); raw[n++] = (proven_byte_t)w;
+            if (proven_transport_write_all(c.t, (proven_mem_view_t){ raw, n }, proven_net_deadline_in(5000)).err != PROVEN_OK) break;
+            for (int k = 0; k < 10; k++) (void)cl_pump(&c, 5);
+        }
+        for (int i = 0; i < 300 && !c.gone; i++) (void)cl_pump(&c, 10);
+        PROVEN_TEST_ASSERT(c.goaway && c.gone && raises <= 10, "within ten raises the server says GOAWAY and closes", "");
+        for (int i = 0; i < 300 && done_total() < 100; i++) proven_time_sleep(10);
+        PROVEN_TEST_ASSERT(done_total() == 100 && atomic_load(&g_done_reset) == 100 && atomic_load(&g_dispatch_bad) == 0,
+            "and every handler is told once that its exchange ended in a reset, the lent bodies' too", "");
+        cl_close(&c);
+        server_stop();
+    }
+
+    PROVEN_TEST_SECTION("two connections that each owe many megabytes", "With a large output bound, one connection's lent and copied bodies are many times what it writes in one turn of the loop: it lets the other connection have its turn and is called back, and both are answered whole.", "Check H2_VISIT_BYTES in d_pump and h2_on_progress in net/src/http_event_h2.c: a connection that stops at its turn's bytes must ask the loop to call it again (proven_http_event_raw_again_), or its output stalls until the client writes something.");
+    {
+        proven_http_event_server_config_t cfg = { .max_buffered_output = 4u << 20 };
+        proven_u16 port = server_start(cfg);
+        cl_t a, b;
+        PROVEN_TEST_ASSERT(cl_open_with(&a, NULL, port, 1u << 30) && cl_open_with(&b, NULL, port, 1u << 30), "two clients whose windows are a gigabyte", "");
+        reset_counts();
+        proven_u32 ia[6], ib[2];
+        for (int i = 0; i < 6; i++) ia[i] = cl_ask(&a, "GET", i % 2 ? "/whole/400000" : "/borrow/2000000", true);
+        (void)cl_pump(&a, 1);
+        for (int i = 0; i < 2; i++) ib[i] = cl_ask(&b, "GET", i ? "/whole/400000" : "/borrow/1500000", true);
+        proven_time_t until = proven_time_monotonic_now() + (proven_time_t)(30000u * PROVEN_TEST_BULK_SCALE) * 1000000;
+        bool a_end = false, b_end = false;
+        while (!(a_end && b_end) && !a.gone && !b.gone && proven_time_monotonic_now() < until) {
+            (void)cl_pump(&a, 2);
+            (void)cl_pump(&b, 2);
+            a_end = b_end = true;
+            for (int i = 0; i < 6; i++) a_end = a_end && (cl_res(&a, ia[i])->end || cl_res(&a, ia[i])->reset);
+            for (int i = 0; i < 2; i++) b_end = b_end && (cl_res(&b, ib[i])->end || cl_res(&b, ib[i])->reset);
+        }
+        bool whole = true;
+        for (int i = 0; i < 6; i++) whole = whole && cl_res(&a, ia[i])->end && !cl_res(&a, ia[i])->reset && cl_res(&a, ia[i])->got == (proven_size_t)(i % 2 ? 400000 : 2000000) && !cl_res(&a, ia[i])->bad;
+        for (int i = 0; i < 2; i++) whole = whole && cl_res(&b, ib[i])->end && !cl_res(&b, ib[i])->reset && cl_res(&b, ib[i])->got == (proven_size_t)(i ? 400000 : 1500000) && !cl_res(&b, ib[i])->bad;
+        PROVEN_TEST_ASSERT(whole, "seven megabytes on one connection and two on the other, every byte the pattern", "");
+        PROVEN_TEST_ASSERT(settled(8) && atomic_load(&g_done_ok) == 8, "and on_done comes once for each, with PROVEN_OK", "");
+        /* One connection alone, with nothing to wake it but its own turns: a body of twenty
+         * megabytes is twenty of them, and the client writes nothing while it reads. */
+        proven_u32 one = cl_ask(&a, "GET", "/borrow/20000000", true);
+        PROVEN_TEST_ASSERT(cl_wait(&a, one, 30000u * PROVEN_TEST_BULK_SCALE) && cl_res(&a, one)->got == 20000000 && !cl_res(&a, one)->bad, "twenty megabytes alone arrive whole: a connection that stopped at its turn is called again", "");
+        cl_close(&a);
+        cl_close(&b);
         server_stop();
     }
 

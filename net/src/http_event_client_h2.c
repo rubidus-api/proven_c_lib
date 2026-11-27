@@ -334,16 +334,17 @@ static bool c_flush_tls(c2conn_t *c) {
 }
 
 /* Give `data` to the transport and say how much it took: while the loop holds less than
- * C2_OFFER_HOLD for the connection - straight to the socket when nothing waits there, the rest
- * held by the loop - and nothing more after. */
+ * C2_OFFER_HOLD for the connection. In the clear all of it is offered to the socket when nothing
+ * waits there, and of what it does not take the loop holds what is left under C2_OFFER_HOLD -
+ * the bound is on what is held, not on what is written. Nothing more after. */
 static proven_size_t c_offer(c2conn_t *c, proven_mem_view_t data) {
     if (c->dead) return 0;
     proven_size_t taken = 0;
     const proven_size_t held = c_held(c);
     if (data.size > 0 && held < C2_OFFER_HOLD) {
         proven_size_t n = C2_OFFER_HOLD - held;
-        if (n > data.size) n = data.size;
         if (c->tls) {
+            if (n > data.size) n = data.size;
             proven_mem_view_t piece = { .ptr = data.ptr, .size = n < 16384 ? n : 16384 };
             const bool early = c->early && !proven_tls_is_established(c->tls);
             if (early && proven_tls_early_room_(c->tls) == 0) return 0;      /* the rest after the handshake */
@@ -353,9 +354,9 @@ static proven_size_t c_offer(c2conn_t *c, proven_mem_view_t data) {
             if (early && !c2_append(c->client->alloc, &c->early_copy, &c->early_copy_len, &c->early_copy_cap, data.ptr, taken)) { c_kill(c, PROVEN_ERR_NOMEM); return 0; }
             if (!c_flush_tls(c)) return 0;
         } else {
-            proven_result_size_t w = proven_loop_send(c->client->loop, &c->ls, (proven_mem_view_t){ .ptr = data.ptr, .size = n });
-            if (w.err != PROVEN_OK || w.value != n) { c_kill(c, w.err == PROVEN_ERR_NOMEM ? PROVEN_ERR_NOMEM : PROVEN_ERR_RESET); return 0; }
-            taken = n;
+            const proven_result_size_t w = proven_loop_send_some_(c->client->loop, &c->ls, data, n);
+            if (w.err != PROVEN_OK) { c_kill(c, w.err == PROVEN_ERR_NOMEM ? PROVEN_ERR_NOMEM : PROVEN_ERR_RESET); return 0; }
+            taken = w.value;
         }
     }
     c->more_out = taken < data.size;

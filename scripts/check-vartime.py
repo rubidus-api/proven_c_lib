@@ -34,7 +34,7 @@ VERIFY = {
     "crypto/src/crypto_ec.c": "proven_crypto_ecdsa_verify",
     "crypto/src/crypto_25519.c": "proven_crypto_ed25519_verify",
 }
-SCANNED = ("src", "platform", "include", "crypto", "codec", "net")
+SCANNED = ("src", "platform", "include", "crypto", "codec", "net", "math")
 VARTIME = re.compile(r"\b(\w+_vartime)\b")
 HOOK = re.compile(r"\bproven_crypto_\w+_test_\w+\b")
 IDENT = re.compile(r"[A-Za-z_]\w*")

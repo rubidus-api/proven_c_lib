@@ -70,6 +70,10 @@ proven_allocator_t proven_http_event_raw_allocator_(const proven_http_stream_t *
  * one queue, not two. 0 when the connection is gone. */
 [[nodiscard]]
 proven_size_t proven_http_event_raw_offer_(proven_http_stream_t *stream, proven_mem_view_t data);
+/* proven_http_event_raw_offer_ of several pieces in order (at most PROVEN_NET_VEC_WIDE_), in one
+ * gather write in the clear; the value counts across them. Through TLS only the first is offered. */
+[[nodiscard]]
+proven_size_t proven_http_event_raw_offerv_(proven_http_stream_t *stream, const proven_mem_view_t *parts, proven_size_t count);
 
 /* Ask for on_progress from the loop as soon as the socket is writable - which, with nothing
  * held, is at once. For an owner that has something to do that it may not do from inside the
@@ -287,6 +291,8 @@ proven_u32 proven_h2_conn_test_window_(const struct proven_h2_conn *conn, proven
 proven_u32 proven_http_event_h2_test_window_(proven_http_stream_t *stream);
 [[nodiscard]]
 proven_err_t proven_http_event_h2_respond_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count, proven_mem_view_t body);
+[[nodiscard]]
+proven_err_t proven_http_event_h2_respond_borrowed_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count, proven_mem_view_t body);
 void proven_http_event_h2_abort_(proven_http_stream_t *stream);
 void proven_http_event_h2_pause_(proven_http_stream_t *stream);
 void proven_http_event_h2_resume_(proven_http_stream_t *stream);

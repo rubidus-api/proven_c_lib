@@ -104,9 +104,17 @@ struct proven_qpack_dec {
     proven_byte_t *ib;                 /* an encoder-stream instruction not yet whole */
     proven_size_t ib_n, ib_cap;
     proven_byte_t *tmp;                /* a name and value decoded or copied, max_cap bytes */
+    proven_u64 work;                   /* bytes copied by encoder instructions, less QP_WORK_PER_BYTE for each byte of them */
 };
 
 #define QP_IB_MAX(d) ((proven_size_t)(d)->max_cap * 4u + 64u)     /* Huffman may take up to 30 bits a byte */
+
+/* The encoder stream's work: every byte an instruction copies (out of the table, and into it)
+ * counts one, every byte of the stream takes QP_WORK_PER_BYTE off. Past QP_WORK_MAX - four times
+ * the table this side allows, room to refresh all of it at once - the stream is refused. A
+ * literal insert pays for itself; a Duplicate of a large entry is one byte. */
+#define QP_WORK_PER_BYTE 16u
+#define QP_WORK_MAX(d) ((proven_u64)(d)->max_cap * 4u)
 
 static void *qp_alloc(proven_allocator_t a, proven_size_t n) {
     proven_result_mem_mut_t m = a.alloc_fn(a.ctx, n ? n : 1, 8);
@@ -187,6 +195,7 @@ static bool qp_insert(proven_qpack_dec_t *d, const proven_byte_t *name, proven_u
     d->count++;
     d->size += (proven_u32)esize;
     d->bytes += nlen + vlen;
+    d->work += (proven_u64)nlen + vlen;
     d->inserts++;
     return true;
 }
@@ -221,6 +230,37 @@ static int qp_enc_string(proven_qpack_dec_t *d, proven_mem_view_t in, proven_siz
     return 0;
 }
 
+/* A string's length prefix and its bytes, skipped: 1 not all here, 2 too large, 0 skipped. */
+static int qp_skip_string(const proven_qpack_dec_t *d, proven_mem_view_t in, proven_size_t *pos, unsigned prefix) {
+    proven_u64 n = 0;
+    const int r = qp_int_more(in, pos, prefix, &n);
+    if (r != 0) return r;
+    if (n > QP_IB_MAX(d)) return 2;
+    if (n > in.size - *pos) return 1;
+    *pos += (proven_size_t)n;
+    return 0;
+}
+
+/* Whether a whole encoder instruction is at the start of `in`, by its lengths alone: 1 not all
+ * here, 2 malformed, 0 whole. An instruction that comes a piece at a time is looked at again at
+ * every piece; this way nothing of it is copied or decoded until it is all here. */
+static int qp_enc_whole(const proven_qpack_dec_t *d, proven_mem_view_t in) {
+    proven_size_t pos = 0;
+    proven_u64 v = 0;
+    const proven_byte_t b = in.ptr[0];
+    int r;
+    if ((b & 0xc0) != 0 && !d->ring) return 2;         /* an insert before any capacity: refused at once */
+    if ((b & 0x80) != 0) {
+        if ((r = qp_int_more(in, &pos, 6, &v)) != 0) return r;
+        return qp_skip_string(d, in, &pos, 7);
+    }
+    if ((b & 0x40) != 0) {
+        if ((r = qp_skip_string(d, in, &pos, 5)) != 0) return r;
+        return qp_skip_string(d, in, &pos, 7);
+    }
+    return qp_int_more(in, &pos, 5, &v);
+}
+
 /* One encoder instruction at the start of `in`: 1 not all here, 2 an error, 0 done (`*used`). */
 static int qp_enc_instr(proven_qpack_dec_t *d, proven_mem_view_t in, proven_size_t *used) {
     proven_size_t pos = 0, tmp_at = 0;
@@ -242,6 +282,7 @@ static int qp_enc_instr(proven_qpack_dec_t *d, proven_mem_view_t in, proven_size
             if (!e) return 2;
             qp_ring_copy(d, e->at, e->nlen, d->tmp);    /* copied out: the insert may evict it */
             name = d->tmp; nlen = e->nlen; tmp_at = e->nlen;
+            d->work += e->nlen;
         }
         const proven_byte_t *value; proven_u32 vlen;
         if ((r = qp_enc_string(d, in, &pos, 7, 0x80, false, &tmp_at, &value, &vlen)) != 0) return r;
@@ -266,8 +307,12 @@ static int qp_enc_instr(proven_qpack_dec_t *d, proven_mem_view_t in, proven_size
         const qp_entry_t *e = qp_entry(d, d->inserts - 1 - v);
         if (!e) return 2;
         qp_ring_copy(d, e->at, e->nlen + e->vlen, d->tmp);
+        d->work += (proven_u64)e->nlen + e->vlen;
         if (!qp_insert(d, d->tmp, e->nlen, d->tmp + e->nlen, e->vlen)) return 2;
     }
+    const proven_u64 earned = (proven_u64)pos * QP_WORK_PER_BYTE;
+    d->work = d->work > earned ? d->work - earned : 0;
+    if (d->work > QP_WORK_MAX(d)) return 2;
     *used = pos;
     return 0;
 }
@@ -301,7 +346,9 @@ proven_u64 proven_qpack_dec_feed(proven_qpack_dec_t *d, proven_mem_view_t in) {
         for (;;) {
             if (done == at.size) break;
             proven_size_t used = 0;
-            const int r = qp_enc_instr(d, (proven_mem_view_t){ .ptr = at.ptr + done, .size = at.size - done }, &used);
+            const proven_mem_view_t rest = { .ptr = at.ptr + done, .size = at.size - done };
+            int r = qp_enc_whole(d, rest);
+            if (r == 0) r = qp_enc_instr(d, rest, &used);
             if (r == 2) return PROVEN_QPACK_ENCODER_STREAM_ERROR;
             if (r == 1) break;
             done += used;
@@ -483,7 +530,12 @@ proven_err_t proven_qpack_decode_dyn(proven_qpack_dec_t *d, proven_mem_view_t se
             if (!qp_int(section, &r.pos, 3, &index) || index > PROVEN_QUIC_VARINT_MAX - base || base + index >= ric || !(dyn = qp_entry(d, base + index))) return PROVEN_ERR_INVALID_FORMAT;
             if (base + index + 1 > top) top = base + index + 1;
         }
-        if (e == PROVEN_OK && dyn) {
+        if (e == PROVEN_OK && dyn && r.over) {
+            /* Past the limit nothing is given out: the entry is counted, not copied - else a
+             * section of one-byte references to a large entry would copy it once a byte. */
+            name = (proven_u8str_view_t){ .ptr = (void *)0, .size = dyn->nlen };
+            if (whole) value = (proven_u8str_view_t){ .ptr = (void *)0, .size = dyn->vlen };
+        } else if (e == PROVEN_OK && dyn) {
             /* From the table: copied out, as a later insert may evict it. */
             e = qp_from_table(&r, d, dyn->at, dyn->nlen, &name);
             if (e == PROVEN_OK && whole) e = qp_from_table(&r, d, (dyn->at + dyn->nlen) % d->max_cap, dyn->vlen, &value);

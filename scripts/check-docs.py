@@ -10,9 +10,17 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-# The operating docs are the maintainers' and live in the private sibling; a clean public clone
-# has none, and then these checks are skipped rather than failed.
-PRIVATE = ROOT.parent / (ROOT.name + "_private")
+# The operating docs are the maintainers' and live in the internal `ops/` directory, which the
+# public repository does not carry; a clean public clone has none, and then these checks are
+# skipped rather than failed. Paths below are relative to that directory.
+PRIVATE = ROOT / "ops"
+# Tracked here, never published: the internal directory and the agents' own files.
+INTERNAL_PREFIXES = ("ops/", ".agents/")
+INTERNAL_FILES = {"AGENTS.md", "CLAUDE.md", "public.manifest", ".gitignore.public"}
+
+
+def is_internal(rel: str) -> bool:
+    return rel.startswith(INTERNAL_PREFIXES) or rel in INTERNAL_FILES
 
 # Paths that belong to the private sibling and must never be tracked here again: design RFCs,
 # benchmark records and measurement programs, the backlog, process docs and maintainer scripts.
@@ -25,24 +33,23 @@ PRIVATE_ONLY = [
 ]
 
 REQUIRED = [
-    "docs/operations/README.md",
-    "docs/tests/README.md",
-    "docs/tests/test-index.md",
-    "docs/tests/cases/T001-project-operations.md",
-    "docs/tests/cases/T002-operating-file-roles.md",
+    "operations/README.md",
+    "tests/README.md",
+    "tests/test-index.md",
+    "tests/cases/T001-project-operations.md",
+    "tests/cases/T002-operating-file-roles.md",
     "scripts/project-check.sh",
 ]
-PUBLIC_REQUIRED = {"scripts/project-check.sh"}
 
 REQUIRED_TEXT = {
-    "docs/operations/README.md": [
+    "operations/README.md": [
         "`SPEC.md` as the local current behavior, architecture, and layout contract",
         "`REQUIREMENTS.md`, when present, as the local current accepted requirements",
         "`docs/tests/test-index.md` as a compact process/TDD catalog",
         "`BACKLOGS.md` is the single compact queue",
         "`CONTEXT.md` (`## Resume Packet`) is the resume state",
     ],
-    "docs/tests/test-index.md": [
+    "tests/test-index.md": [
         "docs/tests/cases/T001-project-operations.md",
         "docs/tests/cases/T002-operating-file-roles.md",
     ],
@@ -82,34 +89,29 @@ def candidate_files() -> list[Path]:
         cwd=ROOT,
         text=True,
     )
-    return [ROOT / line for line in out.splitlines() if line]
+    return [ROOT / line for line in out.splitlines() if line and not is_internal(line)]
 
 
 def main() -> None:
-    def locate(rel: str) -> Path | None:
-        for base in (ROOT, PRIVATE):
-            if (base / rel).exists():
-                return base / rel
-        return None
-
     tracked = subprocess.check_output(["git", "ls-files"], cwd=ROOT, text=True).splitlines()
     for rel in tracked:
+        if is_internal(rel):
+            continue
         for pattern in PRIVATE_ONLY:
             if re.search(pattern, rel):
-                fail(f"{rel} belongs in ../{PRIVATE.name}/, not in the public repository")
+                fail(f"{rel} belongs in {PRIVATE.name}/, not in the public tree")
 
-    have_private_docs = locate("docs/operations/README.md") is not None
+    have_private_docs = (PRIVATE / "operations/README.md").exists()
     if not have_private_docs:
-        print("check-docs: note: operating docs not found here or in ../%s; skipping their checks" % PRIVATE.name)
-    for rel in REQUIRED:
-        if rel not in PUBLIC_REQUIRED and not have_private_docs:
-            continue
-        if locate(rel) is None:
-            fail(f"missing {rel}")
+        print(f"check-docs: note: no {PRIVATE.name}/ here (a public clone); skipping its checks")
+    else:
+        for rel in REQUIRED:
+            if not (PRIVATE / rel).exists():
+                fail(f"missing {PRIVATE.name}/{rel}")
 
     for rel, snippets in REQUIRED_TEXT.items():
-        path = locate(rel)
-        if path is None:
+        path = PRIVATE / rel
+        if not path.exists():
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for snippet in snippets:

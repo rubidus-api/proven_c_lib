@@ -216,7 +216,7 @@ int main(void) {
 | `proven_hpack_encode_bound(headers, count)` | 언제나 충분한 자리. | `proven_size_t`. |
 | `proven_hpack_encoder_set_peer_table_bytes(enc, n)` | 상대의 한도가 바뀌었다. 다음 블록에서 알린다. | 없음. |
 | `proven_hpack_decoder_create(alloc, max_table_bytes, &dec)` | 상대에게 이만큼의 테이블을 허용하는 디코더. | `proven_err_t`. |
-| `proven_hpack_decode(dec, block, headers, cap, scratch, max_list_bytes, &count)` | 블록 하나를 통째로 디코딩한다. | `proven_err_t`: `OUT_OF_BOUNDS` - 목록이 너무 크거나, 필드가 너무 많거나, 스크래치가 너무 작다. 디코더는 여전히 쓸 수 있다. `INVALID_FORMAT` - HPACK이 아니다. 디코더는 끝났다. |
+| `proven_hpack_decode(dec, block, headers, cap, scratch, max_list_bytes, &count)` | 블록 하나를 통째로 디코딩한다. | `proven_err_t`: `OUT_OF_BOUNDS` - 목록이 너무 크거나, 필드가 너무 많거나, 스크래치가 너무 작다. 디코더는 여전히 쓸 수 있다. `INVALID_FORMAT` - HPACK이 아니거나, 받아들일 목록이 필요로 하는 것보다 훨씬 많이 복사한다(HPACK bomb). 디코더는 끝났다. |
 | `proven_hpack_decode_marked(dec, block, headers, never_indexed, cap, scratch, max_list_bytes, &count)` | 같은 일을 하고, `never_indexed[i]`가 필드 `i`가 절대 인덱싱하지 말라는 형태로 왔는지 알려 준다. | `proven_hpack_decode`와 같다. |
 | `proven_hpack_decoder_set_max_table_bytes(dec, n)` | 이쪽의 한도가 바뀌었다. 낮췄다면 상대의 다음 블록이 따랐다고 말해야 한다. | 없음. |
 | `proven_hpack_decoder_table_count`, `_table_bytes`, `_table_entry` | 디코더의 테이블을 들여다본다. | 개수. `bool`. |
@@ -230,7 +230,11 @@ int main(void) {
   이름, 값, 그리고 필드마다 32바이트 - 을 묶고, 그 크기의 `scratch`면 언제나 충분하다.
 - **한도 초과는 연결의 끝이 아니고, 잘못된 형식은 끝이다.** `OUT_OF_BOUNDS`는 블록을 끝까지 읽었고
   테이블이 맞아 있으며 이 메시지만 거절한다는 뜻이다. `INVALID_FORMAT`은 두 테이블이 달라졌을 수 있다는
-  뜻이고, 디코더는 그 뒤로 계속 같은 답을 한다.
+  뜻이고, 디코더는 그 뒤로 계속 같은 답을 한다. 한도를 넘은 뒤에는 테이블의 필드를 세기만 하고 복사하지
+  않는다. 그래도 `scratch`와 `max_list_bytes` 가운데 큰 것의 네 배에 블록의 두 배를 더한 것보다 많이
+  복사하게 될 블록 - 큰 이름을 되풀이해 삽입하는 HPACK bomb - 도 `INVALID_FORMAT`이다. HTTP/2 엔진의
+  스크래치는 한도의 네 배이므로, 엔진이 거절하는 목록은 그 스트림의 오류로 남는다. 스크래치가 더 작은
+  직접 호출자에게는 삽입된 필드가 많은 목록이 디코더를 끝낼 수도 있다.
 - **뷰, 세 가지.** 디코딩된 이름이나 값은 블록 안, 라이브러리의 고정 테이블 안, 또는 여러분이 빌려준
   임시 작업용(scratch) 버퍼 - 아래에서는 스크래치 - 안을 가리킨다. 셋 모두 필드를 쓰는 동안 살아 있어야 한다. 간직할 것은 복사한다.
 - **비밀은 테이블에 넣지 않는다.** 테이블은 압축 문맥이고, 그 안의 것은 공격자가 영향을 주는 뒤따르는
@@ -635,6 +639,33 @@ void proven_h2_conn_consumed(proven_h2_conn_t *conn, proven_u32 stream_id, prove
 마지막 줄은, 서버가 일을 시작하게 해 놓고 버리게 하려고 스트림을 열자마자 리셋하기를 되도록 빨리
 되풀이하는 클라이언트에 대한 답이다. 시계는 쓰지 않는다: 리셋 하나가 하나를 더하고, 제대로 끝난 스트림
 하나가 하나를 덜며, 시작한 것을 대체로 끝내는 상대는 한도 근처에도 가지 않는다.
+
+**알려진 공격, 하나씩.** 공개된 HTTP/2 서비스 거부 공격들과, 여기서 무엇이 각각에 답하는지와, 그것을
+경계까지 몰아 보는 `tests/test_unit_h2_conn.c`의 시험(다른 것을 적지 않았으면 "what a peer may do
+without progress" 절):
+
+| 공격 | 답하는 것 | 몰아 보는 시험 |
+|---|---|---|
+| Data dribble (CVE-2019-9511): 윈도를 한 바이트씩 열어 서버가 답을 아주 작은 조각으로 보내게 하기 | 상대를 위해 쥐는 양은 윈도와 상관없이 `max_buffered_output`이다. 윈도 때문에 256바이트 아래로 잘린 DATA 프레임은 하나로 세고, 상대가 보내는 프레임은 모두 하나씩 덜어 준다. 4 x `max_concurrent_streams` + 64를 넘으면 `ENHANCE_YOUR_CALM`으로 연결이 끝난다. 스트림마다 제 WINDOW_UPDATE로 여는 상대는 프레임 하나마다 프레임 하나를 치르므로 끝나지 않는다. 응용이 스스로 작게 쓰는 조각은 세지 않는다 | 답 백 개가 기다리는 채로 INITIAL_WINDOW_SIZE를 프레임마다 하나씩 올리기: 다섯 안에 끝난다; 같은 양을 스트림마다 열기: 프레임 사천 개, 끝나지 않는다; 10바이트 조각 삼천 개 |
+| Ping flood (CVE-2019-9512) | 프로토콜이 빚진 답은 따로 센다. 읽히지 않은 채 `max_buffered_output`을 넘으면 `ENHANCE_YOUR_CALM`으로 연결이 끝난다 | 읽지 않은 답 예순 개는 1,024바이트에 들고, 예순한 번째가 끝낸다 |
+| Resource loop (CVE-2019-9513): 우선순위 뒤섞기 | 우선순위 트리가 없다: PRIORITY는 읽고 잊는다 | PRIORITY 프레임 만 개가 스트림도, 보낼 것도 만들지 않는다 |
+| Reset flood (CVE-2019-9514): 리셋해야 하는 요청들 | 이쪽이 보내는 리셋은 두 번 센다: 빚진 출력으로, 그리고 `max_reset_debt`로 | 상대의 잘못으로 리셋한 스트림은 상대가 리셋한 것과 같이 센다 |
+| Settings flood (CVE-2019-9515) | 확인 응답은 PING의 답처럼 센다 | 읽지 않은 113개는 1,024바이트에 들고, 다음 것이 끝낸다 |
+| 길이 0인 헤더 (CVE-2019-9516) | 빈 이름은 요청을 잘못된 것으로 만든다. 모든 필드는 32바이트를 `max_header_list_bytes`에 센다. 목록은 그 사건 뒤에 아무것도 남기지 않는다 | 빈 이름 하나, 빈 값 백 개, 육백 개 |
+| Internal data buffering (CVE-2019-9517): 윈도는 열고 TCP는 닫기 | 윈도가 무엇을 허락하든 `max_buffered_output`. `proven_http_stream_respond`에 통째로 넘긴 본문은 통째로 쥔다: 그 메모리는 처리기가 고른 것이다 | `test_unit_http_event_h2.c`의 "a client that does not read" |
+| Empty frames flood (CVE-2019-9518) | 아무것도 싣지 않고 아무것도 끝내지 않는 프레임은 연달아 열여섯 개까지. 열일곱 번째가 연결을 끝낸다. DATA, HEADERS, CONTINUATION 모두. PUSH_PROMISE는 받지 않는다 | 빈 DATA 열여섯 개 두 번; 열일곱 번째; 빈 HEADERS와 CONTINUATION |
+| 큰 SETTINGS 프레임 (CVE-2020-11080), 그리고 되풀이해 바꾸는 INITIAL_WINDOW_SIZE | 항목은 하나도 쥐지 않는다: 읽는 대로 적용한다. INITIAL_WINDOW_SIZE를 바꾸면 열린 스트림을 모두 옮긴다: 스트림 하나에 한 걸음. 연결 하나는 32 x `max_concurrent_streams` 걸음까지 받고, 제대로 끝난 스트림 하나가 16걸음을 돌려준다. 그것을 넘으면 `ENHANCE_YOUR_CALM`으로 연결이 끝난다. 아무것도 바꾸지 않는 항목은 비용이 없다 | 아무것도 바꾸지 않는 항목 천 개; 모든 스트림이 열린 채 서른두 번 바꾸기와 서른세 번째; 끝난 스트림이 돌려주는 여유 |
+| Rapid reset (CVE-2023-44487) | 위의 `max_reset_debt` | 백 개는 견디고, 백한 번째가 끝낸다 |
+| MadeYouReset (CVE-2025-8671): 이쪽이 리셋하도록 만든 요청 | 상대의 잘못으로 이쪽이 보내는 리셋은 모두 상대 자신의 것처럼 `max_reset_debt`에 센다. 하나뿐인 예외는 이쪽이 GOAWAY를 보낸 뒤 거절하는 스트림으로, 아무 일도 시작하지 않는다 | 0인 WINDOW_UPDATE, END_STREAM 뒤의 DATA, 잘못된 요청: 백한 개가 끝낸다 |
+| CONTINUATION flood (2024, VU#421644) | `max_header_list_bytes`의 두 배를 넘는 헤더 블록은 연결을 끝낸다. 그 이상은 쥐지 않는다. 빈 CONTINUATION은 빈 프레임으로 센다 | "10.5.1: a header block of more than twice the limit"; 열일곱 번째 빈 CONTINUATION |
+| HPACK bomb (CVE-2016-6581): 큰 테이블 항목 하나를 1바이트 참조로 되풀이해 부르기 | `max_header_list_bytes`를 넘은 뒤에는 테이블의 필드를 세기만 하고 복사하지 않는다. 블록 하나의 디코딩은 스크래치와 그 한도 가운데 큰 것의 네 배에 블록 크기의 두 배를 더한 만큼까지만 복사할 수 있다. 그것을 넘으면 `COMPRESSION_ERROR`로 연결이 끝난다(테이블을 더는 따라갈 수 없다). QPACK도 한도를 넘은 뒤에는 같은 방식으로 센다 | `test_unit_hpack.c`의 "limits": 참조 이천 개; 3,000바이트 이름의 삽입 이천 개와 일곱 개; `test_unit_qpack.c`의 "A large entry named over and over" |
+| QPACK 인코더 스트림 플러드 (HTTP/3): 큰 항목 하나를 1바이트 Duplicate 명령으로 되풀이해 복제하거나, Insert With Name Reference로 그 이름을 가져가기 | 인코더 명령이 복사하는 바이트(테이블에서 꺼내는 것과 넣는 것)는 하나씩 세고, 인코더 스트림의 바이트 하나는 열여섯을 뺀다. 이쪽이 허용하는 테이블 크기의 네 배를 넘으면 `QPACK_ENCODER_STREAM_ERROR`로 연결이 끝난다. 나중에 복제할 것을 먼저 삽입한 인코더는 멈추지 않는다. 조각으로 도착한 명령은 다 온 뒤에 한 번만 디코딩한다 | `test_unit_qpack.c`의 "A large entry duplicated over and over": 3,001바이트 항목의 Duplicate 둘, 셋째는 거부; 400바이트 삽입 사이에 끼운 천 번; 3,000바이트 이름을 참조로 두 번, 셋째는 거부; 그 항목의 명령을 1바이트씩 |
+
+따로 설정이 없는 허용량 넷은 저마다 지키는 설정을 따른다: 작은 DATA 프레임과 윈도 이동은
+`max_concurrent_streams`를, 헤더 블록의 작업량은 `max_header_list_bytes`(와 그것이 정하는 스크래치)를,
+인코더 스트림의 작업량은 허용하는 QPACK 테이블 크기(`http3_header_table_bytes`)를.
+스트림을 더 많이, 목록을 더 길게 허락하는 서버는 각각을 그만큼 더 허락한다. 어느 것도 플랫폼에 따라
+다르지 않다: 저마다 상대가 일으키는 일을 그 상대가 스스로 보내는 것에 대어 묶는다.
 
 막 열린 연결은 많아야 400바이트인 블록 하나를 쥔다. 요청을 실어 나른 뒤 다시 한가해진 연결은 그것과,
 마지막 스트림들이 어떻게 끝났는지의 기록과, 압축 테이블 둘을 쥔다. **테이블은 쓰이는 만큼 자란다**:
@@ -1207,11 +1238,13 @@ int main(void) {
 - **요청이 끝나기 전에 답한 처리기는 그 요청과 끝난 것이다.** 서버는 클라이언트에게 그만 보내라고
   말하고(5절), 이미 오던 것은 읽지 않고 버린다 - 오류였을 프레임까지도. 본문이 중요하다면 본문이
   도착한 뒤에 답한다.
-- **WebSocket에는 HTTP/1.1이 필요하다.** HTTP/2 스트림에서의 업그레이드는 거부된다
-  (`PROVEN_ERR_UNSUPPORTED`): WebSocket을 원하는 브라우저는 그것을 위해 HTTP/1.1 연결을 열고, 같은
-  포트가 그것을 받는다.
-- **트레일러는 전달되지 않는다.** 어느 방향이든, HTTP/1.1에서도 그렇듯이: 요청의 트레일러는 본문을
-  끝내고 버려진다.
+- **HTTP/2 위의 WebSocket에는 `http2_websocket`이 필요하다**(RFC 8441, 15장): 그것이 있으면
+  클라이언트는 WebSocket을 스트림으로 열고, `proven_ws_event_accept`는 어느 쪽이든 답한다. 없으면
+  HTTP/2 스트림에서의 업그레이드는 거부되고(`PROVEN_ERR_UNSUPPORTED`), 브라우저는 그것을 위해
+  HTTP/1.1 연결을 열며, 같은 포트가 그것을 받는다.
+- **트레일러**(v0.107.0부터), HTTP/1.1에서와 같이: `proven_http_stream_trailers`는 본문이 끝난
+  요청의 트레일러를 읽고, `proven_http_stream_end_trailers`는 길이를 밝히지 않은 응답을 트레일러로
+  끝낸다 - 여기서는 스트림을 끝내는 HEADERS 프레임으로.
 
 ## 7. 이벤트 구동 클라이언트의 HTTP/2
 
@@ -1426,8 +1459,6 @@ int main(void) {
 - **지연을 둔 재시도, 그리고 서버가 처리하지 않은 것 말고 다른 것의 재시도**: 이벤트 구동 클라이언트는
   그런 요청을 알리고(`PROVEN_ERR_AGAIN`), `retry_unsent`가 정해져 있으면 그 횟수만큼 곧바로 다시
   보낸다. 시도 사이에 기다리는 것과, 처리되었을 수도 있는 것을 다시 시도하는 것은 호출자의 몫이다.
-- **이벤트 구동 서버의 트레일러**, 어느 프로토콜이든.
-- **확장 CONNECT**(RFC 8441, HTTP/2 위의 WebSocket)와 거기에 필요한 `SETTINGS`.
 - **서버 푸시**: `PUSH_PROMISE`는 거절할 수 있도록 알아보기만 한다.
 - **우선순위**(RFC 9113이 폐기한 RFC 7540의 방식): 건너뛴다.
 - RFC 9113이 없앤 **`Upgrade: h2c`**. (HTTP/3은 9절과 10절.)

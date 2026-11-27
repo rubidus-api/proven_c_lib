@@ -92,6 +92,16 @@ void proven_loop_send_limit_(proven_loop_sock_t *sock, proven_size_t bytes);
  * they go to the socket in one gather write, and only what it does not take is copied - a
  * response head and its body, a frame's header and payload, leave together without a copy. */
 proven_result_size_t proven_loop_sendv_(proven_loop_t *loop, proven_loop_sock_t *sock, const proven_mem_view_t *parts, proven_size_t count);
+/* For a driver that keeps its own output: with nothing waiting, `bytes` go to the socket in one
+ * write, as many as it takes; of what it does not take the loop holds at most `hold` (and no
+ * more than the socket's limit). The value is what was taken - written and held; the rest is
+ * still the caller's. With sends through the ring nothing is written at once and `hold` is all
+ * that is taken. */
+proven_result_size_t proven_loop_send_some_(proven_loop_t *loop, proven_loop_sock_t *sock, proven_mem_view_t bytes, proven_size_t hold);
+/* proven_loop_send_some_ of several pieces in order (at most PROVEN_NET_VEC_WIDE_): with nothing
+ * waiting they go to the socket in one gather write; of what it does not take the loop holds at
+ * most `hold` bytes, from where it stopped - the rest of the pieces stays the caller's. */
+proven_result_size_t proven_loop_send_some_v_(proven_loop_t *loop, proven_loop_sock_t *sock, const proven_mem_view_t *parts, proven_size_t count, proven_size_t hold);
 proven_err_t proven_loop_reserve_(proven_loop_t *loop, proven_loop_sock_t *sock, proven_size_t min, proven_mem_mut_t *room);
 void proven_loop_commit_(proven_loop_t *loop, proven_loop_sock_t *sock, proven_size_t n);
 /* Write what is committed now, not after the current callback: for a driver that has put a

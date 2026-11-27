@@ -15,7 +15,8 @@
 #   scripts/make-webfonts.sh
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
-fonts=${TYPST_FONT_PATHS:-$root/../usr/toolchains/fonts}
+tc="$root/../usr/toolchains"; [ -d "$tc" ] || tc="$root/../../usr/toolchains"   # beside the repository or one level above
+fonts=${TYPST_FONT_PATHS:-$tc/fonts}
 venv=${WEBFONT_VENV:-$root/build/fontvenv}
 
 if [ ! -x "$venv/bin/pyftsubset" ]; then

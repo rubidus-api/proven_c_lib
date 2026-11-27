@@ -429,8 +429,11 @@ int main(void) {
             "a scratch too small for what the table gives back: the same", "");
         PROVEN_TEST_ASSERT(proven_hpack_decode(d, (proven_mem_view_t){ refer, 3 }, g_fields, 8, (proven_mem_mut_t){ g_scratch, 64 }, 0, &count) == PROVEN_OK && count == 3 && view_is(g_fields[2].value, "value"),
             "and the decoder is still in step afterwards", "");
-        PROVEN_TEST_ASSERT(proven_hpack_decode(d, (proven_mem_view_t){ refer, 1 }, g_fields, 8, (proven_mem_mut_t){ g_scratch, 4 }, 0, &count) == PROVEN_ERR_INVALID_FORMAT,
-            "one field larger than the whole scratch cannot be followed: PROVEN_ERR_INVALID_FORMAT", "");
+        PROVEN_TEST_ASSERT(proven_hpack_decode(d, (proven_mem_view_t){ refer, 1 }, g_fields, 8, (proven_mem_mut_t){ g_scratch, 4 }, 0, &count) == PROVEN_ERR_OUT_OF_BOUNDS,
+            "one reference larger than the whole scratch: past the limit it is counted, not copied - PROVEN_ERR_OUT_OF_BOUNDS, the decoder still good", "");
+        static const proven_byte_t insert_named[] = { 0x7e, 0x00 };                      /* a literal named as entry 62 ("key"), to be inserted */
+        PROVEN_TEST_ASSERT(proven_hpack_decode(d, (proven_mem_view_t){ insert_named, 2 }, g_fields, 8, (proven_mem_mut_t){ g_scratch, 2 }, 0, &count) == PROVEN_ERR_INVALID_FORMAT,
+            "but a name to be inserted that is larger than the whole scratch cannot be followed: PROVEN_ERR_INVALID_FORMAT", "");
         proven_hpack_decoder_destroy(d);
 
         /* A bomb: one entry of 3,000 bytes, named two thousand times. Six kilobytes that would be six megabytes. */
@@ -445,6 +448,31 @@ int main(void) {
         static const proven_byte_t again[] = { 0xbe };
         PROVEN_TEST_ASSERT(proven_hpack_decode(d, (proven_mem_view_t){ again, 1 }, g_fields, 8, (proven_mem_mut_t){ g_scratch, 16384 }, 16384, &count) == PROVEN_OK && count == 1 && g_fields[0].value.size == 3000,
             "and the connection could go on", "");
+        proven_hpack_decoder_destroy(d);
+
+        /* The bomb that must be followed: a 3,000-byte name, then two thousand two-byte
+         * literals that insert it again with an empty value - each copies the name out and
+         * back into the table, so the work, not the list, is what stops it. */
+        PROVEN_TEST_ASSERT(proven_hpack_decoder_create(g_heap, 4096, &d) == PROVEN_OK, "a decoder", "");
+        n = 0;
+        g_block[n++] = 0x40;
+        g_block[n++] = 0x7f; g_block[n++] = (proven_byte_t)(0x80 | ((3000 - 127) & 0x7f)); g_block[n++] = (proven_byte_t)((3000 - 127) >> 7);
+        memset(g_block + n, 'n', 3000); n += 3000;
+        g_block[n++] = 0x00;
+        for (int i = 0; i < 2000; i++) { g_block[n++] = 0x7e; g_block[n++] = 0x00; }
+        PROVEN_TEST_ASSERT(proven_hpack_decode(d, (proven_mem_view_t){ g_block, n }, g_fields, sizeof g_fields / sizeof g_fields[0], (proven_mem_mut_t){ g_scratch, 16384 }, 16384, &count) == PROVEN_ERR_INVALID_FORMAT,
+            "seven kilobytes that would copy twelve megabytes pass the work allowed a block: PROVEN_ERR_INVALID_FORMAT", "");
+        PROVEN_TEST_ASSERT(proven_hpack_decode(d, (proven_mem_view_t){ again, 1 }, g_fields, 8, (proven_mem_mut_t){ g_scratch, 16384 }, 16384, &count) == PROVEN_ERR_INVALID_FORMAT,
+            "and the decoder, which could not follow the table, repeats the error", "");
+        proven_hpack_decoder_destroy(d);
+        /* Seven such fields are within it: a list over the limit, the decoder still good. */
+        PROVEN_TEST_ASSERT(proven_hpack_decoder_create(g_heap, 4096, &d) == PROVEN_OK, "a decoder", "");
+        n = 3005;
+        for (int i = 0; i < 6; i++) { g_block[n++] = 0x7e; g_block[n++] = 0x00; }
+        PROVEN_TEST_ASSERT(proven_hpack_decode(d, (proven_mem_view_t){ g_block, n }, g_fields, sizeof g_fields / sizeof g_fields[0], (proven_mem_mut_t){ g_scratch, 16384 }, 16384, &count) == PROVEN_ERR_OUT_OF_BOUNDS,
+            "seven such fields are a list over 16 KiB (21,224 bytes) and their copies within the work allowed", "");
+        PROVEN_TEST_ASSERT(proven_hpack_decode(d, (proven_mem_view_t){ again, 1 }, g_fields, 8, (proven_mem_mut_t){ g_scratch, 16384 }, 16384, &count) == PROVEN_OK && count == 1 && g_fields[0].name.size == 3000,
+            "and the decoder goes on", "");
         proven_hpack_decoder_destroy(d);
     }
 

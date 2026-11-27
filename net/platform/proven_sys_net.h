@@ -146,11 +146,15 @@ proven_sys_net_result_t proven_sys_net_send(proven_sys_socket_t sock, const void
 
 /** One buffer of proven_sys_net_send_vec. */
 typedef struct { const void *ptr; proven_size_t len; } proven_sys_net_vec_t;
-/** The most buffers one proven_sys_net_send_vec offers; the rest wait for the next call. */
+/** The most buffers a send kept in flight (proven_sys_net_keep_t) holds. */
 #define PROVEN_SYS_NET_VEC_MAX 16
+/** The most buffers one proven_sys_net_send_vec offers; the rest wait for the next call. More
+ *  than a kept send: an HTTP/2 response is a frame header and a payload for each 16 KiB, and
+ *  128 of them are 1 MiB a call (RFC-0053 D-5). */
+#define PROVEN_SYS_NET_SEND_VEC_MAX 128
 
-/** Send from up to PROVEN_SYS_NET_VEC_MAX buffers in order, in one call; `sent` says how many
- *  bytes went, which may end inside any of them. */
+/** Send from up to PROVEN_SYS_NET_SEND_VEC_MAX buffers in order, in one call; `sent` says how
+ *  many bytes went, which may end inside any of them. */
 proven_sys_net_result_t proven_sys_net_send_vec(proven_sys_socket_t sock, const proven_sys_net_vec_t *vec, proven_size_t count,
                                                 proven_size_t *sent);
 

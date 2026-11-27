@@ -18,10 +18,12 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 work="$root/build/site"
 out="$root/docs"
 
+# The workspace's toolchains sit beside the repository or one level above it.
+tc="$root/../usr/toolchains"; [ -d "$tc" ] || tc="$root/../../usr/toolchains"
 typst=${TYPST:-typst}
-command -v "$typst" >/dev/null 2>&1 || typst="$root/../usr/toolchains/typst/typst"
+command -v "$typst" >/dev/null 2>&1 || typst="$tc/typst/typst"
 [ -x "$typst" ] || { echo "build-site: no typst binary (set TYPST)" >&2; exit 1; }
-fonts=${TYPST_FONT_PATHS:-$root/../usr/toolchains/fonts}
+fonts=${TYPST_FONT_PATHS:-$tc/fonts}
 
 version=$(sed -n 's/^#define PROVEN_VERSION_STRING "\(.*\)"$/\1/p' "$root/include/proven/version.h")
 [ -n "$version" ] || { echo "build-site: cannot read the version" >&2; exit 1; }

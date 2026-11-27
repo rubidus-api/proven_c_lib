@@ -1910,6 +1910,67 @@ proven_result_size_t proven_loop_send(proven_loop_t *l, proven_loop_sock_t *sock
     return proven_loop_sendv_(l, sock, &bytes, 1);
 }
 
+proven_result_size_t proven_loop_send_some_v_(proven_loop_t *l, proven_loop_sock_t *sock, const proven_mem_view_t *parts, proven_size_t count, proven_size_t hold) {
+    proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
+    if (!l || !sock || (count > 0 && !parts) || count > PROVEN_NET_VEC_WIDE_) { res.err = PROVEN_ERR_INVALID_ARG; return res; }
+    proven_size_t total = 0;
+    for (proven_size_t i = 0; i < count; ++i) {
+        if (parts[i].size > 0 && !parts[i].ptr) { res.err = PROVEN_ERR_INVALID_ARG; return res; }
+        total += parts[i].size;
+    }
+    loop_sock_t *s = sock_of(sock);
+    if (s->node.kind != KIND_SOCK || s->node.state != S_OPEN) { res.err = PROVEN_ERR_INVALID_STATE; return res; }
+    if (s->send_err != PROVEN_OK) { res.err = (proven_err_t)s->send_err; return res; }
+    proven_size_t gone = 0;
+    if (s->queued == 0 && total > 0 && !LOOP_RING_SENDS(l)) {
+        proven_net_conn_t conn = sock_conn(s);
+        proven_err_t e;
+        if (count == 1) {
+            const proven_result_size_t w = proven_net_write(&conn, parts[0], PROVEN_NET_DONT_WAIT);
+            e = w.err;
+            gone = w.value;
+        } else {
+            e = proven_net_write_vec_(&conn, parts, count, &gone);
+        }
+        if (e != PROVEN_OK && e != PROVEN_ERR_TIMEOUT) {
+            s->send_err = (proven_u16)e;
+            sock_drop_chunks(l, s);
+            res.value = gone;
+            res.err = e;
+            return res;
+        }
+    }
+    res.value = gone;
+    /* Of the rest, `hold` at most - and no more than the socket's limit leaves room for: what is
+     * not taken stays the caller's, which is not an error. Piece by piece from where the socket
+     * stopped, and none after a piece that was not taken whole. */
+    proven_size_t at = 0, left = hold;
+    for (proven_size_t i = 0; i < count && left > 0; ++i) {
+        const proven_size_t size = parts[i].size;
+        if (at + size <= gone) { at += size; continue; }
+        const proven_size_t skip = gone > at ? gone - at : 0;
+        proven_size_t want = size - skip;
+        if (want > left) want = left;
+        proven_size_t taken = 0;
+        const proven_err_t e = sock_hold(l, s, parts[i].ptr + skip, want, &taken);
+        res.value += taken;
+        left -= taken;
+        at += size;
+        if (e != PROVEN_OK && e != PROVEN_ERR_AGAIN) { res.err = e; break; }
+        if (taken < size - skip) break;
+    }
+    if (s->queued > 0) {
+        const proven_err_t e = sock_kick(l, s);
+        if (e != PROVEN_OK && res.err == PROVEN_OK) res.err = e;
+    }
+    return res;
+}
+
+proven_result_size_t proven_loop_send_some_(proven_loop_t *l, proven_loop_sock_t *sock, proven_mem_view_t bytes, proven_size_t hold) {
+    if (bytes.size > 0 && !bytes.ptr) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
+    return proven_loop_send_some_v_(l, sock, &bytes, 1, hold);
+}
+
 proven_result_size_t proven_loop_read(proven_loop_t *l, proven_loop_sock_t *sock, proven_mem_mut_t buf) {
     proven_result_size_t res = { .err = PROVEN_OK, .value = 0 };
     if (!l || !sock || (buf.size > 0 && !buf.ptr)) { res.err = PROVEN_ERR_INVALID_ARG; return res; }

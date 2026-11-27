@@ -330,6 +330,7 @@ typedef struct {
     proven_mem_mut_t scratch;
     proven_size_t used;                /* of scratch */
     bool over;                         /* the list passed a limit: nothing more is given out, but the block is read on */
+    proven_size_t work, budget;        /* bytes copied so far (scratch and table), and the most allowed */
 } proven_hp_run_t;
 
 /* Copy `s` into the scratch and return the copy. False when there is no room. */
@@ -338,6 +339,7 @@ static bool hp_keep(proven_hp_run_t *r, proven_u8str_view_t s, proven_u8str_view
     for (proven_size_t i = 0; i < s.size; ++i) r->scratch.ptr[r->used + i] = s.ptr[i];
     *out = (proven_u8str_view_t){ .ptr = r->scratch.ptr + r->used, .size = s.size };
     r->used += s.size;
+    r->work += s.size;
     return true;
 }
 
@@ -358,6 +360,7 @@ static proven_err_t hp_string(proven_hp_run_t *r, proven_u8str_view_t *out) {
     proven_err_t e = proven_hpack_huffman_decode(raw, r->scratch, &at);
     if (e != PROVEN_OK) return e;
     *out = (proven_u8str_view_t){ .ptr = r->scratch.ptr + r->used, .size = at - r->used };
+    r->work += at - r->used;
     r->used = at;
     return PROVEN_OK;
 }
@@ -375,7 +378,15 @@ proven_err_t proven_hpack_decode_marked(proven_hpack_decoder_t *d, proven_mem_vi
     if (!d || !count || (block.size > 0 && !block.ptr) || (header_cap > 0 && !headers) || (scratch.size > 0 && !scratch.ptr)) return PROVEN_ERR_INVALID_ARG;
     if (d->failed) return PROVEN_ERR_INVALID_FORMAT;
     proven_hp_table_t *t = &d->table;
-    proven_hp_run_t r = { .in = block, .scratch = scratch };
+    /* The work a block may make, in bytes copied into the scratch and the table. A list
+     * within the limit needs its fields once in the scratch and once more into the table:
+     * about twice the list. Past the limit a reference is counted, not copied, but a name
+     * from the table for an entry being inserted is still copied twice for two bytes of
+     * block - an "HPACK bomb" of those passes this and ends the decoder. */
+    const proven_size_t room = scratch.size > max_list_bytes ? scratch.size : max_list_bytes;
+    const proven_size_t eighth = (proven_size_t)-1 / 8;
+    proven_hp_run_t r = { .in = block, .scratch = scratch,
+                          .budget = room > eighth || block.size > eighth ? (proven_size_t)-1 : 4 * room + 2 * block.size };
     proven_size_t n = 0;
     proven_u64 list = 0;
     bool fields_begun = false;
@@ -414,8 +425,13 @@ proven_err_t proven_hpack_decode_marked(proven_hpack_decoder_t *d, proven_mem_vi
             } else {
                 if (index - HPACK_STATIC_COUNT > t->count) goto fail;
                 const proven_hp_entry_t *en = hp_at(t, (proven_size_t)(index - HPACK_STATIC_COUNT - 1));
-                /* Copied: a later field of this block may evict it. */
-                if (!hp_keep(&r, hp_name(t, en), &name) || !hp_keep(&r, hp_value(t, en), &value)) goto no_room;
+                if (r.over) {
+                    /* Nothing is given out any more, and the table does not change: counted, not copied. */
+                    name = hp_name(t, en);
+                    value = hp_value(t, en);
+                } else if (!hp_keep(&r, hp_name(t, en), &name) || !hp_keep(&r, hp_value(t, en), &value)) {
+                    goto no_room;         /* copied: a later field of this block may evict it */
+                }
             }
         } else {
             /* A literal: with indexing (01), without (0000), or never indexed (0001). */
@@ -433,7 +449,8 @@ proven_err_t proven_hpack_decode_marked(proven_hpack_decoder_t *d, proven_mem_vi
             } else {
                 if (index - HPACK_STATIC_COUNT > t->count) goto fail;
                 const proven_hp_entry_t *en = hp_at(t, (proven_size_t)(index - HPACK_STATIC_COUNT - 1));
-                if (!hp_keep(&r, hp_name(t, en), &name)) goto no_room;
+                if (r.over && !insert) name = hp_name(t, en);       /* only counted, as above */
+                else if (!hp_keep(&r, hp_name(t, en), &name)) goto no_room;
             }
             e = hp_string(&r, &value);
             if (e == PROVEN_ERR_OUT_OF_BOUNDS) goto no_room;
@@ -444,7 +461,9 @@ proven_err_t proven_hpack_decode_marked(proven_hpack_decoder_t *d, proven_mem_vi
         if (insert) {
             proven_err_t te = hp_table_add(t, name, value);
             if (te != PROVEN_OK) { e = te; goto fail; }
+            r.work += name.size + value.size;
         }
+        if (r.work > r.budget) goto fail;          /* e is PROVEN_ERR_INVALID_FORMAT: the table cannot be followed further */
         list += (proven_u64)name.size + value.size + PROVEN_HPACK_ENTRY_OVERHEAD;
         if ((max_list_bytes != 0 && list > max_list_bytes) || n == header_cap) r.over = true;
         if (!r.over) {

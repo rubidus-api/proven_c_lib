@@ -332,6 +332,54 @@ static void case_sendv_cut(void) {
     (void)proven_net_close(&far);
 }
 
+/* proven_loop_send_some_ (the drivers' offer): everything is offered to the socket when nothing
+ * waits, and of what it does not take only `hold` is held - the rest stays the caller's, which is
+ * not an error. Behind held bytes nothing is written, and again only `hold` is taken. On io_uring
+ * nothing goes to the socket first, so `hold` is what is taken. */
+static void case_send_some(void) {
+    const bool ring = proven_loop_backend(g_loop) == PROVEN_LOOP_BACKEND_URING;
+    conn_t c;
+    proven_net_conn_t far;
+    pair(&c, &far);
+    static proven_byte_t src[3000];
+    for (proven_size_t i = 0; i < sizeof src; ++i) src[i] = (proven_byte_t)(i * 13 + i / 251);
+    proven_net_write_cap_for_test_(700);
+    proven_result_size_t s;
+    INSIDE(s = proven_loop_send_some_(g_loop, &c.sock, (proven_mem_view_t){ src, sizeof src }, 1000));
+    proven_net_write_cap_for_test_(0);
+    const proven_size_t first = s.value;
+    PROVEN_TEST_ASSERT(s.err == PROVEN_OK && first == (ring ? 1000u : 1700u) && proven_loop_send_queued(&c.sock) == 1000,
+                       ring ? "on the ring: the bound is taken and held" : "700 written at once, 1,000 of the rest held, 1,300 left to the caller", g_kind);
+    /* Behind what is held: nothing written, at most the bound taken. */
+    INSIDE(s = proven_loop_send_some_(g_loop, &c.sock, (proven_mem_view_t){ src + first, 200 }, 100));
+    PROVEN_TEST_ASSERT(s.err == PROVEN_OK && s.value == 100 && proven_loop_send_queued(&c.sock) == 1100, "behind held bytes only the bound is taken", g_kind);
+    INSIDE(s = proven_loop_send_some_(g_loop, &c.sock, (proven_mem_view_t){ src + first + 100, sizeof src - first - 100 }, sizeof src));
+    PROVEN_TEST_ASSERT(s.err == PROVEN_OK && s.value == sizeof src - first - 100, "and the rest when the bound allows it", g_kind);
+    static proven_byte_t got[3000];
+    proven_size_t n = 0;
+    while (n < sizeof got) {
+        rounds(1);
+        proven_result_size_t r = proven_net_read(&far, (proven_mem_mut_t){ got + n, sizeof got - n }, proven_net_deadline_in(1000));
+        if (r.err != PROVEN_OK) break;
+        n += r.value;
+    }
+    PROVEN_TEST_ASSERT(n == sizeof got && memcmp(got, src, sizeof src) == 0, "everything arrives once, in order", g_kind);
+    PROVEN_TEST_ASSERT(proven_loop_send_queued(&c.sock) == 0, "and nothing is held after", g_kind);
+    /* With nothing waiting and a socket that takes it all, nothing is held even with no bound. */
+    INSIDE(s = proven_loop_send_some_(g_loop, &c.sock, (proven_mem_view_t){ src, sizeof src }, 0));
+    PROVEN_TEST_ASSERT(s.err == PROVEN_OK && s.value == (ring ? 0u : sizeof src) && proven_loop_send_queued(&c.sock) == 0,
+                       ring ? "on the ring a bound of 0 takes nothing" : "a socket that takes all of it gets all of it in one write, with a bound of 0", g_kind);
+    n = 0;
+    while (!ring && n < sizeof got) {
+        proven_result_size_t r = proven_net_read(&far, (proven_mem_mut_t){ got + n, sizeof got - n }, proven_net_deadline_in(1000));
+        if (r.err != PROVEN_OK) break;
+        n += r.value;
+    }
+    PROVEN_TEST_ASSERT(ring || (n == sizeof got && memcmp(got, src, sizeof src) == 0), "and it arrives", g_kind);
+    close_and_wait(&c);
+    (void)proven_net_close(&far);
+}
+
 /* Close with everything in flight; a send that fails in the loop. */
 static void case_close_and_fail(void) {
     conn_t c;
@@ -986,6 +1034,8 @@ static void run_all(proven_allocator_t heap, int on) {
     case_send();
     PROVEN_TEST_SECTION("pieces cut by the socket", "Several pieces sent at once, cut inside them: the rest is held from the right byte, small pieces put together and large ones in a gather write.", g_kind);
     case_sendv_cut();
+    PROVEN_TEST_SECTION("a send that holds a bounded part", "proven_loop_send_some_: all of it to the socket, of the rest only the bound held; behind held bytes, only the bound; in order.", g_kind);
+    case_send_some();
     PROVEN_TEST_SECTION("close and failure", "Close with a receive, a wait and bytes in flight; a send that fails in the loop.", g_kind);
     case_close_and_fail();
     PROVEN_TEST_SECTION("accepts and connects", "Accepts re-armed from inside, cancelled; a connect that succeeds and one that is refused.", g_kind);

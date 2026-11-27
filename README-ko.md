@@ -1,4 +1,4 @@
-**한국어** | [English](README.md) — **Proven C library v0.119.3** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.119.3/proven_c_lib-v0.119.3.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.119.3/proven_c_lib-v0.119.3-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.119.3/proven_c_lib-v0.119.3-ko-manual.pdf)
+**한국어** | [English](README.md) — **Proven C library v0.120.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.120.0/proven_c_lib-v0.120.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.120.0/proven_c_lib-v0.120.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.120.0/proven_c_lib-v0.120.0-ko-manual.pdf)
 
 # Proven C library
 
@@ -24,7 +24,7 @@ C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도
 짧은 프로그램 아홉 개가 출력, 길이를 아는 문자열, 값으로 오는 오류, allocator, arena, 컨테이너, 파일을
 하나씩 더해 갑니다. 다 읽은 뒤에는 0장으로 가면 됩니다.
 
-- 버전: proven_c_lib-v0.119.3 · 표준: C23 · 라이선스: MIT
+- 버전: proven_c_lib-v0.120.0 · 표준: C23 · 라이선스: MIT
 - 버전은 시맨틱 버전 `MAJOR.MINOR.PATCH`이며 v0.0.1(2026-09-04)부터 시작합니다. 그 이전 릴리스는
   날짜 기반 번호(`v26.MM.DDx`)이고, 발표된 그대로 둡니다.
 - `*_internal`이나 `*_impl`로 끝나는 함수 일곱 개는 매크로가 호출하기 때문에 공개 헤더에 있습니다.
@@ -666,16 +666,20 @@ portable implementation 파일은 `src/proven/`에 있습니다. OS와 C runtime
 
 Cross compilation은 header, source visibility, ABI assumption, target별 compile-time branch가 함께 맞는지 확인하는 용도입니다. 대상 머신에서의 runtime test를 대신하지는 않습니다.
 
-## 네 라이브러리: proven_base, proven_crypto, proven_codec, proven_net
+## 다섯 라이브러리: proven_base, proven_crypto, proven_codec, proven_net, proven_math
 
-이 트리에는 버전 하나 아래 라이브러리 네 개가 있습니다. **proven_base** - `include/proven/`,
+이 트리에는 버전 하나 아래 라이브러리 다섯 개가 있습니다. **proven_base** - `include/proven/`,
 `src/proven/`, `platform/` - 는 메모리, 문자열, 컨테이너, 텍스트, 숫자, 파일, 시간, job, 난수 생성기,
 CRC-32와 테이블용 해시입니다. **proven_crypto** - `crypto/` - 는 SHA-2, HMAC과 레거시 해시, AES와
 AEAD 암호, 키 교환, 서명 키, DER과 X.509 인증서입니다. **proven_codec** - `codec/` - 은 zlib·gzip
 틀을 포함한 DEFLATE, Zstandard, Brotli입니다. **proven_net** - `net/` - 은 소켓, 이벤트 루프, TLS,
-HTTP/1.1, HTTP/2, QUIC 위의 HTTP/3, WebSocket, server-sent events입니다. 각 라이브러리는 아래쪽
-라이브러리의 공개 헤더 말고는 아무것도 쓰지 않습니다(테스트가 그 선을 지킵니다). crypto와 codec은
-base 위에만 서고, 네트워크 라이브러리는 셋 모두 위에 서며, base는 어느 쪽도 모릅니다.
+HTTP/1.1, HTTP/2, QUIC 위의 HTTP/3, WebSocket, server-sent events입니다. **proven_math** - `math/` -
+는 binary64·binary32 사칙연산, `fma`, 비교, 변환, `sqrt`, 반올림, `fmod`, `frexp`/`ldexp`(`float_ops.h`)와
+올바르게 반올림하는 `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2`(`float_math.h`)로, 모든 타깃에서 같은
+비트를 내며 FPU가 없어도 됩니다(십진 파싱과 출력은 base에 남습니다).
+각 라이브러리는 아래쪽 라이브러리의 공개 헤더 말고는 아무것도 쓰지 않습니다(테스트가 그 선을 지킵니다).
+crypto, codec, math는 base 위에만 서고, 네트워크 라이브러리는 base, crypto, codec 위에 서며, base는
+어느 쪽도 모릅니다.
 
 프로그램은 base와, 쓰는 라이브러리만 함께 컴파일합니다. 각각 자기 `include/` 디렉터리와 `src/`,
 `platform/` 소스를 더합니다. 헤더 이름은 바뀌지 않았고(`#include "proven/sign.h"`,
@@ -692,7 +696,7 @@ base 위에만 서고, 네트워크 라이브러리는 셋 모두 위에 서며,
 - Containers: `array`, `list`, `ring`, `map`.
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
-- Numbers: `float_parse`, `float_format`.
+- Numbers: `float_parse`, `float_format`, `float_ops` (binary64 `sqrt`, 반올림, `fmod`, `frexp`/`ldexp`, int64 변환 - 모든 타깃에서 같은 비트, libm 없음).
 - 해싱과 인코딩: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC, HKDF, PBKDF2), `deflate` (DEFLATE 압축과 풀기, 그대로 또는 zlib·gzip으로, 스트리밍, 풀 때 나올 양은 호출자가 한정), `zstd` (Zstandard 압축과 풀기 - 쓰는 쪽은 레벨 스물두 개, 창은 1 GiB까지, 레벨 6은 gzip 6 크기에 두 배 속도, 19는 libzstd 크기의 약 1 % 안; 장거리 일치; 원시 사전과 형식 있는 사전(`zstd --train`이 쓰는 것)을 양쪽에서 -, 출력과 윈도는 호출자가 한정), `brotli` (Brotli 풀기, 출력과 윈도는 호출자가 한정; `PROVEN_NO_BROTLI`는 이것과 122,784바이트 사전을 뺍니다), `cert` (X.509 인증서: 읽기, 이름, 신뢰 앵커, 체인 검증, 코드 서명·타임스탬프 용도), `sign` (PEM, DER, 부품에서 만드는 개인 키 - RSA, P-256, P-384 -, 다이제스트에 대한 결정적 서명, PSS, 검증), `der` (엄격한 DER 읽개와 쓰개), `aes` (암호화된 키 파일을 위한 AES-CBC와 PKCS #7), `aead` (AES-GCM과 ChaCha20-Poly1305), `kex` (X25519, P-256·P-384 위의 ECDH, 고정 그룹 위의 유한체 Diffie-Hellman), `hash_legacy` (SHA-1과 MD5, 그것을 못 박은 형식용), `encode` (hex, Base64, Base64URL), `utf` (엄격한 UTF-8 <-> UTF-16).
 - 난수: `random` (xoshiro256** 재현 가능, ChaCha20 암호학적(키 삭제, fork한 자식에서 새 키), 스레드별 빠른 소스, proven_crypto에는 AES 명령이 있는 프로세서에서 대량용 AES-256-CTR 생성기, 무편향 범위/셔플 헬퍼, 교체 가능한 엔트로피 소스 — 기본은 OS CSPRNG, 베어메탈은 보드의 하드웨어 TRNG).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.

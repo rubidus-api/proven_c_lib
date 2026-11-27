@@ -1,4 +1,4 @@
-# Proven Freestanding 모드 (v0.119.3)
+# Proven Freestanding 모드 (v0.120.0)
 
 **6부 — 더 나아가기. 선행 조건: 2–5부, 그리고
 [6장](manual-06-execution-and-platform-ko.md).**
@@ -129,6 +129,7 @@ src/proven/random.c
 src/proven/float_decimal.c
 src/proven/float_parse.c
 src/proven/float_format.c
+math/src/float_ops.c
 src/proven/time.c
 src/proven/fmt.c
 src/proven/scan.c
@@ -151,6 +152,7 @@ platform/proven_sys_io.c
 platform/proven_sys_env.c
 platform/proven_sys_time.c
 platform/proven_sys_random.c
+platform/proven_sys_crc.c
 platform/proven_sys_mem.c
 ```
 
@@ -193,7 +195,7 @@ platform/proven_sys_mem.c
 | `u16str.h` | 제외됨 | 현재 프로파일은 `PROVEN_NO_U16STR`를 정의한다. |
 | `array.h`, `list.h`, `ring.h`, `map.h` | 사용 가능 | 숨겨진 OS 의존성 없음. |
 | `algorithm.h` | 사용 가능 | 배열용 정렬/검색 헬퍼. |
-| `hash.h` | 사용 가능 | FNV-1a, SipHash-2-4, CRC-32(SHA-256은 v0.113.0부터 proven_crypto의 `sha2.h`) — 바이트 단위로 정확, OS 의존성 없음. CRC-32는 기본으로 256항목 표 여덟 개(읽기 전용 데이터 8 KiB)를 쓴다. 라이브러리를 `-DPROVEN_CRC32_SMALL=1`로 빌드하면 1 KiB 표 하나만 남는다. 긴 입력에서 약 5배 느리고 결과는 같다. |
+| `hash.h` | 사용 가능 | FNV-1a, SipHash-2-4, CRC-32(SHA-256은 v0.113.0부터 proven_crypto의 `sha2.h`) — 바이트 단위로 정확, OS 의존성 없음. CRC-32는 기본으로 256항목 표 여덟 개(읽기 전용 데이터 8 KiB)를 쓴다. 라이브러리를 `-DPROVEN_CRC32_SMALL=1`로 빌드하면 1 KiB 표 하나만 남는다. 긴 입력에서 약 5배 느리고 결과는 같다. CRC-64/XZ도 같다: 16 KiB, 또는 `-DPROVEN_CRC64_SMALL=1`이면 2 KiB 표 하나(따로 정하지 않으면 `PROVEN_CRC32_SMALL`을 따른다). 호스트 빌드의 캐리 없는 곱셈 폴딩은 프리스탠딩 빌드에는 없다. |
 | `hash_legacy.h` | 사용 가능 | SHA-1과 MD5. 그것을 못 박은 형식(WebSocket accept 키, 오래된 체크섬 파일)을 위한 것이다. SHA-256과 같은 모양이고, MD5의 상수 64개보다 큰 표는 없다. |
 | `hmac.h` | 사용 가능 | SHA-256, SHA-384, SHA-512(셋 모두 `sha2.h`에 있다)와 SHA-1 위의 HMAC, HKDF, PBKDF2. 순수한 산술이다. 함께 쓰는 `proven_mem_equal_ct`와 `proven_mem_wipe`는 `memory.h`에 있다. |
 | `deflate.h` | 사용 가능 | DEFLATE, zlib, gzip을 양방향으로. 순수한 산술이다. 압축기(기본 윈도에서 약 325 KiB, 가장 작은 윈도에서 11 KiB)나 해제기(약 35 KiB)마다 할당 하나를, 넘겨준 할당자로 한다. |
@@ -212,6 +214,8 @@ platform/proven_sys_mem.c
 | `scan.h` | 사용 가능 | 메모리 뷰용 스캐너. |
 | `float_parse.h` | 사용 가능 | `proven_strtod`, `proven_parse_double_ascii`, `proven_parse_f64_ascii`가 모두 여기서 컴파일된다. 십진수→binary64 엔진은 정수 연산만 쓰므로 libc가 필요 없다. 유일한 차이는 freestanding 빌드가 오버플로/언더플로에서 `errno`를 설정하지 않는다는 점이며, 대신 반환된 `proven_err_t`가 그 정보를 담는다 — `errno` 자체가 없는 타깃에서 확인해야 할 값이다. 이는 이 프로파일이 실제로 컴파일에서 제외하는 `fmt.h`의 부동소수점 **출력**과는 별개다. |
 | `float_format.h` | `fmt.h` 연동 없이 사용 가능 | binary64 포매터는 정수 연산만 쓰므로 컴파일되지만, 현재 프로파일이 `PROVEN_FMT_NO_FLOAT`를 정의하므로 `{}`는 부동소수점을 렌더링하지 않는다. 코드 크기를 감수할 가치가 있다고 판단한 타깃에서 자릿수 출력이 필요하다면 `float_format.h`의 진입점을 직접 호출할 것. |
+| `float_ops.h` | 사용 가능 | 이 용도로 만들었다(RFC-0054): 비트를 정수로 다루며 libm도 `errno`도 쓰지 않는다. 제곱근은 타깃에 IEEE 명령(SSE2, AArch64, WebAssembly `f64.sqrt`)이 있으면 그것을, 없으면 같은 비트를 내는 정수 제곱근을 쓴다. RFC-0055가 사칙연산(`add` `sub` `mul` `div` `fma`, 비교, 변환)과 binary32 판을 더했다: x86 SSE2, AArch64, ARM VFP, RISC-V F/D, WebAssembly에서는 명령을, FPU가 없는 코어에서는 같은 비트를 내는 정수 구현을 쓰며 soft-float 런타임(`__aeabi_dadd` 등)이 필요 없다. `PROVEN_FLOAT_SOFT=1`은 정수 구현을 강제한다. |
+| `float_math.h` | 사용 가능 | `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2`(RFC-0056), 올바르게 반올림: freestanding 빌드에서는 정수 경로(FPU도 soft-float 런타임도 없이; 스택은 최대 약 7 KiB - Cortex-M3, clang -O2에서 잰 값 - 이고 코드와 표는 약 40 KiB), AArch64와 FMA·AVX2용으로 빌드한 x86-64에서는 CORE-MATH FPU 경로; 어느 쪽이든 같은 비트. `PROVEN_FLOAT_MATH_SMALL=1`이면 FPU 경로의 코드와 표를 뺀다. |
 | `time.h` | 제한적 | 핵심 datetime 포매팅은 컴파일 가능하지만, 실제 PAL 시간은 제외된다. |
 | `heap.h` | 스텁 | `proven_heap_allocator()`는 유효하지 않은 allocator를 반환한다. |
 | `fs.h`, `stream.h`, `net.h`, `http_client.h`, `http_server.h`, `loop.h`, `http_event.h`, `ws_event.h`, `http_event_client.h`, `ws_conn.h`, `mmap.h`, `sysio.h`, `job.h` | 제외됨 | 호스티드 PAL 서비스가 필요하다. |

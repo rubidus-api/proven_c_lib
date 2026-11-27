@@ -20,7 +20,7 @@
 
 #define MAX_NAMES 256
 typedef struct { char name[MAX_NAMES][300]; int n; } names_t;
-static names_t g_base_public, g_crypto_public, g_crypto_own, g_crypto_pal, g_codec_public, g_codec_own, g_codec_pal;
+static names_t g_base_public, g_crypto_public, g_crypto_own, g_crypto_pal, g_codec_public, g_codec_own, g_codec_pal, g_math_public, g_math_own, g_math_pal;
 
 static char *slurp(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -86,7 +86,15 @@ static bool codec_may_include(const char *name, size_t len, const char *file) {
     return module_may_include(name, len, &g_codec_public, &g_codec_own, &g_codec_pal, "proven_codec.h");
 }
 
+static bool math_may_include(const char *name, size_t len, const char *file) {
+    (void)file;
+    return module_may_include(name, len, &g_math_public, &g_math_own, &g_math_pal, "proven_math.h");
+}
+
 static bool base_may_include(const char *name, size_t len, const char *file) {
+    if (listed(name, len, &g_math_public) || listed(name, len, &g_math_own)) return false;
+    if (strstr(name, "math/") && (size_t)(strstr(name, "math/") - name) < len) return false;
+    if (is(name, len, "proven_math.h")) return strcmp(file, "include/proven.h") == 0;
     if (listed(name, len, &g_crypto_public) || listed(name, len, &g_codec_public)) return false;
     if (listed(name, len, &g_crypto_own) || listed(name, len, &g_codec_own)) return false;
     if (pal_of(name, len, &g_crypto_pal) || pal_of(name, len, &g_codec_pal)) return false;
@@ -160,6 +168,10 @@ int main(void) {
     names_of("codec/include/proven", "proven/", &g_codec_public);
     names_of("codec/src", "", &g_codec_own);
     names_of("codec/platform", "", &g_codec_pal);
+    names_of("math/include/proven", "proven/", &g_math_public);
+    names_of("math/src", "", &g_math_own);
+    names_of("math/src/cm", "cm/", &g_math_own);           /* float_math.c's includes of the FPU path */
+    names_of("math/src/cm", "", &g_math_own);              /* the FPU path's own includes */
     PROVEN_TEST_ASSERT(g_base_public.n >= 30 && g_crypto_public.n >= 9 && g_codec_public.n >= 3 && g_crypto_own.n >= 3 && g_codec_own.n >= 4,
         "the three libraries' headers are found", "Run from the repository root.");
 
@@ -193,12 +205,24 @@ int main(void) {
         PROVEN_TEST_ASSERT(stray == 0, "no base file includes anything of the crypto or codec libraries", "");
     }
 
+    PROVEN_TEST_SECTION("the floating-point library's includes", "math/src, math/src/cm, math/include/proven and math/include.", "Named above.");
+    {
+        int files = 0;
+        const char *what = "math code includes what is not its own or the base's public";
+        int stray = stray_in("math/src", math_may_include, what, &files) + stray_in("math/src/cm", math_may_include, what, &files) +
+                    stray_in("math/include/proven", math_may_include, what, &files) + stray_in("math/include", math_may_include, what, &files);
+        PROVEN_TEST_ASSERT(files >= 4, "the math files are read", "");
+        PROVEN_TEST_ASSERT(stray == 0, "no math file includes a header of another library or one private to the base", "");
+    }
+
     PROVEN_TEST_SECTION("no crypto or codec source left in the base", "A file in src/proven named like one of their units means a move was missed.",
         "Move it under crypto/src or codec/src, or rename it if it belongs to the base.");
     {
         static const char *const crypto[] = { "crypto", "aead", "aes", "kex", "dh", "sign", "der", "cert", "hmac", "hash_legacy", "sha2" };
         static const char *const codec[] = { "deflate", "zstd", "brotli" };
-        const int left = left_in_base(crypto, sizeof crypto / sizeof crypto[0], "crypto") + left_in_base(codec, sizeof codec / sizeof codec[0], "codec");
+        static const char *const math[] = { "float_ops", "float_math" };
+        const int left = left_in_base(crypto, sizeof crypto / sizeof crypto[0], "crypto") + left_in_base(codec, sizeof codec / sizeof codec[0], "codec")
+                       + left_in_base(math, sizeof math / sizeof math[0], "math");
         PROVEN_TEST_ASSERT(left == 0, "every crypto and codec source is under its library", "");
     }
 

@@ -45,7 +45,7 @@ int main(void) {
         "std=-std=c23; ${CC:-cc} $std -fsyntax-only -x c /dev/null 2>/dev/null || std=-std=c2x; "
         "for f in $(sed -n 's/^PROVEN_BUILD_SOURCE(\"\\([^\"]*\\)\".*/\\1/p' build_sources.inc); do "
         "  ${CC:-cc} $std -Wall -Wextra -Werror -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L -DPROVEN_NO_BROTLI "
-        "    -I./include -I./platform -I./crypto/include -I./crypto/platform -I./codec/include -I./codec/platform -I./net/include -I./net/platform -c \"$f\" -o %s/$(echo \"$f\" | tr '/' '_').o || exit 1; "
+        "    -I./include -I./platform -I./crypto/include -I./crypto/platform -I./codec/include -I./codec/platform -I./net/include -I./net/platform -I./math/include -c \"$f\" -o %s/$(echo \"$f\" | tr '/' '_').o || exit 1; "
         "done; echo $std > %s/std.txt", dir, dir);
     PROVEN_TEST_ASSERT(run(cmd) == 0,
         "every library source compiles with -DPROVEN_NO_BROTLI",
@@ -59,7 +59,7 @@ int main(void) {
         "'    proven_http_client_t *client = NULL;' "
         "'    return proven_http_client_create(&c, &client) == PROVEN_ERR_UNSUPPORTED && client == NULL ? 0 : 1;' "
         "'}' > %s/main.c && "
-        "${CC:-cc} $(cat %s/std.txt) -Wall -Wextra -Werror -D_DEFAULT_SOURCE -DPROVEN_NO_BROTLI -I./include -I./platform -I./crypto/include -I./crypto/platform -I./codec/include -I./codec/platform -I./net/include -I./net/platform "
+        "${CC:-cc} $(cat %s/std.txt) -Wall -Wextra -Werror -D_DEFAULT_SOURCE -DPROVEN_NO_BROTLI -I./include -I./platform -I./crypto/include -I./crypto/platform -I./codec/include -I./codec/platform -I./net/include -I./net/platform -I./math/include "
         "  %s/main.c %s/*.o -pthread -o %s/nobrotli && %s/nobrotli",
         dir, dir, dir, dir, dir, dir);
     PROVEN_TEST_ASSERT(run(cmd) == 0,

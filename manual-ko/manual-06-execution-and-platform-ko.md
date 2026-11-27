@@ -539,6 +539,7 @@ PAL 영역:
 - `proven_sys_thread`: job system을 위한 스레드와 동기화.
 - `proven_sys_io`: 표준 스트림 I/O.
 - `proven_sys_math`: 필요한 경우의 수학 헬퍼.
+- `proven_sys_crc`: 프로세서에 있을 때 CRC를 위한 캐리 없는 곱셈(v0.120.0부터).
 
 공개 애플리케이션 코드는 고수준 API를 선호해야 한다:
 

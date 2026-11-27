@@ -85,12 +85,21 @@ void proven_hpack_decoder_set_max_table_bytes(proven_hpack_decoder_t *decoder, p
  *         fields than `header_cap`, or does not fit `scratch`: **the fields are not to be
  *         used, but the decoder is still good** - the block was read to its end and the
  *         table kept in step, so the connection can go on (in HTTP/2: refuse the stream).
- *         (One field that alone is larger than the whole of `scratch` cannot be followed,
- *         and is the next error instead.)
+ *         (Past the limit a field from the table is counted, not copied. One that must still
+ *         be copied - a Huffman-coded string, or a name from the table for an entry being
+ *         inserted - and alone is larger than the whole of `scratch` cannot be followed, and
+ *         is the next error instead.)
  *         PROVEN_ERR_INVALID_FORMAT when the block is not valid HPACK - an index that names
  *         nothing, an integer or a string that runs past the block or is too large, Huffman
  *         coding that ends wrongly, a table size update above the limit or not at the start,
- *         a missing one after the limit was lowered, a block that ends inside a field: **the
+ *         a missing one after the limit was lowered, a block that ends inside a field; also a
+ *         block whose decoding would copy more than four times the larger of `scratch` and
+ *         `max_list_bytes` plus twice the block's own size into the scratch and the table
+ *         (a list within the limit, each field inserted at most once, needs at most about
+ *         half of that; one-byte references to a large entry - an "HPACK bomb" - need far
+ *         more. With a `scratch` under about a third of a list over the limit, a list of
+ *         many inserted fields can pass it too; the HTTP/2 engine's scratch is four times
+ *         its limit): **the
  *         decoder is then unusable and repeats the error** (in HTTP/2: a connection error,
  *         COMPRESSION_ERROR).
  */

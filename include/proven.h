@@ -4,9 +4,10 @@
 /**
  * @file proven.h
  * @brief Unified entry point for the proven library: the base library, proven_base - and the
- *        cryptography library proven_crypto, the compression library proven_codec (RFC-0045)
- *        and the network library proven_net (RFC-0043), each when its headers (crypto/include,
- *        codec/include, net/include in the source tree) are on the include path.
+ *        cryptography library proven_crypto, the compression library proven_codec (RFC-0045),
+ *        the network library proven_net (RFC-0043) and the floating-point library proven_math,
+ *        each when its headers (crypto/include, codec/include, net/include, math/include in the
+ *        source tree) are on the include path.
  */
 
 #include "proven/types.h"
@@ -56,6 +57,9 @@
 #endif
 #if __has_include("proven_net.h")
 #include "proven_net.h"
+#endif
+#if __has_include("proven_math.h")
+#include "proven_math.h"
 #endif
 #endif
 

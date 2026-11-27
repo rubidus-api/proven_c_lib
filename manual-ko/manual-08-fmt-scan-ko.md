@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v0.119.3)
+# Chapter 8: Formatting and Scanning (v0.120.0)
 
 이 장은 `fmt.h`와 `scan.h`에 대한 상세 레퍼런스다.
 Chapter 3은 더 짧은 개요와 일상적인 예제를 제공한다.
@@ -484,6 +484,197 @@ proven_float_format_options_t gen = proven_float_format_options_general();
   잘리지 않는다), 지원되지 않는 정책에는 `PROVEN_ERR_INVALID_ARG`를 반환한다.
 - 제네릭 `{}` 포매터(`proven_u8str_append_fmt*`)는 내부적으로 `DEFAULT` 정책을
   사용하므로, 일상적인 로깅에서는 이 API를 직접 호출할 필요가 없다.
+
+### binary64 연산 (`float_ops.h`)
+
+`float_ops.h`(RFC-0054; proven_math, `math/include` 아래)는 답이 정확히 하나인 binary64 연산 - 정확하거나 올바르게 반올림되는
+것 - 을 모아 두었고, 컴파일러의 부동소수점 플래그나 FPU와 상관없이 모든 타깃에서 그 답을 낸다.
+정수로 비트를 다룬다. 제곱근만은 IEEE 명령이 있는 곳(SSE2, AArch64, WebAssembly)에서 그
+명령을 쓰고, 다른 곳에서는 같은 비트를 내는 정수 제곱근을 쓴다. libm도 `errno`도 없고
+freestanding에서 쓸 수 있다.
+
+| 함수 | 결과 |
+|---|---|
+| `proven_float_sqrt(x)` | 올바르게 반올림한 제곱근; -0은 -0, 음수는 NaN `0x7FF8000000000000` |
+| `proven_float_floor` `proven_float_ceil` `proven_float_trunc` | 정수 값; 0이 되면 `x`의 부호를 유지(`ceil(-0.5)`는 -0) |
+| `proven_float_round(x)` | 가장 가까운 정수, 절반은 0에서 먼 쪽(`round(2.5)`는 3) |
+| `proven_float_rint(x)` | 가장 가까운 정수, 절반은 짝수 쪽(`rint(2.5)`는 2) |
+| `proven_float_fabs` `proven_float_copysign` | 부호 비트만(signalling NaN은 그대로 남는다) |
+| `proven_float_fmin` `proven_float_fmax` | NaN보다 숫자가 이긴다; -0이 +0보다 작다 |
+| `proven_float_fmod(x, y)` | 정확한 나머지, `x`의 부호 |
+| `proven_float_frexp` `proven_float_ldexp` | 가수와 지수; 비정규수로 들어갈 때 한 번만 반올림하는 스케일 |
+| `proven_float_from_i64` | 가장 가까운 짝수(2^53까지 정확) |
+| `proven_float_to_i64(x, &out)` | 0 쪽으로 자름; NaN과 [-2^63, 2^63) 밖은 `PROVEN_ERR_OUT_OF_BOUNDS` |
+| `proven_float_is_nan` `proven_float_is_inf` `proven_float_is_finite` | 비트로 판정: `-ffast-math`가 없애지 못한다 |
+| `proven_float_to_bits` `proven_float_from_bits` | double의 비트, 그리고 그 반대 |
+
+들어온 NaN은 payload를 유지하고 quiet 비트를 켜서 돌려주며, 여기서 새로 만드는 NaN은
+`0x7FF8000000000000`이다. 그래서 한 프로그램의 네 빌드 - 네이티브, 다른 컴파일러, 내보낸 C,
+WebAssembly - 가 같은 비트를 출력한다.
+
+예외가 하나 있는데, 타깃의 호출 규약 때문이다. 32비트 x86은 `double`과 `float`을 x87 레지스터로
+돌려주는데, signalling NaN을 그 레지스터에 올리면 quiet이 된다. 그래서 그 타깃에서는 이 헤더의
+함수를 포함해 어떤 함수가 돌려주는 값에서도 signalling NaN이 남지 않는다(NaN이 quiet으로 들어오므로
+`pow(sNaN, 0)`은 1이다). quiet NaN과 그 payload는 그곳에서도 다른 곳과 똑같이 지켜진다.
+
+```c
+#include "proven/float_ops.h"
+
+/* What a language runtime does with a user's number: classify it, round it the way the user
+ * asked, and hand an index to integer code only when it fits. */
+proven_i64 n = 0;
+int e2 = 0;
+double x = 1e30;
+proven_err_t got = !proven_float_is_finite(x) || proven_float_is_nan(x) || proven_float_is_inf(x)
+                 ? PROVEN_ERR_OUT_OF_BOUNDS
+                 : proven_float_to_i64(proven_float_floor(x), &n);    /* PROVEN_ERR_OUT_OF_BOUNDS: above 2^63 */
+double r = proven_float_rint(2.5);                    /* 2.0: halves to even */
+r = proven_float_round(2.5);                          /* 3.0: halves away from zero */
+r = proven_float_ceil(-0.5);                          /* -0.0 */
+r = proven_float_trunc(proven_float_fmod(-7.5, 2.0)); /* fmod is -1.5 exactly; trunc -1.0 */
+r = proven_float_fmin(0.0, -0.0);                     /* -0.0: -0 is below +0 */
+r = proven_float_fmax(r, proven_float_from_bits(0x7ff8000000000000u));   /* -0.0: a number wins over NaN */
+r = proven_float_copysign(proven_float_fabs(-3.0), -1.0);               /* -3.0 */
+r = proven_float_ldexp(proven_float_frexp(48.0, &e2), e2);              /* 0.75 * 2^6 = 48.0 */
+r = proven_float_sqrt(proven_float_from_i64(1000000));                  /* 1000.0 */
+proven_u64 bits = proven_float_to_bits(r);            /* 0x408f400000000000 */
+(void)got; (void)bits;
+```
+
+### 사칙연산과 binary32 (`float_ops.h`, RFC-0055)
+
+FPU가 없거나 단정도 FPU만 있는 타깃을 위해 `float_ops.h`에는 연산 자체도 있다:
+`proven_float_add`, `_sub`, `_mul`, `_div`, `_fma`(반올림 한 번). 모두 가장 가까운 값으로,
+동점은 짝수로 올바르게 반올림하며 비정규수도 빠짐없이 다룬다. 타깃의 명령이 구조상 IEEE 754인
+곳 - x86 SSE2, AArch64, ARM VFP, RISC-V F/D, WebAssembly; fma는 타깃이 융합 연산이라고 밝힌
+곳만; `-ffast-math` 빌드에서는 어디서도 쓰지 않음 - 에서는 그 명령을, 다른 곳에서는 같은 비트를 내는 정수 구현을 쓴다. 정수 구현은 FPU도
+컴파일러의 soft-float 런타임도 필요 없다. binary32 판 `proven_float32_*`는 `float`에 대한 같은
+함수들이며, 위 표의 함수도 모두 있다.
+
+| 함수 | 결과 |
+|---|---|
+| `proven_float_add` `_sub` `_mul` `_div` | 반올림 한 번; inf - inf, 0 * inf, 0 / 0, inf / inf는 `0x7FF8000000000000`; x - x는 +0 |
+| `proven_float_fma(x, y, z)` | x * y + z를 한 번 반올림; 0 * inf는 `z`가 숫자여도 NaN |
+| `proven_float_compare` | -1, 0, 1, 어느 쪽이든 NaN이면 2; -0과 +0은 같다 |
+| `proven_float_eq` `_lt` `_le` `_unordered` | IEEE 비교: NaN은 자기 자신을 포함해 어떤 값과도 같지 않다 |
+| `proven_float_to_float32` `proven_float_from_float32` | binary32로 가장 가까운 짝수 반올림, 되돌리기는 정확; NaN은 부호와 payload 윗부분을 유지 |
+| `proven_float_from_i32` `_from_u32` `_from_u64` | 정확; `_from_u64`는 2^53을 넘으면 가장 가까운 짝수로 |
+| `proven_float_to_i32` `_to_u32` `_to_u64` | 0 쪽으로 자름; NaN과 타입 범위 밖은 `PROVEN_ERR_OUT_OF_BOUNDS`(부호 없는 타입에서 -0.5는 0) |
+| `proven_float32_*` | 위의 함수와 앞 표의 함수 모두를 `float`로; `_from_i64` `_from_u64` `_to_i64` `_to_u64`도 |
+
+NaN 결과는 어디서나 같은 규칙으로 만든다: 인자 순서로 첫 NaN 피연산자의 payload를 살려 quiet로
+돌려주고, 없으면 `0x7FF8000000000000`(binary32는 `0x7FC00000`)이다. x86, ARM, RISC-V마다 다른
+명령의 NaN은 쓰지 않는다. 예외 플래그는 없고, 명령 경로는 기본 부동소수점 환경을 전제한다.
+반올림 모드를 바꾸거나 flush-to-zero를 켜는 프로그램(x86에서 `-ffast-math`의 시작 코드가
+켠다)은 `PROVEN_FLOAT_SOFT=1`로 빌드해야 이 비트를 얻는다. 이 매크로는 모든 함수가 정수 구현을
+쓰게 한다. 64비트 시프트나 32x32 곱셈을 한 명령으로 못 하는 코어(armv6-M, M 확장 없는 RV32)에서는
+정수 구현이 그 일에 컴파일러의 정수 헬퍼(`__aeabi_llsr`, `__aeabi_lmul`, `__muldi3`)를 부른다.
+부동소수점 헬퍼나 나눗셈 헬퍼는 부르지 않는다.
+
+```c
+#include "proven/float_ops.h"
+
+/* A soft-float runtime of its own: the same bits on a Cortex-M0 with no FPU, on a Cortex-M4F
+ * with a single-precision one, and on a desktop. */
+double a = proven_float_add(0.1, 0.2);                /* 0.30000000000000004, as SSE gives */
+double b = proven_float_sub(a, 0.3);                  /* 2^-54 */
+double c = proven_float_mul(proven_float_div(1.0, 3.0), 3.0);           /* 1.0 */
+double d = proven_float_fma(0.1, 10.0, -1.0);         /* 2^-54: the product's error, kept */
+int order = proven_float_compare(a, proven_float_from_bits(0x7ff8000000000000u));   /* 2: unordered */
+bool same = proven_float_eq(0.0, -0.0) && proven_float_lt(b, a) && proven_float_le(c, 1.0)
+         && !proven_float_unordered(c, d);            /* true */
+float f = proven_float_to_float32(a);                 /* 0.3f, rounded once */
+double back = proven_float_from_float32(f);           /* 0.30000001192092896, exact */
+double big = proven_float_from_u64(UINT64_MAX);       /* 2^64: rounded to nearest even */
+double small = proven_float_add(proven_float_from_i32(-7), proven_float_from_u32(7u));   /* +0 */
+proven_i32 i32 = 0;
+proven_u32 u32 = 0;
+proven_u64 u64 = 0;
+proven_err_t e1 = proven_float_to_i32(-2147483648.5, &i32);   /* OK: truncates to INT32_MIN */
+proven_err_t e2 = proven_float_to_u32(-0.5, &u32);    /* OK: 0 */
+proven_err_t e3 = proven_float_to_u64(big, &u64);     /* PROVEN_ERR_OUT_OF_BOUNDS: 2^64 */
+
+/* binary32: rounded once in binary32, never through binary64. */
+float g = proven_float32_fma(proven_float32_from_i32(3), proven_float32_div(1.0f, 3.0f), -1.0f);
+g = proven_float32_add(g, proven_float32_mul(proven_float32_sub(2.5f, 0.5f), proven_float32_sqrt(4.0f)));
+g = proven_float32_rint(proven_float32_round(proven_float32_floor(proven_float32_ceil(proven_float32_trunc(g)))));
+g = proven_float32_copysign(proven_float32_fabs(g), -1.0f);
+g = proven_float32_fmin(proven_float32_fmax(g, -8.0f), proven_float32_fmod(7.5f, 2.0f));
+int ex = 0;
+g = proven_float32_ldexp(proven_float32_frexp(g, &ex), ex);
+bool cls = proven_float32_is_nan(g) || proven_float32_is_inf(g) || !proven_float32_is_finite(g);
+bool cmp = proven_float32_eq(g, g) && proven_float32_lt(g, 0.0f) && proven_float32_le(g, g)
+        && !proven_float32_unordered(g, 1.0f) && proven_float32_compare(g, 0.0f) == -1;
+proven_u32 fb = proven_float32_to_bits(proven_float32_from_bits(0x3f800000u));   /* 1.0f */
+float h = proven_float32_from_u32(16777217u);         /* 16777216.0f: to even */
+h = proven_float32_add(h, proven_float32_from_i64(-1));
+h = proven_float32_add(h, proven_float32_from_u64(1u));
+proven_i64 i64 = 0;
+proven_err_t e4 = proven_float32_to_i64(h, &i64);
+proven_err_t e5 = proven_float32_to_i32(h, &i32);
+proven_err_t e6 = proven_float32_to_u32(h, &u32);
+proven_err_t e7 = proven_float32_to_u64(h, &u64);
+(void)order; (void)same; (void)back; (void)small; (void)e1; (void)e2; (void)e3;
+(void)cls; (void)cmp; (void)fb; (void)e4; (void)e5; (void)e6; (void)e7;
+```
+
+### exp, log, pow와 삼각함수 (`float_math.h`, RFC-0056)
+
+`proven_float_exp`, `_log`, `_pow`, `_sin`, `_cos`, `_tan`, `_atan2`와 그 binary32 판
+`proven_float32_*`는 올바르게 반올림한다. 모든 결과는 정확한 값을 가장 가까운 쪽으로, 동점은 짝수로
+한 번 반올림한 것이다. 입력마다 정답이 하나이므로 모든 타깃과 모든 빌드가 같은 비트를 내고, 올바르게
+반올림하는 다른 라이브러리(CORE-MATH, MPFR, LLVM libc의 올바른 반올림 함수)와도 같다. 사인, 코사인,
+탄젠트는 인수를 정확히 축소하므로 `sin(1e22)`도 맞다.
+
+두 경로가 같은 비트를 낸다.
+
+- **FPU 경로.** FMA와 AVX2가 있는 x86-64(실행 중에 고른다)와 AArch64에서는 CORE-MATH 프로젝트의
+  코드(MIT; `THIRD_PARTY_NOTICES.md`)가 계산한다. 속도는 올바르게 반올림하지 않는 glibc libm과
+  비슷하다.
+- **정수 경로.** 그 밖의 모든 타깃과 `PROVEN_FLOAT_SOFT=1` 또는 `PROVEN_FLOAT_MATH_SMALL=1`
+  빌드에서는 이 라이브러리의 다정밀도 정수 연산이 계산한다. FPU도 soft-float 런타임도 쓰지 않으며,
+  더 느리다. 나노초가 아니라 마이크로초 단위다.
+
+FPU 경로는 CORE-MATH가 공개한 오차 분석에 기댄다. 정수 경로는 함수마다 센 오차 한계에 기대고,
+반올림 검사는 마지막 자리의 4단위를 허용한다. 정밀도 단계마다 잰 오차는 최대 1단위다. 768비트에서도
+결정되지 않는 결과는 검사 없이 가장 가까운 쪽으로 반올림하는데, 그런 입력은 아직 없었다. 두 경로는
+반올림하기 어려운 입력 약 9백만 개와 형식 전체에서 고르게 뽑은 binary32 입력으로 GNU MPFR과, 그리고
+서로 비교해 검증했다. 정수 경로는 WebAssembly에서도 돌렸다.
+
+| 함수 | 특수값(C23 Annex F) |
+|---|---|
+| `proven_float_exp(x)` | `exp(+-0) = 1`, `exp(-inf) = +0`, `exp(+inf) = +inf`; 709.78을 넘으면 무한대, -745.13보다 작으면 0 |
+| `proven_float_log(x)` | `log(1) = +0`, `log(+-0) = -inf`, `log(x < 0)`은 NaN `0x7FF8000000000000` |
+| `proven_float_pow(x, y)` | quiet NaN이어도 `pow(x, +-0) = 1`, `pow(+1, y) = 1`; 음수 `x`의 정수 아닌 거듭제곱은 NaN; 0과 무한대는 Annex F의 목록대로; 정확한 결과(`pow(9, 0.5) = 3`)는 정확히 |
+| `proven_float_sin` `_cos` `_tan` | 무한대는 NaN; `sin(-0) = -0` |
+| `proven_float_atan2(y, x)` | 부호 있는 0과 무한대는 +-0, +-pi/4, +-pi/2, +-3pi/4, +-pi |
+
+들어온 NaN은 `float_ops.h`와 같이 payload를 유지한 채 quiet로 돌려준다(둘이면 인자 순서로 첫째).
+`y = 0` 또는 `x = 1`인 `pow`에 들어온 signalling NaN도 IEEE 754대로 quiet로 바꿔 돌려준다.
+
+```c
+#include "proven/float_math.h"
+
+/* The same bits in every build of a program: native, exported C, WebAssembly, a core without
+ * an FPU. Each result is the exact value rounded once. */
+double e = proven_float_exp(1.0);                     /* 2.718281828459045 */
+double l = proven_float_log(e);                       /* 1.0 */
+double p = proven_float_pow(2.0, 0.5);                /* 1.4142135623730951 */
+double q = proven_float_pow(-8.0, 3.0);               /* -512.0, exactly */
+double s = proven_float_sin(1e22);                    /* -0.8522008497671888: reduced exactly */
+double c = proven_float_cos(0.0);                     /* 1.0 */
+double t = proven_float_tan(proven_float_atan2(1.0, 1.0));   /* tan(pi/4 rounded): 0.9999999999999999 */
+double a = proven_float_atan2(-0.0, -1.0);            /* -pi */
+float ef = proven_float32_exp(1.0f);                  /* 2.7182817f */
+float lf = proven_float32_log(ef);                    /* 0.99999994f: log of the rounded e */
+float pf = proven_float32_pow(10.0f, -2.0f);          /* 0.01f */
+float sf = proven_float32_sin(3.14159265f);           /* -8.742278e-08f */
+float cf = proven_float32_cos(sf);                    /* 1.0f */
+float tf = proven_float32_tan(0.5f);                  /* 0.5463025f */
+float af = proven_float32_atan2(1.0f, -1.0f);         /* 2.3561945f: 3 pi / 4 */
+(void)l; (void)p; (void)q; (void)s; (void)c; (void)t; (void)a;
+(void)lf; (void)pf; (void)cf; (void)tf; (void)af;
+```
 
 ## 4. 형식 문자열 문법
 포매터는 의도적으로 작은 문법을 받아들인다.

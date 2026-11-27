@@ -200,6 +200,13 @@ int main(void) {
     proven_mem_view_t whole = { .ptr = (const proven_byte_t *)batch, .size = sizeof batch };
     EXAMPLE_REQUIRE(running == proven_crc32(whole),
                     "chunked and whole-buffer CRC-32 must agree, whatever the chunking");
+    /* CRC-64/XZ 도 같은 방식으로 흐른다. 흐르는 값이 64 비트일 뿐이다. */
+    proven_u64 running64 = 0;
+    for (proven_size_t i = 0; i < batch_len; ++i) {
+        proven_mem_view_t chunk = { .ptr = (const proven_byte_t *)&batch[i], .size = sizeof batch[i] };
+        running64 = proven_crc64_update(running64, chunk);
+    }
+    EXAMPLE_REQUIRE(running64 == proven_crc64(whole), "and so must CRC-64's");
 
     printf("events=%zu recent=%zu crc32=%08x\n",
            (size_t)events.len, (size_t)recent.len, (unsigned)running);

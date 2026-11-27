@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v0.119.3)
+# Chapter 8: Formatting and Scanning (v0.120.0)
 
 **Part IV - Text in and out. Prerequisite: [Chapter 3](manual-03-strings-text.md) section 3-section 4.**
 **After this chapter** you can format any value, teach the formatter a type of your own, parse
@@ -510,6 +510,203 @@ proven_float_format_options_t gen = proven_float_format_options_general();
   truncated silently) and `PROVEN_ERR_INVALID_ARG` for an unsupported policy.
 - The generic `{}` formatter (`proven_u8str_append_fmt*`) uses the `DEFAULT`
   policy internally, so everyday logging needs no direct call to this API.
+
+### binary64 operations (`float_ops.h`)
+
+`float_ops.h` (RFC-0054; proven_math, under `math/include`) holds the binary64 operations that have exactly one right answer -
+exact, or correctly rounded - and gives that answer on every target, whatever the compiler's
+floating-point flags or the FPU. They work on the bits with integers; only the square root uses
+the hardware's IEEE instruction where there is one (SSE2, AArch64, WebAssembly) and an integer
+root that gives the same bits elsewhere. No libm, no `errno`; freestanding.
+
+| Function | What it gives |
+|---|---|
+| `proven_float_sqrt(x)` | the root, correctly rounded; -0 for -0, NaN `0x7FF8000000000000` for a negative |
+| `proven_float_floor` `proven_float_ceil` `proven_float_trunc` | integral values; a zero keeps `x`'s sign (`ceil(-0.5)` is -0) |
+| `proven_float_round(x)` | nearest, halves away from zero (`round(2.5)` is 3) |
+| `proven_float_rint(x)` | nearest, halves to even (`rint(2.5)` is 2) |
+| `proven_float_fabs` `proven_float_copysign` | the sign bit only (a signalling NaN stays one) |
+| `proven_float_fmin` `proven_float_fmax` | a number wins over a NaN; -0 is below +0 |
+| `proven_float_fmod(x, y)` | the exact remainder, with `x`'s sign |
+| `proven_float_frexp` `proven_float_ldexp` | fraction and exponent; scaling, rounded once into the subnormals |
+| `proven_float_from_i64` | nearest even (exact to 2^53) |
+| `proven_float_to_i64(x, &out)` | toward zero; `PROVEN_ERR_OUT_OF_BOUNDS` for NaN and outside [-2^63, 2^63) |
+| `proven_float_is_nan` `proven_float_is_inf` `proven_float_is_finite` | by the bits: `-ffast-math` cannot fold them away |
+| `proven_float_to_bits` `proven_float_from_bits` | the bits of a double, and back |
+
+A NaN given comes back with its payload and the quiet bit set; a NaN made here is
+`0x7FF8000000000000`. So four builds of one program - native, another compiler, exported C,
+WebAssembly - print the same bits.
+
+One exception, set by the target's calling convention: 32-bit x86 returns a `double` or a
+`float` in the x87 register, and loading a signalling NaN there makes it quiet. On that target
+a signalling NaN does not survive a function's return, this header's functions included (and
+`pow(sNaN, 0)` gives 1, since the NaN arrives quiet). Quiet NaNs, with their payloads, are kept
+there as everywhere.
+
+```c
+#include "proven/float_ops.h"
+
+/* What a language runtime does with a user's number: classify it, round it the way the user
+ * asked, and hand an index to integer code only when it fits. */
+proven_i64 n = 0;
+int e2 = 0;
+double x = 1e30;
+proven_err_t got = !proven_float_is_finite(x) || proven_float_is_nan(x) || proven_float_is_inf(x)
+                 ? PROVEN_ERR_OUT_OF_BOUNDS
+                 : proven_float_to_i64(proven_float_floor(x), &n);    /* PROVEN_ERR_OUT_OF_BOUNDS: above 2^63 */
+double r = proven_float_rint(2.5);                    /* 2.0: halves to even */
+r = proven_float_round(2.5);                          /* 3.0: halves away from zero */
+r = proven_float_ceil(-0.5);                          /* -0.0 */
+r = proven_float_trunc(proven_float_fmod(-7.5, 2.0)); /* fmod is -1.5 exactly; trunc -1.0 */
+r = proven_float_fmin(0.0, -0.0);                     /* -0.0: -0 is below +0 */
+r = proven_float_fmax(r, proven_float_from_bits(0x7ff8000000000000u));   /* -0.0: a number wins over NaN */
+r = proven_float_copysign(proven_float_fabs(-3.0), -1.0);               /* -3.0 */
+r = proven_float_ldexp(proven_float_frexp(48.0, &e2), e2);              /* 0.75 * 2^6 = 48.0 */
+r = proven_float_sqrt(proven_float_from_i64(1000000));                  /* 1000.0 */
+proven_u64 bits = proven_float_to_bits(r);            /* 0x408f400000000000 */
+(void)got; (void)bits;
+```
+
+### Arithmetic and binary32 (`float_ops.h`, RFC-0055)
+
+For a target without an FPU, or with a single-precision one, `float_ops.h` also has the
+arithmetic itself: `proven_float_add`, `_sub`, `_mul`, `_div` and `_fma` (one rounding), each
+correctly rounded to nearest, ties to even, subnormals in full. Each takes the target's
+instruction where it is IEEE 754 by construction - x86 SSE2, AArch64, ARM VFP, RISC-V F/D,
+WebAssembly; fma only where the target says it is fused; none under `-ffast-math` - and an
+integer implementation with the same bits elsewhere, which needs neither an FPU nor the compiler's soft-float runtime. The
+binary32 set, `proven_float32_*`, is the same for `float`, with every function above.
+
+| Function | What it gives |
+|---|---|
+| `proven_float_add` `_sub` `_mul` `_div` | rounded once; inf - inf, 0 * inf, 0 / 0, inf / inf are `0x7FF8000000000000`; x - x is +0 |
+| `proven_float_fma(x, y, z)` | x * y + z rounded once; 0 * inf is a NaN even when `z` is a number |
+| `proven_float_compare` | -1, 0, 1, or 2 when either is a NaN; -0 equals +0 |
+| `proven_float_eq` `_lt` `_le` `_unordered` | IEEE comparisons: a NaN equals nothing, itself included |
+| `proven_float_to_float32` `proven_float_from_float32` | to binary32 rounded to nearest even, and back exactly; a NaN keeps its sign and the top of its payload |
+| `proven_float_from_i32` `_from_u32` `_from_u64` | exact; `_from_u64` rounds to nearest even past 2^53 |
+| `proven_float_to_i32` `_to_u32` `_to_u64` | toward zero; `PROVEN_ERR_OUT_OF_BOUNDS` for NaN and outside the type (-0.5 is 0 for the unsigned ones) |
+| `proven_float32_*` | all of the above and of the table before it, for `float`; `_from_i64` `_from_u64` `_to_i64` `_to_u64` too |
+
+A NaN result is made by the same rule everywhere: the first NaN operand in argument order, its
+payload kept and quieted, else `0x7FF8000000000000` (binary32 `0x7FC00000`) - not what the
+instruction makes, which differs between x86, ARM and RISC-V. There are no exception flags, and
+the instruction path assumes the default floating-point environment: a program that changes the
+rounding mode, or turns on flush-to-zero (as `-ffast-math`'s startup code does on x86), gets
+these bits only when built with `PROVEN_FLOAT_SOFT=1`, which makes every function take the
+integers. On a core that cannot shift 64 bits or multiply 32 by 32 in one instruction
+(armv6-M, RV32 without M), the integers call the compiler's integer helpers for that
+(`__aeabi_llsr`, `__aeabi_lmul`, `__muldi3`); never a floating-point or a division helper.
+
+```c
+#include "proven/float_ops.h"
+
+/* A soft-float runtime of its own: the same bits on a Cortex-M0 with no FPU, on a Cortex-M4F
+ * with a single-precision one, and on a desktop. */
+double a = proven_float_add(0.1, 0.2);                /* 0.30000000000000004, as SSE gives */
+double b = proven_float_sub(a, 0.3);                  /* 2^-54 */
+double c = proven_float_mul(proven_float_div(1.0, 3.0), 3.0);           /* 1.0 */
+double d = proven_float_fma(0.1, 10.0, -1.0);         /* 2^-54: the product's error, kept */
+int order = proven_float_compare(a, proven_float_from_bits(0x7ff8000000000000u));   /* 2: unordered */
+bool same = proven_float_eq(0.0, -0.0) && proven_float_lt(b, a) && proven_float_le(c, 1.0)
+         && !proven_float_unordered(c, d);            /* true */
+float f = proven_float_to_float32(a);                 /* 0.3f, rounded once */
+double back = proven_float_from_float32(f);           /* 0.30000001192092896, exact */
+double big = proven_float_from_u64(UINT64_MAX);       /* 2^64: rounded to nearest even */
+double small = proven_float_add(proven_float_from_i32(-7), proven_float_from_u32(7u));   /* +0 */
+proven_i32 i32 = 0;
+proven_u32 u32 = 0;
+proven_u64 u64 = 0;
+proven_err_t e1 = proven_float_to_i32(-2147483648.5, &i32);   /* OK: truncates to INT32_MIN */
+proven_err_t e2 = proven_float_to_u32(-0.5, &u32);    /* OK: 0 */
+proven_err_t e3 = proven_float_to_u64(big, &u64);     /* PROVEN_ERR_OUT_OF_BOUNDS: 2^64 */
+
+/* binary32: rounded once in binary32, never through binary64. */
+float g = proven_float32_fma(proven_float32_from_i32(3), proven_float32_div(1.0f, 3.0f), -1.0f);
+g = proven_float32_add(g, proven_float32_mul(proven_float32_sub(2.5f, 0.5f), proven_float32_sqrt(4.0f)));
+g = proven_float32_rint(proven_float32_round(proven_float32_floor(proven_float32_ceil(proven_float32_trunc(g)))));
+g = proven_float32_copysign(proven_float32_fabs(g), -1.0f);
+g = proven_float32_fmin(proven_float32_fmax(g, -8.0f), proven_float32_fmod(7.5f, 2.0f));
+int ex = 0;
+g = proven_float32_ldexp(proven_float32_frexp(g, &ex), ex);
+bool cls = proven_float32_is_nan(g) || proven_float32_is_inf(g) || !proven_float32_is_finite(g);
+bool cmp = proven_float32_eq(g, g) && proven_float32_lt(g, 0.0f) && proven_float32_le(g, g)
+        && !proven_float32_unordered(g, 1.0f) && proven_float32_compare(g, 0.0f) == -1;
+proven_u32 fb = proven_float32_to_bits(proven_float32_from_bits(0x3f800000u));   /* 1.0f */
+float h = proven_float32_from_u32(16777217u);         /* 16777216.0f: to even */
+h = proven_float32_add(h, proven_float32_from_i64(-1));
+h = proven_float32_add(h, proven_float32_from_u64(1u));
+proven_i64 i64 = 0;
+proven_err_t e4 = proven_float32_to_i64(h, &i64);
+proven_err_t e5 = proven_float32_to_i32(h, &i32);
+proven_err_t e6 = proven_float32_to_u32(h, &u32);
+proven_err_t e7 = proven_float32_to_u64(h, &u64);
+(void)order; (void)same; (void)back; (void)small; (void)e1; (void)e2; (void)e3;
+(void)cls; (void)cmp; (void)fb; (void)e4; (void)e5; (void)e6; (void)e7;
+```
+
+### exp, log, pow and the trigonometric functions (`float_math.h`, RFC-0056)
+
+`proven_float_exp`, `_log`, `_pow`, `_sin`, `_cos`, `_tan` and `_atan2`, and their binary32 forms
+`proven_float32_*`, are correctly rounded: each result is the exact value rounded once to
+nearest, ties to even. There is one right answer for each input, so every target and every
+build give the same bits, and so does any other correctly rounded library (CORE-MATH, MPFR,
+LLVM libc's correctly rounded functions). The sine, cosine and tangent reduce their argument
+exactly, so `sin(1e22)` is right too.
+
+Two paths give these bits:
+
+- **The FPU path.** On x86-64 with FMA and AVX2 (chosen at run time) and on AArch64, the
+  CORE-MATH project's code (MIT; `THIRD_PARTY_NOTICES.md`) does the work, at about the speed of
+  glibc's libm, which is not correctly rounded.
+- **The integer path.** On every other target, and with `PROVEN_FLOAT_SOFT=1` or
+  `PROVEN_FLOAT_MATH_SMALL=1`, the library's own multiple-precision integer arithmetic does it.
+  It uses no FPU and no soft-float runtime, and it is slower: microseconds, not nanoseconds.
+
+The FPU path rests on CORE-MATH's published error analyses. The integer path rests on an error
+bound counted for each function, and the rounding test allows 4 units of the last place. The
+error measured at every precision level is at most 1 unit. A result still undecided at 768 bits
+would be rounded to nearest without the test: no input has needed that. Both paths are tested
+against GNU MPFR and against each other, on about nine million hard-to-round inputs and on
+binary32 inputs sampled across the whole format, natively and, for the integer path, under
+WebAssembly.
+
+| Function | Special values (C23 Annex F) |
+|---|---|
+| `proven_float_exp(x)` | `exp(+-0) = 1`, `exp(-inf) = +0`, `exp(+inf) = +inf`; over 709.78 infinity, below -745.13 zero |
+| `proven_float_log(x)` | `log(1) = +0`, `log(+-0) = -inf`, `log(x < 0)` is the NaN `0x7FF8000000000000` |
+| `proven_float_pow(x, y)` | `pow(x, +-0) = 1` and `pow(+1, y) = 1` even for a quiet NaN; a negative `x` with a non-integer `y` is a NaN; zeros and infinities as Annex F lists them; exact results (`pow(9, 0.5) = 3`) exact |
+| `proven_float_sin` `_cos` `_tan` | an infinity gives a NaN; `sin(-0) = -0` |
+| `proven_float_atan2(y, x)` | the signed zeros and infinities give +-0, +-pi/4, +-pi/2, +-3pi/4 and +-pi |
+
+A NaN given comes back quieted with its payload (of two, the first in argument order), as in
+`float_ops.h`; a signalling NaN given to `pow` with `y = 0` or `x = 1` also comes back quieted, as
+IEEE 754 says.
+
+```c
+#include "proven/float_math.h"
+
+/* The same bits in every build of a program: native, exported C, WebAssembly, a core without
+ * an FPU. Each result is the exact value rounded once. */
+double e = proven_float_exp(1.0);                     /* 2.718281828459045 */
+double l = proven_float_log(e);                       /* 1.0 */
+double p = proven_float_pow(2.0, 0.5);                /* 1.4142135623730951 */
+double q = proven_float_pow(-8.0, 3.0);               /* -512.0, exactly */
+double s = proven_float_sin(1e22);                    /* -0.8522008497671888: reduced exactly */
+double c = proven_float_cos(0.0);                     /* 1.0 */
+double t = proven_float_tan(proven_float_atan2(1.0, 1.0));   /* tan(pi/4 rounded): 0.9999999999999999 */
+double a = proven_float_atan2(-0.0, -1.0);            /* -pi */
+float ef = proven_float32_exp(1.0f);                  /* 2.7182817f */
+float lf = proven_float32_log(ef);                    /* 0.99999994f: log of the rounded e */
+float pf = proven_float32_pow(10.0f, -2.0f);          /* 0.01f */
+float sf = proven_float32_sin(3.14159265f);           /* -8.742278e-08f */
+float cf = proven_float32_cos(sf);                    /* 1.0f */
+float tf = proven_float32_tan(0.5f);                  /* 0.5463025f */
+float af = proven_float32_atan2(1.0f, -1.0f);         /* 2.3561945f: 3 pi / 4 */
+(void)l; (void)p; (void)q; (void)s; (void)c; (void)t; (void)a;
+(void)lf; (void)pf; (void)cf; (void)tf; (void)af;
+```
 
 ## 4. Format string grammar
 

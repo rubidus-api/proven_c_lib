@@ -556,6 +556,7 @@ PAL areas:
 - `proven_sys_thread`: threads and synchronization for the job system.
 - `proven_sys_io`: standard stream I/O.
 - `proven_sys_math`: math helpers where needed.
+- `proven_sys_crc`: carry-less multiplication for the CRCs, where the processor has it (since v0.120.0).
 
 Public application code should prefer high-level APIs:
 

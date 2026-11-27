@@ -673,15 +673,15 @@ proven_sys_net_result_t proven_sys_net_send(proven_sys_socket_t sock, const void
 }
 
 /* Several buffers in one call, in order: writev's sendmsg on POSIX (with the same no-SIGPIPE
- * flag as send), WSASend on Windows. Offered up to PROVEN_SYS_NET_VEC_MAX buffers and, as
+ * flag as send), WSASend on Windows. Offered up to PROVEN_SYS_NET_SEND_VEC_MAX buffers and, as
  * clamp_send says, at most 64 KiB in all on Windows. */
 proven_sys_net_result_t proven_sys_net_send_vec(proven_sys_socket_t sock, const proven_sys_net_vec_t *vec, proven_size_t count,
                                                 proven_size_t *sent) {
     *sent = 0;
-    if (count > PROVEN_SYS_NET_VEC_MAX) count = PROVEN_SYS_NET_VEC_MAX;
+    if (count > PROVEN_SYS_NET_SEND_VEC_MAX) count = PROVEN_SYS_NET_SEND_VEC_MAX;
     proven_size_t total = 0, used = 0;
 #if defined(_WIN32) || defined(_WIN64)
-    WSABUF bufs[PROVEN_SYS_NET_VEC_MAX];
+    WSABUF bufs[PROVEN_SYS_NET_SEND_VEC_MAX];
     for (; used < count && total < 65536u; ++used) {
         proven_size_t n = vec[used].len;
         if (n > 65536u - total) n = 65536u - total;
@@ -698,7 +698,7 @@ proven_sys_net_result_t proven_sys_net_send_vec(proven_sys_socket_t sock, const 
         return net_reason(e);
     }
 #else
-    struct iovec iov[PROVEN_SYS_NET_VEC_MAX];
+    struct iovec iov[PROVEN_SYS_NET_SEND_VEC_MAX];
     for (; used < count && total < 0x40000000u; ++used) {
         proven_size_t n = vec[used].len;
         if (n > 0x40000000u - total) n = 0x40000000u - total;

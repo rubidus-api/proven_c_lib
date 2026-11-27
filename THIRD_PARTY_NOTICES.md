@@ -63,3 +63,34 @@ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## CORE-MATH (math/src/cm)
+
+`math/src/cm/` holds the binary64 and binary32 `exp`, `log`, `pow`, `sin`, `cos`, `tan` and
+`atan2` of the CORE-MATH project (https://core-math.gitlabpages.inria.fr/, Inria and CERN;
+authors Alexei Sibidanov, Paul Zimmermann, Tom Hubrecht and others named in each file), ported
+for proven_math's FPU path (RFC-0056). Each file keeps its copyright lines and this MIT
+licence; the changes made in porting are listed at the top of each file.
+
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
+`tests/test_unit_float_math_vectors.h` includes inputs taken from CORE-MATH's lists of
+hard-to-round cases (the same project and licence); their expected results were computed with
+GNU MPFR. The integer path in `math/src/float_math.c` and its constants
+(`scripts/generate_float_math_consts.py`) are this repository's own.

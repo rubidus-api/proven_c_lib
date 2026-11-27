@@ -1,5 +1,6 @@
 #include "proven/h2.h"
 #include "proven/hpack.h"
+#include "proven_internal_h2.h"
 #include "../platform/proven_sys_net_mem.h"
 
 /*
@@ -10,6 +11,18 @@
 
 #define H2C_NO_LENGTH (~(proven_u64)0)
 #define H2C_EMPTY_RUN_MAX 16u              /* frames in a row that carry nothing and end nothing */
+/* Small DATA frames the peer's windows cut (CVE-2019-9511, "data dribble"): one under this many
+ * bytes, made smaller than what the application offered by a window, counts one, and every
+ * frame the peer sends takes one off. A peer that opens windows a byte at a time for many
+ * streams at once - one SETTINGS frame raising INITIAL_WINDOW_SIZE by one - gets one frame a
+ * stream for each frame it sends; past the allowance the connection ends. */
+#define H2C_SMALL_DATA 256u
+#define H2C_DRIBBLE_PER_STREAM 4u          /* the allowance: this many for each stream allowed, and 64 more */
+/* Moving every open stream's window for a change of INITIAL_WINDOW_SIZE costs one step a
+ * stream (CVE-2020-11080, a SETTINGS frame of thousands of entries). The allowance: this many
+ * changes with every allowed stream open; a stream that ends properly gives back a few steps. */
+#define H2C_MOVES_PER_STREAM 32u
+#define H2C_MOVES_BACK 16u
 #define H2C_MAX_LIST ((proven_u32)1 << 20)
 #define H2C_MAX_FRAME ((proven_u32)1 << 20)
 
@@ -44,6 +57,22 @@ typedef enum { RS_PREFACE = 0, RS_HDR, RS_FIXED, RS_DATA, RS_BLOCK, RS_SKIP, RS_
 /* How much of a GOAWAY frame's debug text is kept for the event. */
 #define H2C_TEXT_KEEP 256u
 
+/* A payload lent to the engine (RFC-0053): it is sent after out[at - 1], and before out[at]. */
+typedef struct {
+    const proven_byte_t *ptr;
+    proven_size_t size, at;
+    proven_h2_lend_t *lend;
+} proven_h2c_seg_t;
+
+/* What few connections need, apart so that every connection stays 400 bytes: the peer's GOAWAY
+ * text and the lent payloads waiting, in order, seg[seg_head .. seg_count). */
+typedef struct {
+    proven_byte_t text[H2C_TEXT_KEEP];
+    proven_u32 text_len;                   /* how much of `text` the last GOAWAY filled */
+    proven_h2c_seg_t *seg;
+    proven_size_t seg_head, seg_count, seg_cap, seg_bytes;
+} proven_h2c_aux_t;
+
 struct proven_h2_conn {
     proven_allocator_t alloc;
     /* this side's settings */
@@ -67,7 +96,7 @@ struct proven_h2_conn {
     proven_byte_t *blk;                    /* a header block that came in more than one piece */
     proven_size_t blk_cap, blk_len;
     proven_byte_t *hbuf;                   /* decoded fields, then the scratch they point into */
-    proven_byte_t *text;                   /* the debug text of the peer's GOAWAY, when it sent one with any: H2C_TEXT_KEEP bytes; `content_left` counts what of it is still to come */
+    proven_h2c_aux_t *aux;                 /* made when first needed: the debug text of the peer's GOAWAY (`content_left` counts what of it is still to come), and lent payloads */
     const bool *sensitive;                 /* proven_h2_conn_next_sensitive: for the next header list sent */
 
     proven_i64 send_win, recv_win;
@@ -78,7 +107,10 @@ struct proven_h2_conn {
     proven_u32 last_peer_id;               /* a server: the highest stream the client began */
     proven_u32 last_acted;                 /* a server: the highest stream handed to the application */
     proven_u32 goaway_last, goaway_code, close_code;
-    proven_u32 debt, empty_run;
+    proven_u32 debt;
+    proven_u32 dribble;                    /* small DATA frames the windows cut, less the frames received (H2C_SMALL_DATA) */
+    proven_u32 moves;                      /* stream windows moved by INITIAL_WINDOW_SIZE (H2C_MOVES_PER_STREAM) */
+    proven_u32 want_window;                /* the initial window asked for while a change was in flight */
     proven_size_t ctl_queued;
     /* Streams changed after the opening (proven_h2_conn_set_max_streams; at most 2^20, the
      * ceiling `cfg_streams`): what was last said, what the peer has acknowledged, and what was
@@ -89,6 +121,7 @@ struct proven_h2_conn {
     proven_h2c_rs_t rs;
     proven_byte_t small[16];
     proven_u8 small_len, small_need;       /* at most the preface's 24, and 16 */
+    proven_u16 empty_run;                  /* frames in a row that carry nothing and end nothing: at most H2C_EMPTY_RUN_MAX + 1 */
     /* A ceiling on credit (RFC-0026; proven_h2_conn_cap_window_): what a stream, and the
      * connection, may have granted and not yet consumed. 0: none. It takes the room the two
      * above gave up, so the struct stays 400 bytes. */
@@ -108,13 +141,11 @@ struct proven_h2_conn {
     bool sweep_goaway : 1, sweep_writable : 1;
     bool heads_free : 1;                   /* proven_h2_conn_heads_past_bound_: a response head is not refused for the output bound */
     proven_u32 sweep_at;                   /* where the search for a stream that may send again goes on from: each in its turn */
-    proven_u32 text_len;                   /* how much of `text` the last GOAWAY filled */
     /* Windows that grow while they are read (RFC-0019 section 10; proven_h2_conn_grow_): the caps in
      * KiB, the clock, and in `grow_mark` when this side's first SETTINGS left - then, once they are
      * acknowledged, the round trip (microseconds, wrapping: only differences are taken). */
     proven_u16 grow_stream_kib, grow_conn_kib;
     proven_u32 grow_mark;
-    proven_u32 want_window;                /* the initial window asked for while a change was in flight */
     proven_u64 (*grow_now)(void);
 };
 
@@ -137,6 +168,55 @@ static void h2c_free(proven_h2_conn_t *c, void *p) {
     if (p) c->alloc.free_fn(c->alloc.ctx, p);
 }
 
+static proven_h2c_aux_t *h2c_aux(proven_h2_conn_t *c) {
+    if (!c->aux) {
+        proven_result_mem_mut_t m = c->alloc.alloc_fn(c->alloc.ctx, sizeof(proven_h2c_aux_t), alignof(proven_h2c_aux_t));
+        if (m.err != PROVEN_OK) return (void *)0;
+        c->aux = (proven_h2c_aux_t *)(void *)m.value.ptr;
+        *c->aux = (proven_h2c_aux_t){0};
+    }
+    return c->aux;
+}
+
+/* The first lent payload waiting, if any. */
+static proven_h2c_seg_t *h2c_seg0(const proven_h2_conn_t *c) {
+    return c->aux && c->aux->seg_head < c->aux->seg_count ? &c->aux->seg[c->aux->seg_head] : (void *)0;
+}
+
+static proven_size_t h2c_lent(const proven_h2_conn_t *c) {
+    return c->aux ? c->aux->seg_bytes : 0;
+}
+
+/* out[0 .. delta) is gone: the payloads' places move with what follows it. */
+static void h2c_rebase(proven_h2_conn_t *c, proven_size_t delta) {
+    if (!c->aux || delta == 0) return;
+    for (proven_size_t i = c->aux->seg_head; i < c->aux->seg_count; i++) c->aux->seg[i].at -= delta;
+}
+
+/* Room for `n` more lent payloads. */
+static bool h2c_seg_reserve(proven_h2_conn_t *c, proven_size_t n) {
+    proven_h2c_aux_t *x = h2c_aux(c);
+    if (!x) return false;
+    if (x->seg_head > 0 && x->seg_count + n > x->seg_cap) {
+        h2c_move((proven_byte_t *)(void *)x->seg, (const proven_byte_t *)(void *)(x->seg + x->seg_head), (x->seg_count - x->seg_head) * sizeof *x->seg);
+        x->seg_count -= x->seg_head;
+        x->seg_head = 0;
+    }
+    if (x->seg_count + n <= x->seg_cap) return true;
+    proven_size_t cap = x->seg_cap ? x->seg_cap : 16;
+    while (cap < x->seg_count + n) {
+        if (cap > ((proven_size_t)1 << 24)) return false;
+        cap *= 2;
+    }
+    proven_result_mem_mut_t m = x->seg
+        ? c->alloc.realloc_fn(c->alloc.ctx, x->seg, x->seg_cap * sizeof *x->seg, cap * sizeof *x->seg, alignof(proven_h2c_seg_t))
+        : c->alloc.alloc_fn(c->alloc.ctx, cap * sizeof *x->seg, alignof(proven_h2c_seg_t));
+    if (m.err != PROVEN_OK) return false;
+    x->seg = (proven_h2c_seg_t *)(void *)m.value.ptr;
+    x->seg_cap = cap;
+    return true;
+}
+
 // -----------------------------------------------------------------------------
 // Output
 // -----------------------------------------------------------------------------
@@ -154,9 +234,10 @@ static void h2c_put_u32(proven_byte_t *p, proven_u32 v) {
 /* Room for `n` more bytes at out[out_len]. False, with the connection over, when there is none
  * to be had. */
 static bool h2c_out_reserve(proven_h2_conn_t *c, proven_size_t n) {
-    if (c->out_off == c->out_len) c->out_off = c->out_len = 0;
+    if (c->out_off == c->out_len) { h2c_rebase(c, c->out_off); c->out_off = c->out_len = 0; }
     if (c->out_cap - c->out_len >= n) return true;
     if (c->out_off > 0) {
+        h2c_rebase(c, c->out_off);
         h2c_move(c->out, c->out + c->out_off, c->out_len - c->out_off);
         c->out_len -= c->out_off;
         c->out_off = 0;
@@ -177,7 +258,7 @@ static bool h2c_out_reserve(proven_h2_conn_t *c, proven_size_t n) {
 }
 
 static proven_size_t h2c_pending(const proven_h2_conn_t *c) {
-    return c->out_len - c->out_off;
+    return c->out_len - c->out_off + h2c_lent(c);
 }
 
 static void h2c_q_goaway(proven_h2_conn_t *c, proven_u32 code) {
@@ -432,6 +513,7 @@ static void h2c_remove(proven_h2_conn_t *c, proven_h2c_stream_t *s, bool properl
         if (!(s->flags & ST_UNMAPPED)) *h2c_slot(c, s->id) = (proven_u32)(s - c->streams) + 1;
     }
     if (properly && c->debt > 0) c->debt--;
+    if (properly) c->moves = c->moves > H2C_MOVES_BACK ? c->moves - H2C_MOVES_BACK : 0;
     if (how != 0) h2c_ring_add(c, id, how);
     h2c_conn_credit(c, held);
 }
@@ -444,6 +526,14 @@ static bool h2c_is_idle(const proven_h2_conn_t *c, proven_u32 id) {
 
 static void h2c_event_stream(proven_h2_event_t *ev, proven_h2_event_kind_t kind, const proven_h2c_stream_t *s) {
     *ev = (proven_h2_event_t){ .kind = kind, .stream_id = s->id, .user = s->user };
+}
+
+/* One more DATA frame a window cut small: false when that passes the allowance, and the
+ * connection is ended. */
+static bool h2c_dribbled(proven_h2_conn_t *c) {
+    if (++c->dribble <= c->cfg_streams * H2C_DRIBBLE_PER_STREAM + 64u) return true;
+    h2c_fail(c, PROVEN_H2_ENHANCE_YOUR_CALM);
+    return false;
 }
 
 /* One more stream ended badly; too many more than end well, and the connection goes. */
@@ -687,6 +777,9 @@ static void h2c_apply_setting(proven_h2_conn_t *c, proven_h2_setting_t st) {
         case PROVEN_H2_SETTINGS_INITIAL_WINDOW_SIZE: {
             /* Every open stream moves by the difference, below zero if need be (section 6.9.2). */
             const proven_i64 delta = (proven_i64)st.value - (proven_i64)c->peer_window;
+            if (delta == 0) break;
+            c->moves += c->stream_count;                   /* at most 2^20 streams: far from overflow before the check */
+            if (c->moves > c->cfg_streams * H2C_MOVES_PER_STREAM) { h2c_fail(c, PROVEN_H2_ENHANCE_YOUR_CALM); return; }
             for (proven_u32 i = 0; i < c->stream_count; i++) {
                 const proven_i64 w = (proven_i64)c->streams[i].send_win + delta;
                 if (w > (proven_i64)PROVEN_H2_MAX_WINDOW) { h2c_fail(c, PROVEN_H2_FLOW_CONTROL_ERROR); return; }
@@ -774,12 +867,13 @@ static void h2c_goaway_event(proven_h2_conn_t *c, proven_h2_event_t *ev) {
     c->goaway_recv = true;
     c->sweep_goaway = true;
     *ev = (proven_h2_event_t){ .kind = PROVEN_H2_EVENT_GOAWAY, .code = c->goaway_code, .last_stream_id = c->goaway_last,
-                               .data = { .ptr = c->text_len > 0 ? c->text : (void *)0, .size = c->text_len } };
+                               .data = { .ptr = c->aux && c->aux->text_len > 0 ? c->aux->text : (void *)0, .size = c->aux ? c->aux->text_len : 0 } };
 }
 
 /* A frame header has been read. */
 static void h2c_on_header(proven_h2_conn_t *c, proven_h2_event_t *ev) {
     const proven_h2_frame_t f = c->f;
+    if (c->dribble > 0) c->dribble--;
     /* Nothing may come between the frames of a header block (section 6.10). */
     if (c->expect_cont != 0 ? (f.type != PROVEN_H2_CONTINUATION || f.stream_id != c->expect_cont) : f.type == PROVEN_H2_CONTINUATION) {
         h2c_fail(c, PROVEN_H2_PROTOCOL_ERROR);
@@ -981,14 +1075,10 @@ static void h2c_on_fixed(proven_h2_conn_t *c, proven_h2_event_t *ev) {
             if (c->goaway_recv && last > c->goaway_last) { h2c_fail(c, PROVEN_H2_PROTOCOL_ERROR); return; }
             c->goaway_last = last;
             c->goaway_code = h2c_u32(b + 4);
-            c->text_len = 0;
+            if (c->aux) c->aux->text_len = 0;
             if (f.length > 8) {
                 /* Its debug text first, as much of it as is kept: the event carries it. */
-                if (!c->text) {
-                    proven_result_mem_mut_t m = c->alloc.alloc_fn(c->alloc.ctx, H2C_TEXT_KEEP, 1);
-                    if (m.err == PROVEN_OK) c->text = m.value.ptr;
-                }
-                if (c->text) {
+                if (h2c_aux(c)) {
                     c->content_left = f.length - 8 < H2C_TEXT_KEEP ? f.length - 8 : H2C_TEXT_KEEP;
                     c->pad_left = f.length - 8 - c->content_left;
                     c->rs = RS_TEXT;
@@ -1136,8 +1226,8 @@ static proven_err_t h2c_read(proven_h2_conn_t *c, proven_mem_view_t in, proven_s
             }
             case RS_TEXT: {
                 const proven_u32 n = h2c_min_u32(c->content_left, avail);
-                h2c_copy(c->text + c->text_len, p, n);
-                c->text_len += n;
+                h2c_copy(c->aux->text + c->aux->text_len, p, n);
+                c->aux->text_len += n;
                 c->content_left -= n;
                 *used += n;
                 if (c->content_left > 0) return PROVEN_OK;
@@ -1232,7 +1322,15 @@ void proven_h2_conn_destroy(proven_h2_conn_t *c) {
     h2c_free(c, c->ring);
     h2c_free(c, c->out);
     h2c_free(c, c->blk);
-    h2c_free(c, c->text);
+    if (c->aux) {
+        /* What was lent and not sent goes back now. */
+        for (proven_size_t i = c->aux->seg_head; i < c->aux->seg_count; i++) {
+            proven_h2c_seg_t g = c->aux->seg[i];
+            if (g.size > 0) g.lend->returned(g.lend, g.size);
+        }
+        h2c_free(c, c->aux->seg);
+        h2c_free(c, c->aux);
+    }
     if (!c->hbuf_lent) h2c_free(c, c->hbuf);
     proven_allocator_t a = c->alloc;
     a.free_fn(a.ctx, c);
@@ -1311,22 +1409,61 @@ proven_err_t proven_h2_conn_feed(proven_h2_conn_t *c, proven_mem_view_t in, prov
         if (!c->hbuf_lent) { h2c_free(c, c->hbuf); c->hbuf = (void *)0; }
         h2c_free(c, c->blk); c->blk = (void *)0; c->blk_cap = 0;
         h2c_streams_free(c);
-        if (c->out_off == c->out_len) { h2c_free(c, c->out); c->out = (void *)0; c->out_cap = c->out_len = c->out_off = 0; }
+        if (h2c_pending(c) == 0) { h2c_free(c, c->out); c->out = (void *)0; c->out_cap = c->out_len = c->out_off = 0; }
+        if (c->aux && c->aux->seg_count == 0) { h2c_free(c, c->aux->seg); c->aux->seg = (void *)0; c->aux->seg_cap = c->aux->seg_head = 0; }
     }
     return PROVEN_OK;
 }
 
 proven_mem_view_t proven_h2_conn_pending_output(const proven_h2_conn_t *c) {
-    if (!c || c->out_len == c->out_off) return (proven_mem_view_t){ .ptr = (void *)0, .size = 0 };
-    return (proven_mem_view_t){ .ptr = c->out + c->out_off, .size = c->out_len - c->out_off };
+    if (!c) return (proven_mem_view_t){ .ptr = (void *)0, .size = 0 };
+    const proven_h2c_seg_t *g = h2c_seg0(c);
+    if (g && g->at == c->out_off) return (proven_mem_view_t){ .ptr = g->ptr, .size = g->size };
+    const proven_size_t end = g ? g->at : c->out_len;
+    if (end == c->out_off) return (proven_mem_view_t){ .ptr = (void *)0, .size = 0 };
+    return (proven_mem_view_t){ .ptr = c->out + c->out_off, .size = end - c->out_off };
+}
+
+proven_size_t proven_h2_conn_pending_vec_(const proven_h2_conn_t *c, proven_mem_view_t *parts, proven_size_t cap) {
+    if (!c || !parts) return 0;
+    proven_size_t n = 0, off = c->out_off;
+    for (proven_size_t i = c->aux ? c->aux->seg_head : 0; n < cap; i++) {
+        const proven_h2c_seg_t *g = c->aux && i < c->aux->seg_count ? &c->aux->seg[i] : (void *)0;
+        const proven_size_t end = g ? g->at : c->out_len;
+        if (end > off) parts[n++] = (proven_mem_view_t){ .ptr = c->out + off, .size = end - off };
+        off = end;
+        if (!g || n == cap) break;
+        parts[n++] = (proven_mem_view_t){ .ptr = g->ptr, .size = g->size };
+    }
+    return n;
+}
+
+proven_size_t proven_h2_conn_pending_bytes_(const proven_h2_conn_t *c) {
+    return c ? h2c_pending(c) : 0;
 }
 
 void proven_h2_conn_output_sent(proven_h2_conn_t *c, proven_size_t n) {
     if (!c || n == 0) return;
     if (n > h2c_pending(c)) n = h2c_pending(c);
-    c->out_off += n;
     c->ctl_queued = c->ctl_queued > n ? c->ctl_queued - n : 0;
-    if (c->out_off == c->out_len) {
+    /* Through the buffer up to the next lent payload, through that, and on. */
+    while (n > 0) {
+        proven_h2c_seg_t *g = h2c_seg0(c);
+        const proven_size_t end = g ? g->at : c->out_len;
+        proven_size_t k = end - c->out_off < n ? end - c->out_off : n;
+        c->out_off += k;
+        n -= k;
+        if (n == 0 || !g) break;
+        k = g->size < n ? g->size : n;
+        g->ptr += k;
+        g->size -= k;
+        c->aux->seg_bytes -= k;
+        n -= k;
+        proven_h2_lend_t *lend = g->lend;
+        if (g->size == 0 && ++c->aux->seg_head == c->aux->seg_count) c->aux->seg_head = c->aux->seg_count = 0;
+        lend->returned(lend, k);
+    }
+    if (h2c_pending(c) == 0) {
         c->out_off = c->out_len = 0;
         /* With no stream open there is nothing to say soon: the buffer goes back. */
         if (c->stream_count == 0) { h2c_free(c, c->out); c->out = (void *)0; c->out_cap = 0; }
@@ -1433,6 +1570,7 @@ proven_result_size_t proven_h2_conn_send_data(proven_h2_conn_t *c, proven_u32 st
         if (take > (proven_size_t)s->send_win) take = (proven_size_t)s->send_win;
         if ((proven_i64)take > c->send_win) take = (proven_size_t)c->send_win;
     }
+    const bool cut = take > 0 && take < data.size && take < H2C_SMALL_DATA;     /* by a window, before the bound below */
     /* What is already waiting for the peer bounds what more is taken. */
     const proven_size_t pending = h2c_pending(c);
     const proven_size_t room = pending < c->cfg_out ? c->cfg_out - pending : 0;
@@ -1453,6 +1591,56 @@ proven_result_size_t proven_h2_conn_send_data(proven_h2_conn_t *c, proven_u32 st
         }
         s->send_win -= (proven_i32)take;
         c->send_win -= (proven_i64)take;
+        if (cut && !h2c_dribbled(c)) return (proven_result_size_t){ .err = PROVEN_OK, .value = take };
+    }
+    if (!all) s->flags |= ST_BLOCKED;
+    else if (end_stream) h2c_local_end(c, s);
+    return (proven_result_size_t){ .err = PROVEN_OK, .value = take };
+}
+
+proven_result_size_t proven_h2_conn_send_data_ref_(proven_h2_conn_t *c, proven_u32 stream_id, proven_mem_view_t data, bool end_stream,
+                                                   proven_h2_lend_t *lend) {
+    if (!c || (data.size > 0 && (!data.ptr || !lend))) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_ARG, .value = 0 };
+    if (c->closed) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
+    proven_h2c_stream_t *s = h2c_find(c, stream_id);
+    if (!s) return (proven_result_size_t){ .err = PROVEN_ERR_NOT_FOUND, .value = 0 };
+    if ((s->flags & ST_HEAD_SENT) == 0 || (s->flags & ST_LOCAL_END) != 0) return (proven_result_size_t){ .err = PROVEN_ERR_INVALID_STATE, .value = 0 };
+
+    /* As proven_h2_conn_send_data: the windows and the bound say how much. */
+    proven_size_t take = data.size;
+    if (s->send_win <= 0 || c->send_win <= 0) take = 0;
+    else {
+        if (take > (proven_size_t)s->send_win) take = (proven_size_t)s->send_win;
+        if ((proven_i64)take > c->send_win) take = (proven_size_t)c->send_win;
+    }
+    const bool cut = take > 0 && take < data.size && take < H2C_SMALL_DATA;     /* by a window, before the bound below */
+    const proven_size_t pending = h2c_pending(c);
+    const proven_size_t room = pending < c->cfg_out ? c->cfg_out - pending : 0;
+    if (take > room) take = room;
+    const proven_size_t frame = c->peer_frame;
+    const bool all = take == data.size;
+    if (take > 0 || (all && end_stream)) {
+        const proven_size_t frames = take == 0 ? 1 : (take + frame - 1) / frame;
+        /* Room for the payloads' places first, then for the headers: nothing is queued unless both are had. */
+        if ((take > 0 && !h2c_seg_reserve(c, frames)) || !h2c_out_reserve(c, 9 * frames)) {
+            c->oom = false; c->closed = false;
+            return (proven_result_size_t){ .err = PROVEN_ERR_NOMEM, .value = 0 };
+        }
+        proven_size_t done = 0;
+        for (proven_size_t i = 0; i < frames; i++) {
+            const proven_size_t piece = take - done < frame ? take - done : frame;
+            const bool last = i == frames - 1;
+            h2c_put_header(c->out + c->out_len, piece, PROVEN_H2_DATA, last && all && end_stream ? PROVEN_H2_FLAG_END_STREAM : 0, stream_id);
+            c->out_len += 9;
+            if (piece > 0) {
+                c->aux->seg[c->aux->seg_count++] = (proven_h2c_seg_t){ .ptr = PROVEN_NET_AT(data.ptr, done), .size = piece, .at = c->out_len, .lend = lend };
+                c->aux->seg_bytes += piece;
+            }
+            done += piece;
+        }
+        s->send_win -= (proven_i32)take;
+        c->send_win -= (proven_i64)take;
+        if (cut && !h2c_dribbled(c)) return (proven_result_size_t){ .err = PROVEN_OK, .value = take };
     }
     if (!all) s->flags |= ST_BLOCKED;
     else if (end_stream) h2c_local_end(c, s);

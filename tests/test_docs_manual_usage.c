@@ -181,6 +181,7 @@ static void collect_headers(void) {
     collect_headers_from("crypto/include/proven");
     collect_headers_from("codec/include/proven");
     collect_headers_from("net/include/proven");
+    collect_headers_from("math/include/proven");
 }
 
 /* Everything the examples use. */

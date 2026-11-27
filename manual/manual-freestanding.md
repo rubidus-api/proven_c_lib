@@ -1,4 +1,4 @@
-# Proven Freestanding Mode (v0.119.3)
+# Proven Freestanding Mode (v0.120.0)
 
 **Part VI - Going further. Prerequisites: Parts II-V, and
 [Chapter 6](manual-06-execution-and-platform.md).**
@@ -130,6 +130,7 @@ src/proven/random.c
 src/proven/float_decimal.c
 src/proven/float_parse.c
 src/proven/float_format.c
+math/src/float_ops.c
 src/proven/time.c
 src/proven/fmt.c
 src/proven/scan.c
@@ -152,6 +153,7 @@ platform/proven_sys_io.c
 platform/proven_sys_env.c
 platform/proven_sys_time.c
 platform/proven_sys_random.c
+platform/proven_sys_crc.c
 platform/proven_sys_mem.c
 ```
 
@@ -194,7 +196,7 @@ on every release, not asserted in this table.
 | `u16str.h` | Excluded | Current profile defines `PROVEN_NO_U16STR`. |
 | `array.h`, `list.h`, `ring.h`, `map.h` | Available | No hidden OS dependency. |
 | `algorithm.h` | Available | Sort/search helpers for arrays. |
-| `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32 (SHA-256 is `sha2.h`, proven_crypto, since v0.113.0) - byte-exact, no OS dependency. CRC-32 uses eight 256-entry tables (8 KiB of read-only data) by default; build the library with `-DPROVEN_CRC32_SMALL=1` to keep one 1 KiB table, about 5x slower on long inputs, same output. |
+| `hash.h` | Available | FNV-1a, SipHash-2-4, CRC-32 (SHA-256 is `sha2.h`, proven_crypto, since v0.113.0) - byte-exact, no OS dependency. CRC-32 uses eight 256-entry tables (8 KiB of read-only data) by default; build the library with `-DPROVEN_CRC32_SMALL=1` to keep one 1 KiB table, about 5x slower on long inputs, same output. CRC-64/XZ likewise: 16 KiB, or one 2 KiB table with `-DPROVEN_CRC64_SMALL=1` (which follows `PROVEN_CRC32_SMALL` unless set). The carry-less-multiply folding of hosted builds is not in the freestanding one. |
 | `hash_legacy.h` | Available | SHA-1 and MD5, for formats that fix them (the WebSocket accept key, old checksum files). Same shape as SHA-256; no table larger than MD5's 64 constants. |
 | `hmac.h` | Available | HMAC, HKDF and PBKDF2 over SHA-256, SHA-384 and SHA-512 (all three in `sha2.h`), and SHA-1. Pure arithmetic. `proven_mem_equal_ct` and `proven_mem_wipe`, which go with them, are in `memory.h`. |
 | `deflate.h` | Available | DEFLATE, zlib and gzip, both ways. Pure arithmetic; one allocation per compressor (about 325 KiB at the default window, 11 KiB at the smallest) or decompressor (about 35 KiB), through the allocator you pass. |
@@ -213,6 +215,8 @@ on every release, not asserted in this table.
 | `scan.h` | Available | Scanner for memory views. |
 | `float_parse.h` | Available | `proven_strtod`, `proven_parse_double_ascii` and `proven_parse_f64_ascii` all compile here: the decimal-to-binary64 engine is integer-only and needs no libc. The one difference is that the freestanding build does not set `errno` on overflow or underflow - the returned `proven_err_t` carries that instead, which is the value to check on a target with no `errno` at all. This is separate from `fmt.h`'s float **formatting**, which the profile does compile out. |
 | `float_format.h` | Available without `fmt.h` integration | The binary64 formatter is integer-only and compiles, but the current profile defines `PROVEN_FMT_NO_FLOAT`, so `{}` will not render a float. Call the `float_format.h` entry points directly if you need digits on a target where you have decided the code size is worth it. |
+| `float_ops.h` | Available | Made for it (RFC-0054): integer work on the bits, no libm and no `errno`; the square root takes the IEEE instruction where the target has one (SSE2, AArch64, WebAssembly `f64.sqrt`) and an integer root elsewhere, with the same bits. RFC-0055 adds the arithmetic (`add` `sub` `mul` `div` `fma`, comparisons, conversions) and a binary32 set: the instruction on x86 SSE2, AArch64, ARM VFP, RISC-V F/D and WebAssembly, the integers with the same bits on a core without an FPU - no soft-float runtime (`__aeabi_dadd` and the like) needed. `PROVEN_FLOAT_SOFT=1` forces the integers. |
+| `float_math.h` | Available | `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2` (RFC-0056), correctly rounded: the integer path in a freestanding build (no FPU, no soft-float runtime; up to about 7 KiB of stack, measured on Cortex-M3 with clang -O2, and about 40 KiB of code and tables), or the CORE-MATH FPU path on AArch64 and on x86-64 built for FMA and AVX2; the same bits either way. `PROVEN_FLOAT_MATH_SMALL=1` leaves the FPU path's code and tables out. |
 | `time.h` | Limited | Core datetime formatting can compile; real PAL time is excluded. |
 | `heap.h` | Stub | `proven_heap_allocator()` returns an invalid allocator. |
 | `fs.h`, `stream.h`, `net.h`, `http_client.h`, `http_server.h`, `loop.h`, `http_event.h`, `ws_event.h`, `http_event_client.h`, `ws_conn.h`, `mmap.h`, `sysio.h`, `job.h` | Excluded | Require hosted PAL services. |

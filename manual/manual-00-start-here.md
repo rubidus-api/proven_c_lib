@@ -335,15 +335,16 @@ system - the **PAL**, or platform abstraction layer. Everything that makes a sys
 and nowhere else, which is why the rest of the library can be compiled for a target with no
 operating system at all.
 
-That is the base library, **proven_base**. Three more libraries sit on it, each compiled with it
-when a program uses it. **proven_crypto** under `crypto/` - SHA-2, HMAC, ciphers, key exchange,
+That is the base library, **proven_base**. Four more libraries sit on it, each compiled with it
+when a program uses it. **proven_math** under `math/` - `float_ops.h` and `float_math.h`, floating-point
+operations and `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2` with the same bits on every target (chapter 8) - stands on the base alone, as these do: **proven_crypto** under `crypto/` - SHA-2, HMAC, ciphers, key exchange,
 signatures, DER and certificates - and **proven_codec** under `codec/` - DEFLATE/gzip, Zstandard,
 Brotli - since v0.113.0; **proven_net** under `net/` - sockets, the event loop, TLS, HTTP/1.1, 2
 and 3, WebSocket, server-sent events (chapters 9 to 12, 14, 15 and 17) - since v0.111.0, standing
 on both of the others:
 
 ```text
-gcc -std=c2x -Iinclude -Iplatform -Icrypto/include -Icodec/include -Inet/include your_program.c src/proven/*.c platform/*.c crypto/src/*.c crypto/platform/*.c codec/src/*.c codec/platform/*.c net/src/*.c net/platform/*.c -o your_program
+gcc -std=c2x -Iinclude -Iplatform -Icrypto/include -Icodec/include -Inet/include -Imath/include your_program.c src/proven/*.c platform/*.c crypto/src/*.c crypto/platform/*.c codec/src/*.c codec/platform/*.c net/src/*.c net/platform/*.c math/src/*.c math/src/cm/*.c -o your_program
 ```
 
 Header names are the same (`#include "proven/sign.h"`, `#include "proven/http.h"`), and `proven.h`
@@ -1005,6 +1006,8 @@ Two things this table tells you that the file names do not:
 | `scan.h` | Structural scanner and typed scan destinations | Chapter 3 |
 | `float_parse.h` | Locale-free decimal and hexadecimal -> `double`/`float` parser (`proven_strtod`, `proven_parse_double_ascii`) | Chapter 8 |
 | `float_format.h` | `double`/`float` -> decimal formatter (fixed `%f`/`%e`, shortest) | Chapter 8 |
+| `float_ops.h` | binary64 and binary32 operations with the same bits on every target: `add`/`sub`/`mul`/`div`/`fma`, comparisons, `sqrt`, `floor`/`ceil`/`trunc`/`round`/`rint`, `fmod`, `frexp`/`ldexp`, integer and binary32 conversions, classification; the instruction or the integers, no FPU needed | Chapter 8 |
+| `float_math.h` | `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2` for binary64 and binary32, correctly rounded: the same bits on every target | Chapter 8 |
 | `float_config.h` | Float-engine tuning (`PROVEN_FLOAT_BIGINT_LIMBS`, precision caps) | Chapters 6 and 8 |
 | `array.h` | Generic growable vector | Chapter 4 |
 | `list.h` | Intrusive doubly-linked list | Chapter 4 |

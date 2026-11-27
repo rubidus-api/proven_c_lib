@@ -132,6 +132,7 @@ static void collect_real(void) {
     collect_real_from("include/proven", true);
     collect_real_from("crypto/include/proven", true);       /* the cryptography library (RFC-0045) */
     collect_real_from("codec/include/proven", true);        /* the compression library (RFC-0045) */
+    collect_real_from("math/include/proven", true);         /* the floating-point library */
     collect_real_from("net/include/proven", true);          /* the network library (RFC-0043) */
     /* The PAL is real - the manual references it when it explains the platform boundary, and a
      * reference to it is not a ghost. But it is an internal layer for porting and integration,

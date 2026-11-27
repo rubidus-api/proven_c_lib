@@ -1483,6 +1483,15 @@ proven_err_t proven_http_stream_trailers(const proven_http_stream_t *c, proven_h
     return proven_http_body_trailers(&c->body, fields, cap, count);    /* PROVEN_ERR_INVALID_STATE before the body's end */
 }
 
+proven_err_t proven_http_stream_respond_borrowed(proven_http_stream_t *c, proven_u16 status,
+                                                 const proven_http_header_t *headers, proven_size_t header_count, proven_mem_view_t body) {
+    if (!c || (body.size > 0 && !body.ptr)) return PROVEN_ERR_INVALID_ARG;
+    /* Only HTTP/2 in the clear sends from the caller's memory; the others copy, which keeps
+     * the promise too (the body is not read after on_done). */
+    if (PROVEN_HTTP_EVENT_IS_H2_(c)) return proven_http_event_h2_respond_borrowed_(c, status, headers, header_count, body);
+    return proven_http_stream_respond(c, status, headers, header_count, body);
+}
+
 proven_err_t proven_http_stream_respond(proven_http_stream_t *c, proven_u16 status,
                                         const proven_http_header_t *headers, proven_size_t header_count, proven_mem_view_t body) {
     if (!c || (body.size > 0 && !body.ptr)) return PROVEN_ERR_INVALID_ARG;
@@ -1718,16 +1727,32 @@ void proven_http_event_raw_again_(proven_http_stream_t *c) {
 }
 
 proven_size_t proven_http_event_raw_offer_(proven_http_stream_t *c, proven_mem_view_t data) {
+    return proven_http_event_raw_offerv_(c, &data, 1);
+}
+
+proven_size_t proven_http_event_raw_offerv_(proven_http_stream_t *c, const proven_mem_view_t *parts, proven_size_t count) {
     if (!c || c->dead || c->h.state != EV_RAW) return 0;
     proven_size_t taken = 0;
+    /* Through TLS one piece at a time (each is sealed into records of its own): its owner lends
+     * nothing, so its output is one piece. */
+    if (c->tls && count > 1) count = 1;
+    proven_size_t total = 0;
+    for (proven_size_t i = 0; i < count; i++) total += parts[i].size;
+    const proven_mem_view_t data = count > 0 ? parts[0] : (proven_mem_view_t){ .ptr = (void *)0, .size = 0 };
     ev_enter(c);
-    /* Taken while the loop holds less than EV_OFFER_HOLD for the connection: straight to the
-     * socket when nothing waits, the rest held by the loop; the owner keeps what is refused. */
+    /* Taken while the loop holds less than EV_OFFER_HOLD for the connection. In the clear, all
+     * of it is offered to the socket when nothing waits, and of what the socket does not take
+     * the loop holds what is left under EV_OFFER_HOLD: the bound is on what is held, not on what
+     * is written (32 KiB a write was 33 sends a 1 MiB response). The owner keeps what is refused. */
     const proven_size_t held = ev_buffered(c);
-    if (data.size > 0 && held < EV_OFFER_HOLD) {
+    if (total > 0 && held < EV_OFFER_HOLD) {
         proven_size_t n = EV_OFFER_HOLD - held;
-        if (n > data.size) n = data.size;
-        if (c->tls) {
+        if (!c->tls) {
+            const proven_result_size_t w = proven_loop_send_some_v_(c->h.server->loop, &c->lsock, parts, count, n);
+            if (w.err != PROVEN_OK) ev_kill(c, w.err == PROVEN_ERR_NOMEM ? PROVEN_ERR_NOMEM : PROVEN_ERR_RESET);
+            else taken = w.value;
+        } else {
+            if (n > data.size) n = data.size;
             /* Sealed into the loop's chunks; a CBC suite through the engine, a record's worth at a time. */
             bool fallback = false;
             if (ev_flush(c) && ev_seal(c, data.ptr, n, &taken, &fallback) && fallback) {
@@ -1740,12 +1765,10 @@ proven_size_t proven_http_event_raw_offer_(proven_http_stream_t *c, proven_mem_v
             /* What was sealed leaves now: an owner that offers a last frame and then lets go of
              * the connection in the same callback still has it delivered. */
             if (!c->dead) proven_loop_flush_(c->h.server->loop, &c->lsock);
-        } else if (ev_put(c, data.ptr, n)) {
-            taken = n;
         }
     }
     if (c->dead) taken = 0;
-    else { c->raw_more = taken < data.size; ev_watch(c); }
+    else { c->raw_more = taken < total; ev_watch(c); }
     ev_leave(c);
     return taken;
 }

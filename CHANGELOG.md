@@ -18,6 +18,174 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.120.0] - 2026-11-27
+
+### Added
+
+- **proven_math**, a fifth library under `math/` (`math/include/proven/`, `math/src/`, umbrella
+  `math/include/proven_math.h`): the floating-point operations with the same bits on every
+  target. `float_ops.h` below is in it, and `PROVEN_FLOAT_SOFT` is in its `math_config.h`. Like
+  proven_crypto and proven_codec it stands on the base's public headers alone, and `proven.h`
+  includes it when `math/include` is on the include path. A hand-listed build adds
+  `-Imath/include`, `math/src/*.c` and `math/src/cm/*.c`. Decimal parsing and formatting of floats
+  (`float_parse.h`, `float_format.h`) stay in the base.
+
+- `proven_crc64` and `proven_crc64_update` (`hash.h`, asked by FultaArc): CRC-64/XZ (ECMA-182,
+  reflected), the check xz writes, the same shape as CRC-32's pair. Slicing-by-8 tables (16 KiB;
+  `PROVEN_CRC64_SMALL=1` keeps one 2 KiB table), and carry-less-multiply folding where the
+  processor has it. 100 MiB in 64 KiB calls: 13.5 GB/s folded, as liblzma's `lzma_crc64`
+  (13.7 GB/s); 1.8 GB/s on the tables.
+- `float_ops.h` (RFC-0054, asked by Pinax): binary64 operations that have one right answer and
+  give it on every target - `proven_float_sqrt` (correctly rounded; the IEEE instruction on
+  SSE2, AArch64 and WebAssembly, an integer root with the same bits elsewhere),
+  `_floor` `_ceil` `_trunc` `_round` (halves away) `_rint` (halves to even), `_fabs`
+  `_copysign`, `_fmin`/`_fmax` (a number wins over a NaN, -0 below +0), `_fmod` (exact),
+  `_frexp`/`_ldexp`, `_from_i64`, `_to_i64` (`PROVEN_ERR_OUT_OF_BOUNDS` outside
+  [-2^63, 2^63) and for NaN), `_is_nan` `_is_inf` `_is_finite`, `_to_bits`/`_from_bits`.
+  On the bits with integers: no libm, no `errno`, no effect of `-ffast-math` or
+  `-ffp-contract`; freestanding. A NaN given keeps its payload, quieted; a NaN made is
+  `0x7FF8000000000000`. On 32-bit x86 a signalling NaN does not survive any function's
+  return (the calling convention returns floats in the x87 register, which quiets it); quiet
+  NaNs and their payloads are kept there too. Tested against bit tables and, on random inputs,
+  references computed another way (`tests/test_unit_float_ops`; on 32-bit x86, the Windows test
+  VM's i686 and `gcc -m32`, with quiet NaNs for the signalling rows and no binary64 reference
+  from the x87 operators, which round twice).
+- `float_ops.h` arithmetic and binary32 (RFC-0055), for targets without an FPU or with a
+  single-precision one: `proven_float_add` `_sub` `_mul` `_div` `_fma`, `_compare` `_eq` `_lt`
+  `_le` `_unordered`, `_to_float32`/`_from_float32`, `_from_i32` `_from_u32` `_from_u64`,
+  `_to_i32` `_to_u32` `_to_u64`; and `proven_float32_*`, every one of these and of RFC-0054's
+  functions for `float`. Correctly rounded to nearest even, subnormals in full, fma and the
+  binary32 results rounded once. The instruction where it is IEEE by construction (x86 SSE2,
+  AArch64 by inline assembly; ARM VFP, RISC-V F/D and WebAssembly by the operator, not under
+  x87 evaluation; fma only where the target says it is fused; none of them under
+  `-ffast-math`, whose startup code turns on flush-to-zero), an integer
+  implementation with the same bits elsewhere that needs no soft-float runtime. A NaN result
+  is the first NaN operand quieted, or `0x7FF8000000000000` (`0x7FC00000`), whatever the
+  instruction made. No exception flags; the instruction path assumes the default rounding mode
+  and no flush-to-zero. `PROVEN_FLOAT_SOFT=1` (`math_config.h`) makes every function take the
+  integers, the square root included. Tested against this host's SSE and FMA instructions on
+  inputs weighted to the edges, fma also against Dekker's exact product error
+  (`tests/test_unit_float_arith`); the AArch64, ARM, RISC-V and WebAssembly branches were
+  compiled with `clang --target=`, not run (AArch64's operand order checked by disassembly). On
+  armv6-M and RV32 without M the integers call the compiler's 64-bit shift and multiply
+  helpers; no floating-point or division helper on any target.
+- `float_math.h` (RFC-0056, proven_math, asked by Pinax): `proven_float_exp`, `_log`, `_pow`,
+  `_sin`, `_cos`, `_tan`, `_atan2` and their binary32 forms `proven_float32_*`, correctly
+  rounded to nearest even - the one right answer, so the same bits on every target and in every
+  build, and the same as any other correctly rounded library. Special values as C23 Annex F says;
+  NaNs as `float_ops.h` (a signalling NaN to `pow` with `y = 0` or `x = 1` comes back quieted, as
+  IEEE 754 says); the trigonometric functions reduce exactly for every finite argument. Two
+  paths with the same bits:
+  - the FPU path: CORE-MATH's code (MIT, ported in `math/src/cm`; `THIRD_PARTY_NOTICES.md`), on
+    x86-64 with FMA and AVX2 (chosen at run time in a hosted build) and on AArch64: 10-39 ns a
+    call on x86-64, 1.0-3.0 times glibc's libm, which is not correctly rounded;
+  - the integer path: this library's own multiple-precision integer arithmetic with Ziv's
+    rounding test - 192-bit tables and fixed-point series at the first level - everywhere else
+    and with `PROVEN_FLOAT_SOFT=1` or the new `PROVEN_FLOAT_MATH_SMALL=1` (which leaves out the
+    FPU path's code). No FPU and no soft-float runtime; 0.7-4.9 us a call on x86-64, about
+    40 KiB of code and tables on a 32-bit target.
+  Checked against GNU MPFR on both paths: every input of CORE-MATH's lists of hard-to-round cases
+  (about 9.4 million, the binary64 functions and binary32 `atan2` and `pow`), every 61st binary32
+  input of `exp`, `log`, `sin`, `cos`, `tan` on the FPU path (70 million each) and every 251st on
+  the integer path (17 million each), and random inputs; `tests/test_unit_float_math` carries about 1,350 of them
+  with MPFR's results and checks the two paths against each other. The FPU path passed the lists
+  built by gcc (`-std=c23` and `-std=gnu23 -O2`, `-O3 -march=native`) and clang; the integer path
+  also ran under WebAssembly (Node.js, 562,096 inputs with MPFR's results). The integer path's
+  error, measured at every Ziv level against the next, is at most 1 unit of the last place
+  against the 4 its rounding test allows. The AArch64 FPU path is compiled, not run.
+- `proven_http_stream_respond_borrowed` (RFC-0053 phase 2): `proven_http_stream_respond` without
+  the copy - the body must stay valid until `on_done`. Over HTTP/2 in the clear it is sent from
+  the caller's memory (frame headers in the engine, the body lent between them), and `on_done`
+  comes once the server no longer needs it: after its last byte was written or when the
+  connection is gone, which may be after the response ended. Over HTTP/1.1, TLS, HTTP/3 and
+  when compressed it is copied, under the same rule. Under h2load: 1.21-1.52 x the requests a
+  second of `proven_http_stream_respond` (64 KiB and 1 MiB bodies), 0.92-1.62 x libnghttp2's.
+- HTTP/2: the last piece of a response body carries END_STREAM itself, instead of an empty DATA
+  frame after it.
+
+### Changed
+
+- `proven_crc32_update` folds with PCLMULQDQ (x86) or PMULL (AArch64) where the processor has
+  it, chosen at run time and used only after a self-test gives the tables' answer; the result
+  is unchanged on every length and alignment, the build flags too (per-function target
+  attributes). 100 MiB in 64 KiB calls: 2.6 to 13.5 GB/s, 4 times zlib 1.3.1's `crc32_z`;
+  in 256-byte calls 7.7 GB/s. The freestanding build keeps the tables. Asked by FultaArc.
+  A build that lists its sources by hand adds `platform/proven_sys_crc.c` (hosted builds);
+  without it `hash.c` does not link.
+- HTTP/2 in the clear on the event-driven server and client (`net/src/http_event.c`,
+  `net/src/http_event_client_h2.c`, `net/src/loop.c`): when nothing waits for the socket, all
+  of the connection's pending output is offered to it in one write; the 32 KiB bound now limits
+  only what the loop holds of what the socket did not take, not what one write may carry. A
+  1 MiB response took 33 `send` calls and now takes about one. Under nghttp2's h2load (one
+  server core, loopback, median of three): 64 KiB bodies 1.39 x and 1 MiB bodies 1.35 x the
+  requests a second of before; heads unchanged. Public API, wire format and memory bounds
+  unchanged; TLS connections unchanged.
+- HTTP/2 in the clear on the event-driven server (RFC-0053 phase 1, `net/src/h2_conn.c`,
+  `net/src/http_event_h2.c`): a response body the driver keeps because it is over the output
+  bound is lent to the engine, which sends it in place between the frame headers, gathered into
+  writes of up to 128 pieces, instead of copying it a second time. Under h2load on a loaded
+  machine no row was slower and no response took more writes (1 MiB bodies at a 2 MiB bound:
+  1.19 x the requests a second, within a wide spread). Public API, wire format, `on_done`'s
+  timing and memory bounds unchanged; TLS connections unchanged.
+- HTTP/2 on the event-driven server (`net/src/http_event_h2.c`): a connection writes at most
+  1 MiB each time the loop calls it, then lets the loop's other connections have their turn
+  and is called back behind them. Where the socket takes all it is given (loopback, a fast
+  network), a connection that owed ten 1 MiB answers wrote all ten before the loop moved on,
+  and the requests of the others waited unread: under h2load, 1 MiB bodies on ten
+  connections, one connection made twice the requests of another and the 99th percentile of
+  a request's time was 59-60 ms against a median of 13-14 ms. Now every connection makes the
+  same number, and the 99th percentile is 25 ms against a median of 20 ms (libnghttp2's server:
+  38-39 ms against 30-31), the requests a second unchanged. Public API, wire format, memory
+  bounds and the number of writes unchanged.
+
+- Manual chapter 17 (both editions), section 5: a table of the published HTTP/2 denial-of-service
+  attacks (CVE-2016-6581, CVE-2019-9511 to 9518, CVE-2020-11080, CVE-2023-44487, CVE-2025-8671, the 2024
+  CONTINUATION flood), each with the bound that answers it and the test that drives it.
+  `test_unit_h2_conn` gains the rows that had none: unread SETTINGS acknowledgements, a PRIORITY
+  flood, empty names and empty values, an empty HEADERS frame, resets this side is made to send.
+
+### Fixed
+
+- The build's repository check ran again: since the maintainers' script moved, every `./nob`
+  mode logged `[PROJECT_CHECK][SKIP] reason=not-present` and passed. `./nob` now runs the
+  maintainers' script where there is one and `scripts/check-docs.py` (the public half: no
+  private file in the public tree, no local path or key, no link followed by `(`) where there
+  is not; `scripts/check-docs.py` itself no longer fails for a script it cannot have, and
+  `scripts/release.sh` runs the same check.
+- Manual chapter 17 (both editions) listed extended CONNECT (RFC 8441) under "Not here"; it is
+  there since v0.56.0 (`enable_connect_protocol`, chapter 15's `http2_websocket`).
+- Manual chapter 17 (both editions) also said that the event-driven server passes no trailers and
+  that WebSocket needs HTTP/1.1: both are there (trailers since v0.107.0, `proven_http_stream_trailers`
+  and `proven_http_stream_end_trailers`; WebSocket over HTTP/2 with `http2_websocket`).
+
+### Security
+
+- HTTP/2 floods that cost the server far more than the peer, each now bounded (measured on
+  the engine alone against small requests, a byte fed for a byte); HTTP/3 shares the first's
+  fix for its field sections:
+  - The HPACK bomb (CVE-2016-6581's attack): past `max_header_list_bytes` a header block was
+    still read to its end, and each one-byte reference to a large table entry copied it - 30
+    to 55 times a request's cost. A field from the table is now counted, not copied, past the
+    limit, and `proven_hpack_decode` refuses a block whose decoding would copy more than four
+    times the larger of its scratch and `max_list_bytes` plus twice the block
+    (`PROVEN_ERR_INVALID_FORMAT`; in HTTP/2 `COMPRESSION_ERROR`). QPACK field sections count
+    the same way past the limit.
+  - Data dribble (CVE-2019-9511): each SETTINGS frame raising INITIAL_WINDOW_SIZE by one
+    drew a one-byte DATA frame from every waiting stream - 36 to 156 times a request's cost.
+    DATA frames a window cuts below 256 bytes now count against the frames the peer sends;
+    past 4 x `max_concurrent_streams` + 64 the connection ends with `ENHANCE_YOUR_CALM`.
+  - INITIAL_WINDOW_SIZE changed over and over (as in CVE-2020-11080): each change moved
+    every open stream, up to 5 times a request's cost at 1,000 streams. A connection now takes
+    32 x `max_concurrent_streams` stream moves, a stream that ends properly giving 16 back;
+    past that, `ENHANCE_YOUR_CALM`. An entry that changes nothing costs nothing.
+- HTTP/3: the QPACK encoder stream's Duplicate (one byte) copied a whole table entry out and
+  in again, about 1,000 times a small insert's cost per byte at the default 4,096-byte table.
+  The bytes encoder instructions copy now count against sixteen for each byte of the stream;
+  past four times the table size allowed, `QPACK_ENCODER_STREAM_ERROR`. Measured after:
+  1.5 times a small insert, the table made again included. An instruction that arrives in
+  pieces is now decoded once it is whole: before, each piece decoded its name again - a
+  2,000-byte Huffman name fed a byte at a time cost 2,050 ns a byte, now 38.
+
 ## [0.119.3] - 2026-11-21
 
 ### Changed

@@ -26,6 +26,9 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_crc32(proven_mem_view_from_u8(PROVEN_LIT("123456789"))) == 0xcbf43926u,
                     "CRC-32 of \"123456789\" is the shared check value");
     (void)checksum;
+    /* xz 의 검사값이나 더 긴 CRC 가 필요할 때의 같은 일: CRC-64/XZ. */
+    EXAMPLE_REQUIRE(proven_crc64(proven_mem_view_from_u8(PROVEN_LIT("123456789"))) == 0x995dc9bbdf1939faull,
+                    "CRC-64/XZ of \"123456789\" is its check value");
 
     /* 할 일 4: 내용의 지문 - 중복 제거, 내용 주소화, "이 둘이 같은 파일인가". 일치를
      * 위조하려는 상대 앞에서도 안전하게 답한다. 답이 속아 넘어가면 안 되는 자리에서

@@ -596,6 +596,24 @@ held in memory. The body is copied whatever its size, so it is for bodies that a
 It may be called inside `on_request` or at any later time on the loop's thread, while the
 stream is valid.
 
+**Lent, not copied.** `proven_http_stream_respond_borrowed` takes the same arguments and does
+not copy the body: it must stay valid and unchanged until `on_done` for that stream. Over
+HTTP/2 in the clear the bytes then go from your memory to the socket, and `on_done` comes when
+the server no longer needs them - after the last was written, or when the connection is gone -
+which may be later than the response's end. Over HTTP/1.1, through TLS, over HTTP/3 and for a
+compressed response the body is copied as by `proven_http_stream_respond`, under the same
+rule. Reach for it when the body outlives the response anyway: a mapped file, a cached page, a
+buffer you free in `on_done`.
+
+```c
+/* A page that lives as long as the server - cached once, lent to every response that sends it. */
+static const proven_byte_t page[] = "<!doctype html><title>cached</title>";
+proven_http_stream_t *stream = (void *)0;    /* in a handler: the stream on_request was given */
+proven_err_t e = proven_http_stream_respond_borrowed(stream, 200, (void *)0, 0,
+                                                    (proven_mem_view_t){ page, sizeof page - 1 });
+(void)e;                                      /* here PROVEN_ERR_INVALID_ARG: there is no stream */
+```
+
 **In pieces.** `proven_http_stream_begin` sends the head and promises a body of
 `content_length` bytes, or - given `PROVEN_HTTP_EVENT_LENGTH_UNKNOWN` - a body sent chunked,
 whose length nobody knows yet. Then `proven_http_stream_write` offers bytes, and

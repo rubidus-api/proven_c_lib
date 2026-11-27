@@ -127,7 +127,7 @@ int main(void) {
 
     /* The base library's headers, the crypto, codec (RFC-0045) and network (RFC-0043) libraries':
      * one alias layer for all. */
-    static const char *const dirs[] = { "include/proven", "crypto/include/proven", "codec/include/proven", "net/include/proven" };
+    static const char *const dirs[] = { "include/proven", "crypto/include/proven", "codec/include/proven", "net/include/proven", "math/include/proven" };
     int headers = 0;
     for (size_t di = 0; di < sizeof dirs / sizeof dirs[0]; ++di) {
     DIR *d = opendir(dirs[di]);

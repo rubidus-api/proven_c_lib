@@ -802,6 +802,7 @@ int *hit = proven_array_binary_search(&nums, &key, cmp_int);
 | **여러분 자신의** 테이블에 키를 해싱, **신뢰된** 입력 | `proven_hash_bytes` (FNV-1a) | 빠르다; 여기서 crypto 해시는 이득 없이 ~50배 느리다 |
 | **신뢰할 수 없는** 입력의 키를 테이블에 해싱 | `proven_hash_keyed` (SipHash-2-4) | FNV는 공격자가 모든 키를 한 버킷에 충돌시켜 O(1) 테이블을 O(n²)로 바꾸게 한다 |
 | 데이터가 전송/디스크에서 **손상**되지 않았는지 확인 | `proven_crc32` | 체크섬; gzip/zlib/PNG와 상호운용된다 |
+| 같은 일을 xz의 검사값으로, 또는 더 긴 CRC로 | `proven_crc64` | CRC-64/XZ(ECMA-182), `.xz` 파일이 지니는 그것 |
 | 콘텐츠 **지문 채취**: 중복 제거, 콘텐츠 주소 지정, "같은 파일?" | `proven_sha256` (`sha2.h`, proven_crypto) | *고의로* 위조된 일치에 대해 안전한 유일한 것 |
 
 기억할 한 줄: **CRC-32와 FNV는 사고를 탐지하지 공격을 탐지하지 않는다.** 누군가
@@ -823,6 +824,7 @@ SipHash: CC0; SHA-256: FIPS 180-4, 특허 없음), 각 명세로부터 구현되
 | `proven_hash_keyed(view, key[16])` | 16바이트 비밀 아래의 SipHash-2-4. 같은 작업이되, 공격자가 공급하는 키를 위한 것. | `proven_u64`. |
 | `proven_crc32(view)` | 한 번에 하는 CRC-32(IEEE, reflected) — gzip/zlib/PNG가 지니는 그것. | `proven_u32`. |
 | `proven_crc32_update(crc, view)` | 청크 스트림에 대한 같은 CRC. `0`에서 시작하라; 호출 사이에 여러분이 쥐고 있는 값이 진짜 CRC이므로, 저장하고, 기록하고, 재개할 수 있다. | `proven_u32`. |
+| `proven_crc64(view)`, `proven_crc64_update(crc, view)` | CRC-64/XZ(ECMA-182, reflected) — xz가 쓰는 검사값; CRC-32의 두 함수와 같은 모양(v0.120.0부터). | `proven_u64`. |
 | `proven_sha256(view, out[32])` | 한 번에 하는 SHA-256. | void; `PROVEN_SHA256_SIZE` 바이트를 쓴다. |
 | `proven_sha256_init/_update/_final` | 한 번에 메모리에 담을 수 없는 콘텐츠에 대한 같은 다이제스트. 다이제스트는 오직 바이트에만 의존하며, 어떻게 청크되었는지에는 결코 의존하지 않는다. | void. |
 | `proven_sha256_to_hex(digest, out[65])` | `sha256sum`과 `git`이 출력하는 64자 소문자 표기. NUL 종료. | void. |
@@ -923,6 +925,9 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_crc32(proven_mem_view_from_u8(PROVEN_LIT("123456789"))) == 0xcbf43926u,
                     "CRC-32 of \"123456789\" is the shared check value");
     (void)checksum;
+    /* xz 의 검사값이나 더 긴 CRC 가 필요할 때의 같은 일: CRC-64/XZ. */
+    EXAMPLE_REQUIRE(proven_crc64(proven_mem_view_from_u8(PROVEN_LIT("123456789"))) == 0x995dc9bbdf1939faull,
+                    "CRC-64/XZ of \"123456789\" is its check value");
 
     /* 할 일 4: 내용의 지문 - 중복 제거, 내용 주소화, "이 둘이 같은 파일인가". 일치를
      * 위조하려는 상대 앞에서도 안전하게 답한다. 답이 속아 넘어가면 안 되는 자리에서
@@ -2107,6 +2112,13 @@ int main(void) {
     proven_mem_view_t whole = { .ptr = (const proven_byte_t *)batch, .size = sizeof batch };
     EXAMPLE_REQUIRE(running == proven_crc32(whole),
                     "chunked and whole-buffer CRC-32 must agree, whatever the chunking");
+    /* CRC-64/XZ 도 같은 방식으로 흐른다. 흐르는 값이 64 비트일 뿐이다. */
+    proven_u64 running64 = 0;
+    for (proven_size_t i = 0; i < batch_len; ++i) {
+        proven_mem_view_t chunk = { .ptr = (const proven_byte_t *)&batch[i], .size = sizeof batch[i] };
+        running64 = proven_crc64_update(running64, chunk);
+    }
+    EXAMPLE_REQUIRE(running64 == proven_crc64(whole), "and so must CRC-64's");
 
     printf("events=%zu recent=%zu crc32=%08x\n",
            (size_t)events.len, (size_t)recent.len, (unsigned)running);

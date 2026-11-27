@@ -814,6 +814,7 @@ primitive per job so the choice is made once you name the job:
 | hashing keys into **your own** table, **trusted** input | `proven_hash_bytes` (FNV-1a) | fast; a crypto hash here is ~50x slower for no gain |
 | hashing keys from **untrusted** input into a table | `proven_hash_keyed` (SipHash-2-4) | FNV lets an attacker collide every key into one bucket and turn your O(1) table into O(n^2) |
 | checking data was not **corrupted** in transit or on disk | `proven_crc32` | a checksum; interoperates with gzip/zlib/PNG |
+| the same, for xz's check or where a longer CRC is wanted | `proven_crc64` | CRC-64/XZ (ECMA-182), as `.xz` files carry it |
 | **fingerprinting** content: dedup, content-addressing, "same file?" | `proven_sha256` (`sha2.h`, proven_crypto) | the only one safe against a *deliberately* forged match |
 
 The one line to remember: **CRC-32 and FNV detect accident, not attack.** Do not use them
@@ -835,6 +836,7 @@ their specifications and checked against each one's official known-answer vector
 | `proven_hash_keyed(view, key[16])` | SipHash-2-4 under a 16-byte secret. The same job, for keys an attacker supplies. | `proven_u64`. |
 | `proven_crc32(view)` | One-shot CRC-32 (IEEE, reflected) - the one gzip/zlib/PNG carry. | `proven_u32`. |
 | `proven_crc32_update(crc, view)` | The same CRC over a stream of chunks. Start from `0`; the value you hold between calls is the real CRC, so you can store it, log it, and resume. | `proven_u32`. |
+| `proven_crc64(view)`, `proven_crc64_update(crc, view)` | CRC-64/XZ (ECMA-182, reflected) - the check xz writes; the same shape as CRC-32's pair (since v0.120.0). | `proven_u64`. |
 | `proven_sha256(view, out[32])` | One-shot SHA-256. | void; writes `PROVEN_SHA256_SIZE` bytes. |
 | `proven_sha256_init/_update/_final` | The same digest over content you cannot hold in memory at once. The digest depends only on the bytes, never on how they were chunked. | void. |
 | `proven_sha256_to_hex(digest, out[65])` | The 64-character lowercase spelling `sha256sum` and `git` print. NUL-terminated. | void. |
@@ -935,6 +937,9 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_crc32(proven_mem_view_from_u8(PROVEN_LIT("123456789"))) == 0xcbf43926u,
                     "CRC-32 of \"123456789\" is the shared check value");
     (void)checksum;
+    /* The same job for xz's check, or where a longer CRC is wanted: CRC-64/XZ. */
+    EXAMPLE_REQUIRE(proven_crc64(proven_mem_view_from_u8(PROVEN_LIT("123456789"))) == 0x995dc9bbdf1939faull,
+                    "CRC-64/XZ of \"123456789\" is its check value");
 
     /* Job 4: fingerprint content - dedup, content-addressing, "are these the same file",
      * answered safely even against someone trying to forge a match. This is the one you
@@ -2148,6 +2153,13 @@ int main(void) {
     proven_mem_view_t whole = { .ptr = (const proven_byte_t *)batch, .size = sizeof batch };
     EXAMPLE_REQUIRE(running == proven_crc32(whole),
                     "chunked and whole-buffer CRC-32 must agree, whatever the chunking");
+    /* CRC-64/XZ streams the same way, with a 64-bit running value. */
+    proven_u64 running64 = 0;
+    for (proven_size_t i = 0; i < batch_len; ++i) {
+        proven_mem_view_t chunk = { .ptr = (const proven_byte_t *)&batch[i], .size = sizeof batch[i] };
+        running64 = proven_crc64_update(running64, chunk);
+    }
+    EXAMPLE_REQUIRE(running64 == proven_crc64(whole), "and so must CRC-64's");
 
     printf("events=%zu recent=%zu crc32=%08x\n",
            (size_t)events.len, (size_t)recent.len, (unsigned)running);

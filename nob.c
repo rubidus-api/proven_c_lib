@@ -158,7 +158,7 @@ static void append_mode_cflags(Nob_Cmd *cmd, const char *mode, const char *stand
     else nob_cmd_append(cmd, "-g", "-O0");
     if (standard_flag) nob_cmd_append(cmd, standard_flag);
     if (sysroot && *sysroot) nob_cmd_append(cmd, "--sysroot", sysroot);
-    nob_cmd_append(cmd, "-I./include", "-I./platform", "-I./crypto/include", "-I./crypto/platform", "-I./codec/include", "-I./codec/platform", "-I./net/include", "-I./net/platform", "-I./manual/examples");
+    nob_cmd_append(cmd, "-I./include", "-I./platform", "-I./crypto/include", "-I./crypto/platform", "-I./codec/include", "-I./codec/platform", "-I./net/include", "-I./net/platform", "-I./math/include", "-I./manual/examples");
 }
 
 /* The one place a library object's compile command is built: the cache hash and the compile use
@@ -476,7 +476,7 @@ static bool command_available(const char *cmd_name) {
 }
 
 /*
- * scripts/project-check.sh runs the repository checks that are not C: the documentation
+ * ops/scripts/project-check.sh runs the repository checks that are not C: the documentation
  * structure rules and the privacy scan that keeps this machine's paths and any key-like
  * pattern out of a public repository.
  *
@@ -491,11 +491,21 @@ static bool command_available(const char *cmd_name) {
  *
  * It is skipped, loudly, when it cannot run - no POSIX shell, no python3, or no script (a
  * source tarball). A skip says so; it never passes silently.
+ *
+ * The full script is the maintainers' (ops/, not published); a public clone runs its public
+ * half, scripts/check-docs.py. When the script moved there, every build logged
+ * reason=not-present and passed for days: a loud skip is still a skip nobody reads.
  */
 static bool command_available(const char *cmd_name);
 
 static int run_project_check(void) {
-    const char *script = "scripts/project-check.sh";
+    const char *script = "ops/scripts/project-check.sh";
+    const char *command = "sh ops/scripts/project-check.sh";
+
+    if (!nob_file_exists(script)) {
+        script = "scripts/check-docs.py";
+        command = "python3 scripts/check-docs.py";
+    }
 
     if (!nob_file_exists(script)) {
         nob_log(NOB_INFO, "[PROVEN][PROJECT_CHECK][SKIP] path=%s reason=not-present", script);
@@ -517,7 +527,7 @@ static int run_project_check(void) {
         return 0;
     }
     nob_log(NOB_INFO, "[PROVEN][PROJECT_CHECK][RUN] path=%s", script);
-    if (system("sh scripts/project-check.sh") != 0) {
+    if (system(command) != 0) {
         nob_log(NOB_ERROR, "[PROVEN][PROJECT_CHECK][FAIL] path=%s", script);
         nob_log(NOB_ERROR, "[PROVEN][PROJECT_CHECK][FAIL_HINT] The failing check names the file above. "
                            "A privacy hit is either a real leak - delete it - or an example string "
@@ -938,11 +948,11 @@ static void append_cross_cflags(Nob_Cmd *cmd, const Proven_Cross_Target *target,
         nob_cmd_append(cmd,
                        standard_flag, "-ffreestanding", "-nostdlib",
                        "-DPROVEN_FREESTANDING", "-DPROVEN_FMT_NO_FLOAT", "-DPROVEN_NO_U16STR",
-                       "-Wall", "-Wextra", "-Werror", "-I./include", "-I./platform", "-I./crypto/include", "-I./crypto/platform", "-I./codec/include", "-I./codec/platform", "-I./net/include", "-I./net/platform");
+                       "-Wall", "-Wextra", "-Werror", "-I./include", "-I./platform", "-I./crypto/include", "-I./crypto/platform", "-I./codec/include", "-I./codec/platform", "-I./net/include", "-I./net/platform", "-I./math/include");
     } else {
         nob_cmd_append(cmd,
                        standard_flag, "-D_DEFAULT_SOURCE", "-D_POSIX_C_SOURCE=200809L",
-                       "-Wall", "-Wextra", "-Werror", "-I./include", "-I./platform", "-I./crypto/include", "-I./crypto/platform", "-I./codec/include", "-I./codec/platform", "-I./net/include", "-I./net/platform");
+                       "-Wall", "-Wextra", "-Werror", "-I./include", "-I./platform", "-I./crypto/include", "-I./crypto/platform", "-I./codec/include", "-I./codec/platform", "-I./net/include", "-I./net/platform", "-I./math/include");
     }
     if (sysroot && *sysroot) nob_cmd_append(cmd, "--sysroot", sysroot);
     if (target->arch_flag_1) nob_cmd_append(cmd, target->arch_flag_1);
@@ -1121,7 +1131,7 @@ static bool check_manual_code_blocks(const char *compiler, const char *standard_
         nob_cmd_append(&cmd, compiler);
         if (standard_flag) nob_cmd_append(&cmd, standard_flag);
         nob_cmd_append(&cmd, "-Wall", "-Wextra", "-D_DEFAULT_SOURCE", "-D_POSIX_C_SOURCE=200809L",
-                       "-I./include", "-I./platform", "-I./crypto/include", "-I./crypto/platform", "-I./codec/include", "-I./codec/platform", "-I./net/include", "-I./net/platform", "-fsyntax-only", out_path);
+                       "-I./include", "-I./platform", "-I./crypto/include", "-I./crypto/platform", "-I./codec/include", "-I./codec/platform", "-I./net/include", "-I./net/platform", "-I./math/include", "-fsyntax-only", out_path);
         bool ok = nob_cmd_run_sync(cmd);
         nob_cmd_free(cmd);
 
@@ -1614,7 +1624,7 @@ int main(int argc, char **argv)
     if (archiver_exe) nob_sb_append_cstr(&hash_src, archiver_exe);
     nob_sb_append_cstr(&hash_src, build_mode);
     nob_sb_append_cstr(&hash_src, standard_flag);
-    nob_sb_append_cstr(&hash_src, "-I./include-I./crypto/include-I./codec/include-I./net/include-D_DEFAULT_SOURCE-D_POSIX_C_SOURCE=200809L");
+    nob_sb_append_cstr(&hash_src, "-I./include-I./crypto/include-I./codec/include-I./net/include-I./math/include-D_DEFAULT_SOURCE-D_POSIX_C_SOURCE=200809L");
     if (sysroot) nob_sb_append_cstr(&hash_src, sysroot);
     if (user_cflags) nob_sb_append_cstr(&hash_src, user_cflags);
     if (user_ldflags) nob_sb_append_cstr(&hash_src, user_ldflags);
@@ -1643,7 +1653,7 @@ int main(int argc, char **argv)
     if (!mkdir_p_safe(build_dir)) return 1;
 
     // Subdirs
-    static const char *subdirs[] = {"src", "src/proven", "platform", "crypto", "crypto/src", "crypto/platform", "codec", "codec/src", "codec/platform", "net", "net/src", "net/platform", "tests", "manual", "manual/examples",
+    static const char *subdirs[] = {"src", "src/proven", "platform", "crypto", "crypto/src", "crypto/platform", "codec", "codec/src", "codec/platform", "net", "net/src", "net/platform", "math", "math/src", "math/src/cm", "tests", "manual", "manual/examples",
                                     "manual/examples/en", "manual/examples/ko"};
     for (size_t i = 0; i < NOB_ARRAY_LEN(subdirs); ++i) {
         char buf[256];

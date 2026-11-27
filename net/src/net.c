@@ -679,14 +679,15 @@ proven_result_size_t proven_net_write_all(proven_net_conn_t *conn, proven_mem_vi
     return internal_write(conn, src, until, true);
 }
 
-_Static_assert(PROVEN_NET_VEC_MAX == PROVEN_SYS_NET_VEC_MAX, "one limit for the gather write");
+_Static_assert(PROVEN_NET_VEC_WIDE_ == PROVEN_SYS_NET_SEND_VEC_MAX, "one limit for the gather write");
+_Static_assert(PROVEN_NET_VEC_MAX <= PROVEN_NET_VEC_WIDE_, "the loop's pieces fit one");
 
 proven_err_t proven_net_write_vec_(proven_net_conn_t *conn, const proven_mem_view_t *bufs, proven_size_t count, proven_size_t *sent) {
     *sent = 0;
     if (!conn || (count > 0 && !bufs)) return PROVEN_ERR_INVALID_ARG;
     if (!conn->internal.open) return PROVEN_ERR_INVALID_STATE;
-    if (count > PROVEN_NET_VEC_MAX) count = PROVEN_NET_VEC_MAX;
-    proven_sys_net_vec_t vec[PROVEN_NET_VEC_MAX];
+    if (count > PROVEN_NET_VEC_WIDE_) count = PROVEN_NET_VEC_WIDE_;
+    proven_sys_net_vec_t vec[PROVEN_NET_VEC_WIDE_];
     proven_size_t room = g_write_cap > 0 ? g_write_cap : (proven_size_t)-1;
     for (proven_size_t i = 0; i < count; ++i) {
         proven_size_t n = bufs[i].size < room ? bufs[i].size : room;

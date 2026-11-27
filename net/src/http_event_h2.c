@@ -2,6 +2,8 @@
 #include "../platform/proven_sys_net_mem.h"
 #include "proven_internal_http_event.h"
 #include "proven_internal_http_coding.h"
+#include "proven_internal_h2.h"
+#include "proven_internal_net.h"
 
 #if !defined(PROVEN_FREESTANDING) && !defined(PROVEN_NO_NET)
 
@@ -39,6 +41,26 @@
 
 typedef struct h2d h2d_t;
 
+/* A stream's `out` lent to the engine (RFC-0053): the engine sends from it in place, and gives
+ * back what it has sent. When the stream is done with it - all of it offered, or the stream over
+ * - it is `orphan`, and goes when the last lent byte has come back, though the stream may be gone
+ * by then.
+ *
+ * A body the handler lent (proven_http_stream_respond_borrowed) is the caller's: `buf` is null,
+ * nothing of it is freed here, and its stream's on_done waits - the stream is `waiter`, with
+ * `why` - until the engine has given back every lent byte or the connection is gone. While the
+ * stream or a wait refers to it the record is `held` and stays. */
+typedef struct h2_lent {
+    proven_h2_lend_t base;             /* first: the engine's view of it */
+    proven_allocator_t alloc;
+    proven_byte_t *buf;                /* the driver's own, freed with the record; null when borrowed */
+    proven_size_t lent, back;
+    bool orphan, held;
+    struct h2s *waiter;
+    proven_err_t why;
+    struct h2_lent *next_wait;         /* the connection's list of on_done that wait */
+} h2_lent_t;
+
 typedef struct h2s {
     proven_ev_head_t h;                       /* first: what http_event.c reads */
     h2d_t *d;                          /* not to be followed once `dead` */
@@ -48,6 +70,8 @@ typedef struct h2s {
     proven_size_t held_len, held_cap;
     proven_byte_t *out;                /* response body made and not yet taken by the engine */
     proven_size_t out_len, out_off, out_cap;
+    h2_lent_t *lent;                   /* `out` is lent to the engine: it may not change (s_out_own) */
+    h2_lent_t *borrow;                 /* the handler's body, lent: on_done waits for it (s_finish) */
     proven_http_compressor_t_ *zip;
     proven_u64 response_left;          /* body bytes still promised; LENGTH_UNKNOWN when not counted */
     proven_u64 body_seen;
@@ -98,6 +122,9 @@ struct h2d {
     bool eof;                          /* the peer closed its sending side */
     bool held;                         /* input is left where it is - the connection is not read - until the engine's output is under its bound again */
     bool early_now;                    /* everything the engine has taken so far arrived as early data (RFC-0027) */
+    bool lend;                         /* in the clear: response bodies are lent to the engine, not copied (RFC-0053) */
+    h2_lent_t *waits;                  /* streams whose on_done waits for a borrowed body to be sent (d_fire) */
+    proven_size_t visit_sent;          /* written since the loop last called in (d_pump's H2_VISIT_BYTES) */
 };
 
 /* The engine's clock for growing windows: microseconds. */
@@ -129,6 +156,59 @@ static bool h2_append(proven_allocator_t a, proven_byte_t **buf, proven_size_t *
 }
 
 // -----------------------------------------------------------------------------
+// A stream's output lent to the engine (RFC-0053)
+// -----------------------------------------------------------------------------
+
+static void h2_lent_free(h2_lent_t *l) {
+    proven_allocator_t a = l->alloc;
+    if (l->buf) a.free_fn(a.ctx, l->buf);
+    a.free_fn(a.ctx, l);
+}
+
+static void h2_lent_maybe_free(h2_lent_t *l) {
+    if (l->orphan && !l->held && l->back == l->lent) h2_lent_free(l);
+}
+
+/* From the engine, inside proven_h2_conn_output_sent or proven_h2_conn_destroy: count only. A
+ * wait is ended by d_fire, outside the engine. */
+static void h2_lent_returned(proven_h2_lend_t *base, proven_size_t n) {
+    h2_lent_t *l = (h2_lent_t *)(void *)base;
+    l->back += n;
+    h2_lent_maybe_free(l);
+}
+
+/* The stream lets go of `out`: freed, or - while the engine still has some of it - left to the
+ * record, which frees it when the last byte comes back. */
+static void s_out_free(proven_h2s_t *s) {
+    if (s->lent) {
+        h2_lent_t *l = s->lent;
+        s->lent = (void *)0;
+        l->orphan = true;
+        h2_lent_maybe_free(l);
+    } else if (s->out) {
+        proven_allocator_t a = s->h.server->alloc;
+        a.free_fn(a.ctx, s->out);
+    }
+    s->out = (void *)0;
+    s->out_len = s->out_off = s->out_cap = 0;
+}
+
+/* Before `out` changes: a lent one may not, so what of it is not yet offered moves to a buffer of
+ * the stream's own, and the lent one is left to its record. False when there is no memory. */
+static bool s_out_own(proven_h2s_t *s) {
+    if (!s->lent) return true;
+    const proven_size_t left = s->out_len - s->out_off;
+    proven_byte_t *q = (void *)0;
+    proven_size_t len = 0, cap = 0;
+    if (left > 0 && !h2_append(s->h.server->alloc, &q, &len, &cap, s->out + s->out_off, left)) return false;
+    s_out_free(s);
+    s->out = q;
+    s->out_len = len;
+    s->out_cap = cap;
+    return true;
+}
+
+// -----------------------------------------------------------------------------
 // Lifetimes
 // -----------------------------------------------------------------------------
 
@@ -136,8 +216,16 @@ static void d_pump(h2d_t *d);
 
 static void d_enter(h2d_t *d) { d->depth++; }
 
+static bool d_fire(h2d_t *d, bool all);
+
 static void d_leave(h2d_t *d) {
     if (--d->depth > 0 || !d->dead) return;
+    /* The connection is gone: nothing more is sent from a borrowed body, so its on_done is due. */
+    if (d->waits) {
+        d->depth++;
+        (void)d_fire(d, true);
+        if (--d->depth > 0) return;
+    }
     proven_allocator_t a = d->server->alloc;
     proven_h2_conn_destroy(d->engine);
     a.free_fn(a.ctx, d);
@@ -168,9 +256,27 @@ static void s_finish(proven_h2s_t *s, proven_err_t why) {
     if (!d->dead) proven_h2_conn_stream_set_user(d->engine, s->id, (void *)0);
     if (s->zip) { proven_http_compressor_destroy_(s->zip); s->zip = (void *)0; }
     if (s->held) { a.free_fn(a.ctx, s->held); s->held = (void *)0; s->held_len = s->held_cap = 0; }
-    if (s->out) { a.free_fn(a.ctx, s->out); s->out = (void *)0; s->out_len = s->out_off = s->out_cap = 0; }
+    s_out_free(s);
     proven_loop_timer_cancel(sv->loop, &s->timer);
-    if (s->active) {
+    /* A borrowed body still partly in the engine: on_done when the engine has given it all back
+     * (d_fire). The stream struct stays for it. */
+    bool wait = false;
+    if (s->borrow) {
+        h2_lent_t *b = s->borrow;
+        s->borrow = (void *)0;
+        if (s->active && !d->dead && b->back < b->lent) {
+            b->waiter = s;
+            b->why = why;
+            b->next_wait = d->waits;
+            d->waits = b;
+            s_enter(s);
+            wait = true;
+        } else {
+            b->held = false;
+            h2_lent_maybe_free(b);
+        }
+    }
+    if (s->active && !wait) {
         s->active = false;
         if (sv->cfg.on.on_done) sv->cfg.on.on_done(sv->cfg.ctx, (proven_http_stream_t *)(void *)s, why);
     }
@@ -212,7 +318,7 @@ static void d_kill(h2d_t *d, proven_err_t why) {
 // -----------------------------------------------------------------------------
 
 static proven_size_t d_queued(const h2d_t *d) {
-    return proven_h2_conn_pending_output(d->engine).size + proven_http_event_raw_held_(d->conn);
+    return proven_h2_conn_pending_bytes_(d->engine) + proven_http_event_raw_held_(d->conn);
 }
 
 /* A request's body is owed from now: it has `body_timeout_ms` to say something. */
@@ -260,7 +366,7 @@ static proven_size_t s_out_pending(const proven_h2s_t *s) { return s->out_len - 
 #define H2_TURN_BYTES ((proven_size_t)65536)
 
 static proven_size_t d_room(const h2d_t *d) {
-    const proven_size_t held = proven_h2_conn_pending_output(d->engine).size, bound = d->server->cfg.max_buffered_output;
+    const proven_size_t held = proven_h2_conn_pending_bytes_(d->engine), bound = d->server->cfg.max_buffered_output;
     const proven_size_t room = held < bound ? bound - held : 0;
     return d->sharing && d->share < room ? d->share : room;
 }
@@ -276,15 +382,35 @@ static void s_push(proven_h2s_t *s) {
         proven_size_t n = d_room(d);
         if (n == 0) break;
         if (n > s_out_pending(s)) n = s_out_pending(s);
-        proven_result_size_t r = proven_h2_conn_send_data(d->engine, s->id, (proven_mem_view_t){ .ptr = s->out + s->out_off, .size = n }, false);
+        const proven_mem_view_t piece = { .ptr = s->out + s->out_off, .size = n };
+        /* The last of a body whose end is asked carries END_STREAM itself: an empty DATA frame
+         * after it would be a write of its own once the body has gone out. */
+        const bool last = s->end_asked && !s->engine_done && s->out_trailers.count == 0 && n == s_out_pending(s);
+        proven_result_size_t r;
+        /* A response's whole body is in `out` once its end is asked: it no longer changes, and
+         * is lent rather than copied. (A WebSocket's or a tunnel's goes on growing.) */
+        if (d->lend && s->end_asked && !s->raw && !s->tunnel && !s->lent) {
+            proven_result_mem_mut_t m = sv->alloc.alloc_fn(sv->alloc.ctx, sizeof(h2_lent_t), alignof(h2_lent_t));
+            if (m.err == PROVEN_OK) {
+                s->lent = (h2_lent_t *)(void *)m.value.ptr;
+                *s->lent = (h2_lent_t){ .base = { .returned = h2_lent_returned }, .alloc = sv->alloc, .buf = s->out };
+            }
+        }
+        if (s->lent) {
+            r = proven_h2_conn_send_data_ref_(d->engine, s->id, piece, last, &s->lent->base);
+            if (r.err == PROVEN_OK) s->lent->lent += r.value;
+        } else {
+            r = proven_h2_conn_send_data(d->engine, s->id, piece, last);
+        }
         if (r.err != PROVEN_OK) { s_finish(s, PROVEN_ERR_RESET); break; }
+        if (last && r.value == n) s->engine_done = true;          /* the engine has the end too */
         s->out_off += r.value;
         if (r.value > 0 && s->raw) s->want_writable = true;     /* output moved: the WebSocket may want to know */
         if (d->sharing) d->share -= r.value < d->share ? r.value : d->share;
         if (r.value < n) { s->window_shut = true; break; }      /* the peer's window: the engine says when */
     }
     if (!s->dead && s_out_pending(s) == 0) {
-        if (s->out) { sv->alloc.free_fn(sv->alloc.ctx, s->out); s->out = (void *)0; s->out_len = s->out_off = s->out_cap = 0; }
+        if (s->out) s_out_free(s);
         if (s->end_asked) {
             proven_result_size_t r = s->engine_done            ? (proven_result_size_t){ .err = PROVEN_OK, .value = 0 }
                                      : s->out_trailers.count ? (proven_result_size_t){ .err = proven_h2_conn_send_trailers(d->engine, s->id, s->out_trailers.fields, s->out_trailers.count) }
@@ -482,6 +608,45 @@ static bool d_full(const h2d_t *d) {
     return d_queued(d) >= h2_engine_bound(d->server);
 }
 
+/* on_done for each stream whose borrowed body the engine has given back - or, with `all`, for
+ * every one that waits (the connection is gone). Whether any was told. */
+static bool d_fire(h2d_t *d, bool all) {
+    bool fired = false;
+    for (h2_lent_t **pp = &d->waits; *pp;) {
+        h2_lent_t *b = *pp;
+        if (!all && b->back < b->lent) { pp = &b->next_wait; continue; }
+        *pp = b->next_wait;
+        proven_h2s_t *s = b->waiter;
+        proven_http_event_server_t *sv = s->h.server;
+        b->waiter = (void *)0;
+        b->held = false;
+        const proven_err_t why = b->why;
+        h2_lent_maybe_free(b);
+        if (s->active) {
+            s->active = false;
+            if (sv->cfg.on.on_done) sv->cfg.on.on_done(sv->cfg.ctx, (proven_http_stream_t *)(void *)s, why);
+        }
+        s_leave(s);
+        fired = true;
+        pp = &d->waits;                            /* on_done may have changed the list */
+    }
+    return fired;
+}
+
+/* The most pieces one write gathers: 64 frames of 16 KiB, a header and a payload each (RFC-0053 D-5;
+ * at most PROVEN_NET_VEC_WIDE_, what proven_http_event_raw_offerv_ takes). */
+#define H2_VEC 128
+_Static_assert(H2_VEC <= PROVEN_NET_VEC_WIDE_, "a write gathers no more pieces than the loop takes");
+
+/* The most one connection writes each time the loop calls in, before it lets the others have
+ * their turn (and asks to be called again, behind them). On loopback, or wherever the socket
+ * takes all it is given, a connection with ten 1 MiB answers owed wrote all ten before the
+ * loop moved on; one core's time then went to whoever came first, and the others' requests
+ * waited unread: under h2load, 1 MiB bodies on ten connections, one connection made twice the
+ * requests of another and a request's 99th percentile was 2-3.5 x its median (libnghttp2's
+ * server, writing at most 1 MiB a turn: about 1.5 x). One gather write (H2_VEC pieces) fits. */
+#define H2_VISIT_BYTES ((proven_size_t)1 << 20)
+
 static void d_pump(h2d_t *d) {
     /* While a read is being worked through, what it makes is held back and written when the read
      * is done: a hundred requests that came in one read are answered in one write, not a
@@ -492,16 +657,23 @@ static void d_pump(h2d_t *d) {
     if (d->reading && d_queued(d) < d->server->cfg.max_buffered_output / 4) return;
     d->pumping = true;
     d_enter(d);
+    bool yielded = false;
     for (;;) {
         bool progress = false;
         while (!d->dead) {
-            /* Offered even when there is nothing: that withdraws a request to be called back. */
-            proven_mem_view_t out = proven_h2_conn_pending_output(d->engine);
-            proven_size_t n = proven_http_event_raw_offer_(d->conn, out);     /* a dead transport comes back through on_closed */
+            if (d->visit_sent >= H2_VISIT_BYTES) { yielded = proven_h2_conn_pending_bytes_(d->engine) > 0; break; }
+            /* Offered even when there is nothing: that withdraws a request to be called back. In
+             * pieces: frame headers and the bodies lent between them, in one gather write. */
+            proven_mem_view_t parts[H2_VEC];
+            const proven_size_t count = proven_h2_conn_pending_vec_(d->engine, parts, H2_VEC);
+            proven_size_t n = proven_http_event_raw_offerv_(d->conn, parts, count);     /* a dead transport comes back through on_closed */
             if (d->dead || n == 0) break;
             proven_h2_conn_output_sent(d->engine, n);
+            d->visit_sent += n;
             progress = true;
         }
+        /* What was sent may have been the last of a borrowed body. */
+        if (!d->dead && d->waits && d_fire(d, false)) progress = true;
         if (d->dead) break;
         /* What sending made due: a stream the engine had cut short. */
         for (;;) {
@@ -527,12 +699,12 @@ static void d_pump(h2d_t *d) {
                 if (!(s->mark == d->round || s->window_shut || !(s_out_pending(s) > 0 || s->end_asked || s->want_writable))) {
                     s->mark = d->round;
                     if (!(d_room(d) == 0 && !(s->end_asked && s_out_pending(s) == 0))) {
-                        const proven_size_t before = proven_h2_conn_pending_output(d->engine).size;
+                        const proven_size_t before = proven_h2_conn_pending_bytes_(d->engine);
                         d->turn = s;
                         d->sharing = true; d->share = H2_TURN_BYTES;
                         s_push(s);
                         d->sharing = false;
-                        if (!d->dead && proven_h2_conn_pending_output(d->engine).size != before) progress = true;
+                        if (!d->dead && proven_h2_conn_pending_bytes_(d->engine) != before) progress = true;
                         again = true;
                         break;
                     }
@@ -540,9 +712,11 @@ static void d_pump(h2d_t *d) {
                 s = after == first ? (void *)0 : after;
             }
         }
-        if (d->dead || !progress) break;
+        if (d->dead || !progress || yielded) break;
     }
     if (!d->dead) {
+        /* Output left for the next turn: the loop calls back once the others have had theirs. */
+        if (yielded) proven_http_event_raw_again_(d->conn);
         /* Nothing more to take and nothing left to write: the connection is finished with. */
         if (d->eof && d->stream_count == 0) d->over = true;
         if (d->over && d_queued(d) == 0) {
@@ -570,6 +744,7 @@ static void d_pump(h2d_t *d) {
 static proven_size_t h2_on_input(void *raw, proven_mem_mut_t in) {
     h2d_t *d = raw;
     d_enter(d);
+    d->visit_sent = 0;
     proven_size_t pos = 0;
     /* How much of this input arrived early: a request whose HEADERS ended inside it did. */
     const proven_size_t early = proven_http_event_early_ahead_(d->conn);
@@ -625,6 +800,7 @@ static void h2_on_progress(void *raw) {
     h2d_t *d = raw;
     if (d->dead) return;
     d_enter(d);
+    d->visit_sent = 0;
     /* The connection's output moved: a WebSocket that counts it (proven_http_event_h2_buffered_)
      * and was refused is asked again in this round's turns. With sends through io_uring the
      * output stays in the loop until the next round, so a stream's own output having moved
@@ -778,6 +954,7 @@ proven_err_t proven_http_event_h2_take_(proven_http_stream_t *conn) {
     d->ops = &h2_ops;
     d->conn = conn;
     d->server = sv;
+    d->lend = !conn->tls;                          /* through TLS the bytes are sealed into records: a copy whatever is done */
     conn->h.state = EV_RAW;
     conn->raw = d;
     conn->paused = false;
@@ -923,6 +1100,7 @@ static bool s_zip(proven_h2s_t *s, const proven_byte_t *p, proven_size_t n, prov
         if (e != PROVEN_OK) return false;
         if (used) p += used;
         n -= used;
+        if (!s_out_own(s)) return false;
         if (s->out_off > 0 && s->out_off == s->out_len) s->out_off = s->out_len = 0;
         if (!h2_append(sv->alloc, &s->out, &s->out_len, &s->out_cap, sv->zbuf, made)) return false;
         if (flush == PROVEN_DEFLATE_FLUSH_FINISH ? done : (n == 0 && made < PROVEN_HTTP_CODING_PIECE)) return true;
@@ -1038,8 +1216,8 @@ proven_err_t proven_http_event_h2_end_(proven_http_stream_t *stream, const prove
     return result;
 }
 
-proven_err_t proven_http_event_h2_respond_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
-                                           proven_mem_view_t body) {
+static proven_err_t h2_respond(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
+                               proven_mem_view_t body, bool borrowed) {
     proven_h2s_t *s = h2s_of(stream);
     if (s->dead || !s->active || s->response_begun) return PROVEN_ERR_INVALID_STATE;
     proven_http_event_server_t *sv = s->h.server;
@@ -1061,7 +1239,23 @@ proven_err_t proven_http_event_h2_respond_(proven_http_stream_t *stream, proven_
         s->end_asked = true;
         /* The whole response is this call's contract, whatever the output bound: what the
          * engine does not take now is kept, and follows as the peer's window opens. */
-        if (!s->bodiless && body.size > 0) {
+        /* A borrowed body in the clear, not compressed: lent to the engine as it is, from the
+         * caller's memory, which stays good until on_done (RFC-0053 phase 2). With no memory for
+         * the record it is copied, as by proven_http_stream_respond. */
+        h2_lent_t *b = (void *)0;
+        if (borrowed && d->lend && !packed && !s->bodiless && body.size > 0) {
+            proven_result_mem_mut_t m = sv->alloc.alloc_fn(sv->alloc.ctx, sizeof(h2_lent_t), alignof(h2_lent_t));
+            if (m.err == PROVEN_OK) {
+                b = (h2_lent_t *)(void *)m.value.ptr;
+                *b = (h2_lent_t){ .base = { .returned = h2_lent_returned }, .alloc = sv->alloc, .held = true };
+                s->out = (proven_byte_t *)(void *)body.ptr;     /* read only: lent, never written */
+                s->out_len = body.size;
+                s->out_off = s->out_cap = 0;
+                s->lent = b;
+                s->borrow = b;
+            }
+        }
+        if (!b && !s->bodiless && body.size > 0) {
             /* Offered only as far as the bound on body bytes: the engine's own bound is twice
              * that, and the other half is for heads - another stream's response must be able
              * to begin while this one's body waits. */
@@ -1072,7 +1266,7 @@ proven_err_t proven_http_event_h2_respond_(proven_http_stream_t *stream, proven_
                                    : (proven_result_size_t){ .err = PROVEN_OK, .value = 0 };
             if (r.err != PROVEN_OK) { s_finish(s, PROVEN_ERR_RESET); e = PROVEN_ERR_RESET; }
             else if (r.value == body.size) s->engine_done = true;
-            else if (!h2_append(sv->alloc, &s->out, &s->out_len, &s->out_cap, body.ptr + r.value, body.size - r.value)) { s_reset(s, PROVEN_H2_INTERNAL_ERROR, PROVEN_ERR_NOMEM); e = PROVEN_ERR_NOMEM; }
+            else if (!s_out_own(s) || !h2_append(sv->alloc, &s->out, &s->out_len, &s->out_cap, body.ptr + r.value, body.size - r.value)) { s_reset(s, PROVEN_H2_INTERNAL_ERROR, PROVEN_ERR_NOMEM); e = PROVEN_ERR_NOMEM; }
         }
         if (!s->dead) s_push(s);
     }
@@ -1082,6 +1276,16 @@ proven_err_t proven_http_event_h2_respond_(proven_http_stream_t *stream, proven_
     d_leave(d);
     s_leave(s);
     return e;
+}
+
+proven_err_t proven_http_event_h2_respond_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
+                                           proven_mem_view_t body) {
+    return h2_respond(stream, status, headers, header_count, body, false);
+}
+
+proven_err_t proven_http_event_h2_respond_borrowed_(proven_http_stream_t *stream, proven_u16 status, const proven_http_header_t *headers, proven_size_t header_count,
+                                                    proven_mem_view_t body) {
+    return h2_respond(stream, status, headers, header_count, body, true);
 }
 
 void proven_http_event_h2_abort_(proven_http_stream_t *stream) {
@@ -1244,7 +1448,7 @@ bool proven_http_event_h2_raw_send_(proven_http_stream_t *stream, proven_mem_vie
     d_enter(d);
     d->calls++;
     /* Both parts are queued together, so that a frame's header and payload stay in order. */
-    const bool ok = h2_append(al, &s->out, &s->out_len, &s->out_cap, a.ptr, a.size) && h2_append(al, &s->out, &s->out_len, &s->out_cap, b.ptr, b.size);
+    const bool ok = s_out_own(s) && h2_append(al, &s->out, &s->out_len, &s->out_cap, a.ptr, a.size) && h2_append(al, &s->out, &s->out_len, &s->out_cap, b.ptr, b.size);
     if (!ok) s_reset(s, PROVEN_H2_INTERNAL_ERROR, PROVEN_ERR_NOMEM);
     else s_push(s);
     d_pump(d);

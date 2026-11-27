@@ -507,6 +507,85 @@ int main(void) {
         proven_qpack_enc_destroy(e);
     }
 
+    PROVEN_TEST_SECTION("A large entry named over and over", "One 3,000-byte entry, then a section that names it two thousand times by one byte each: past the limit each is counted and not copied, and the decoder goes on.", "Check the r.over branch for table entries in proven_qpack_decode_dyn.");
+    {
+        proven_qpack_dec_t *d = NULL;
+        PROVEN_TEST_ASSERT(proven_qpack_dec_create(proven_heap_allocator(), 4096, &d) == PROVEN_OK, "a decoder whose table may be 4,096 bytes", "");
+        static proven_byte_t enc[3100];
+        proven_size_t n = 0;
+        enc[n++] = 0x3f; enc[n++] = 0xe1; enc[n++] = 0x1f;                 /* Set Dynamic Table Capacity 4,096 */
+        enc[n++] = 0x41; enc[n++] = 'x';                                    /* Insert With Literal Name "x" */
+        enc[n++] = 0x7f; enc[n++] = 0xb9; enc[n++] = 0x16;                 /* a value of 3,000 bytes */
+        memset(enc + n, 'v', 3000); n += 3000;
+        PROVEN_TEST_ASSERT(proven_qpack_dec_feed(d, (proven_mem_view_t){ enc, n }) == 0 && proven_qpack_dec_inserts(d) == 1, "the entry is in the table", "");
+        static proven_byte_t sec[2002];
+        sec[0] = 0x02; sec[1] = 0x00;                                       /* Required Insert Count 1, Base 1 */
+        memset(sec + 2, 0x80, 2000);                                        /* the entry, two thousand times */
+        proven_http_header_t fields[64];
+        bool never[64];
+        proven_size_t count = 0;
+        proven_u64 ric = 0;
+        PROVEN_TEST_ASSERT(proven_qpack_decode_dyn(d, (proven_mem_view_t){ sec, sizeof sec }, fields, never, 64, (proven_mem_mut_t){ scratch, 16384 }, 16384, &count, &ric) == PROVEN_ERR_OUT_OF_BOUNDS && ric == 1,
+            "two kilobytes that name it two thousand times are a list over 16 KiB: PROVEN_ERR_OUT_OF_BOUNDS", "");
+        PROVEN_TEST_ASSERT(proven_qpack_decode_dyn(d, (proven_mem_view_t){ sec, 3 }, fields, never, 64, (proven_mem_mut_t){ scratch, 16384 }, 16384, &count, &ric) == PROVEN_OK && count == 1 && fields[0].value.size == 3000 && fields[0].value.ptr[2999] == 'v',
+            "and a section that names it once is decoded whole", "");
+        proven_qpack_dec_destroy(d);
+    }
+
+    PROVEN_TEST_SECTION("A large entry duplicated over and over", "The encoder stream's work: one 3,001-byte entry, then one-byte Duplicates of it. Two are taken, the third is refused; Duplicates spaced by 400-byte inserts are taken a thousand times.", "Check d->work, QP_WORK_PER_BYTE and QP_WORK_MAX in qp_enc_instr and qp_insert in net/src/qpack.c.");
+    {
+        static proven_byte_t enc[3100];
+        proven_size_t n = 0;
+        enc[n++] = 0x3f; enc[n++] = 0xe1; enc[n++] = 0x1f;                 /* Set Dynamic Table Capacity 4,096 */
+        enc[n++] = 0x41; enc[n++] = 'x';                                    /* Insert With Literal Name "x" */
+        enc[n++] = 0x7f; enc[n++] = 0xb9; enc[n++] = 0x16;                 /* a value of 3,000 bytes */
+        memset(enc + n, 'v', 3000); n += 3000;
+        proven_qpack_dec_t *d = NULL;
+        PROVEN_TEST_ASSERT(proven_qpack_dec_create(proven_heap_allocator(), 4096, &d) == PROVEN_OK && proven_qpack_dec_feed(d, (proven_mem_view_t){ enc, n }) == 0, "a 3,001-byte entry in a table of 4,096", "");
+        const proven_byte_t dup0 = 0x00;                                    /* Duplicate, relative index 0 */
+        PROVEN_TEST_ASSERT(proven_qpack_dec_feed(d, (proven_mem_view_t){ &dup0, 1 }) == 0 && proven_qpack_dec_feed(d, (proven_mem_view_t){ &dup0, 1 }) == 0 && proven_qpack_dec_inserts(d) == 3,
+            "two one-byte Duplicates, each copying 6,002 bytes: taken", "");
+        PROVEN_TEST_ASSERT(proven_qpack_dec_feed(d, (proven_mem_view_t){ &dup0, 1 }) == PROVEN_QPACK_ENCODER_STREAM_ERROR,
+            "the third passes four times the table's 4,096 bytes: QPACK_ENCODER_STREAM_ERROR", "");
+        proven_qpack_dec_destroy(d);
+
+        /* An encoder that pays: each Duplicate of the large entry follows an insert of 400 bytes. */
+        static proven_byte_t round[406];
+        proven_size_t m = 0;
+        round[m++] = 0x41; round[m++] = 'y';                                /* Insert With Literal Name "y" */
+        round[m++] = 0x7f; round[m++] = 0x91; round[m++] = 0x02;           /* a value of 400 bytes */
+        memset(round + m, 'w', 400); m += 400;
+        round[m++] = 0x01;                                                  /* Duplicate, relative index 1: the large one */
+        d = NULL;
+        bool taken = proven_qpack_dec_create(proven_heap_allocator(), 4096, &d) == PROVEN_OK && proven_qpack_dec_feed(d, (proven_mem_view_t){ enc, n }) == 0;
+        for (int i = 0; i < 1000 && taken; ++i) taken = proven_qpack_dec_feed(d, (proven_mem_view_t){ round, m }) == 0;
+        PROVEN_TEST_ASSERT(taken && proven_qpack_dec_inserts(d) == 2001, "a thousand Duplicates, each after a 400-byte insert: all taken", "");
+        proven_qpack_dec_destroy(d);
+
+        /* Insert With Name Reference: a 3,000-byte name, then that name with an empty value. */
+        static proven_byte_t named[3100];
+        proven_size_t q = 0;
+        named[q++] = 0x3f; named[q++] = 0xe1; named[q++] = 0x1f;           /* Set Dynamic Table Capacity 4,096 */
+        named[q++] = 0x5f; named[q++] = 0x99; named[q++] = 0x17;           /* Insert With Literal Name, a name of 3,000 bytes */
+        memset(named + q, 'n', 3000); q += 3000;
+        named[q++] = 0x00;                                                  /* an empty value */
+        d = NULL;
+        const proven_byte_t ref0[2] = { 0x80, 0x00 };                       /* the name of relative index 0, an empty value */
+        PROVEN_TEST_ASSERT(proven_qpack_dec_create(proven_heap_allocator(), 4096, &d) == PROVEN_OK && proven_qpack_dec_feed(d, (proven_mem_view_t){ named, q }) == 0 &&
+                           proven_qpack_dec_feed(d, (proven_mem_view_t){ ref0, 2 }) == 0 && proven_qpack_dec_feed(d, (proven_mem_view_t){ ref0, 2 }) == 0,
+            "a 3,000-byte name, then two inserts that take it by reference (two bytes, 6,000 copied each): taken", "");
+        PROVEN_TEST_ASSERT(proven_qpack_dec_feed(d, (proven_mem_view_t){ ref0, 2 }) == PROVEN_QPACK_ENCODER_STREAM_ERROR,
+            "the third: QPACK_ENCODER_STREAM_ERROR", "");
+        proven_qpack_dec_destroy(d);
+
+        /* The same entry's instruction a byte at a time: nothing is copied until it is whole. */
+        d = NULL;
+        bool bytewise = proven_qpack_dec_create(proven_heap_allocator(), 4096, &d) == PROVEN_OK;
+        for (proven_size_t i = 0; i < q && bytewise; ++i) bytewise = proven_qpack_dec_feed(d, (proven_mem_view_t){ named + i, 1 }) == 0;
+        PROVEN_TEST_ASSERT(bytewise && proven_qpack_dec_inserts(d) == 1, "fed a byte at a time: one entry, the stream not refused", "");
+        proven_qpack_dec_destroy(d);
+    }
+
     PROVEN_TEST_PASS("QPACK decodes with and without a dynamic table, encodes with and without one, and refuses as RFC 9204 says.");
     return 0;
 }

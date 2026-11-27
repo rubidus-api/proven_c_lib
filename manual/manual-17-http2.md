@@ -226,7 +226,7 @@ int main(void) {
 | `proven_hpack_encode_bound(headers, count)` | Room that is always enough. | `proven_size_t`. |
 | `proven_hpack_encoder_set_peer_table_bytes(enc, n)` | The peer's limit changed; announced in the next block. | none. |
 | `proven_hpack_decoder_create(alloc, max_table_bytes, &dec)` | A decoder that allows the peer this much table. | `proven_err_t`. |
-| `proven_hpack_decode(dec, block, headers, cap, scratch, max_list_bytes, &count)` | Decode one whole block. | `proven_err_t`: `OUT_OF_BOUNDS` - too large a list, too many fields, too small a scratch; the decoder is still good. `INVALID_FORMAT` - not HPACK; the decoder is finished. |
+| `proven_hpack_decode(dec, block, headers, cap, scratch, max_list_bytes, &count)` | Decode one whole block. | `proven_err_t`: `OUT_OF_BOUNDS` - too large a list, too many fields, too small a scratch; the decoder is still good. `INVALID_FORMAT` - not HPACK, or more copying than any accepted list needs (an HPACK bomb); the decoder is finished. |
 | `proven_hpack_decode_marked(dec, block, headers, never_indexed, cap, scratch, max_list_bytes, &count)` | The same, and `never_indexed[i]` says whether field `i` came in the form that must never be indexed. | as `proven_hpack_decode`. |
 | `proven_hpack_decoder_set_max_table_bytes(dec, n)` | This side's limit changed; if lowered, the peer's next block must say it followed. | none. |
 | `proven_hpack_decoder_table_count`, `_table_bytes`, `_table_entry` | Look at the decoder's table. | counts; `bool`. |
@@ -242,6 +242,12 @@ int main(void) {
 - **Over the limit is not the end of the connection; malformed is.** `OUT_OF_BOUNDS` means the
   block was read to its end, the table is in step, and only this message is refused.
   `INVALID_FORMAT` means the tables may now differ, and the decoder repeats it for ever.
+  Past the limit a field from the table is counted, not copied; a block whose decoding would
+  still copy more than four times the larger of `scratch` and `max_list_bytes`, plus twice
+  the block, is `INVALID_FORMAT` as well - an HPACK bomb that inserts a large name again and
+  again. The HTTP/2 engine's scratch is four times its limit, so a list it refuses stays an
+  error of its stream; a caller of its own with a smaller scratch can see a list of many
+  inserted fields end the decoder instead.
 - **Views, three kinds.** A decoded name or value points into the block, into the library's
   fixed table, or into your scratch. All three must outlive your use of the fields; copy what
   you keep.
@@ -658,6 +664,34 @@ The last row is the answer to a client that opens streams and resets them at onc
 as it can, to make a server start work it then throws away. No clock is involved: a reset
 adds one, a stream that ends as it should takes one off, and a peer that mostly finishes
 what it starts never comes near the limit.
+
+**The known attacks, one by one.** Published HTTP/2 denials of service against what
+answers each here, and the test in `tests/test_unit_h2_conn.c` (section "what a peer may do
+without progress", unless another is named) that drives it to its edge:
+
+| Attack | What answers it | Driven by |
+|---|---|---|
+| Data dribble (CVE-2019-9511): windows opened a byte at a time, to make the server send its answers in tiny pieces | What is held for the peer is `max_buffered_output`, whatever the windows. A DATA frame a window cuts below 256 bytes counts one, and every frame the peer sends takes one off; past 4 x `max_concurrent_streams` + 64 the connection ends with `ENHANCE_YOUR_CALM`. A peer that opens each stream with a WINDOW_UPDATE of its own pays a frame for every frame, and is never ended; pieces the application itself writes small are not counted | INITIAL_WINDOW_SIZE raised by one, a frame at a time, with a hundred answers waiting: ended within five; the same bytes opened stream by stream: four thousand frames, not ended; three thousand ten-byte pieces |
+| Ping flood (CVE-2019-9512) | Answers the protocol owes are counted apart; unread beyond `max_buffered_output`, the connection ends with `ENHANCE_YOUR_CALM` | sixty unread answers fit 1,024 bytes, the sixty-first ends it |
+| Resource loop (CVE-2019-9513): priorities shuffled | There is no priority tree: PRIORITY is read and forgotten | ten thousand PRIORITY frames build no stream and queue nothing |
+| Reset flood (CVE-2019-9514): requests that must be reset | Each reset this side sends is counted twice: as owed output, and toward `max_reset_debt` | a stream reset for the peer's fault counts as one the peer reset |
+| Settings flood (CVE-2019-9515) | Acknowledgements are counted as PING's answers are | 113 unread fit 1,024 bytes, the next ends it |
+| Zero-length headers (CVE-2019-9516) | An empty name makes the request malformed; every field counts its 32 bytes toward `max_header_list_bytes`; nothing of a list is kept after its event | an empty name, a hundred empty values, six hundred |
+| Internal data buffering (CVE-2019-9517): windows open, TCP closed | `max_buffered_output`, whatever the windows allow. A body handed whole to `proven_http_stream_respond` is kept whole: the handler chose that memory | `test_unit_http_event_h2.c`, "a client that does not read" |
+| Empty frames flood (CVE-2019-9518) | Sixteen frames in a row that carry nothing and end nothing; the seventeenth ends the connection. DATA, HEADERS and CONTINUATION alike; PUSH_PROMISE is never taken | sixteen empty DATA twice; the seventeenth; empty HEADERS and CONTINUATION |
+| A large SETTINGS frame (CVE-2020-11080), and INITIAL_WINDOW_SIZE changed over and over | No entry is kept: each is applied as it is read. A change of INITIAL_WINDOW_SIZE moves every open stream: one step a stream. A connection may take 32 x `max_concurrent_streams` steps, and each stream that ends properly gives 16 back; past that the connection ends with `ENHANCE_YOUR_CALM`. An entry that changes nothing costs nothing | a thousand entries that change nothing; thirty-two changes with every stream open, and the thirty-third; streams that finish give room back |
+| Rapid reset (CVE-2023-44487) | `max_reset_debt`, above | a hundred borne, the hundred and first ends it |
+| MadeYouReset (CVE-2025-8671): requests made to be reset by this side | Every reset this side sends for the peer's fault counts toward `max_reset_debt` as the peer's own; the one exception is a stream refused after this side's GOAWAY, which starts no work | a WINDOW_UPDATE of zero, DATA after END_STREAM, a malformed request: a hundred and one end it |
+| CONTINUATION flood (2024, VU#421644) | A header block of more than twice `max_header_list_bytes` ends the connection; it is never kept beyond that. Empty CONTINUATIONs count as empty frames | "10.5.1: a header block of more than twice the limit"; the seventeenth empty CONTINUATION |
+| HPACK bomb (CVE-2016-6581): one large table entry named again and again by one-byte references | Past `max_header_list_bytes` a field from the table is counted, not copied. The decoding of one block may copy at most four times the larger of its scratch and that limit, plus twice the block's size; past that the connection ends with `COMPRESSION_ERROR` (the table can no longer be followed). QPACK, past the limit, counts the same way | `test_unit_hpack.c`, "limits": two thousand references; two thousand insertions of a 3,000-byte name, and seven; `test_unit_qpack.c`, "A large entry named over and over" |
+| QPACK encoder-stream flood (HTTP/3): one large entry duplicated by one-byte Duplicate instructions, or its name taken by Insert With Name Reference | Every byte an encoder instruction copies, out of the table and into it, counts one; every byte of the encoder stream takes sixteen off. Past four times the table size this side allows, the connection ends with `QPACK_ENCODER_STREAM_ERROR`. An encoder that inserts what it duplicates later is never stopped. An instruction that arrives in pieces is decoded once, when it is whole | `test_unit_qpack.c`, "A large entry duplicated over and over": two Duplicates of a 3,001-byte entry, the third refused; a thousand spaced by 400-byte inserts; a 3,000-byte name taken twice by reference, the third refused; that entry's instruction a byte at a time |
+
+The four allowances that are not settings of their own follow the settings they guard:
+`max_concurrent_streams` for small DATA frames and window moves, `max_header_list_bytes` (and
+the scratch it sizes) for a header block's work, and the QPACK table size allowed
+(`http3_header_table_bytes`) for the encoder stream's. A server that allows more streams or longer
+lists allows more of each, in proportion. None depends on the platform: each bounds the work
+a peer causes against what that peer itself sends.
 
 A connection that has only opened holds one block of at most 400 bytes. One that has carried
 requests and is idle again holds that, a record of how its last streams ended, and the two
@@ -1259,11 +1293,13 @@ int main(void) {
   tells the client to stop sending (section 5), and what was already on its way is dropped
   unread - including a frame that would have been an error. If the body matters, answer
   when it has arrived.
-- **WebSocket needs HTTP/1.1.** An upgrade is refused on an HTTP/2 stream
-  (`PROVEN_ERR_UNSUPPORTED`): a browser that wants a WebSocket opens an HTTP/1.1 connection
-  for it, which the same port accepts.
-- **Trailers are not passed on**, in either direction, as they are not on HTTP/1.1: a
-  request's trailers end its body and are dropped.
+- **WebSocket over HTTP/2 needs `http2_websocket`** (RFC 8441, Chapter 15): with it a client
+  opens its WebSocket as a stream, and `proven_ws_event_accept` answers either kind. Without
+  it an upgrade is refused on an HTTP/2 stream (`PROVEN_ERR_UNSUPPORTED`), and a browser opens
+  an HTTP/1.1 connection for it, which the same port accepts.
+- **Trailers** (since v0.107.0), as on HTTP/1.1: `proven_http_stream_trailers` reads a
+  request's once its body has ended, and `proven_http_stream_end_trailers` ends a response of
+  no stated length with them - here a HEADERS frame that ends the stream.
 
 ## 7. HTTP/2 in the event-driven client
 
@@ -1496,8 +1532,6 @@ announce a length it does not carry.
   event-driven client reports such a request (`PROVEN_ERR_AGAIN`) and, when `retry_unsent`
   is set, puts it again at once, so many times. Waiting between tries, and trying again
   what may have been acted on, are its caller's.
-- **Trailers in the event-driven server**, for either protocol.
-- **Extended CONNECT** (RFC 8441, WebSocket over HTTP/2) and the `SETTINGS` it needs.
 - **Server push**: `PUSH_PROMISE` is recognised so that it can be refused.
 - **Priorities** (RFC 7540's scheme, which RFC 9113 deprecated): skipped.
 - **`Upgrade: h2c`**, which RFC 9113 removed. (HTTP/3 is sections 9 and 10.)

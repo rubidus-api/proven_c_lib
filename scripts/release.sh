@@ -65,7 +65,7 @@ fi
     grep -n 'error:\|FAIL' "$root/build/release-no-http3.log" | head -5 >&2; exit 1; }
 echo "release: PROVEN_NO_HTTP3 build passed"
 
-"$root/scripts/project-check.sh" >/dev/null || {
+sh "$root/ops/scripts/project-check.sh" >/dev/null || {
     echo "release: project-check failed (privacy or docs) - not releasing" >&2; exit 1; }
 echo "release: project-check passed"
 
@@ -89,7 +89,7 @@ echo "release: site built, every internal link resolves"
 
 # ── the artefacts ──────────────────────────────────────────────────────────────
 dist="$root/dist"
-mkdir -p "$dist"
+rm -rf "$dist"; mkdir -p "$dist"   # only this release's files: the publisher uploads dist/*
 for lang in en ko; do
     cp "$root/docs/$lang/manual.pdf" "$dist/$version-$lang-manual.pdf"
 done
@@ -98,7 +98,7 @@ done
 # tests and its manual - not the generated site, and not the build directory.
 stage="$root/build/release/$version"
 rm -rf "$root/build/release"; mkdir -p "$stage"
-for item in include src platform crypto codec net tests manual manual-ko scripts site nob.c nob.h \
+for item in include src platform crypto codec net math tests manual manual-ko scripts site nob.c nob.h \
             build_headers.inc build_tests.inc build_sources.inc README.md README-ko.md LICENSE \
             THIRD_PARTY_NOTICES.md CHANGELOG.md TEST.md; do
     [ -e "$root/$item" ] && cp -r "$root/$item" "$stage/"

@@ -1,5 +1,6 @@
 #include "proven.h"
 #include "proven_test.h"
+#include "../src/proven/proven_internal_crc.h"
 #include <string.h>
 
 /*
@@ -145,6 +146,86 @@ int main(void) {
          * four-byte tail. */
         PROVEN_TEST_ASSERT(proven_crc32(sv("The quick brown fox jumps over the lazy dog.")) == 0x519025e9u,
             "the 44-byte fox with its period (zlib: 0x519025e9)", "");
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("CRC-32 folded by carry-less multiply agrees with the tables",
+        "Where the processor has PCLMULQDQ or PMULL, inputs of 64 bytes or more are folded 16 bytes at a time and the last 16 left to the tables. For every length to 1,100, every offset to 15, and a split, the folded CRC must equal the tables' (the switch keeps them on the tables).",
+        "Check the constants CRC32_FOLD and crc32_fold in src/proven/hash.c, and proven_sys_crc_fold in platform/proven_sys_crc.c.");
+    // ---------------------------------------------------------------
+    {
+        static proven_byte_t buf[1120];
+        proven_u64 s = 0x9e3779b97f4a7c15ull;
+        for (size_t i = 0; i < sizeof buf; ++i) { s ^= s << 13; s ^= s >> 7; s ^= s << 17; buf[i] = (proven_byte_t)(s >> 24); }
+        static proven_u32 tables[16][1101];
+        proven_crc_force_portable_(true);
+        const bool soft_now = !proven_crc_is_hardware_();
+        for (size_t off = 0; off < 16; ++off)
+            for (size_t len = 0; len <= 1100; ++len) tables[off][len] = proven_crc32_update(0x5a5a5a5au, (proven_mem_view_t){ buf + off, len });
+        proven_crc_force_portable_(false);
+        const bool hw = proven_crc_is_hardware_();
+        int bad = 0;
+        for (size_t off = 0; off < 16; ++off) {
+            for (size_t len = 0; len <= 1100; ++len) {
+                const proven_u32 one = proven_crc32_update(0x5a5a5a5au, (proven_mem_view_t){ buf + off, len });
+                const proven_size_t cut = len * 2 / 5;
+                const proven_u32 two = proven_crc32_update(proven_crc32_update(0x5a5a5a5au, (proven_mem_view_t){ buf + off, cut }),
+                                                           (proven_mem_view_t){ buf + off + cut, len - cut });
+                if (one != tables[off][len] || two != tables[off][len]) ++bad;
+            }
+        }
+        PROVEN_TEST_ASSERT(soft_now && bad == 0, hw ? "folded (this processor has the instruction): every length, offset and split agrees with the tables"
+                                                    : "no carry-less multiply here: the tables alone, every length, offset and split", "");
+#if (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__))
+        __builtin_cpu_init();
+        PROVEN_TEST_ASSERT(hw == (__builtin_cpu_supports("pclmul") != 0),
+            "on x86 the folding is taken exactly when the processor has PCLMULQDQ: its self-test passed",
+            "False with PCLMULQDQ present: the self-test in crc_clmul found the folding wrong and fell back to the tables.");
+#endif
+        for (size_t i = 0; i < 1024; ++i) buf[i] = (proven_byte_t)i;
+        PROVEN_TEST_ASSERT(proven_crc32((proven_mem_view_t){ buf, 1024 }) == 0xb70b4c26u, "bytes 0 to 255 four times: zlib's answer", "");
+    }
+
+    // ---------------------------------------------------------------
+    PROVEN_TEST_SECTION("CRC-64/XZ: the check xz writes",
+        "ECMA-182 reflected, register started and ended inverted. The vectors are the ones Python's lzma writes into .xz files (CHECK_CRC64); then streaming, and the tables against the folding for every length to 1,100 and offset to 15.",
+        "Check crc64_tables.h, crc64_soft, CRC64_FOLD and crc64_fold in src/proven/hash.c.");
+    // ---------------------------------------------------------------
+    {
+        PROVEN_TEST_ASSERT(proven_crc64(sv("")) == 0, "CRC-64 of the empty input is 0", "");
+        PROVEN_TEST_ASSERT(proven_crc64(sv("a")) == 0x330284772e652b05ull, "CRC-64 of \"a\"", "");
+        PROVEN_TEST_ASSERT(proven_crc64(sv("123456789")) == 0x995dc9bbdf1939faull, "CRC-64/XZ of \"123456789\" is the check value 0x995DC9BBDF1939FA", "");
+        PROVEN_TEST_ASSERT(proven_crc64(sv("The quick brown fox jumps over the lazy dog")) == 0x5b5eb8c2e54aa1c4ull, "CRC-64 of the pangram", "");
+        proven_u64 streamed = proven_crc64_update(proven_crc64_update(proven_crc64_update(0, sv("123")), sv("456")), sv("789"));
+        PROVEN_TEST_ASSERT(streamed == 0x995dc9bbdf1939faull, "fed in three chunks, the same", "");
+        static proven_byte_t buf[1120];
+        proven_u64 s = 0x2545f4914f6cdd1dull;
+        for (size_t i = 0; i < sizeof buf; ++i) { s ^= s << 13; s ^= s >> 7; s ^= s << 17; buf[i] = (proven_byte_t)(s >> 32); }
+        static proven_u64 tables[16][1101];
+        proven_crc_force_portable_(true);
+        for (size_t off = 0; off < 16; ++off)
+            for (size_t len = 0; len <= 1100; ++len) tables[off][len] = proven_crc64_update(0xa5a5a5a55a5a5a5aull, (proven_mem_view_t){ buf + off, len });
+        int bad = 0;
+        for (size_t off = 0; off < 16; ++off)
+            for (size_t len = 0; len <= 1100; ++len) {
+                proven_u64 bytewise = 0xa5a5a5a55a5a5a5aull;
+                if (len % 97 == 0 || len < 20)
+                    for (size_t i = 0; i < len; ++i) bytewise = proven_crc64_update(bytewise, (proven_mem_view_t){ buf + off + i, 1 });
+                else bytewise = tables[off][len];
+                if (bytewise != tables[off][len]) ++bad;
+            }
+        proven_crc_force_portable_(false);
+        for (size_t off = 0; off < 16; ++off)
+            for (size_t len = 0; len <= 1100; ++len) {
+                const proven_size_t cut = len / 3;
+                const proven_u64 one = proven_crc64_update(0xa5a5a5a55a5a5a5aull, (proven_mem_view_t){ buf + off, len });
+                const proven_u64 two = proven_crc64_update(proven_crc64_update(0xa5a5a5a55a5a5a5aull, (proven_mem_view_t){ buf + off, cut }),
+                                                           (proven_mem_view_t){ buf + off + cut, len - cut });
+                if (one != tables[off][len] || two != tables[off][len]) ++bad;
+            }
+        PROVEN_TEST_ASSERT(bad == 0, "eight bytes at a time against one, and the folding (where there is one) against the tables: every length, offset and split", "");
+        for (size_t i = 0; i < 1024; ++i) buf[i] = (proven_byte_t)i;
+        PROVEN_TEST_ASSERT(proven_crc64((proven_mem_view_t){ buf, 1024 }) == 0xd51fb58dc789c400ull, "bytes 0 to 255 four times: lzma's answer", "");
     }
 
     // ---------------------------------------------------------------

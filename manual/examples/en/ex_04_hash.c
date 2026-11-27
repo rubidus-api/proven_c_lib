@@ -26,6 +26,9 @@ int main(void) {
     EXAMPLE_REQUIRE(proven_crc32(proven_mem_view_from_u8(PROVEN_LIT("123456789"))) == 0xcbf43926u,
                     "CRC-32 of \"123456789\" is the shared check value");
     (void)checksum;
+    /* The same job for xz's check, or where a longer CRC is wanted: CRC-64/XZ. */
+    EXAMPLE_REQUIRE(proven_crc64(proven_mem_view_from_u8(PROVEN_LIT("123456789"))) == 0x995dc9bbdf1939faull,
+                    "CRC-64/XZ of \"123456789\" is its check value");
 
     /* Job 4: fingerprint content - dedup, content-addressing, "are these the same file",
      * answered safely even against someone trying to forge a match. This is the one you

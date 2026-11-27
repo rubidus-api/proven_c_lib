@@ -1,5 +1,13 @@
 #include "proven/hash.h"
 #include "proven/config.h"
+#include "proven_internal_crc.h"
+
+#include "crc64_tables.h"
+
+#ifndef PROVEN_FREESTANDING
+#include "../../platform/proven_sys_crc.h"
+#include <stdatomic.h>
+#endif
 
 /*
  * Four hashes, one per use case, each implemented from its specification and checked in
@@ -386,14 +394,8 @@ static const proven_u32 CRC32_SLICE[7][256] = {
 };
 #endif
 
-proven_u32 proven_crc32_update(proven_u32 crc, proven_mem_view_t data) {
-    /* Reflected form: init/xorout 0xFFFFFFFF, polynomial 0xEDB88320. The running value the
-     * caller holds is the already-inverted CRC, so we invert on the way in and out and the
-     * middle stays as a plain register - that is what makes chaining chunks work. */
-    proven_u32 c = ~crc;
-    if (data.size > 0 && !data.ptr) return crc;   /* consistent with the SHA path */
-    const proven_byte_t *p = data.ptr;
-    proven_size_t n = data.size;
+/* The register (not inverted) over n bytes, by the tables. */
+static proven_u32 crc32_soft(proven_u32 c, const proven_byte_t *p, proven_size_t n) {
 #if !PROVEN_CRC32_SMALL
     /* Byte loads, not a cast to a wider type: no alignment assumption, no aliasing question,
      * and the compiler fuses them into one load where the target allows it. */
@@ -411,9 +413,135 @@ proven_u32 proven_crc32_update(proven_u32 crc, proven_mem_view_t data) {
     for (proven_size_t i = 0; i < n; ++i) {
         c = (c >> 8) ^ CRC32_TABLE[(c ^ (proven_u32)p[i]) & 0xFFu];
     }
-    return ~c;
+    return c;
+}
+
+/* Carry-less folding (platform/proven_sys_crc.c) where the processor has it: reflected x^576,
+ * x^512, x^192 and x^128 modulo the polynomial, each as x^(e-1) mod P bit-reversed in 64 bits
+ * (computed, and the folding checked against the bitwise CRC, by a private program). The
+ * folding is used only after it has given the tables' answer on a fixed message. */
+#define CRC_FOLD_MIN 64u
+#ifndef PROVEN_FREESTANDING
+static const uint64_t CRC32_FOLD[4] = { 0x653d982200000000u, 0xcad38e8f00000000u, 0x65673b4600000000u, 0x9ba54c6f00000000u };
+static const uint64_t CRC64_FOLD[4] = { 0x6ae3efbb9dd441f3u, 0x081f6054a7842df4u, 0xe05dd497ca393ae4u, 0xdabe95afc7875f40u };
+static _Atomic int g_crc_clmul = -1;         /* 1 fold, 0 do not, -1 not yet asked: the same on every thread */
+static _Atomic bool g_crc_force_portable;
+
+static proven_u32 crc32_fold(proven_u32 c, const proven_byte_t *p, proven_size_t n, proven_size_t *done) {
+    proven_byte_t x[16];
+    const proven_size_t m = n & ~(proven_size_t)15;
+    if (!proven_sys_crc_fold(CRC32_FOLD, c, p, m, x)) { *done = 0; return c; }
+    *done = m;
+    return crc32_soft(0, x, 16);
+}
+
+static proven_u64 crc64_soft(proven_u64 c, const proven_byte_t *p, proven_size_t n);
+
+static proven_u64 crc64_fold(proven_u64 c, const proven_byte_t *p, proven_size_t n, proven_size_t *done) {
+    proven_byte_t x[16];
+    const proven_size_t m = n & ~(proven_size_t)15;
+    if (!proven_sys_crc_fold(CRC64_FOLD, c, p, m, x)) { *done = 0; return c; }
+    *done = m;
+    return crc64_soft(0, x, 16);
+}
+
+static bool crc_clmul(void) {
+    if (atomic_load_explicit(&g_crc_force_portable, memory_order_relaxed)) return false;
+    int on = atomic_load_explicit(&g_crc_clmul, memory_order_relaxed);
+    if (on < 0) {
+        on = 0;
+        if (proven_sys_crc_clmul_available()) {
+            proven_byte_t probe[208];
+            for (proven_size_t i = 0; i < sizeof probe; ++i) probe[i] = (proven_byte_t)(i * 167u + 13u);
+            proven_size_t done = 0;
+            const proven_u32 folded = crc32_fold(0x12345678u, probe, sizeof probe, &done);
+            proven_size_t done64 = 0;
+            const proven_u64 folded64 = crc64_fold(0x0123456789abcdefu, probe, sizeof probe, &done64);
+            on = done == sizeof probe && folded == crc32_soft(0x12345678u, probe, sizeof probe) &&
+                 done64 == sizeof probe && folded64 == crc64_soft(0x0123456789abcdefu, probe, sizeof probe);
+        }
+        atomic_store_explicit(&g_crc_clmul, on, memory_order_relaxed);
+    }
+    return on != 0;
+}
+#endif
+
+bool proven_crc_is_hardware_(void) {
+#ifndef PROVEN_FREESTANDING
+    return crc_clmul();
+#else
+    return false;
+#endif
+}
+
+void proven_crc_force_portable_(bool on) {
+#ifndef PROVEN_FREESTANDING
+    atomic_store_explicit(&g_crc_force_portable, on, memory_order_relaxed);
+#else
+    (void)on;
+#endif
+}
+
+proven_u32 proven_crc32_update(proven_u32 crc, proven_mem_view_t data) {
+    /* Reflected form: init/xorout 0xFFFFFFFF, polynomial 0xEDB88320. The running value the
+     * caller holds is the already-inverted CRC, so we invert on the way in and out and the
+     * middle stays as a plain register - that is what makes chaining chunks work. */
+    proven_u32 c = ~crc;
+    if (data.size > 0 && !data.ptr) return crc;   /* consistent with the SHA path */
+    const proven_byte_t *p = data.ptr;
+    proven_size_t n = data.size;
+#ifndef PROVEN_FREESTANDING
+    if (n >= CRC_FOLD_MIN && crc_clmul()) {
+        proven_size_t done = 0;
+        c = crc32_fold(c, p, n, &done);
+        p += done;
+        n -= done;
+    }
+#endif
+    return ~crc32_soft(c, p, n);
 }
 
 proven_u32 proven_crc32(proven_mem_view_t data) {
     return proven_crc32_update(0, data);
+}
+
+// =============================================================================
+// CRC-64/XZ (ECMA-182, reflected) - xz's check
+// =============================================================================
+
+/* The register (not inverted) over n bytes, by the tables (crc64_tables.h). */
+static proven_u64 crc64_soft(proven_u64 c, const proven_byte_t *p, proven_size_t n) {
+#if !PROVEN_CRC64_SMALL
+    while (n >= 8) {
+        c ^= (proven_u64)p[0] | (proven_u64)p[1] << 8 | (proven_u64)p[2] << 16 | (proven_u64)p[3] << 24 |
+             (proven_u64)p[4] << 32 | (proven_u64)p[5] << 40 | (proven_u64)p[6] << 48 | (proven_u64)p[7] << 56;
+        c = CRC64_SLICE[7][c & 0xFFu] ^ CRC64_SLICE[6][(c >> 8) & 0xFFu] ^ CRC64_SLICE[5][(c >> 16) & 0xFFu] ^
+            CRC64_SLICE[4][(c >> 24) & 0xFFu] ^ CRC64_SLICE[3][(c >> 32) & 0xFFu] ^ CRC64_SLICE[2][(c >> 40) & 0xFFu] ^
+            CRC64_SLICE[1][(c >> 48) & 0xFFu] ^ CRC64_SLICE[0][c >> 56];
+        p += 8;
+        n -= 8;
+    }
+#endif
+    for (proven_size_t i = 0; i < n; ++i) c = (c >> 8) ^ CRC64_SLICE[0][(c ^ p[i]) & 0xFFu];
+    return c;
+}
+
+proven_u64 proven_crc64_update(proven_u64 crc, proven_mem_view_t data) {
+    proven_u64 c = ~crc;
+    if (data.size > 0 && !data.ptr) return crc;
+    const proven_byte_t *p = data.ptr;
+    proven_size_t n = data.size;
+#ifndef PROVEN_FREESTANDING
+    if (n >= CRC_FOLD_MIN && crc_clmul()) {
+        proven_size_t done = 0;
+        c = crc64_fold(c, p, n, &done);
+        p += done;
+        n -= done;
+    }
+#endif
+    return ~crc64_soft(c, p, n);
+}
+
+proven_u64 proven_crc64(proven_mem_view_t data) {
+    return proven_crc64_update(0, data);
 }

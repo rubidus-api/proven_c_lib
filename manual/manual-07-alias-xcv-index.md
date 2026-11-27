@@ -555,6 +555,8 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_coro_t` | `proven_coro_t` |
 | `xcv_crc32` | `proven_crc32` |
 | `xcv_crc32_update` | `proven_crc32_update` |
+| `xcv_crc64` | `proven_crc64` |
+| `xcv_crc64_update` | `proven_crc64_update` |
 | `xcv_cstr_len` | `proven_cstr_len` |
 | `xcv_datetime_t` | `proven_datetime_t` |
 | `xcv_deflate` | `proven_deflate` |

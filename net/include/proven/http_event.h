@@ -338,6 +338,26 @@ proven_err_t proven_http_stream_respond(proven_http_stream_t *stream, proven_u16
                                         proven_mem_view_t body);
 
 /**
+ * @brief proven_http_stream_respond, but the body is not copied (since RFC-0053): it must stay
+ *        valid and unchanged until `on_done` for this stream.
+ *
+ * For a body that outlives the response anyway - a file mapped into memory, a cached page, a
+ * generated buffer you free in `on_done` - this saves the copy into the server: over HTTP/2
+ * in the clear the bytes go from your memory to the socket. `on_done` then comes when the
+ * server no longer needs them - when the last of them was written, or the connection is gone -
+ * which may be after the response has otherwise ended, and possibly inside this call. Over
+ * HTTP/1.1, through TLS, over HTTP/3 and when the response is compressed, the body is copied
+ * as by proven_http_stream_respond; the rule about `on_done` is the same, so code written for
+ * one is right for all.
+ *
+ * @return as proven_http_stream_respond.
+ */
+[[nodiscard]]
+proven_err_t proven_http_stream_respond_borrowed(proven_http_stream_t *stream, proven_u16 status,
+                                                 const proven_http_header_t *headers, proven_size_t header_count,
+                                                 proven_mem_view_t body);
+
+/**
  * @brief Begin a response whose body will follow in pieces.
  * @param content_length the body's size, or PROVEN_HTTP_EVENT_LENGTH_UNKNOWN to send it chunked.
  * @return as proven_http_stream_respond; PROVEN_ERR_RESET when the connection or the stream ended

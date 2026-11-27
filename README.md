@@ -1,4 +1,4 @@
-[한국어](README-ko.md) | **English** - **Proven C library v0.119.3** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.119.3/proven_c_lib-v0.119.3.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.119.3/proven_c_lib-v0.119.3-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.119.3/proven_c_lib-v0.119.3-ko-manual.pdf)
+[한국어](README-ko.md) | **English** - **Proven C library v0.120.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.120.0/proven_c_lib-v0.120.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.120.0/proven_c_lib-v0.120.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.120.0/proven_c_lib-v0.120.0-ko-manual.pdf)
 
 # Proven C library
 
@@ -27,7 +27,7 @@ than looked up.
 programs, each adding one idea: printing, text with a length, errors as values, allocators, arenas,
 a container and a file. Chapter 0 is the place to go after it.
 
-- Version: proven_c_lib-v0.119.3 | Standard: C23 | License: MIT
+- Version: proven_c_lib-v0.120.0 | Standard: C23 | License: MIT
 - Versions are semantic, `MAJOR.MINOR.PATCH`, from v0.0.1 (2026-09-04); the releases before it carry
   date-based numbers (`v26.MM.DDx`) and stay as they were published.
 - Seven functions named `*_internal` or `*_impl` sit in public headers because macros call them;
@@ -696,17 +696,20 @@ This split keeps the core library easier to audit and gives ports a clear place 
 
 Cross compilation shows that headers, source visibility, ABI assumptions, and compile-time platform branches line up. It does not replace runtime tests on the target machine.
 
-## Four libraries: proven_base, proven_crypto, proven_codec and proven_net
+## Five libraries: proven_base, proven_crypto, proven_codec, proven_net and proven_math
 
-The tree holds four libraries under one version. **proven_base** - `include/proven/`, `src/proven/`,
+The tree holds five libraries under one version. **proven_base** - `include/proven/`, `src/proven/`,
 `platform/` - is memory, strings, containers, text, numbers, files, time, jobs, the random
 generators, CRC-32 and the table hashes. **proven_crypto** - `crypto/` - is SHA-2, HMAC and the
 legacy hashes, AES and the AEAD ciphers, key exchange, signing keys, DER and X.509 certificates.
 **proven_codec** - `codec/` - is DEFLATE with zlib and gzip framing, Zstandard and Brotli.
 **proven_net** - `net/` - is sockets, the event loop, TLS, HTTP/1.1, HTTP/2, HTTP/3 over QUIC,
-WebSocket and server-sent events. Each uses nothing of the ones below it but their public headers
-(tests hold those lines): crypto and codec stand on the base alone, the network library on all
-three, and the base knows nothing of any of them.
+WebSocket and server-sent events. **proven_math** - `math/` - is binary64 and binary32 arithmetic,
+`fma`, comparisons, conversions, `sqrt`, rounding, `fmod`, `frexp`/`ldexp` (`float_ops.h`) and
+`exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2` correctly rounded (`float_math.h`), with the same
+bits on every target and no FPU needed (decimal parsing and formatting stay in the base). Each uses nothing of the ones below it but their public headers
+(tests hold those lines): crypto, codec and math stand on the base alone, the network library on
+the base, crypto and codec, and the base knows nothing of any of them.
 
 A program compiles the base and whichever of the others it uses: each adds its `include/`
 directory and its `src/` and `platform/` sources. Header names did not change -
@@ -723,7 +726,7 @@ step and checkable: [docs/migrating-to-proven-crypto-and-codec.md](docs/migratin
 - Containers: `array`, `list`, `ring`, `map`.
 - Algorithms: `algorithm`.
 - Text: `fmt`, `scan`.
-- Numbers: `float_parse`, `float_format`.
+- Numbers: `float_parse`, `float_format`, `float_ops` (binary64 and binary32 arithmetic, `fma`, comparisons, `sqrt`, rounding, `fmod`, `frexp`/`ldexp`, conversions - the same bits on every target, by the instruction or by integers on a core without an FPU, no libm).
 - Hashing and encoding: `hash` (FNV-1a, SipHash-2-4, CRC-32, SHA-256, SHA-384, SHA-512), `hmac` (HMAC, HKDF and PBKDF2), `deflate` (DEFLATE compression both ways, bare or as zlib or gzip, streaming, with the caller bounding what a decompression may produce), `zstd` (Zstandard both ways - twenty-two levels to write it, windows up to 1 GiB, level 6 at gzip 6's size and twice its speed, 19 within about 1 % of libzstd's size; long-distance matching; dictionaries, raw or formatted (as `zstd --train` writes them), both ways -, with the caller bounding the output and the window), `brotli` (Brotli decompression, with the caller bounding the output and the window; `PROVEN_NO_BROTLI` leaves it and its 122,784-byte dictionary out), `cert` (X.509 certificates: reading, names, trust anchors, chain verification, code-signing and time-stamping uses), `sign` (private keys - RSA, P-256, P-384 - from PEM, DER or parts; deterministic signatures over a digest, PSS, verification), `der` (a strict DER reader and a writer), `aes` (AES-CBC and PKCS #7, for encrypted key files), `aead` (AES-GCM and ChaCha20-Poly1305), `kex` (X25519, ECDH over P-256 and P-384, finite-field Diffie-Hellman over fixed groups), `hash_legacy` (SHA-1 and MD5, for formats that fix them), `encode` (hex, Base64, Base64URL), `utf` (strict UTF-8 <-> UTF-16).
 - Randomness: `random` (xoshiro256** reproducible, ChaCha20 cryptographic with key erasure and a new key in a forked child, a per-thread fast source, and in proven_crypto an AES-256-CTR generator for bulk on processors with AES instructions; unbiased range/shuffle helpers, and a pluggable entropy source - the OS CSPRNG by default, a board's hardware TRNG on bare metal).
 - Hosted services: `fs`, `stream`, `time`, `mmap`, `sysio`.
