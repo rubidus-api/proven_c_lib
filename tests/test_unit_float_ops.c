@@ -1,6 +1,7 @@
 #include "proven/float_ops.h"
 #include "proven_test.h"
 #include "../math/src/proven_internal_float_ops.h"
+#include <limits.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -37,6 +38,8 @@ static double D(uint64_t u) { double x; memcpy(&x, &u, sizeof x); return x; }
 #define MINNORM 0x0010000000000000u
 #define MAXF 0x7fefffffffffffffu
 #define ONE 0x3ff0000000000000u
+#define PINF_D (proven_float_from_bits(PINF))
+#define NINF_D (proven_float_from_bits(NINF))
 
 typedef double (*f1_t)(double);
 typedef struct { uint64_t in, out; } row1_t;
@@ -256,6 +259,56 @@ int main(void) {
             }
         }
         PROVEN_TEST_ASSERT(bad == 0, "random values both ways agree with the compiler's conversions", "");
+    }
+
+    PROVEN_TEST_SECTION("RFC-0058's exact functions", "remainder, remquo, nextafter, modf, ilogb, logb, fdim, round_to_i64 and rint_to_i64 by tables of bits; remainder also as x - n*y checked exactly on random inputs.", "Check f_remquo's quotient bits and its |x| < |y| branch, and nextafter's direction.");
+    {
+        int q = 0;
+        PROVEN_TEST_ASSERT(B(proven_float_remainder(D(0x4014000000000000u), D(0x4000000000000000u))) == ONE              /* 5 rem 2 = 1 (n = 2, even) */
+            && B(proven_float_remainder(D(0x401c000000000000u), D(0x4000000000000000u))) == 0xbff0000000000000u          /* 7 rem 2 = -1 (n = 4) */
+            && B(proven_float_remainder(D(0x3ff8000000000000u), D(ONE))) == 0xbfe0000000000000u                          /* 1.5 rem 1 = -0.5 (n = 2) */
+            && B(proven_float_remainder(D(0x3fe0000000000000u), D(ONE))) == 0x3fe0000000000000u                          /* 0.5 rem 1 = 0.5 (n = 0) */
+            && B(proven_float_remainder(D(0xc010000000000000u), D(0x4000000000000000u))) == NZ                           /* -4 rem 2 = -0: x's sign */
+            && B(proven_float_remainder(D(ONE), D(PZ))) == QNAN && B(proven_float_remainder(D(PINF), D(ONE))) == QNAN
+            && B(proven_float_remainder(D(ONE), D(PINF))) == ONE && B(proven_float_remainder(D(SNAN), D(ONE))) == SNANQ,
+            "remainder: ties to even n, a zero with x's sign, the invalid cases, NaNs", "");
+        PROVEN_TEST_ASSERT(B(proven_float_remquo(D(0x401c000000000000u), D(0xc000000000000000u), &q)) == 0xbff0000000000000u && q == -4
+            && B(proven_float_remquo(D(0x3ff8000000000000u), D(ONE), &q)) == 0xbfe0000000000000u && q == 2,
+            "remquo: the quotient's sign and low bits", "");
+        PROVEN_TEST_ASSERT(B(proven_float_nextafter(D(ONE), D(PINF))) == 0x3ff0000000000001u && B(proven_float_nextafter(D(ONE), D(PZ))) == 0x3fefffffffffffffu
+            && B(proven_float_nextafter(D(PZ), D(NZ))) == NZ && B(proven_float_nextafter(D(PZ), D(ONE))) == MINSUB && B(proven_float_nextafter(D(NZ), D(0xbff0000000000000u))) == (MINSUB | NZ)
+            && B(proven_float_nextafter(D(MAXF), D(PINF))) == PINF && B(proven_float_nextafter(D(PINF), D(ONE))) == MAXF && B(proven_float_nextafter(D(ONE), D(QNAN))) == QNAN,
+            "nextafter: both directions, through zero, to and from infinity", "");
+        double ip = 0;
+        PROVEN_TEST_ASSERT(B(proven_float_modf(D(0xc004000000000000u), &ip)) == 0xbfe0000000000000u && B(ip) == 0xc000000000000000u
+            && B(proven_float_modf(D(0x4000000000000000u), &ip)) == PZ && B(proven_float_modf(D(NINF), &ip)) == NZ && B(ip) == NINF,
+            "modf: -2.5 is -2 and -0.5; an integer's fraction is a signed zero; an infinity's too", "");
+        PROVEN_TEST_ASSERT(proven_float_ilogb(D(ONE)) == 0 && proven_float_ilogb(D(MINSUB)) == -1074 && proven_float_ilogb(D(MAXF)) == 1023
+            && proven_float_ilogb(D(PZ)) == PROVEN_FLOAT_ILOGB_ZERO && proven_float_ilogb(D(QNAN)) == PROVEN_FLOAT_ILOGB_NAN && proven_float_ilogb(D(PINF)) == INT_MAX
+            && B(proven_float_logb(D(PZ))) == NINF && B(proven_float_logb(D(0x4024000000000000u))) == 0x4008000000000000u,
+            "ilogb and logb: subnormals counted, the special results", "");
+        proven_i64 v = 0;
+        PROVEN_TEST_ASSERT(B(proven_float_fdim(D(ONE), D(0x4000000000000000u))) == PZ && B(proven_float_fdim(D(0x4000000000000000u), D(ONE))) == ONE
+            && proven_float_round_to_i64(D(0x4004000000000000u), &v) == PROVEN_OK && v == 3 && proven_float_rint_to_i64(D(0x4004000000000000u), &v) == PROVEN_OK && v == 2
+            && proven_float_round_to_i64(D(QNAN), &v) == PROVEN_ERR_OUT_OF_BOUNDS,
+            "fdim; 2.5 rounds to 3 away from zero and to 2 to even", "");
+        int bad = 0;
+        for (int i = 0; i < 300000; i++) {
+            const double x = rnd_double(), y = rnd_double();
+            if (!proven_float_is_finite(x) || !proven_float_is_finite(y) || proven_float_to_bits(y) << 1 == 0) continue;
+            int qq;
+            const double r = proven_float_remquo(x, y, &qq);
+            /* |r| <= |y|/2, r has x's sign when zero, and x - r is an integer multiple of y whose
+             * low bits are qq: checked with fmod (exact) on the difference */
+            const double ay = proven_float_fabs(y), ar = proven_float_fabs(r);
+            if (proven_float_lt(proven_float_mul(ay, 0.5), ar)) bad++;
+            /* fmod is exact and truncates; the remainder is it, or it minus |y| with fmod's sign -
+             * a difference Sterbenz makes exact, since then |fmod| > |y|/2 */
+            const double f = proven_float_fmod(x, y), g = proven_float_sub(f, proven_float_copysign(ay, f));
+            if (proven_float_to_bits(r) != proven_float_to_bits(f) && proven_float_to_bits(r) != proven_float_to_bits(g)) bad++;
+            if (proven_float_to_bits(proven_float_nextafter(proven_float_nextafter(x, PINF_D), NINF_D)) != proven_float_to_bits(x) && proven_float_fabs(x) < 1e300) bad++;
+        }
+        PROVEN_TEST_ASSERT(bad == 0, "300,000 random pairs: |remainder| <= |y|/2 and it is fmod or fmod minus |y|; nextafter up then down returns", "");
     }
 
     PROVEN_TEST_PASS("float_ops checks passed.");

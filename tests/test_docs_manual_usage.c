@@ -40,7 +40,7 @@
  * naming gate: it is the porting layer, not the API a caller programs against.
  */
 
-#define MAX_SYMS 1600
+#define MAX_SYMS 2400
 #define MAX_NAME 96
 #define MAX_BODY 8192
 
@@ -52,6 +52,7 @@ static char g_macro_body[MAX_SYMS][MAX_BODY];
 static int  g_macro_n = 0;
 
 static char g_used[MAX_SYMS][MAX_NAME];      /* every proven_/PROVEN_ name that appears in code */
+static bool g_full;                          /* a table reached MAX_SYMS: names were dropped, the gate cannot judge */
 static int  g_used_n = 0;
 
 static char *read_text_file(const char *path) {
@@ -77,8 +78,9 @@ static bool have(char list[][MAX_NAME], int n, const char *name) {
 }
 
 static void add_used(const char *name) {
-    if (!have(g_used, g_used_n, name) && g_used_n < MAX_SYMS) {
-        snprintf(g_used[g_used_n++], MAX_NAME, "%s", name);
+    if (!have(g_used, g_used_n, name)) {
+        if (g_used_n < MAX_SYMS) snprintf(g_used[g_used_n++], MAX_NAME, "%s", name);
+        else g_full = true;
     }
 }
 
@@ -150,6 +152,8 @@ static void collect_headers_from(const char *dir) {
                 memcpy(g_macro[g_macro_n], name, (size_t)(q - name));
                 g_macro[g_macro_n][q - name] = '\0';
                 ++g_macro_n;
+            } else {
+                g_full = true;
             }
             p = end;
         }
@@ -163,8 +167,9 @@ static void collect_headers_from(const char *dir) {
                 char name[MAX_NAME];
                 memcpy(name, p, (size_t)(q - p));
                 name[q - p] = '\0';
-                if (!have(g_macro, g_macro_n, name) && !have(g_fn, g_fn_n, name) && g_fn_n < MAX_SYMS) {
-                    snprintf(g_fn[g_fn_n++], MAX_NAME, "%s", name);
+                if (!have(g_macro, g_macro_n, name) && !have(g_fn, g_fn_n, name)) {
+                    if (g_fn_n < MAX_SYMS) snprintf(g_fn[g_fn_n++], MAX_NAME, "%s", name);
+                    else g_full = true;
                 }
             }
             p = q;
@@ -276,6 +281,8 @@ int main(void) {
         "Named below. Put the call in a manual/examples program (compiled and run) or a ```c block (compiled), next to the sentence saying when a reader would want it.");
     // ---------------------------------------------------------------
     {
+        PROVEN_TEST_ASSERT(!g_full, "every public function and every used name fits the scan's tables",
+            "Raise MAX_SYMS: a full table drops names, so a demonstrated function reads as undemonstrated.");
         int undemonstrated = 0;
         for (int i = 0; i < g_fn_n; ++i) {
             if (!have(g_used, g_used_n, g_fn[i])) {

@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v0.121.1)
+# Chapter 8: Formatting and Scanning (v0.122.0)
 
 **Part IV - Text in and out. Prerequisite: [Chapter 3](manual-03-strings-text.md) section 3-section 4.**
 **After this chapter** you can format any value, teach the formatter a type of your own, parse
@@ -533,6 +533,12 @@ root that gives the same bits elsewhere. No libm, no `errno`; freestanding.
 | `proven_float_to_i64(x, &out)` | toward zero; `PROVEN_ERR_OUT_OF_BOUNDS` for NaN and outside [-2^63, 2^63) |
 | `proven_float_is_nan` `proven_float_is_inf` `proven_float_is_finite` | by the bits: `-ffast-math` cannot fold them away |
 | `proven_float_to_bits` `proven_float_from_bits` | the bits of a double, and back |
+| `proven_float_remainder(x, y)`, `_remquo` | IEEE 754 remainder, exact; a zero result has `x`'s sign; `remquo` also gives the sign and low 31 bits of the quotient |
+| `proven_float_nextafter(x, y)` | the next value after `x` toward `y` |
+| `proven_float_modf(x, &i)` | the fraction, and the integral part in `i` |
+| `proven_float_ilogb`, `proven_float_logb` | the exponent, as an `int` or a double |
+| `proven_float_fdim(x, y)` | `x - y` when `x > y`, else +0 |
+| `proven_float_round_to_i64`, `_rint_to_i64` | `llround` and `llrint`, with `PROVEN_ERR_OUT_OF_BOUNDS` instead of an unspecified value |
 
 A NaN given comes back with its payload and the quiet bit set; a NaN made here is
 `0x7FF8000000000000`. So four builds of one program - native, another compiler, exported C,
@@ -567,6 +573,37 @@ r = proven_float_sqrt(proven_float_from_i64(1000000));                  /* 1000.
 proven_u64 bits = proven_float_to_bits(r);            /* 0x408f400000000000 */
 (void)got; (void)bits;
 ```
+
+The rest of `math.h`'s exact functions (RFC-0058), each with a `proven_float32_` twin:
+
+```c
+int quo = 0;
+double whole = 0;
+proven_i64 n = 0;
+const double r = proven_float_remainder(7.0, 2.0);        /* -1: 7 - 4 * 2, n = 3.5 rounded to even */
+const double rq = proven_float_remquo(7.0, -2.0, &quo);   /* -1, and quo -4: x/y's sign, n's low bits */
+const double up = proven_float_nextafter(1.0, 2.0);       /* 1 + 2^-52 */
+const double frac = proven_float_modf(-2.5, &whole);      /* -0.5, whole -2 */
+const int ex = proven_float_ilogb(10.0);                  /* 3 */
+const double lb = proven_float_logb(10.0);                /* 3.0 */
+const double dim = proven_float_fdim(1.0, 2.0);           /* +0: 1 is not above 2 */
+const proven_err_t e1 = proven_float_round_to_i64(2.5, &n);   /* 3: halves away from zero */
+const proven_err_t e2 = proven_float_rint_to_i64(2.5, &n);    /* 2: halves to even */
+int q32 = 0;
+float w32 = 0;
+proven_i64 n32 = 0;
+const float f[] = { proven_float32_remainder(7.0f, 2.0f), proven_float32_remquo(7.0f, 2.0f, &q32),
+                    proven_float32_nextafter(1.0f, 0.0f), proven_float32_modf(1.5f, &w32),
+                    proven_float32_logb(8.0f), proven_float32_fdim(3.0f, 1.0f) };
+const int ex32 = proven_float32_ilogb(8.0f);
+const proven_err_t e3 = proven_float32_round_to_i64(-0.5f, &n32);   /* -1 */
+const proven_err_t e4 = proven_float32_rint_to_i64(-0.5f, &n32);    /* -0, so 0 */
+(void)r; (void)rq; (void)up; (void)frac; (void)ex; (void)lb; (void)dim; (void)e1; (void)e2;
+(void)f; (void)ex32; (void)e3; (void)e4;
+```
+
+`remainder` is IEEE 754's: exact, and a zero result has `x`'s sign (glibc's gives the other sign
+when `y` is the smallest subnormal; this one does what the standard says).
 
 ### Arithmetic and binary32 (`float_ops.h`, RFC-0055)
 
@@ -646,6 +683,159 @@ proven_err_t e7 = proven_float32_to_u64(h, &u64);
 (void)cls; (void)cmp; (void)fb; (void)e4; (void)e5; (void)e6; (void)e7;
 ```
 
+### The floating-point environment as a value (`float_env.h`)
+
+C's `<fenv.h>` keeps the rounding direction and the five exception flags in the processor:
+`fesetround` changes how every operation of the thread rounds, for code that never asked, and a
+flag raised anywhere stays raised. `float_env.h` (RFC-0058) makes them a value,
+`proven_float_env_t` - a direction and the flags so far - that you pass to the operations that
+should use it; nothing else is touched, and every other function keeps rounding to nearest.
+
+| Function | Rounds in `env->round`, ORs its exceptions into `env->flags` |
+|---|---|
+| `proven_float_env_add`, `_sub`, `_mul`, `_div`, `_fma`, `_sqrt` | the arithmetic |
+| `proven_float_env_rint`, `_to_i64` | to an integral value or an integer (C's `rint`, `llrint`) |
+| `proven_float_env_to_float32`, `_from_i64` | between the formats, and from integers |
+| `proven_float32_env_*` | the same for binary32 |
+
+The directions are `PROVEN_ROUND_NEAREST`, `_TOWARD_ZERO`, `_UP` and `_DOWN`; the flags
+`PROVEN_FLOAT_INEXACT`, `_UNDERFLOW` (tiny after rounding and inexact, as x86 and RISC-V judge
+it), `_OVERFLOW`, `_DIVBYZERO` and `_INVALID`. The work is done by the integer core of
+`float_ops.h`, so the bits and the flags are the same on every target, with or without an FPU;
+`tests/test_unit_float_env` compares them with the x86-64 processor in every direction.
+
+<!-- example: manual/examples/en/ex_08_float_env.c -->
+```c
+/*
+ * float_env.h: the floating-point environment as a value. C keeps the rounding direction and
+ * the exception flags in the processor, shared by everything the thread calls; here they are a
+ * proven_float_env_t you hold and pass, and nothing else is touched.
+ *
+ * The classic use is interval arithmetic: the same sum rounded down and rounded up brackets
+ * the true value, whatever the rounding errors were. The second half shows the flags - which
+ * stay set until you clear them - and the binary32 forms.
+ */
+
+int main(void) {
+    /* 1/1 + 1/2 + ... + 1/1000, once rounding every operation down, once up. */
+    proven_float_env_t down = { PROVEN_ROUND_DOWN, 0 }, up = { PROVEN_ROUND_UP, 0 };
+    double lo = 0, hi = 0;
+    for (int k = 1; k <= 1000; k++) {
+        lo = proven_float_env_add(&down, lo, proven_float_env_div(&down, 1.0, proven_float_env_from_i64(&down, k)));
+        hi = proven_float_env_add(&up, hi, proven_float_env_div(&up, 1.0, proven_float_env_from_i64(&up, k)));
+    }
+    /* H(1000) = 7.4854708605503449... - certainly inside, and the interval is a few ulps wide. */
+    EXAMPLE_REQUIRE(lo < hi && lo <= 7.4854708605503449 && 7.4854708605503449 <= hi, "the true sum is between the two");
+    EXAMPLE_REQUIRE(hi - lo < 1e-12, "and the bracket is tight");
+    EXAMPLE_REQUIRE(down.flags == PROVEN_FLOAT_INEXACT && up.flags == PROVEN_FLOAT_INEXACT, "only inexact was raised");
+
+    /* The other operations, and the flags that report trouble. */
+    proven_float_env_t env = { PROVEN_ROUND_NEAREST, 0 };
+    const double big = proven_float_env_mul(&env, 1e300, 1e10);          /* overflow: infinity */
+    EXAMPLE_REQUIRE(env.flags & PROVEN_FLOAT_OVERFLOW, "overflow raised");
+    env.flags = 0;                                                       /* sticky: clear them yourself */
+    const double root = proven_float_env_sqrt(&env, -1.0);               /* invalid: a NaN */
+    const double inf = proven_float_env_div(&env, 1.0, 0.0);             /* divide by zero */
+    EXAMPLE_REQUIRE(env.flags == (PROVEN_FLOAT_INVALID | PROVEN_FLOAT_DIVBYZERO), "both reported, nothing else");
+    env.flags = 0;
+    const double tiny = proven_float_env_mul(&env, 1e-300, 1e-300);      /* underflow to 0 */
+    EXAMPLE_REQUIRE(tiny == 0 && env.flags == (PROVEN_FLOAT_UNDERFLOW | PROVEN_FLOAT_INEXACT), "underflow and inexact");
+    proven_float_env_t z = { PROVEN_ROUND_TOWARD_ZERO, 0 };
+    EXAMPLE_REQUIRE(proven_float_env_sub(&z, 1.0, 1.0) == 0 && proven_float_env_fma(&z, 2.0, 3.0, 1.0) == 7.0, "exact results raise nothing");
+    EXAMPLE_REQUIRE(z.flags == 0, "no flag");
+
+    /* To integers in the direction - C's rint and llrint under fesetround - and to binary32. */
+    proven_i64 n = 0;
+    EXAMPLE_REQUIRE(proven_float_env_rint(&up, 2.1) == 3.0 && proven_float_env_rint(&down, -2.1) == -3.0, "rint up and down");
+    EXAMPLE_REQUIRE(proven_float_env_to_i64(&z, -2.9, &n) == PROVEN_OK && n == -2, "toward zero");
+    EXAMPLE_REQUIRE(proven_float_env_to_i64(&env, 1e30, &n) == PROVEN_ERR_OUT_OF_BOUNDS && (env.flags & PROVEN_FLOAT_INVALID), "too large: an error, and invalid");
+    EXAMPLE_REQUIRE(proven_float_env_to_float32(&up, 0.1) > 0.1 && proven_float_env_to_float32(&down, 0.1) < 0.1, "0.1 narrowed up and down");
+
+    /* binary32: the same functions with proven_float32_ in front. */
+    proven_float_env_t f = { PROVEN_ROUND_UP, 0 };
+    const float s = proven_float32_env_add(&f, 1.0f, 1e-10f);            /* rounded up past 1 */
+    EXAMPLE_REQUIRE(s > 1.0f && proven_float32_env_sub(&f, s, 1.0f) > 0.0f, "1 + tiny, rounded up");
+    EXAMPLE_REQUIRE(proven_float32_env_mul(&f, 3.0f, 3.0f) == 9.0f && proven_float32_env_div(&f, 1.0f, 3.0f) > 0.3333333f, "mul exact, div up");
+    EXAMPLE_REQUIRE(proven_float32_env_fma(&f, 2.0f, 2.0f, 1.0f) == 5.0f && proven_float32_env_sqrt(&f, 2.0f) > 1.4142135f, "fma, sqrt");
+    EXAMPLE_REQUIRE(proven_float32_env_rint(&f, 0.5f) == 1.0f && proven_float32_env_from_i64(&f, 16777217) == 16777218.0f, "rint, from_i64");
+    EXAMPLE_REQUIRE(proven_float32_env_to_i64(&f, 2.5f, &n) == PROVEN_OK && n == 3, "to_i64 up");
+
+    printf("H(1000) in [%.17g, %.17g]\n", lo, hi);
+    (void)big; (void)root; (void)inf;
+    return EXAMPLE_OK();
+}
+```
+
+### Numbers as a place writes them (`numfmt.h`)
+
+`{}` and the parsers are locale-independent on purpose: a number reads and prints the same in
+every process. When a person in a particular place is the reader, `numfmt.h` (RFC-0058) writes
+and reads numbers with that place's conventions - as a value, `proven_numfmt_t`, passed to the
+call, never as process state (C's `setlocale` changes every `printf` of the program).
+
+| Function | Does |
+|---|---|
+| `proven_numfmt_u64`, `_i64` | an integer with group separators |
+| `proven_numfmt_f64(f, v, decimals, out, &n)` | `decimals` digits after the mark, correctly rounded |
+| `proven_numfmt_parse_i64`, `_parse_f64` | read them back: separators only between digits, one mark |
+
+A `proven_numfmt_t` is the decimal mark, the group separator (any UTF-8), the group sizes from
+the right (`{3}`, or India's `{3, 2}`), and the minus sign. Presets: `proven_numfmt_c`, `_en`,
+`_de`, `_fr` (a narrow no-break space), `_ch` (a right single quotation mark) and `_in`. Writing
+refuses rather than truncates. Dates have their own value, `proven_time_locale_t` (chapter 5).
+
+<!-- example: manual/examples/en/ex_08_numfmt.c -->
+```c
+/*
+ * numfmt.h: numbers the way a place writes them, as a value. C's setlocale would change how
+ * every printf and strtod of the process writes a decimal point; here the conventions are a
+ * proven_numfmt_t passed to the one call that needs them, and `{}` stays the same everywhere.
+ *
+ * One amount, written for five readers and read back; then a convention of your own.
+ */
+
+static void show(const char *who, const proven_numfmt_t *f, double amount) {
+    proven_byte_t buf[64];
+    proven_size_t n = 0;
+    EXAMPLE_REQUIRE(proven_numfmt_f64(f, amount, 2, (proven_mem_mut_t){ buf, sizeof buf }, &n) == PROVEN_OK, "written");
+    printf("%-8s %.*s\n", who, (int)n, (const char *)buf);
+    double back = 0;
+    EXAMPLE_REQUIRE(proven_numfmt_parse_f64(f, (proven_u8str_view_t){ buf, n }, NULL, &back) == PROVEN_OK && back == (double)1234567.89, "and read back");
+}
+
+int main(void) {
+    const double amount = 1234567.891;
+    show("C", &proven_numfmt_c, amount);        /* 1234567.89 */
+    show("English", &proven_numfmt_en, amount); /* 1,234,567.89 */
+    show("German", &proven_numfmt_de, amount);  /* 1.234.567,89 */
+    show("French", &proven_numfmt_fr, amount);  /* 1 234 567,89 with narrow no-break spaces */
+    show("Swiss", &proven_numfmt_ch, amount);   /* 1'234'567.89 */
+    show("Indian", &proven_numfmt_in, amount);  /* 12,34,567.89 */
+
+    /* Integers, and a part of a line: `used` says how much of it was the number. */
+    proven_byte_t buf[32];
+    proven_size_t n = 0;
+    EXAMPLE_REQUIRE(proven_numfmt_i64(&proven_numfmt_en, -1500000, (proven_mem_mut_t){ buf, sizeof buf }, &n) == PROVEN_OK
+                    && proven_u8str_view_eq(proven_u8str_view_from_bytes(buf, n), PROVEN_LIT("-1,500,000")), "an integer");
+    EXAMPLE_REQUIRE(proven_numfmt_u64(&proven_numfmt_de, 2026, (proven_mem_mut_t){ buf, sizeof buf }, &n) == PROVEN_OK
+                    && proven_u8str_view_eq(proven_u8str_view_from_bytes(buf, n), PROVEN_LIT("2.026")), "an unsigned one");
+    proven_i64 qty = 0;
+    proven_size_t used = 0;
+    EXAMPLE_REQUIRE(proven_numfmt_parse_i64(&proven_numfmt_en, PROVEN_LIT("12,000 units"), &used, &qty) == PROVEN_OK && qty == 12000 && used == 6,
+                    "the number at the front of a line");
+
+    /* A convention of your own: groups of four, a space, and the minus sign U+2212. */
+    const proven_numfmt_t wan = { PROVEN_LIT("."), PROVEN_LIT(" "), { 4 }, PROVEN_LIT("\xe2\x88\x92") };
+    EXAMPLE_REQUIRE(proven_numfmt_i64(&wan, -123456789, (proven_mem_mut_t){ buf, sizeof buf }, &n) == PROVEN_OK
+                    && proven_u8str_view_eq(proven_u8str_view_from_bytes(buf, n), PROVEN_LIT("\xe2\x88\x92" "1 2345 6789")), "grouped by ten thousands");
+
+    /* Refusal, not truncation. */
+    proven_byte_t tiny[4];
+    EXAMPLE_REQUIRE(proven_numfmt_u64(&proven_numfmt_en, 12345, (proven_mem_mut_t){ tiny, sizeof tiny }, &n) == PROVEN_ERR_OUT_OF_BOUNDS, "too small: refused");
+    return EXAMPLE_OK();
+}
+```
+
 ### exp, log, pow and the trigonometric functions (`float_math.h`, RFC-0056)
 
 `proven_float_exp`, `_log`, `_pow`, `_sin`, `_cos`, `_tan` and `_atan2`, and their binary32 forms
@@ -661,8 +851,9 @@ Two paths give these bits:
   WebAssembly, the CORE-MATH project's code (MIT; `THIRD_PARTY_NOTICES.md`) does the work: on
   x86-64 at 6-36 ns a call, 0.65-1.9 times glibc's libm, which is not correctly rounded.
   WebAssembly has no fused multiply-add, so fma is computed exactly without one there (binary32
-  about 10-35 ns a call under Node.js, binary64 30 ns to 2 us); a wasm module grows by about
-  200 KB, which `PROVEN_FLOAT_MATH_SMALL=1` saves. On wasm proven_math also supplies, as weak
+  about 10-35 ns a call under Node.js, binary64 30 ns to 2 us). Each function's code is its own, so a module links only the
+  functions it calls: all 24 in both formats add about 380 KB to a wasm module (the first seven
+  about 220 KB), which `PROVEN_FLOAT_MATH_SMALL=1` saves. On wasm proven_math also supplies, as weak
   definitions, the three 128-bit integer helpers clang calls there (`__multi3`, `__lshrti3`,
   `__ashlti3`), so a `-nostdlib` link needs nothing more; a toolchain's own win.
 - **The integer path.** On every other target, and with `PROVEN_FLOAT_SOFT=1` or
@@ -711,6 +902,208 @@ float tf = proven_float32_tan(0.5f);                  /* 0.5463025f */
 float af = proven_float32_atan2(1.0f, -1.0f);         /* 2.3561945f: 3 pi / 4 */
 (void)l; (void)p; (void)q; (void)s; (void)c; (void)t; (void)a;
 (void)lf; (void)pf; (void)cf; (void)tf; (void)af;
+```
+
+### The rest of math.h's transcendental functions (`float_math.h`, RFC-0058)
+
+`float_math.h` also has `exp2`, `exp10`, `expm1`, `log2`, `log10`, `log1p`, `cbrt`, `hypot`,
+`asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh` and `atanh`, for binary64
+(`proven_float_*`) and binary32 (`proven_float32_*`). They are correctly rounded and use the
+same two paths: CORE-MATH's code on the FPU path, and the library's own integer arithmetic
+everywhere else. The integer path takes 0.5-10 us a call on x86-64; hypot is the fastest and
+asinh the slowest. These functions have the same testing as the first seven: CORE-MATH's lists
+of hard-to-round inputs (about four million for these functions), binary32 sampled across the
+whole format, and random inputs, against MPFR on both paths.
+
+Where a function's value is rational the result is exact, or it is a tie rounded to even.
+`exp2` and `exp10` of an integer are exact. `log2` of a power of 2 and `log10` of a power of
+10 are integers. So are `cbrt` of a cube and `hypot` of a Pythagorean triple. `exp10(23)` is
+exactly halfway between two doubles and goes to the even one. The integer path finds these
+cases with integers before anything is approximated: `hypot` is computed wholly by integers
+there.
+
+| Function | Special values (C23 Annex F) |
+|---|---|
+| `exp2` `exp10` | `+-0` gives 1, `-inf` gives +0, `+inf` gives +inf; out of range, infinity or zero |
+| `expm1` | `expm1(+-0) = +-0`, `expm1(-inf) = -1` |
+| `log2` `log10` | `log(1) = +0`, `log(+-0) = -inf`, a negative `x` gives a NaN |
+| `log1p` | `log1p(+-0) = +-0`, `log1p(-1) = -inf`, below -1 a NaN |
+| `cbrt` | odd: `cbrt(-8) = -2`; zeros and infinities keep their sign |
+| `hypot(x, y)` | `hypot(+-inf, y) = +inf` even for a quiet NaN `y` (a signalling NaN gives a NaN); `hypot(x, +-0)` is x without its sign |
+| `asin` `acos` | `asin(+-1) = +-pi/2` and `acos(-1) = pi` rounded, `acos(1) = +0`; an `x` beyond +-1 gives a NaN |
+| `atan` | `atan(+-inf) = +-pi/2` rounded |
+| `sinh` `cosh` `tanh` | `cosh(+-0) = 1`, `tanh(+-inf) = +-1`, `sinh(+-inf) = +-inf`, `cosh(+-inf) = +inf` |
+| `asinh` `acosh` `atanh` | `acosh(1) = +0`, `acosh(x < 1)` a NaN; `atanh(+-1) = +-inf`, beyond +-1 a NaN |
+
+```c
+#include "proven/float_math.h"
+
+double a = proven_float_exp2(-1074.0);                /* 5e-324: the smallest subnormal, exactly */
+double b = proven_float_exp10(23.0);                  /* 1e+23: a tie, to the even neighbour */
+double c = proven_float_expm1(1e-10);                 /* 1.00000000005e-10 */
+double d = proven_float_log2(1024.0);                 /* 10.0, exactly */
+double e = proven_float_log10(1e22);                  /* 22.0, exactly */
+double f = proven_float_log1p(-0.5);                  /* -0.6931471805599453 */
+double g = proven_float_cbrt(-27.0);                  /* -3.0 */
+double h = proven_float_hypot(1e300, 1e300);          /* 1.4142135623730952e+300: no overflow */
+double i = proven_float_asin(1.0);                    /* 1.5707963267948966 */
+double j = proven_float_acos(-1.0);                   /* 3.141592653589793 */
+double k = proven_float_atan(1.0);                    /* 0.7853981633974483 */
+double l = proven_float_sinh(1.0);                    /* 1.1752011936438014 */
+double m = proven_float_cosh(1.0);                    /* 1.5430806348152437 */
+double n = proven_float_tanh(0.5);                    /* 0.46211715726000974 */
+double o = proven_float_asinh(1.0);                   /* 0.881373587019543 */
+double p = proven_float_acosh(2.0);                   /* 1.3169578969248168 */
+double q = proven_float_atanh(0.5);                   /* 0.5493061443340549 */
+float af = proven_float32_exp2(10.5f);                /* 1448.1547f */
+float bf = proven_float32_exp10(10.0f);               /* 1e+10f, exactly */
+float cf = proven_float32_expm1(1e-5f);               /* 1.000005e-05f */
+float df = proven_float32_log2(10.0f);                /* 3.321928f */
+float ef = proven_float32_log10(1000.0f);             /* 3.0f */
+float ff = proven_float32_log1p(1e-5f);               /* 9.99995e-06f */
+float gf = proven_float32_cbrt(0.001f);               /* 0.1f */
+float hf = proven_float32_hypot(5.0f, 12.0f);         /* 13.0f */
+float jf = proven_float32_asin(0.5f);                 /* 0.5235988f */
+float kf = proven_float32_acos(0.0f);                 /* 1.5707964f */
+float lf = proven_float32_atan(1e10f);                /* 1.5707964f */
+float mf = proven_float32_sinh(-2.0f);                /* -3.6268604f */
+float nf = proven_float32_cosh(2.0f);                 /* 3.7621956f */
+float of = proven_float32_tanh(10.0f);                /* 1.0f */
+float pf = proven_float32_asinh(-1.0f);               /* -0.8813736f */
+float qf = proven_float32_acosh(1.0f);                /* 0.0f */
+float rf = proven_float32_atanh(-0.5f);               /* -0.54930615f */
+(void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g; (void)h; (void)i; (void)j; (void)k;
+(void)l; (void)m; (void)n; (void)o; (void)p; (void)q; (void)af; (void)bf; (void)cf; (void)df;
+(void)ef; (void)ff; (void)gf; (void)hf; (void)jf; (void)kf; (void)lf; (void)mf; (void)nf; (void)of;
+(void)pf; (void)qf; (void)rf;
+```
+
+### Complex numbers (`complex.h`, RFC-0058)
+
+`proven_complex_t` is a struct of two binary64 parts, `re` and `im`, and `proven_complex32_t`
+is the binary32 form. They are not C's `_Complex`, so they are the same on every compiler,
+MSVC included, and their parts are plain fields. `proven_complex(re, im)` builds one. The
+functions are C's `<complex.h>`: `proven_complex_add`, `_sub`, `_mul`, `_div`, `_abs`, `_arg`,
+`_conj`, `_proj`, `_exp`, `_log`, `_pow`, `_sqrt`, `_sin`, `_cos`, `_tan`, `_asin`, `_acos`,
+`_atan`, `_sinh`, `_cosh`, `_tanh`, `_asinh`, `_acosh` and `_atanh`, and the same with
+`proven_complex32_`.
+
+Each function is a fixed formula built from correctly rounded operations: `float_ops.h`'s
+arithmetic and `float_math.h`'s functions, called by name rather than written as C operators.
+A compiler therefore cannot fuse them or widen them, and every target gives the same bits; a
+test compares a hash of each function's output against x86-64's. A result as a whole is not
+correctly rounded. The error of each part, measured against GNU MPC on 200,000 random inputs a
+function, weighted to the hard places (near `|z| = 1`, near +-1 and +-i, the branch cuts, the
+ends of the range):
+
+| Function | Largest error measured, units of the last place of each part (binary64) |
+|---|---|
+| `abs`, `arg` | 0.5 (hypot and atan2, correctly rounded) |
+| `mul` | 1.1 (each part a sum of two products with one fused correction) |
+| `exp`, `log`, `sqrt`, `sin`, `cos`, `sinh`, `cosh` | 2.0 |
+| `div`, `asin`, `acos`, `asinh`, `acosh` | 3.4 |
+| `atan`, `atanh` | 3.8 |
+| `tan`, `tanh` | 4.6 (the growing part tried up to 2^10: MPC takes minutes past it, where the result is +-1 or +-i and a tiny part) |
+| `pow` | grows with the size of `w log z`: `pow` is `exp(w log z)`, as C's `cpow` usually is |
+
+The binary32 forms compute in binary64 and round each part once. Within the inputs tried their
+error was at most 0.5 units of the last place, so they were correctly rounded there. Nothing
+overflows or underflows on the way to a result in range: `mul` and `div` keep the products'
+mantissas and exponents apart, and `exp`, `sinh` and `cosh` put the exponent back once at the
+end. Near `|z| = 1` the real part of `log` is `log1p(x^2 + y^2 - 1) / 2` with the argument
+summed exactly, so `log(1 + 2^-30 i)` has a real part of 2^-61 rather than 0.
+
+Branch cuts, zeros, infinities and NaNs are C23 Annex G's (G.6). The sign of a zero picks the
+side of a cut: `sqrt(-4 + i0) = 2i`, `sqrt(-4 - i0) = -2i`. A NaN part of a result is the
+default NaN `0x7FF8000000000000` (binary32 `0x7FC00000`). Where Annex G leaves a sign
+unspecified this library gives the sign the function's symmetry gives, and:
+
+- `exp(-inf + i inf) = +0 + i0`, `exp(+inf + i inf) = +inf + i NaN`;
+- `sqrt(-inf + i NaN) = NaN + i inf`;
+- `acos(+-inf + i NaN) = NaN - i inf`;
+- `cos(NaN + i0) = NaN - i0`.
+
+Over every pair of parts from {+-0, +-1e-300, +-0.5, +-1, +-2, +-1e300, +-inf, NaN}, each part's
+kind (zero, finite, infinite, NaN) and sign agree with glibc's `<complex.h>`, which also
+follows Annex G, except where Annex G leaves the sign open, and in `div`'s zero signs. Those
+are the signs of `z conj(w) / |w|^2`, which Annex G does not fix: (0 + 0i) / (-1 - 0i) is
+-0 + 0i here and -0 - 0i in glibc. An exact zero keeps IEEE's sign through `mul`, so
+(-0 + i)(1 + 0i) stays on the imaginary axis's left side.
+
+`pow(z, 0) = 1` for every `z`, a NaN included, as `pow` does for doubles.
+
+```c
+#include "proven/complex.h"
+
+const proven_complex_t z = proven_complex(1.0, 2.0), w = proven_complex(3.0, -4.0);
+const proven_complex_t a = proven_complex_add(z, w);         /* 4 - 2i */
+const proven_complex_t s = proven_complex_sub(z, w);         /* -2 + 6i */
+const proven_complex_t m = proven_complex_mul(z, w);         /* 11 + 2i */
+const proven_complex_t q = proven_complex_div(z, w);         /* -0.2 + 0.4i */
+const double r = proven_complex_abs(w);                      /* 5.0 */
+const double t = proven_complex_arg(w);                      /* -0.9272952180016122 */
+const proven_complex_t c = proven_complex_conj(z);           /* 1 - 2i */
+const proven_complex_t j = proven_complex_proj(proven_complex(-1.0 / 0.0, 2.0));   /* inf + i0 */
+const proven_complex_t e = proven_complex_exp(proven_complex(0.0, 3.141592653589793));
+                                                             /* -1 + 1.2246467991473532e-16 i */
+const proven_complex_t l = proven_complex_log(proven_complex(-1.0, 0.0));          /* 0 + i pi */
+const proven_complex_t p = proven_complex_pow(proven_complex(0.0, 1.0), proven_complex(0.0, 1.0));
+                                                             /* i^i = 0.20787957635076193 */
+const proven_complex_t sq = proven_complex_sqrt(proven_complex(-4.0, -0.0));        /* -2i: the cut's lower side */
+const proven_complex_t sn = proven_complex_sin(z);           /* 3.165778513216168 + 1.959601041421606i */
+const proven_complex_t cs = proven_complex_cos(z);           /* 2.0327230070196656 - 3.0518977991517997i */
+const proven_complex_t tn = proven_complex_tan(z);           /* 0.03381282607989669 + 1.0147936161466335i */
+const proven_complex_t as = proven_complex_asin(proven_complex(2.0, 0.0));
+                                                             /* pi/2 + 1.3169578969248166i: on the cut */
+const proven_complex_t ac = proven_complex_acos(proven_complex(2.0, 0.0));          /* -1.3169578969248166i */
+const proven_complex_t at = proven_complex_atan(z);          /* 1.3389725222944935 + 0.40235947810852507i */
+const proven_complex_t sh = proven_complex_sinh(z);          /* -0.4890562590412937 + 1.4031192506220405i */
+const proven_complex_t ch = proven_complex_cosh(z);          /* -0.64214812471552 + 1.0686074213827783i */
+const proven_complex_t th = proven_complex_tanh(z);          /* 1.1667362572409197 - 0.24345820118572525i */
+const proven_complex_t ash = proven_complex_asinh(z);        /* 1.4693517443681854 + 1.0634400235777521i */
+const proven_complex_t ach = proven_complex_acosh(proven_complex(-1.0, 0.0));       /* 0 + i pi */
+const proven_complex_t ath = proven_complex_atanh(proven_complex(2.0, 0.0));
+                                                             /* 0.5493061443340549 + i pi/2 */
+const proven_complex32_t zf = proven_complex32(1.0f, 2.0f), wf = proven_complex32(3.0f, -4.0f);
+const proven_complex32_t af = proven_complex32_add(zf, wf), sf = proven_complex32_sub(zf, wf);
+const proven_complex32_t mf = proven_complex32_mul(zf, wf), qf = proven_complex32_div(zf, wf);
+const float rf = proven_complex32_abs(wf), tf = proven_complex32_arg(wf);       /* 5.0f, -0.9272952f */
+const proven_complex32_t cf = proven_complex32_conj(zf), jf = proven_complex32_proj(zf);
+const proven_complex32_t ef = proven_complex32_exp(zf);      /* -1.1312044f + 2.4717267f i */
+const proven_complex32_t lf = proven_complex32_log(zf);      /* 0.804719f + 1.1071488f i */
+const proven_complex32_t pf = proven_complex32_pow(zf, proven_complex32(2.0f, 0.0f));   /* -3 + 4i */
+const proven_complex32_t qrf = proven_complex32_sqrt(wf);    /* 2 - i */
+const proven_complex32_t snf = proven_complex32_sin(zf), csf = proven_complex32_cos(zf), tnf = proven_complex32_tan(zf);
+const proven_complex32_t asf = proven_complex32_asin(zf), acf = proven_complex32_acos(zf), atf = proven_complex32_atan(zf);
+const proven_complex32_t shf = proven_complex32_sinh(zf), chf = proven_complex32_cosh(zf), thf = proven_complex32_tanh(zf);
+const proven_complex32_t ashf = proven_complex32_asinh(zf), achf = proven_complex32_acosh(zf), athf = proven_complex32_atanh(zf);
+(void)a; (void)s; (void)m; (void)q; (void)r; (void)t; (void)c; (void)j; (void)e; (void)l; (void)p; (void)sq;
+(void)sn; (void)cs; (void)tn; (void)as; (void)ac; (void)at; (void)sh; (void)ch; (void)th; (void)ash; (void)ach;
+(void)ath; (void)af; (void)sf; (void)mf; (void)qf; (void)rf; (void)tf; (void)cf; (void)jf; (void)ef; (void)lf;
+(void)pf; (void)qrf; (void)snf; (void)csf; (void)tnf; (void)asf; (void)acf; (void)atf; (void)shf; (void)chf;
+(void)thf; (void)ashf; (void)achf; (void)athf;
+```
+
+### To and from C's `_Complex`
+
+Code that already holds `double _Complex` values crosses over with `proven_complex_from_c(z)` and
+`proven_complex_to_c(z)`, and `proven_complex32_from_c` and `_to_c` for `float _Complex`. They
+move the two parts bit for bit, a NaN's payload and a zero's sign included, and need neither
+`<complex.h>` nor libm. They are declared only where the compiler has `_Complex`: not under
+`__STDC_NO_COMPLEX__`, not in C++, not with Microsoft's own compiler (clang-cl has them);
+`PROVEN_HAVE_C_COMPLEX` is 1 where they are. Only the representation crosses: `a * b` on
+`double _Complex` is still the compiler's formula, whose bits depend on the compiler and its
+options (`-ffast-math`, `-fcx-limited-range`), so do the arithmetic here and convert at the
+edges.
+
+```c
+#if PROVEN_HAVE_C_COMPLEX
+const double _Complex c = proven_complex_to_c(proven_complex(1.0, 2.0));
+const proven_complex_t m = proven_complex_mul(proven_complex_from_c(c), proven_complex(3.0, -4.0));
+const double _Complex back = proven_complex_to_c(m);                        /* 11 + 2i */
+const proven_complex32_t f = proven_complex32_from_c(proven_complex32_to_c(proven_complex32(1.0f, -0.0f)));
+(void)back; (void)f;                                                        /* 1 - 0i: the sign kept */
+#endif
 ```
 
 ## 4. Format string grammar

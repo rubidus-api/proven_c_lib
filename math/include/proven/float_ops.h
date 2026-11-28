@@ -2,6 +2,7 @@
 #define PROVEN_FLOAT_OPS_H
 
 #include "proven/types.h"
+#include <limits.h>
 #include "proven/error.h"
 
 /**
@@ -124,6 +125,31 @@
 [[nodiscard]] proven_err_t proven_float_to_u32(double x, proven_u32 *out);
 [[nodiscard]] proven_err_t proven_float_to_u64(double x, proven_u64 *out);
 
+/* The rest of math.h's exact functions (RFC-0058). NaNs by the rule above. */
+/** @brief IEEE 754 remainder: x - n*y with n the integer nearest x/y, ties to even; exact. A
+ *         zero result has x's sign. remainder(x, 0) and remainder(inf, y) are a NaN made. */
+[[nodiscard]] double proven_float_remainder(double x, double y);
+/** @brief remainder, and in `*quo` the sign of x/y with the low three bits of n (C's remquo). */
+[[nodiscard]] double proven_float_remquo(double x, double y, int *quo);
+/** @brief The next representable value after `x` toward `y`; `y` when they are equal. */
+[[nodiscard]] double proven_float_nextafter(double x, double y);
+/** @brief The fraction of `x`, with its integral part (trunc) in `*int_part`; both with x's
+ *         sign. An infinity gives a zero fraction. */
+[[nodiscard]] double proven_float_modf(double x, double *int_part);
+/** @brief The unbiased exponent of `x`, as frexp's minus one: PROVEN_FLOAT_ILOGB_ZERO for 0,
+ *         PROVEN_FLOAT_ILOGB_NAN for a NaN, INT_MAX for an infinity. */
+[[nodiscard]] int proven_float_ilogb(double x);
+#define PROVEN_FLOAT_ILOGB_ZERO INT_MIN
+#define PROVEN_FLOAT_ILOGB_NAN INT_MIN
+/** @brief The same exponent as a double: -inf for 0, +inf for an infinity. */
+[[nodiscard]] double proven_float_logb(double x);
+/** @brief x - y when x > y, else +0 (C's fdim); the difference rounded once. */
+[[nodiscard]] double proven_float_fdim(double x, double y);
+/** @brief round(x) (halves away from zero) or rint(x) (halves to even) as an integer (C's llround
+ *         and llrint): PROVEN_ERR_OUT_OF_BOUNDS for a NaN and outside [-2^63, 2^63). */
+[[nodiscard]] proven_err_t proven_float_round_to_i64(double x, proven_i64 *out);
+[[nodiscard]] proven_err_t proven_float_rint_to_i64(double x, proven_i64 *out);
+
 /*
  * binary32 (RFC-0055): every function above for `float`, with the same contract. The integral
  * values, fmod, frexp, ldexp, fmin and fmax are exact or rounded once, as for binary64; the
@@ -167,5 +193,14 @@
 [[nodiscard]] proven_err_t proven_float32_to_u32(float x, proven_u32 *out);
 [[nodiscard]] proven_err_t proven_float32_to_i64(float x, proven_i64 *out);
 [[nodiscard]] proven_err_t proven_float32_to_u64(float x, proven_u64 *out);
+[[nodiscard]] float proven_float32_remainder(float x, float y);
+[[nodiscard]] float proven_float32_remquo(float x, float y, int *quo);
+[[nodiscard]] float proven_float32_nextafter(float x, float y);
+[[nodiscard]] float proven_float32_modf(float x, float *int_part);
+[[nodiscard]] int proven_float32_ilogb(float x);
+[[nodiscard]] float proven_float32_logb(float x);
+[[nodiscard]] float proven_float32_fdim(float x, float y);
+[[nodiscard]] proven_err_t proven_float32_round_to_i64(float x, proven_i64 *out);
+[[nodiscard]] proven_err_t proven_float32_rint_to_i64(float x, proven_i64 *out);
 
 #endif /* PROVEN_FLOAT_OPS_H */

@@ -15,6 +15,8 @@
 #include "proven/version.h"
 #include "proven/error.h"
 #include "proven/memory.h"
+#include "proven/bit.h"
+#include "proven/bytes.h"
 #include "proven/align.h"
 #include "proven/allocator.h"
 #include "proven/heap.h"
@@ -39,6 +41,7 @@
 #include "proven/fmt.h"
 #include "proven/float_parse.h"
 #include "proven/float_format.h"
+#include "proven/numfmt.h"
 #include "proven/mmap.h"
 #ifndef PROVEN_FREESTANDING
 #include "proven/stream.h"

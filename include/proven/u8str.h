@@ -2,6 +2,7 @@
 #define PROVEN_U8STR_H
 
 #include "proven/types.h"
+#include "proven/bytes.h"
 #include "proven/error.h"
 #include "proven/memory.h"
 #include "proven/buffer.h"
@@ -78,7 +79,6 @@ typedef struct {
 
 #include "proven/align.h"
 
-#define PROVEN_INDEX_NOT_FOUND ((proven_size_t)-1)
 
 [[nodiscard]] proven_result_u8str_t proven_u8str_create(proven_allocator_t alloc, proven_size_t limit);
 [[nodiscard]] proven_result_u8str_t proven_u8str_create_from_view(proven_allocator_t alloc, proven_u8str_view_t view);
@@ -193,15 +193,7 @@ typedef struct {
 /** @brief proven_u8str_view_cmp of the bytes made lower case by proven_ascii_lower: an order
  *  that agrees with proven_u8str_view_eq_ascii_ci. Test the sign. Since v0.112.0. */
 [[nodiscard]] int proven_u8str_view_cmp_ascii_ci(proven_u8str_view_t a, proven_u8str_view_t b);
-/**
- * @brief One byte with an ASCII letter made lower case, by the rule above: 'A' to 'Z' become 'a'
- * to 'z' and every other byte - anything from 0x80 included - is returned as it is. No locale.
- * For writing a name in its canonical form (HTTP/2 and HTTP/3 field names, a host in a cache
- * key) where proven_u8str_view_eq_ascii_ci compares two. Since v0.110.0.
- */
-[[nodiscard]] static inline proven_byte_t proven_ascii_lower(proven_byte_t c) {
-    return c >= 'A' && c <= 'Z' ? (proven_byte_t)(c + ('a' - 'A')) : c;
-}
+/* proven_ascii_lower (since v0.110.0) is in bytes.h, with the other ASCII classes. */
 [[nodiscard]] proven_u8str_view_t proven_u8str_view_slice(proven_u8str_view_t str, proven_size_t index, proven_size_t len);
 
 // -------------------------------------------------------------
@@ -373,5 +365,28 @@ static inline proven_u8str_view_t proven_u8str_as_view(const proven_u8str_t *str
     if (!str) return (proven_u8str_view_t){ .ptr = (const proven_byte_t*)0, .size = 0 };
     return (proven_u8str_view_t){ .ptr = str->internal.ptr, .size = str->internal.len };
 }
+
+
+/**
+ * @brief An integer from text, in any base from 2 to 36 (RFC-0058): C's strtoull and strtoll,
+ *        on a view and with errors as values.
+ *
+ * The digits are '0'-'9', then 'a'-'z' or 'A'-'Z' for 10 to 35; a digit of base `base` is one
+ * below it. In base 16 a "0x" or "0X" in front is taken only when a hex digit follows it. The
+ * signed forms take one '+' or '-' in front; the unsigned forms take no sign. Stricter than
+ * strtoull on purpose: no whitespace is skipped (trim first), there is no base 0 (no guessing
+ * from a prefix), and "-1" is not a large unsigned value but an error. The same contract as
+ * proven_u16str_view_parse_u64, which takes base 10 and 16 only.
+ *
+ * @param used NULL: the whole view must be the number. Otherwise the longest number at the
+ *        front is read and the bytes it took are written here, the rest left to the caller.
+ * @return PROVEN_OK and `*out`; PROVEN_ERR_INVALID_ARG when there is no digit, when the view has
+ *         more than the number (`used` NULL), for a base outside 2-36 or a NULL `out`;
+ *         PROVEN_ERR_OVERFLOW when the value does not fit. `*out` is written only on PROVEN_OK.
+ */
+[[nodiscard]] proven_err_t proven_u8str_view_parse_u64(proven_u8str_view_t s, unsigned base, proven_size_t *used, proven_u64 *out);
+[[nodiscard]] proven_err_t proven_u8str_view_parse_u32(proven_u8str_view_t s, unsigned base, proven_size_t *used, proven_u32 *out);
+[[nodiscard]] proven_err_t proven_u8str_view_parse_i64(proven_u8str_view_t s, unsigned base, proven_size_t *used, proven_i64 *out);
+[[nodiscard]] proven_err_t proven_u8str_view_parse_i32(proven_u8str_view_t s, unsigned base, proven_size_t *used, proven_i32 *out);
 
 #endif /* PROVEN_U8STR_H */

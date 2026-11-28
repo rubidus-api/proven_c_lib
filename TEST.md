@@ -1,4 +1,4 @@
-# proven Test Matrix (v0.121.1)
+# proven Test Matrix (v0.122.0)
 
 This is the **catalog**: what every test checks, and where to start when one fails. Tests are plain C executables built and run by `nob.c`; no external framework is involved.
 
@@ -18,7 +18,7 @@ The class says what kind of question the test answers:
 
 | Class | Question | Count |
 |---|---|---|
-| `unit` | Does this module do what it says, used the way a caller uses it? | 143 |
+| `unit` | Does this module do what it says, used the way a caller uses it? | 147 |
 | `contract` | Does it *refuse* what it says it refuses? | 14 |
 | `regression` | Does a defect that actually shipped stay fixed? | 28 |
 | `differential` | Does it agree with an oracle we did not write? | 5 |
@@ -350,7 +350,7 @@ Last run, 2026-11-27, Windows 11 test VM (v0.121.0): x86-64 398 PASS, 0 FAIL, 10
 ## Test catalog
 
 
-The hosted full run builds and executes 214 registered tests plus the 196 runnable manual examples - 410 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 227 test files: the 214 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
+The hosted full run builds and executes 218 registered tests plus the 206 runnable manual examples - 424 executables in all. `./nob regression` re-runs a 36-test subset, `./nob freestanding` a 5-test subset, and `./nob bench-float` 5 benchmarks. The tree holds 231 test files: the 218 above, the 5 freestanding-only and 5 benchmark entries, and 3 cross-only sources that only `./nob cross` builds (two smoke programs and the no-CRT link).
 
 These counts come from the same preprocessed registry manifest compiled by `nob.c` and
 `tests/test_docs_test_catalog`. The gate also fails when a registry contains duplicates, a
@@ -459,6 +459,31 @@ Sub-checks:
 - Confirms C-string termination, equality helpers, and integer overflow guards.
 
 Failure tip: inspect `src/proven/buffer.c` and `src/proven/u8str.c`. Off-by-one capacity mistakes usually show up here first, especially around the extra NUL byte for C-string compatibility.
+
+### `tests/test_unit_numfmt` - numbers with a place's conventions, as a value
+
+Intent: verify numfmt.h (RFC-0058 D-19).
+
+Sub-checks:
+
+- Every preset (C, English, German, French with U+202F, Swiss with U+2019, Indian) on known numbers; groupings of 3, 3-then-2 and 4; a UTF-8 minus; ties to even; infinity; INT64_MIN and UINT64_MAX.
+- A short buffer is refused, an exact fit is not; decimals past 340 are refused.
+- Reading: separators only between digits, one decimal mark, partial reads with `used`, refusals, overflow; 100,000 integers and 100,000 decimals per preset read back exactly as written.
+
+Failure tip: inspect `src/proven/numfmt.c`: `group_before`, `localize`, `delocalize`.
+
+### `tests/test_unit_libc_gaps` - bit.h, bytes.h, error names, integer parsing in any base
+
+Intent: verify RFC-0058's first group against naive references.
+
+Sub-checks:
+
+- bit.h: every 8- and 16-bit input and 2 million 32- and 64-bit ones against naive counts, widths, powers of two and rotations; byte swaps and big- and little-endian loads and stores; every zero and out-of-range case (C23 leaves some undefined) has its documented answer.
+- bytes.h: the ASCII classes, case and digit values of all 256 bytes; 200,000 views, each ending at its allocation's last byte, searched as memchr, the last byte, strspn, strcspn and strpbrk would by naive loops.
+- Every code from PROVEN_OK to PROVEN_ERR_LAST has a distinct name and a message; an unknown code is named as such.
+- The u8 integer parser: limits, overflow, bases 2-36 in either case, partial reads, the 0x prefix, signs and refusals; 70,000 random values written in every base and read back.
+
+Failure tip: inspect `include/proven/bit.h`, `include/proven/bytes.h`, `src/proven/bytes.c` (the word-at-a-time loop's tail), `src/proven/error.c` and the parser in `src/proven/u8str.c`.
 
 ### `tests/test_unit_coro` - stackless coroutine
 
@@ -2431,6 +2456,29 @@ Intent: verify the public ASCII float parser and strtod-like wrapper expose cons
 
 Failure tip: inspect include/proven/float_parse.h, src/proven/float_parse.c, and src/proven/float_decimal.c if the public parser seam or wrapper contract drifts.
 
+### `tests/test_unit_float_env` - the floating-point environment as a value
+
+Intent: verify float_env.h (RFC-0058 D-18): arithmetic and conversions in each rounding direction with the five IEEE exceptions as flags.
+
+Sub-checks:
+
+- Tables in every direction: 1/3, overflow to infinity or the largest finite, the smallest subnormal from half of it (underflow and inexact), the signs of exact zero sums, divide by zero, invalid, rint and to_i64 of +-2.5, out of range, narrowing, from_i64; a NULL env is nearest-even.
+- On x86-64: 300,000 operations of each format - add, sub, mul, div, fma (where the processor has FMA), sqrt, rint, narrowing - in random directions against the processor with its rounding mode set (MXCSR), result bits (NaN bits excepted) and all five flags.
+
+Failure tip: inspect `math/src/float_ops.c`: `f_pack_env` (the direction, the overflow value, tininess after rounding), the special cases of the `f_soft_*_env` functions, `f_rint_env`.
+
+### `tests/test_unit_complex` - complex: C's complex.h as a pair of values
+
+Intent: verify complex.h (RFC-0058 D-20): the elementary functions of a complex number, binary64 and binary32, with C23 Annex G's special values and the same bits on every target. No libm, no MPC: the accuracy against GNU MPC is a private check.
+
+Sub-checks:
+
+- Annex G's special values: 154 rows of G.6 as bits (exp, log, sqrt, sinh, cosh, tanh, asinh, acos, acosh, atanh, and sin, cos, tan, asin, atan through them), the unspecified signs as the manual lists them; each row again in binary32.
+- Arithmetic and exact results: (3 + 4i)(1 - 2i) = 11 - 2i and back by div, |3 + 4i| = 5, sqrt(-4) = 2i and sqrt(-3 + 4i) = 1 + 2i exactly, an infinite operand of mul giving an infinite result, (-0 + i)(1 + 0i) keeping its -0, (1 + i) / 0 and (1 + i) / inf, a product overflowing only its own part, conj and proj, exp(i pi), log near |z| = 1 not losing its real part, z^0 = 1 for a NaN z, binary32's product and |5 + 12i|.
+- The same bits everywhere: an FNV hash of each function's result bits over 400 fixed inputs of every kind (zeros, infinities, NaNs, subnormals, the extremes, around 1), the 15 functions with mul, div, pow, abs and arg, both formats, against the hashes taken on x86-64 (`tests/test_unit_complex_hashes.h`).
+
+Failure tip: inspect `math/src/complex.c`: the first-quadrant special branches of the function named, `cx_out`, and the formula of its finite case; a hash that differs means this target computes a function differently from x86-64.
+
 ### `tests/test_unit_float_ops` - float_ops: binary64 operations with the same bits everywhere
 
 Each function of `float_ops.h` (RFC-0054) against a table of bits and against a reference computed another way on random inputs. No libm: the build does not link it.
@@ -2458,13 +2506,13 @@ RFC-0055's functions of `float_ops.h` by tables of bits, then the integer implem
 - Conversions: 300,000 values each way between the formats (near binary32's range too: its subnormals and overflow) and from and to `i32`, `u32`, `i64`, `u64` against the compiler's, with the ranges exact; a NaN narrowed keeps the top of its payload; -0.5 is 0 for the unsigned types and -1 is refused.
 - binary32 of RFC-0054's functions: 300,000 values, each of `floor` `ceil` `trunc` `round` `rint` `fmod` `fmin` `fmax` `frexp` `ldexp` as binary64's on the widened value narrowed by the compiler; classification, sign and bits.
 
-### `tests/test_unit_float_math` - float_math: exp, log, pow, sin, cos, tan, atan2 correctly rounded
+### `tests/test_unit_float_math` - float_math: math.h's transcendental functions correctly rounded
 
-RFC-0056's `float_math.h`, binary64 and binary32, on both paths: the public functions (the CORE-MATH FPU path where this build and processor take it) and the integer path (`proven_float_math_int_`). No libm, no MPFR: the expected results are carried in `tests/test_unit_float_math_vectors.h`, computed with GNU MPFR.
+RFC-0056's and RFC-0058's `float_math.h` (24 functions), binary64 and binary32, on both paths: the public functions (the CORE-MATH FPU path where this build and processor take it) and the integer path (`proven_float_math_int_`). No libm, no MPFR: the expected results are carried in `tests/test_unit_float_math_vectors.h`, computed with GNU MPFR.
 
 - Which path: on x86-64 with FMA and AVX2, and neither `PROVEN_FLOAT_SOFT` nor `PROVEN_FLOAT_MATH_SMALL`, the FPU path.
-- Special values: 70 rows of binary64 as bits on both paths - `exp` of the zeros, the infinities, a signalling NaN, past the overflow and under half the smallest subnormal; `log` of 1, the zeros, -1, the infinities and the smallest subnormal; `sin`, `cos`, `tan` of the zeros, the infinities and the smallest subnormal; `atan2`'s signed zeros and infinities (+-pi, +-pi/2, pi/4, 3pi/4, -0) and NaNs; `pow`'s Annex F cases (a quiet NaN to the power 0 is 1, a signalling one is the NaN quieted, -1 to the infinities, the zeros to odd and even powers, the infinities, a negative base to a non-integer) and exact results (9^0.5 = 3, 40^3, 2^-1074, 2^-1075 to +0, 3^40 rounded once); binary32's forms of eight of them.
-- MPFR's results: about 1,350 inputs - every 60th of CORE-MATH's lists of hard-to-round cases for the binary64 functions and binary32 `atan2` and `pow`, and 40 random inputs per function and format - through the public functions and through the integer path.
+- Special values: 149 rows of binary64 as bits on both paths - `exp` of the zeros, the infinities, a signalling NaN, past the overflow and under half the smallest subnormal; `log` of 1, the zeros, -1, the infinities and the smallest subnormal; `sin`, `cos`, `tan` of the zeros, the infinities and the smallest subnormal; `atan2`'s signed zeros and infinities (+-pi, +-pi/2, pi/4, 3pi/4, -0) and NaNs; `pow`'s Annex F cases (a quiet NaN to the power 0 is 1, a signalling one is the NaN quieted, -1 to the infinities, the zeros to odd and even powers, the infinities, a negative base to a non-integer) and exact results (9^0.5 = 3, 40^3, 2^-1074, 2^-1075 to +0, 3^40 rounded once); for RFC-0058's functions the zeros, infinities and NaNs of each, `exp2` and `exp10` of integers (2^-1075 and 10^23 ties to even, 10^22 exact), `log2` and `log10` of exact powers, `cbrt(-27)`, `hypot(3, 4)`, `hypot` of an infinity and a quiet NaN, `hypot` past the largest double, `asin`, `acos`, `atanh` at +-1 and beyond, `acosh(1)` and below; binary32's forms of eighteen of them.
+- MPFR's results: about 3,500 inputs - every 60th of CORE-MATH's lists of hard-to-round cases for the first seven functions (binary64, binary32 `atan2` and `pow`), about 40 of each list for the other seventeen (binary64, binary32 `hypot`), and 40 random inputs per function and format - through the public functions and through the integer path.
 - The two paths agree: 300 random inputs of each function and format near 1, the same bits.
 
 ### `tests/test_unit_float_rfc_0001_cases` - RFC-0001 parse audit

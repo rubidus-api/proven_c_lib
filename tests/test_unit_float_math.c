@@ -9,8 +9,8 @@
 #include <string.h>
 
 /*
- * float_math (RFC-0056): exp, log, pow, sin, cos, tan and atan2, correctly rounded, binary64
- * and binary32. The special values of C23 Annex F as bits; hard-to-round inputs and random ones
+ * float_math (RFC-0056, RFC-0058): the 24 functions of PROVEN_FLOAT_MATH_FNS, correctly rounded,
+ * binary64 and binary32. The special values of C23 Annex F as bits; hard-to-round inputs and random ones
  * with MPFR's results (test_unit_float_math_vectors.h) through the public function and through
  * the integer path; and the two paths against each other on random inputs. The full lists
  * (about nine million inputs) and binary32's sampled exhaustively are a private check run
@@ -22,28 +22,26 @@ static double D(uint64_t u) { double x; memcpy(&x, &u, sizeof x); return x; }
 static uint32_t BF(float x) { uint32_t u; memcpy(&u, &x, sizeof u); return u; }
 static float F(uint32_t u) { float x; memcpy(&x, &u, sizeof x); return x; }
 
+#define CALL_1(f, x, y) f(x)
+#define CALL_2(f, x, y) f(x, y)
 static uint64_t pub(int fn, bool s, uint64_t a, uint64_t b) {
     if (s) {
         const float x = F((uint32_t)a), y = F((uint32_t)b);
+        (void)y;
         switch (fn) {
-        case PROVEN_FLOAT_FN_EXP_: return BF(proven_float32_exp(x));
-        case PROVEN_FLOAT_FN_LOG_: return BF(proven_float32_log(x));
-        case PROVEN_FLOAT_FN_SIN_: return BF(proven_float32_sin(x));
-        case PROVEN_FLOAT_FN_COS_: return BF(proven_float32_cos(x));
-        case PROVEN_FLOAT_FN_TAN_: return BF(proven_float32_tan(x));
-        case PROVEN_FLOAT_FN_ATAN2_: return BF(proven_float32_atan2(x, y));
-        default: return BF(proven_float32_pow(x, y));
+#define CASE(ID, name, ar) case PROVEN_FLOAT_FN_##ID##_: return BF(CALL_##ar(proven_float32_##name, x, y));
+        PROVEN_FLOAT_MATH_FNS(CASE)
+#undef CASE
+        default: return 0;
         }
     }
     const double x = D(a), y = D(b);
+    (void)y;
     switch (fn) {
-    case PROVEN_FLOAT_FN_EXP_: return B(proven_float_exp(x));
-    case PROVEN_FLOAT_FN_LOG_: return B(proven_float_log(x));
-    case PROVEN_FLOAT_FN_SIN_: return B(proven_float_sin(x));
-    case PROVEN_FLOAT_FN_COS_: return B(proven_float_cos(x));
-    case PROVEN_FLOAT_FN_TAN_: return B(proven_float_tan(x));
-    case PROVEN_FLOAT_FN_ATAN2_: return B(proven_float_atan2(x, y));
-    default: return B(proven_float_pow(x, y));
+#define CASE(ID, name, ar) case PROVEN_FLOAT_FN_##ID##_: return B(CALL_##ar(proven_float_##name, x, y));
+    PROVEN_FLOAT_MATH_FNS(CASE)
+#undef CASE
+    default: return 0;
     }
 }
 
@@ -111,12 +109,48 @@ static const row_t SPECIAL64[] = {
     { PROVEN_FLOAT_FN_POW_, TWO, 0xc090cc0000000000u, 0 },                 /* 2^-1075: half of it, to even: +0 */
     { PROVEN_FLOAT_FN_POW_, THREE, 0x4044000000000000u, 0x43e517168a4523fdu }, /* 3^40 rounded once */
     { PROVEN_FLOAT_FN_POW_, 0x4044000000000000u, THREE, 0x40ef400000000000u }, /* 40^3 = 64000, exactly */
+    /* RFC-0058 */
+    { PROVEN_FLOAT_FN_EXP2_, NZ, 0, ONE }, { PROVEN_FLOAT_FN_EXP2_, NINF, 0, 0 }, { PROVEN_FLOAT_FN_EXP2_, INF, 0, INF },
+    { PROVEN_FLOAT_FN_EXP2_, SNAN, 0, SNANQ }, { PROVEN_FLOAT_FN_EXP2_, ONE, 0, TWO }, { PROVEN_FLOAT_FN_EXP2_, 0x4090000000000000u, 0, INF },
+    { PROVEN_FLOAT_FN_EXP2_, 0xc090c80000000000u, 0, 1 },                  /* 2^-1074, exactly */
+    { PROVEN_FLOAT_FN_EXP2_, 0xc090cc0000000000u, 0, 0 },                  /* 2^-1075: a tie, to even */
+    { PROVEN_FLOAT_FN_EXP10_, 0, 0, ONE }, { PROVEN_FLOAT_FN_EXP10_, NINF, 0, 0 }, { PROVEN_FLOAT_FN_EXP10_, THREE, 0, 0x408f400000000000u },
+    { PROVEN_FLOAT_FN_EXP10_, 0x4037000000000000u, 0, 0x44b52d02c7e14af6u }, /* 10^23: halfway between two doubles, to even */
+    { PROVEN_FLOAT_FN_EXP10_, 0x4036000000000000u, 0, 0x4480f0cf064dd592u }, /* 10^22, exactly */
+    { PROVEN_FLOAT_FN_EXPM1_, NZ, 0, NZ }, { PROVEN_FLOAT_FN_EXPM1_, NINF, 0, M1 }, { PROVEN_FLOAT_FN_EXPM1_, INF, 0, INF },
+    { PROVEN_FLOAT_FN_EXPM1_, 0xc050000000000000u, 0, M1 }, { PROVEN_FLOAT_FN_EXPM1_, 1, 0, 1 },
+    { PROVEN_FLOAT_FN_LOG2_, TWO, 0, ONE }, { PROVEN_FLOAT_FN_LOG2_, HALF, 0, M1 }, { PROVEN_FLOAT_FN_LOG2_, 1, 0, 0xc090c80000000000u },
+    { PROVEN_FLOAT_FN_LOG2_, M1, 0, QNAN }, { PROVEN_FLOAT_FN_LOG2_, NZ, 0, NINF }, { PROVEN_FLOAT_FN_LOG2_, ONE, 0, 0 },
+    { PROVEN_FLOAT_FN_LOG10_, 0x408f400000000000u, 0, THREE }, { PROVEN_FLOAT_FN_LOG10_, 0x4480f0cf064dd592u, 0, 0x4036000000000000u },
+    { PROVEN_FLOAT_FN_LOG10_, 0, 0, NINF }, { PROVEN_FLOAT_FN_LOG10_, NINF, 0, QNAN },
+    { PROVEN_FLOAT_FN_LOG1P_, M1, 0, NINF }, { PROVEN_FLOAT_FN_LOG1P_, M2, 0, QNAN }, { PROVEN_FLOAT_FN_LOG1P_, NZ, 0, NZ },
+    { PROVEN_FLOAT_FN_LOG1P_, INF, 0, INF }, { PROVEN_FLOAT_FN_LOG1P_, NINF, 0, QNAN }, { PROVEN_FLOAT_FN_LOG1P_, 1, 0, 1 },
+    { PROVEN_FLOAT_FN_CBRT_, 0xc03b000000000000u, 0, 0xc008000000000000u }, /* -27 */
+    { PROVEN_FLOAT_FN_CBRT_, 0x4020000000000000u, 0, TWO }, { PROVEN_FLOAT_FN_CBRT_, NZ, 0, NZ }, { PROVEN_FLOAT_FN_CBRT_, NINF, 0, NINF },
+    { PROVEN_FLOAT_FN_HYPOT_, THREE, 0x4010000000000000u, 0x4014000000000000u }, /* 3, 4, 5 */
+    { PROVEN_FLOAT_FN_HYPOT_, INF, QNAN, INF }, { PROVEN_FLOAT_FN_HYPOT_, QNAN, NINF, INF }, { PROVEN_FLOAT_FN_HYPOT_, NZ, NZ, 0 },
+    { PROVEN_FLOAT_FN_HYPOT_, 0x7fefffffffffffffu, 0x7fefffffffffffffu, INF }, { PROVEN_FLOAT_FN_HYPOT_, 1, 1, 1 },
+    { PROVEN_FLOAT_FN_ASIN_, ONE, 0, PI2_64 }, { PROVEN_FLOAT_FN_ASIN_, M1, 0, PI2_64 | NZ }, { PROVEN_FLOAT_FN_ASIN_, TWO, 0, QNAN },
+    { PROVEN_FLOAT_FN_ASIN_, NZ, 0, NZ }, { PROVEN_FLOAT_FN_ASIN_, INF, 0, QNAN },
+    { PROVEN_FLOAT_FN_ACOS_, ONE, 0, 0 }, { PROVEN_FLOAT_FN_ACOS_, M1, 0, PI64 }, { PROVEN_FLOAT_FN_ACOS_, NZ, 0, PI2_64 },
+    { PROVEN_FLOAT_FN_ACOS_, M2, 0, QNAN },
+    { PROVEN_FLOAT_FN_ATAN_, INF, 0, PI2_64 }, { PROVEN_FLOAT_FN_ATAN_, NINF, 0, PI2_64 | NZ }, { PROVEN_FLOAT_FN_ATAN_, NZ, 0, NZ },
+    { PROVEN_FLOAT_FN_ATAN_, ONE, 0, PI4_64 }, { PROVEN_FLOAT_FN_ATAN_, 1, 0, 1 },
+    { PROVEN_FLOAT_FN_SINH_, NINF, 0, NINF }, { PROVEN_FLOAT_FN_SINH_, NZ, 0, NZ }, { PROVEN_FLOAT_FN_SINH_, 0x408f400000000000u, 0, INF },
+    { PROVEN_FLOAT_FN_COSH_, NINF, 0, INF }, { PROVEN_FLOAT_FN_COSH_, NZ, 0, ONE }, { PROVEN_FLOAT_FN_COSH_, 1, 0, ONE },
+    { PROVEN_FLOAT_FN_TANH_, INF, 0, ONE }, { PROVEN_FLOAT_FN_TANH_, NINF, 0, M1 }, { PROVEN_FLOAT_FN_TANH_, NZ, 0, NZ },
+    { PROVEN_FLOAT_FN_TANH_, 0x4040000000000000u, 0, ONE },
+    { PROVEN_FLOAT_FN_ASINH_, NINF, 0, NINF }, { PROVEN_FLOAT_FN_ASINH_, NZ, 0, NZ }, { PROVEN_FLOAT_FN_ASINH_, SNAN, 0, SNANQ },
+    { PROVEN_FLOAT_FN_ACOSH_, ONE, 0, 0 }, { PROVEN_FLOAT_FN_ACOSH_, HALF, 0, QNAN }, { PROVEN_FLOAT_FN_ACOSH_, INF, 0, INF },
+    { PROVEN_FLOAT_FN_ACOSH_, NINF, 0, QNAN },
+    { PROVEN_FLOAT_FN_ATANH_, ONE, 0, INF }, { PROVEN_FLOAT_FN_ATANH_, M1, 0, NINF }, { PROVEN_FLOAT_FN_ATANH_, TWO, 0, QNAN },
+    { PROVEN_FLOAT_FN_ATANH_, NZ, 0, NZ },
 };
 
 int main(void) {
-    PROVEN_TEST_SUITE("float_math: exp, log, pow, sin, cos, tan, atan2 correctly rounded",
-        "RFC-0056: the special values of Annex F as bits, hard-to-round and random inputs with MPFR's results through both paths, and the two paths against each other.",
-        "Inspect math/src/float_math.c: the special branches of fm_exp / fm_log / fm_trig / fm_atan2 / fm_pow, mp_round_test, and the function named; for the FPU path math/src/cm and fm_fix.");
+    PROVEN_TEST_SUITE("float_math: math.h's transcendental functions correctly rounded",
+        "RFC-0056, RFC-0058: exp, exp2, exp10, expm1, log, log2, log10, log1p, pow, cbrt, hypot, the trigonometric and hyperbolic functions and their inverses; the special values of Annex F as bits, hard-to-round and random inputs with MPFR's results through both paths, and the two paths against each other.",
+        "Inspect math/src/float_math.c: the special branches of fm_exp / fm_log / fm_trig / fm_atan2 / fm_pow / fm_x_special, mp_round_test, and the function named; for the FPU path math/src/cm and fm_fix.");
 
     PROVEN_TEST_SECTION("which path", "On x86-64 with FMA and AVX2 the public functions take the FPU path (CORE-MATH), unless PROVEN_FLOAT_SOFT or PROVEN_FLOAT_MATH_SMALL.", "Check cm_config.h and fm_cm_ready in math/src/float_math.c.");
     {
@@ -151,6 +185,12 @@ int main(void) {
             && BF(proven_float32_pow(F(0x7fa00000u), F(one32))) == 0x7fe00000u && BF(proven_float32_pow(F(0x7fa00000u), F(0))) == SNAN32_POW0 && BF(proven_float32_cos(F(0x80000000u))) == one32
             && BF(proven_float32_sin(F(0x7f800000u))) == 0x7fc00000u && BF(proven_float32_pow(F(0x40400000u), F(0x40000000u))) == 0x41100000u,
             "binary32: atan2(+0, -0) is pi, log(-1) and sin(inf) 0x7FC00000, pow(NaN, 0) = 1, 3^2 = 9", "");
+        PROVEN_TEST_ASSERT(BF(proven_float32_exp10(F(0x41200000u))) == 0x501502f9u && BF(proven_float32_log2(F(0x00000001u))) == 0xc3150000u
+            && BF(proven_float32_cbrt(F(0xc1d80000u))) == 0xc0400000u && BF(proven_float32_hypot(F(0x7f800000u), F(0x7fc00000u))) == 0x7f800000u
+            && BF(proven_float32_hypot(F(0x40a00000u), F(0x41400000u))) == 0x41500000u && BF(proven_float32_asin(F(0x40000000u))) == 0x7fc00000u
+            && BF(proven_float32_acos(F(0xbf800000u))) == pi32 && BF(proven_float32_atanh(F(0xbf800000u))) == 0xff800000u
+            && BF(proven_float32_expm1(F(0xff800000u))) == 0xbf800000u && BF(proven_float32_cosh(F(0x80000000u))) == one32,
+            "binary32: 10^10, log2 of the smallest subnormal (-149), cbrt(-27), hypot(inf, NaN), 5-12-13, asin(2), acos(-1), atanh(-1), expm1(-inf), cosh(-0)", "");
     }
 
     PROVEN_TEST_SECTION("MPFR's results", "Hard-to-round inputs from CORE-MATH's lists and random ones, each with MPFR's correctly rounded result, through the public function and the integer path.", "Run the failing input through the private MPFR check; then the path that differs.");
@@ -173,7 +213,7 @@ int main(void) {
     {
         uint64_t seed = 0x243f6a8885a308d3u;
         int bad = 0;
-        for (int fn = PROVEN_FLOAT_FN_EXP_; fn <= PROVEN_FLOAT_FN_POW_; fn++) {
+        for (int fn = PROVEN_FLOAT_FN_EXP_; fn < PROVEN_FLOAT_FN_COUNT_; fn++) {
             for (int s = 0; s <= 1; s++) {
                 for (int i = 0; i < 300; i++) {
                     seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;

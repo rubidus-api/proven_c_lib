@@ -1007,7 +1007,8 @@ Two things this table tells you that the file names do not:
 | `float_parse.h` | Locale-free decimal and hexadecimal -> `double`/`float` parser (`proven_strtod`, `proven_parse_double_ascii`) | Chapter 8 |
 | `float_format.h` | `double`/`float` -> decimal formatter (fixed `%f`/`%e`, shortest) | Chapter 8 |
 | `float_ops.h` | binary64 and binary32 operations with the same bits on every target: `add`/`sub`/`mul`/`div`/`fma`, comparisons, `sqrt`, `floor`/`ceil`/`trunc`/`round`/`rint`, `fmod`, `frexp`/`ldexp`, integer and binary32 conversions, classification; the instruction or the integers, no FPU needed | Chapter 8 |
-| `float_math.h` | `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2` for binary64 and binary32, correctly rounded: the same bits on every target | Chapter 8 |
+| `float_math.h` | `exp`, `exp2`, `exp10`, `expm1`, `log`, `log2`, `log10`, `log1p`, `pow`, `cbrt`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh` for binary64 and binary32, correctly rounded: the same bits on every target | Chapter 8 |
+| `complex.h` | complex numbers as a pair of values, binary64 and binary32: arithmetic, `abs`, `arg`, `exp`, `log`, `pow`, `sqrt`, the trigonometric and hyperbolic functions and their inverses, with Annex G's branch cuts and special values; the same bits on every target | Chapter 8 |
 | `float_config.h` | Float-engine tuning (`PROVEN_FLOAT_BIGINT_LIMBS`, precision caps) | Chapters 6 and 8 |
 | `array.h` | Generic growable vector | Chapter 4 |
 | `list.h` | Intrusive doubly-linked list | Chapter 4 |
@@ -1069,9 +1070,18 @@ the trade.
 | `printf` | `proven_println("{}", PROVEN_ARG(x))` | Types come from the arguments, not from the format string. [Ch 8](manual-08-fmt-scan.md) |
 | `sprintf` | `proven_u8str_append_fmt` | Writes into a sized destination and refuses to overrun it. [Ch 8](manual-08-fmt-scan.md) |
 | `sscanf` | `proven_scan_*`, `proven_scan_fmt` | Reports which field failed and where the cursor stopped. [Ch 8](manual-08-fmt-scan.md) |
+| `memchr`, `strspn`, `strcspn`, `strpbrk` | `proven_mem_find_byte`, `proven_mem_span`, `_span_not`, `_find_any` (`bytes.h`) | Over a view, never past its end; a set of bytes is a value, not a string. [Ch 3](manual-03-strings-text.md) |
+| `isalpha`, `isdigit`, `toupper` ... | `proven_ascii_is_alpha`, `_is_digit`, `proven_ascii_upper` ... (`bytes.h`) | No locale; a byte from 0x80 is in no class. [Ch 3](manual-03-strings-text.md) |
+| `strtol`, `strtoull` | `proven_u8str_view_parse_i64`, `_u64` | Any base 2-36, no whitespace skipped, overflow an error. [Ch 3](manual-03-strings-text.md) |
+| `strerror` | `proven_err_name`, `proven_err_message` | For `proven_err_t`; static text. [Ch 1](manual-01-foundation.md) |
+| `stdc_count_ones`, `stdc_bit_ceil` ..., `htonl` | `proven_bit_count_ones_u32`, `proven_bit_ceil_u32` ..., `proven_store_u32_be` (`bit.h`) | Defined for every input, 0 included. [Ch 4](manual-04-containers-algorithms.md) |
 | `strtod` | `proven_parse_f64_ascii` | Correctly rounded, locale-independent, no `errno`. [Ch 8](manual-08-fmt-scan.md) |
 | `sqrt`, `floor`, `fmod`, `fma`, `+ - * /` | `proven_float_sqrt`, `_floor`, `_fmod`, `_fma`, `_add` ... (`float_ops.h`) | The same bits on every target and compiler flag, with or without an FPU. [Ch 8](manual-08-fmt-scan.md) |
-| `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2` | `proven_float_exp` ... (`float_math.h`), `proven_float32_*` for `float` | Correctly rounded, so every build gives the same bits; no `errno`. [Ch 8](manual-08-fmt-scan.md) |
+| `remainder`, `nextafter`, `modf`, `ilogb`, `fdim`, `llround` ... | `proven_float_remainder`, `_nextafter`, `_modf`, `_ilogb`, `_fdim`, `_round_to_i64` ... (`float_ops.h`) | Exact, the same bits everywhere; an integer out of range is an error. [Ch 8](manual-08-fmt-scan.md) |
+| `setlocale`, `localeconv` (for numbers) | `proven_numfmt_t` with `proven_numfmt_f64`, `_parse_f64` ... (`numfmt.h`) | The conventions are a value passed to one call, not process state. [Ch 8](manual-08-fmt-scan.md) |
+| `fesetround`, `fetestexcept` | `proven_float_env_t` with `proven_float_env_add` ... (`float_env.h`) | The direction and the flags are a value you pass, not the processor's state. [Ch 8](manual-08-fmt-scan.md) |
+| `exp`, `exp2`, `exp10`, `expm1`, `log`, `log2`, `log10`, `log1p`, `pow`, `cbrt`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh` | `proven_float_exp` ... (`float_math.h`), `proven_float32_*` for `float` | Correctly rounded, so every build gives the same bits; no `errno`. [Ch 8](manual-08-fmt-scan.md) |
+| `<complex.h>`: `cexp`, `clog`, `csqrt`, `cpow`, ... | `proven_complex_t` with `proven_complex_exp` ... (`complex.h`), `proven_complex32_*` for `float` | A struct of two parts, the same on every compiler (MSVC included) and the same bits on every target. [Ch 8](manual-08-fmt-scan.md) |
 | `fopen` / `fread` / `fclose` | `proven_fs_open`, `_read`, `_close`, or `proven_fs_read_all_u8str` | Explicit errors, no hidden buffering, one call for whole files. [Ch 5](manual-05-hosted-services.md) |
 | `fgets` | `proven_sysio_read_line`, `proven_reader_read_line` | A line that exactly fills the buffer is returned, not lost. [Ch 5](manual-05-hosted-services.md) |
 | `qsort` | `proven_array_sort` | Introsort: *O(n log n)* guaranteed, not quicksort's worst case. [Ch 4](manual-04-containers-algorithms.md) |

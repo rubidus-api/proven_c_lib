@@ -100,6 +100,10 @@ typedef uintptr_t      proven_uintptr_t;
     #error "proven requires C23 <stdckdint.h> or compiler overflow builtins (__builtin_*_overflow)."
 #endif
 
+/** @brief A search's "not found": no index is this large. (Since RFC-0058 here, for every header
+ *         that searches; u8str.h had it before.) */
+#define PROVEN_INDEX_NOT_FOUND ((proven_size_t)-1)
+
 /**
  * @brief Core error codes for the proven library.
  */

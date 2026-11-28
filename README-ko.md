@@ -1,4 +1,4 @@
-**한국어** | [English](README.md) — **Proven C library v0.121.1** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.1/proven_c_lib-v0.121.1.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.1/proven_c_lib-v0.121.1-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.1/proven_c_lib-v0.121.1-ko-manual.pdf)
+**한국어** | [English](README.md) — **Proven C library v0.122.0** — [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.122.0/proven_c_lib-v0.122.0.zip) · [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.122.0/proven_c_lib-v0.122.0-en-manual.pdf) · [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.122.0/proven_c_lib-v0.122.0-ko-manual.pdf)
 
 # Proven C library
 
@@ -35,7 +35,7 @@ C 책을 한 권 뗐다고 해 봅시다. 포인터도, `malloc`도, `printf`도
 짧은 프로그램 아홉 개가 출력, 길이를 아는 문자열, 값으로 오는 오류, allocator, arena, 컨테이너, 파일을
 하나씩 더해 갑니다. 다 읽은 뒤에는 0장으로 가면 됩니다.
 
-- 버전: proven_c_lib-v0.121.1 · 표준: C23 · 라이선스: MIT
+- 버전: proven_c_lib-v0.122.0 · 표준: C23 · 라이선스: MIT
 - 버전은 시맨틱 버전 `MAJOR.MINOR.PATCH`이며 v0.0.1(2026-09-04)부터 시작합니다. 그 이전 릴리스는
   날짜 기반 번호(`v26.MM.DDx`)이고, 발표된 그대로 둡니다.
 - `*_internal`이나 `*_impl`로 끝나는 함수 일곱 개는 매크로가 호출하기 때문에 공개 헤더에 있습니다.
@@ -696,7 +696,9 @@ AEAD 암호, 키 교환, 서명 키, DER과 X.509 인증서입니다. **proven_c
 틀을 포함한 DEFLATE, Zstandard, Brotli입니다. **proven_net** - `net/` - 은 소켓, 이벤트 루프, TLS,
 HTTP/1.1, HTTP/2, QUIC 위의 HTTP/3, WebSocket, server-sent events입니다. **proven_math** - `math/` -
 는 binary64·binary32 사칙연산, `fma`, 비교, 변환, `sqrt`, 반올림, `fmod`, `frexp`/`ldexp`(`float_ops.h`)와
-올바르게 반올림하는 `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2`(`float_math.h`)로, 모든 타깃에서 같은
+올바르게 반올림하는 math.h의 초월함수(`float_math.h`: `exp`, `exp2`, `exp10`, `expm1`, `log`, `log2`,
+`log10`, `log1p`, `pow`, `cbrt`, `hypot`, 삼각함수와 쌍곡선함수, 그 역함수), 값으로 다루는 부동소수점 환경
+(`float_env.h`), 복소수(`complex.h`)로, 모든 타깃에서 같은
 비트를 내며 FPU가 없어도 됩니다(십진 파싱과 출력은 base에 남습니다).
 각 라이브러리는 아래쪽 라이브러리의 공개 헤더 말고는 아무것도 쓰지 않습니다(테스트가 그 선을 지킵니다).
 crypto, codec, math는 base 위에만 서고, 네트워크 라이브러리는 base, crypto, codec 위에 서며, base는

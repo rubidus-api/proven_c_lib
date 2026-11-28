@@ -210,6 +210,26 @@ proven_u8str_destroy(alloc, &s.value);       /* wrong: destroying what was never
 구조체는 어느 쪽이든 존재하므로 컴파일러는 불평하지 않는다 — 그러니 호출 바로 다음 줄에 확인을
 적는 습관을 들일 가치가 있다.
 
+### 이름과 메시지
+
+C의 `strerror`는 `errno`를 글로 바꾼다. `proven_err_name`과 `proven_err_message`는 `proven_err_t`에
+대해 같은 일을 한다. 둘 다 정적인 글을 돌려주므로 해제할 것도, 할당도, 로케일도 없다. 그리고 모든
+값에 답한다. 이 판이 모르는 코드는 `"PROVEN_ERR_UNKNOWN"`과 `"unknown error"`이므로 로그 한 줄이
+널 포인터를 찍는 일은 없다.
+
+| 함수 | 돌려주는 것 |
+|---|---|
+| `proven_err_name(err)` | 열거형의 철자 그대로: `"PROVEN_ERR_TIMEOUT"` |
+| `proven_err_message(err)` | 읽는 사람을 위한 짧은 영어 문구: `"timed out"` |
+
+```c
+const proven_err_t e = PROVEN_ERR_TIMEOUT;
+const char *name = proven_err_name(e);       /* "PROVEN_ERR_TIMEOUT" */
+const char *why = proven_err_message(e);     /* "timed out" */
+(void)name;
+(void)why;
+```
+
 ### 실전 예제: 값으로서의 에러
 
 이 프로그램은 테스트 스위트가 컴파일하고 실행하므로 낡을 수 없다.
@@ -851,9 +871,9 @@ proven_mem_mut_t block = proven_arena_alloc_or_panic(&arena, n);
 
 ```text
 #define PROVEN_VERSION_MAJOR  0
-#define PROVEN_VERSION_MINOR  121
-#define PROVEN_VERSION_PATCH  1
-#define PROVEN_VERSION_STRING "proven_c_lib-v0.121.1"
+#define PROVEN_VERSION_MINOR  122
+#define PROVEN_VERSION_PATCH  0
+#define PROVEN_VERSION_STRING "proven_c_lib-v0.122.0"
 #define PROVEN_VERSION_ENCODE(major, minor, patch) ((major) * 1000000L + (minor) * 1000L + (patch))
 #define PROVEN_VERSION_NUM    PROVEN_VERSION_ENCODE(PROVEN_VERSION_MAJOR, PROVEN_VERSION_MINOR, PROVEN_VERSION_PATCH)
 ```

@@ -1,4 +1,5 @@
 #include "proven/u8str.h"
+#include <stdint.h>
 #include "proven/align.h"
 #include "proven_internal_memrange.h"
 #include "../../platform/proven_sys_mem.h"
@@ -944,4 +945,76 @@ bool proven_u8str_view_split_next(proven_u8str_view_split_t *it, proven_u8str_vi
 
 bool proven_u8str_view_is_well_formed(proven_u8str_view_t s) {
     return s.size == 0 || s.ptr != (const proven_byte_t *)0;
+}
+
+// -----------------------------------------------------------------------------
+// Integers from text in any base from 2 to 36 (RFC-0058)
+// -----------------------------------------------------------------------------
+
+/* The magnitude after an optional sign, at most `limit`: u16str_view.c's parse_mag, with every
+ * base from 2 to 36 (digits '0'-'9', then 'a'-'z' or 'A'-'Z'). */
+static proven_err_t u8_parse_mag(proven_u8str_view_t s, unsigned base, bool sign_ok, proven_size_t *used,
+                                 proven_u64 limit_pos, proven_u64 limit_neg, bool *negative, proven_u64 *mag) {
+    if (base < 2 || base > 36 || !mag) return PROVEN_ERR_INVALID_ARG;
+    if (!s.ptr) s.size = 0;
+    proven_size_t i = 0;
+    *negative = false;
+    if (sign_ok && i < s.size && (s.ptr[i] == '+' || s.ptr[i] == '-')) {
+        *negative = s.ptr[i] == '-';
+        ++i;
+    }
+    if (base == 16 && i + 2 < s.size && s.ptr[i] == '0' && (s.ptr[i + 1] == 'x' || s.ptr[i + 1] == 'X') &&
+        proven_ascii_digit_value(s.ptr[i + 2]) < 16) {
+        i += 2;
+    }
+    const proven_size_t first = i;
+    const proven_u64 limit = *negative ? limit_neg : limit_pos;
+    proven_u64 v = 0;
+    bool over = false;
+    for (unsigned d; i < s.size && (d = proven_ascii_digit_value(s.ptr[i])) < base; ++i) {
+        if (v > (limit - d) / base) over = true;
+        else v = v * base + d;
+    }
+    if (i == first) return PROVEN_ERR_INVALID_ARG;
+    if (!used && i != s.size) return PROVEN_ERR_INVALID_ARG;
+    if (over) return PROVEN_ERR_OVERFLOW;
+    if (used) *used = i;
+    *mag = v;
+    return PROVEN_OK;
+}
+
+proven_err_t proven_u8str_view_parse_u64(proven_u8str_view_t s, unsigned base, proven_size_t *used, proven_u64 *out) {
+    if (!out) return PROVEN_ERR_INVALID_ARG;
+    bool neg;
+    proven_u64 m;
+    const proven_err_t e = u8_parse_mag(s, base, false, used, UINT64_MAX, 0, &neg, &m);
+    if (e == PROVEN_OK) *out = m;
+    return e;
+}
+
+proven_err_t proven_u8str_view_parse_u32(proven_u8str_view_t s, unsigned base, proven_size_t *used, proven_u32 *out) {
+    if (!out) return PROVEN_ERR_INVALID_ARG;
+    bool neg;
+    proven_u64 m;
+    const proven_err_t e = u8_parse_mag(s, base, false, used, UINT32_MAX, 0, &neg, &m);
+    if (e == PROVEN_OK) *out = (proven_u32)m;
+    return e;
+}
+
+proven_err_t proven_u8str_view_parse_i64(proven_u8str_view_t s, unsigned base, proven_size_t *used, proven_i64 *out) {
+    if (!out) return PROVEN_ERR_INVALID_ARG;
+    bool neg;
+    proven_u64 m;
+    const proven_err_t e = u8_parse_mag(s, base, true, used, (proven_u64)INT64_MAX, (proven_u64)INT64_MAX + 1u, &neg, &m);
+    if (e == PROVEN_OK) *out = neg ? (m == (proven_u64)INT64_MAX + 1u ? INT64_MIN : -(proven_i64)m) : (proven_i64)m;
+    return e;
+}
+
+proven_err_t proven_u8str_view_parse_i32(proven_u8str_view_t s, unsigned base, proven_size_t *used, proven_i32 *out) {
+    if (!out) return PROVEN_ERR_INVALID_ARG;
+    bool neg;
+    proven_u64 m;
+    const proven_err_t e = u8_parse_mag(s, base, true, used, (proven_u64)INT32_MAX, (proven_u64)INT32_MAX + 1u, &neg, &m);
+    if (e == PROVEN_OK) *out = neg ? (proven_i32)(-(proven_i64)m) : (proven_i32)m;
+    return e;
 }

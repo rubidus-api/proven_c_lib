@@ -18,6 +18,99 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.122.0] - 2026-11-28
+
+### Added
+
+- RFC-0058's first group - parts of the C library proven did not have, rebuilt in its style:
+  - `bit.h`: C23's `<stdbit.h>` - counts of ones and zeros, leading and trailing zeros and ones,
+    bit width, power-of-two floor and ceiling and test, rotations - for 8, 16, 32 and 64 bits,
+    with an answer for every input (the leading zeros of 0 is the width, a ceiling that does not
+    fit is 0, where C23 leaves them undefined), `PROVEN_BIT_*` macros that pick the width, and
+    byte order: byte swaps and big- and little-endian loads and stores at any alignment. Header
+    only; freestanding.
+  - `bytes.h`: `proven_mem_find_byte`, `_find_last_byte` (memchr), a 256-bit byte set,
+    `proven_mem_span`, `_span_not`, `_find_any`, `_find_last_any` (strspn, strcspn, strpbrk) over
+    views, never reading past them; the ASCII classes (`proven_ascii_is_alpha` ... twelve, as the
+    "C" locale has them for ASCII and false from 0x80), `proven_ascii_upper` and
+    `proven_ascii_digit_value`. `proven_ascii_lower` moved here from `u8str.h`, which includes
+    `bytes.h`, so no include changes; `PROVEN_INDEX_NOT_FOUND` moved to `types.h`.
+  - `proven_err_name` and `proven_err_message` (`error.h`): C's strerror for `proven_err_t`.
+  - `proven_u8str_view_parse_u64`, `_u32`, `_i64`, `_i32`: integers in any base from 2 to 36, the
+    contract of the u16 parsers.
+  Manual chapters 1, 3 and 4 (both editions) with two new runnable examples each edition,
+  appendix D, the freestanding table and the `xcv_` aliases; `tests/test_unit_libc_gaps`.
+- The rest of `math.h`'s exact functions (`float_ops.h`, RFC-0058), binary64 and binary32:
+  `proven_float_remainder` and `_remquo` (IEEE 754's remainder; a zero result has x's sign, which
+  glibc gets wrong when y is the smallest subnormal), `_nextafter`, `_modf`, `_ilogb` (with
+  `PROVEN_FLOAT_ILOGB_ZERO`, `_NAN`), `_logb`, `_fdim`, `_round_to_i64` and `_rint_to_i64` (C's
+  llround and llrint, `PROVEN_ERR_OUT_OF_BOUNDS` instead of an unspecified value). Checked against
+  glibc on 20 million pairs of each, edges and subnormals included.
+- `numfmt.h` (RFC-0058 D-19): numbers written and read with a place's conventions, as a value
+  instead of C's process-wide locale. A `proven_numfmt_t` is the decimal mark, the group
+  separator (any UTF-8), the group sizes from the right and the minus sign; presets
+  `proven_numfmt_c`, `_en`, `_de`, `_fr`, `_ch`, `_in`. `proven_numfmt_u64`, `_i64`, `_f64`
+  (correctly rounded decimals) write, refusing a short buffer; `proven_numfmt_parse_i64` and
+  `_parse_f64` read. `{}` and the parsers stay locale-independent.
+- `float_env.h` (proven_math, RFC-0058 D-18): the floating-point environment as a value. A
+  `proven_float_env_t` holds a rounding direction (`PROVEN_ROUND_NEAREST`, `_TOWARD_ZERO`, `_UP`,
+  `_DOWN`) and the five IEEE exception flags, sticky; `proven_float_env_add`, `_sub`, `_mul`,
+  `_div`, `_fma`, `_sqrt`, `_rint`, `_to_i64`, `_to_float32`, `_from_i64` and their
+  `proven_float32_env_` forms round in it and raise into it, and touch nothing else - the
+  processor's mode is neither read nor changed. By the integer core, so the same bits and flags on
+  every target; underflow judged after rounding (x86, RISC-V). Checked against the x86-64
+  processor in every direction on 3 million operations of each format, bits and flags.
+  `float_ops.h`'s integer core now carries the direction through; its nearest-even results are
+  unchanged (`tests/test_unit_float_arith` against the instruction). Manual chapter 8 (both
+  editions) with an interval-arithmetic example; `tests/test_unit_float_env`.
+- The rest of `math.h`'s transcendental functions (`float_math.h`, proven_math, RFC-0058 D-17),
+  binary64 and binary32, correctly rounded as the first seven are: `proven_float_exp2`, `_exp10`,
+  `_expm1`, `_log2`, `_log10`, `_log1p`, `_cbrt`, `_hypot`, `_asin`, `_acos`, `_atan`, `_sinh`,
+  `_cosh`, `_tanh`, `_asinh`, `_acosh`, `_atanh` and their `proven_float32_` forms. The FPU path
+  is CORE-MATH's code for each (34 more files in `math/src/cm`, ported as before); the integer
+  path is the library's own (0.5-10 us a call on x86-64), with the exact and halfway results found
+  by integers first (`exp10(23)` is a tie, to even; `hypot` wholly by integers). Checked against
+  MPFR on both paths: every CORE-MATH list of hard-to-round inputs for them (about four million),
+  every 61st binary32 input, two million random inputs per function and format, natively and
+  under WebAssembly. Manual chapter 8 (both editions), the freestanding table (stack up to about
+  7.5 KiB on Cortex-M3), the `xcv_` aliases; `tests/test_unit_float_math` with 149 special rows
+  and about 3,500 vectors.
+- `complex.h` (proven_math, RFC-0058 D-20): C's `<complex.h>` as a pair of values.
+  `proven_complex_t` (two binary64 parts) and `proven_complex32_t`, built by `proven_complex()`;
+  `proven_complex_add`, `_sub`, `_mul`, `_div`, `_abs`, `_arg`, `_conj`, `_proj`, `_exp`, `_log`,
+  `_pow`, `_sqrt`, `_sin`, `_cos`, `_tan`, `_asin`, `_acos`, `_atan`, `_sinh`, `_cosh`, `_tanh`,
+  `_asinh`, `_acosh`, `_atanh` and their `proven_complex32_` forms (computed in binary64, each
+  part rounded once). Each is a fixed formula of correctly rounded operations, so the same bits on
+  every target; not correctly rounded as a whole: the largest error measured against GNU MPC,
+  part by part, is 0.5-4.6 units of the last place (`pow`, as `exp(w log z)`, grows with
+  `w log z`). C23 Annex G's branch cuts and special values; nothing overflows or underflows on
+  the way to a result in range. Manual chapter 8 (both editions), the freestanding table, the
+  `xcv_` aliases; `tests/test_unit_complex` (Annex G's rows, exact results, a hash of every
+  function's bits).
+  - `proven_complex_from_c`, `proven_complex_to_c`, `proven_complex32_from_c` and
+    `proven_complex32_to_c`: to and from `double _Complex` and `float _Complex`, the parts
+    moved bit for bit, without `<complex.h>` or libm. Declared only where the compiler has
+    `_Complex` (not under `__STDC_NO_COMPLEX__`, in C++ or with Microsoft's own compiler), and
+    `PROVEN_HAVE_C_COMPLEX` says so.
+
+- Manual chapter 15 (both editions), "A coroutine per connection": a session coroutine per
+  connection that drives chapter 6's reader, on the loop as it is - a reason written before
+  every return of 0, a ready queue inside the requests with one `proven_loop_post` a pass,
+  read first and then park on a receive of zero bytes, and only a step closes, so `closed` may
+  free the request. A worked example, `manual/examples/{en,ko}/ex_15_coro.c`, checks that the
+  sessions take turns, that a waiting one is never stepped, and that nothing reaches a request
+  after its `closed`. It stays a pattern, with no `loop.h` API (RFC-0057), because measured
+  against parsing in `received` it did not show the bar set for an API met: 0.88-0.98 of the
+  throughput and a p99 1.03-1.19 times as long with every connection busy (the bar: 0.95 and
+  1.10), on a machine that was not quiet, and 0.77-0.89 and about 1.2 us more per reply with
+  one message at a time.
+
+### Fixed
+
+- The `xcv_` alias appendix (manual chapter 7, both editions) is regenerated from
+  `include/proven/alias_xcv.h`: it had fallen 89 rows behind the header (the binary32 math
+  functions among them) and showed `XCV_VERSION_ENCODE`'s expansion cut at a comma. 1884 aliases.
+
 ## [0.121.1] - 2026-11-27
 
 ### Changed

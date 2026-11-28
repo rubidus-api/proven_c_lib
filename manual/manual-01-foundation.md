@@ -210,6 +210,26 @@ Reading `.value` before checking `.err` is the one error this convention cannot 
 compiler will not complain - the struct exists either way - so it is worth making a habit of
 writing the check on the line immediately after the call.
 
+### Names and messages
+
+C's `strerror` turns `errno` into text; `proven_err_name` and `proven_err_message` do it for
+`proven_err_t`. Both return static text - nothing to free, no allocation, no locale - and both
+answer every value: a code this version does not know is `"PROVEN_ERR_UNKNOWN"` and
+`"unknown error"`, so a log line never prints a null pointer.
+
+| Function | Returns |
+|---|---|
+| `proven_err_name(err)` | the enum's own spelling: `"PROVEN_ERR_TIMEOUT"` |
+| `proven_err_message(err)` | a short English phrase for a reader: `"timed out"` |
+
+```c
+const proven_err_t e = PROVEN_ERR_TIMEOUT;
+const char *name = proven_err_name(e);       /* "PROVEN_ERR_TIMEOUT" */
+const char *why = proven_err_message(e);     /* "timed out" */
+(void)name;
+(void)why;
+```
+
 ### Worked example: errors as values
 
 This program is compiled and run by the test suite, so it cannot fall out of date.
@@ -870,9 +890,9 @@ Compile-time identification, for diagnostics and for code that must adapt to the
 
 ```text
 #define PROVEN_VERSION_MAJOR  0
-#define PROVEN_VERSION_MINOR  121
-#define PROVEN_VERSION_PATCH  1
-#define PROVEN_VERSION_STRING "proven_c_lib-v0.121.1"
+#define PROVEN_VERSION_MINOR  122
+#define PROVEN_VERSION_PATCH  0
+#define PROVEN_VERSION_STRING "proven_c_lib-v0.122.0"
 #define PROVEN_VERSION_ENCODE(major, minor, patch) ((major) * 1000000L + (minor) * 1000L + (patch))
 #define PROVEN_VERSION_NUM    PROVEN_VERSION_ENCODE(PROVEN_VERSION_MAJOR, PROVEN_VERSION_MINOR, PROVEN_VERSION_PATCH)
 ```

@@ -69,6 +69,13 @@ print(emit("FM_PI_2", mpmath.pi / 2, LIMBS))
 print()
 print(emit("FM_INV_LN2", 1 / mpmath.log(2), 2))
 print()
+# RFC-0058: exp10, log2, log10
+print(emit("FM_LN10", mpmath.log(10), LIMBS))
+print()
+print(emit("FM_LOG2_E", 1 / mpmath.log(2), LIMBS))
+print()
+print(emit("FM_LOG10_E", 1 / mpmath.log(10), LIMBS))
+print()
 TAB = 6               # limbs of the tables of the first Ziv level (192 bits)
 
 

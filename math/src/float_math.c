@@ -1197,6 +1197,481 @@ static u64 fm_pow(u64 xb, u64 yb, bool s) {
     return mp_round_nearest(&r, s);
 }
 
+// -----------------------------------------------------------------------------
+// RFC-0058: exp2, exp10, expm1, log2, log10, log1p, cbrt, hypot, asin, acos, atan and the
+// hyperbolic functions and their inverses, on the functions above
+// -----------------------------------------------------------------------------
+
+/*
+ * a^(1/k) for a > 0 and k = 2 or 3, at n limbs. y = a^(-1/k) by Newton's iteration
+ * y += y (1 - a y^k) / k, which needs no division, from a start of 20 bits or more (the integer
+ * root of a's top bits), doubling the bits each step, less one, the last step made twice; then
+ * a^(1/k) = a y^(k - 1). Each step corrects the errors of the one before, so what is left is a
+ * few units of the last step's arithmetic, at n + 1 limbs.
+ */
+static void mp_root(mp_t *r, const mp_t *a, int k, int n) {
+    const proven_i64 E = mp_top(a), B = 12288;              /* B: a multiple of 2 and 3 above any |E| here */
+    const proven_i64 Q = (proven_i64)fm_udiv((u32)(E + B), (u32)k);
+    const proven_i64 Ek = Q * k - B;                        /* a = M 2^Ek, M in [1, 2^k) */
+    const proven_i64 pos = Ek - 60 - a->e;                  /* N = floor(M 2^60) < 2^63 */
+    const u64 N = ((u64)fm_get32(a->d, a->n, pos + 32) << 32) | fm_get32(a->d, a->n, pos);
+    u64 lo = 1, hi = k == 2 ? (u64)1 << 32 : (u64)1 << 21;  /* q = floor(N^(1/k)), 30 or 20 bits */
+    while (hi - lo > 1) {
+        const u64 mid = (lo + hi) >> 1;
+        const u64 p = k == 2 ? mid * mid : mid * mid * mid;
+        if (p <= N) lo = mid; else hi = mid;
+    }
+    mp_t g, y, t, one;
+    mp_set_u64(&g, false, lo, (k == 2 ? -30 : -20) + Q - B / k, 2);    /* a^(1/k), within 2^-19 */
+    mp_recip(&y, &g, 2);
+    int acc = 18;
+    const int target = n + 1;
+    bool last = false;
+    for (;;) {
+        int p = (2 * acc) / 32 + 2;
+        if (p > target) p = target;
+        mp_mul(&t, &y, &y, p + 1);
+        if (k == 3) mp_mul(&t, &t, &y, p + 1);
+        mp_mul(&t, &t, a, p + 1);
+        mp_one(&one, 1);
+        mp_sub(&t, &one, &t, p + 1);
+        mp_mul(&t, &t, &y, p + 1);
+        if (k == 2) { if (t.n) t.e -= 1; }
+        else mp_div_small(&t, &t, 3, p + 1);
+        mp_add(&y, &y, &t, p + 1);
+        acc = 2 * acc - 2;
+        if (acc > 32 * p - 8) acc = 32 * p - 8;
+        if (p == target) {
+            if (last) break;
+            last = acc >= 32 * target - 8;
+        }
+    }
+    mp_mul(&t, a, &y, target);
+    if (k == 3) mp_mul(&t, &t, &y, target);
+    mp_copy(r, &t, n);
+}
+
+/*
+ * atanh(u) = u + u^3/3 + u^5/5 + ... for |u| <= 1/3, at n limbs: every term of u's sign, so the
+ * sum does not cancel; stopped when u^(2j+1) falls below 2^-(32(n + 1) + 4) of u, the rest being
+ * under 9/8 of that. Each term a few units at n + 1 limbs.
+ */
+static void mp_atanh_series(mp_t *r, const mp_t *u, int n) {
+    if (!u->n) { mp_zero(r); return; }
+    const int m = n + 1;
+    mp_t u2, pw, term, sum;
+    mp_mul(&u2, u, u, m);
+    mp_copy(&pw, u, m);
+    mp_copy(&sum, u, m);
+    const proven_i64 stop = mp_top(u) - (((proven_i64)32) * m + 4);
+    for (u32 j = 3; ; j += 2) {
+        mp_mul(&pw, &pw, &u2, m);
+        if (!pw.n || mp_top(&pw) < stop) break;
+        mp_div_small(&term, &pw, j, m);
+        mp_add(&sum, &sum, &term, m);
+    }
+    mp_copy(r, &sum, n);
+}
+
+static void mp_log_any(mp_t *r, const mp_t *x, int n);
+
+/*
+ * log(1 + t) for t > -1, at n limbs, its error relative to the result's for t >= -1/2 (the
+ * functions below give t no closer to -1 than that unless it is exact). |t| < 1/2:
+ * 2 atanh(t / (2 + t)), |t / (2 + t)| <= 1/3; else log(1 + t), which is at least 0.4 in
+ * magnitude, 1 + t to n + 3 limbs.
+ */
+static void mp_log1p(mp_t *r, const mp_t *t, int n) {
+    if (!t->n) { mp_zero(r); return; }
+    mp_t a, b;
+    if (mp_top(t) < -1) {
+        mp_set_u64(&a, false, 2, 0, 1);
+        mp_add(&b, &a, t, n + 2);
+        mp_div(&a, t, &b, n + 2);
+        mp_atanh_series(&b, &a, n + 1);
+        if (b.n) b.e += 1;
+        mp_copy(r, &b, n);
+        return;
+    }
+    mp_one(&a, 1);
+    mp_add(&b, &a, t, n + 3);
+    mp_log_any(r, &b, n);
+}
+
+/*
+ * log(x) for any positive x whose log is at least 0.3 in magnitude, at n limbs: x = h + d with
+ * h its top two limbs (exact, for mp_log) and 0 <= d < 2^-63 h; log x = log h + log1p(d / h).
+ * The error is then relative to the result.
+ */
+static void mp_log_any(mp_t *r, const mp_t *x, int n) {
+    if (x->n <= 2) { mp_log(r, x, n); return; }
+    mp_t h, d, q, L, s;
+    mp_copy(&h, x, 2);
+    mp_sub(&d, x, &h, n + 2);
+    mp_log(&L, &h, n + 1);
+    if (d.n) {
+        mp_div(&q, &d, &h, n + 1);
+        mp_log1p(&s, &q, n + 1);
+        mp_add(&L, &L, &s, n + 1);
+    }
+    mp_copy(r, &L, n);
+}
+
+/*
+ * exp(x) - 1 for |x| < 2^11, at n limbs, its error relative to the result's. |x| >= 1/2:
+ * exp(x) at n + 1 limbs less 1, which is at least 0.39 in magnitude. |x| < 1/2: t = x / 2^S
+ * below 2^-8, the series t + t^2/2! + ... (no cancellation: |t| is small), then S times
+ * u = u (u + 2), expm1(2t) from expm1(t): each multiplies the relative error by
+ * (2u + 2) / (u + 2) <= 4/3 and adds two units, at n + 1 limbs.
+ */
+static void mp_expm1(mp_t *r, const mp_t *x, int n) {
+    if (!x->n) { mp_zero(r); return; }
+    mp_t u, t, term, w;
+    if (mp_top(x) >= -1) {
+        mp_exp(&u, x, n + 1);
+        mp_one(&w, 1);
+        mp_sub(&u, &u, &w, n + 1);
+        mp_copy(r, &u, n);
+        return;
+    }
+    const int m = n + 1;
+    int S = (int)(mp_top(x) + 9);
+    if (S < 0) S = 0;
+    mp_copy(&t, x, m);
+    t.e -= S;
+    mp_copy(&u, &t, m);
+    mp_copy(&term, &t, m);
+    const proven_i64 stop = mp_top(&t) - (((proven_i64)32) * m + 4);
+    for (u32 j = 2; ; j++) {
+        mp_mul(&term, &term, &t, m);
+        mp_div_small(&term, &term, j, m);
+        if (!term.n || mp_top(&term) < stop) break;
+        mp_add(&u, &u, &term, m);
+    }
+    mp_set_u64(&t, false, 2, 0, 1);
+    for (int i = 0; i < S; i++) {
+        mp_add(&w, &u, &t, m);
+        mp_mul(&u, &u, &w, m);
+    }
+    mp_copy(r, &u, n);
+}
+
+/* q = floor(sqrt(N)) for N = nh 2^64 + nl, digit by digit; *inexact when N is not q^2. */
+static u64 fm_isqrt128(u64 nh, u64 nl, bool *inexact) {
+    u64 rh = 0, rl = 0, q = 0;
+    for (int i = 63; i >= 0; i--) {
+        const u64 two = i >= 32 ? (nh >> (2 * i - 64)) & 3u : (nl >> (2 * i)) & 3u;
+        rh = (rh << 2) | (rl >> 62);
+        rl = (rl << 2) | two;
+        const u64 th = q >> 62, tl = (q << 2) | 1u;         /* 4q + 1 */
+        if (rh > th || (rh == th && rl >= tl)) {
+            const u64 br = rl < tl;
+            rl -= tl;
+            rh -= th + br;
+            q = (q << 1) | 1u;
+        } else {
+            q <<= 1;
+        }
+    }
+    *inexact = rh || rl;
+    return q;
+}
+
+/*
+ * hypot of finite x and y, wholly by integers (its results can be exact or halfway: 3, 4, 5).
+ * With |x| = MX 2^EX >= |y| = MY 2^EY, MX and MY normalized to 64 bits: when EX - EY > 70,
+ * y changes |x| by under 2^-139 of it and the result is |x|. Otherwise S = MX^2 4^D + MY^2
+ * (D = EX - EY, at most 269 bits) exactly, its top 127 or 128 bits' integer root q (64 bits)
+ * with every bit below as sticky, and sqrt(S) 2^EY = q 2^(k + EY) rounded once.
+ */
+static u64 fm_hypot_fin(const fm_val *x, const fm_val *y, bool s) {
+    if (x->cls == FC_ZERO) return y->cls == FC_ZERO ? 0 : proven_float_pack_(false, y->ex, y->mant, s);
+    if (y->cls == FC_ZERO) return proven_float_pack_(false, x->ex, x->mant, s);
+    u64 MX = x->mant, MY = y->mant;
+    proven_i64 EX = x->ex, EY = y->ex;
+    while (!(MX >> 63)) { MX <<= 1; EX--; }
+    while (!(MY >> 63)) { MY <<= 1; EY--; }
+    if (EX < EY || (EX == EY && MX < MY)) { u64 t = MX; MX = MY; MY = t; proven_i64 te = EX; EX = EY; EY = te; }
+    const proven_i64 D = EX - EY;
+    if (D > 70) return proven_float_pack_(false, EX, MX, s);
+    u32 S[10] = { 0 }, P[4];
+    const u32 a[2] = { (u32)MX, (u32)(MX >> 32) }, b[2] = { (u32)MY, (u32)(MY >> 32) };
+    for (int pass = 0; pass < 2; pass++) {
+        const u32 *v = pass ? b : a;
+        for (int i = 0; i < 4; i++) P[i] = 0;
+        for (int i = 0; i < 2; i++) {
+            u64 c = 0;
+            for (int j = 0; j < 2; j++) { c += (u64)v[i] * v[j] + P[i + j]; P[i + j] = (u32)c; c >>= 32; }
+            P[i + 2] = (u32)c;
+        }
+        u32 T[10];
+        fm_place(T, 10, P, 4, pass ? 0 : 2 * D);
+        u64 c = 0;
+        for (int i = 0; i < 10; i++) { c += (u64)S[i] + T[i]; S[i] = (u32)c; c >>= 32; }
+    }
+    int top = 9;
+    while (!S[top]) top--;
+    const proven_i64 L = ((proven_i64)32) * top + 32 - fm_clz32(S[top]);     /* bits of S, >= 127 */
+    const proven_i64 k = (L - 127) >> 1;
+    const u64 nl = ((u64)fm_get32(S, 10, 2 * k + 32) << 32) | fm_get32(S, 10, 2 * k);
+    const u64 nh = ((u64)fm_get32(S, 10, 2 * k + 96) << 32) | fm_get32(S, 10, 2 * k + 64);
+    bool inexact = false;
+    for (proven_i64 i = 0; i < 2 * k && !inexact; i++) inexact = fm_getbit(S, 10, i) != 0;
+    bool rem = false;
+    const u64 q = fm_isqrt128(nh, nl, &rem);
+    return proven_float_pack_(false, k + EY, q | (u64)(inexact || rem), s);
+}
+
+static u64 fm_hypot(u64 a, u64 b, bool s) {
+    const fm_val x = fm_dec(a, s), y = fm_dec(b, s);
+    const bool asig = x.cls == FC_NAN && !(a & FMT_QUIETB(s)), bsig = y.cls == FC_NAN && !(b & FMT_QUIETB(s));
+    /* hypot(+-inf, quiet NaN) = +inf (IEEE 754-2019 9.2.1); a signalling NaN gives a NaN */
+    if (!asig && !bsig && (x.cls == FC_INF || y.cls == FC_INF)) return FMT_INFB(s);
+    if (x.cls == FC_NAN) return a | FMT_QUIETB(s);
+    if (y.cls == FC_NAN) return b | FMT_QUIETB(s);
+    return fm_hypot_fin(&x, &y, s);
+}
+
+/* 5^k for k <= 27 (below 2^63). */
+static u64 fm_pow5(proven_i64 k) {
+    u64 p = 1;
+    for (proven_i64 i = 0; i < k; i++) p *= 5;
+    return p;
+}
+
+/* Whether e is a multiple of 3 (|e| < 3000), and e / 3 then. */
+static bool fm_div3(proven_i64 e, proven_i64 *q) {
+    const u32 v = (u32)(e + 3000), d = fm_udiv(v, 3);
+    if (d * 3 != v) return false;
+    *q = (proven_i64)d - 1000;
+    return true;
+}
+
+/*
+ * The results these functions take without Ziv's loop: special values, the exact ones, and those
+ * surely beyond the format's range. Returns true with *out set; false for the general case,
+ * which fm_x_eval computes. The exact results are those at which the function is rational:
+ * exp2 of an integer, exp10 of an integer (10^23 rounds a tie; above 27, 10^k is neither a
+ * value nor a midpoint, and the loop ends), log2 of a power of 2, log10 of a power of 10, cbrt
+ * of a cube, the zeros and acos(1), acosh(1); every other result at a finite argument is
+ * irrational, so never a rounding boundary.
+ */
+static bool fm_x_special(int fn, bool s, u64 a, u64 b, u64 *out) {
+    if (fn == PROVEN_FLOAT_FN_HYPOT_) { *out = fm_hypot(a, b, s); return true; }
+    const fm_val x = fm_dec(a, s);
+    const u64 sb = FMT_SIGNB(s), inf = FMT_INFB(s), one = FMT_ONEB(s), nan = FMT_NANB(s);
+    if (x.cls == FC_NAN) { *out = a | FMT_QUIETB(s); return true; }
+    mp_t t;
+    proven_i64 top = 0;
+    if (x.cls == FC_FIN) { fm_mp_of(&t, &x, 2); top = mp_top(&t); }
+    u64 om = 0;
+    int oe = 0;
+    if (x.cls == FC_FIN) fm_odd(x.mant, x.ex, &om, &oe);
+    const bool below1 = x.cls == FC_ZERO || (x.cls == FC_FIN && top < 0);     /* |x| < 1 */
+    switch (fn) {
+    case PROVEN_FLOAT_FN_EXP2_: case PROVEN_FLOAT_FN_EXP10_:
+        if (x.cls == FC_INF) { *out = x.neg ? 0 : a; return true; }
+        if (x.cls == FC_ZERO) { *out = one; return true; }
+        if (top >= (fn == PROVEN_FLOAT_FN_EXP2_ ? 11 : 9)) { *out = x.neg ? 0 : inf; return true; }
+        if (oe >= 0) {                                      /* an integer, below 2^11 */
+            const proven_i64 N = (proven_i64)(om << oe);
+            if (fn == PROVEN_FLOAT_FN_EXP2_) { *out = proven_float_pack_(false, x.neg ? -N : N, 1, s); return true; }
+            if (!x.neg && N <= 27) { *out = proven_float_pack_(false, N, fm_pow5(N), s); return true; }
+        }
+        return false;
+    case PROVEN_FLOAT_FN_EXPM1_:
+        if (x.cls == FC_INF) { *out = x.neg ? sb | one : a; return true; }
+        if (x.cls == FC_ZERO) { *out = a; return true; }
+        if (x.neg && top >= 6) { *out = sb | one; return true; }          /* -1 + below 2^-92 */
+        if (!x.neg && top >= 11) { *out = inf; return true; }
+        return false;
+    case PROVEN_FLOAT_FN_LOG2_: case PROVEN_FLOAT_FN_LOG10_:
+        if (x.cls == FC_ZERO) { *out = sb | inf; return true; }
+        if (x.neg) { *out = nan; return true; }
+        if (x.cls == FC_INF) { *out = a; return true; }
+        if (fn == PROVEN_FLOAT_FN_LOG2_ && om == 1) { *out = oe ? proven_float_pack_(oe < 0, 0, (u64)(oe < 0 ? -oe : oe), s) : 0; return true; }
+        if (fn == PROVEN_FLOAT_FN_LOG10_ && oe >= 0 && oe <= 27 && om == fm_pow5(oe)) { *out = oe ? proven_float_pack_(false, 0, (u64)oe, s) : 0; return true; }
+        return false;
+    case PROVEN_FLOAT_FN_LOG1P_:
+        if (x.cls == FC_ZERO) { *out = a; return true; }
+        if (x.cls == FC_INF) { *out = x.neg ? nan : a; return true; }
+        if (x.neg && top >= 0) { *out = top == 0 && x.mant == ((u64)1 << FMT_MANT(s)) ? sb | inf : nan; return true; }   /* -1, below */
+        return false;
+    case PROVEN_FLOAT_FN_CBRT_:
+        if (x.cls != FC_FIN) { *out = a; return true; }
+        {
+            u64 lo = 0, hi = (u64)1 << 18;
+            while (hi - lo > 1) { const u64 mid = (lo + hi) >> 1; if (mid * mid * mid <= om) lo = mid; else hi = mid; }
+            proven_i64 q3;
+            if (lo * lo * lo == om && fm_div3(oe, &q3)) { *out = proven_float_pack_(x.neg, q3, lo, s); return true; }
+        }
+        return false;
+    case PROVEN_FLOAT_FN_ASIN_: case PROVEN_FLOAT_FN_ACOS_:
+        if (x.cls == FC_INF || (x.cls == FC_FIN && !below1 && !(top == 0 && x.mant == ((u64)1 << FMT_MANT(s))))) { *out = nan; return true; }
+        if (x.cls == FC_ZERO) { *out = fn == PROVEN_FLOAT_FN_ASIN_ ? a : fm_pi_mult(2, false, s); return true; }
+        if (!below1) {                                      /* +-1 */
+            if (fn == PROVEN_FLOAT_FN_ASIN_) *out = fm_pi_mult(2, x.neg, s);
+            else *out = x.neg ? fm_pi_mult(4, false, s) : 0;
+            return true;
+        }
+        return false;
+    case PROVEN_FLOAT_FN_ATAN_:
+        if (x.cls == FC_INF) { *out = fm_pi_mult(2, x.neg, s); return true; }
+        if (x.cls == FC_ZERO) { *out = a; return true; }
+        return false;
+    case PROVEN_FLOAT_FN_SINH_: case PROVEN_FLOAT_FN_COSH_:
+        if (x.cls == FC_INF) { *out = fn == PROVEN_FLOAT_FN_SINH_ ? a : inf; return true; }
+        if (x.cls == FC_ZERO) { *out = fn == PROVEN_FLOAT_FN_SINH_ ? a : one; return true; }
+        if (top >= 11) { *out = fn == PROVEN_FLOAT_FN_SINH_ ? (a & sb) | inf : inf; return true; }
+        return false;
+    case PROVEN_FLOAT_FN_TANH_:
+        if (x.cls == FC_ZERO) { *out = a; return true; }
+        if (x.cls == FC_INF || top >= 5) { *out = (a & sb) | one; return true; }   /* |x| >= 32: 1 - below 2^-90 */
+        return false;
+    case PROVEN_FLOAT_FN_ASINH_:
+        if (x.cls != FC_FIN) { *out = a; return true; }
+        return false;
+    case PROVEN_FLOAT_FN_ACOSH_:
+        if (x.cls == FC_ZERO || x.neg || (x.cls == FC_FIN && below1)) { *out = nan; return true; }
+        if (x.cls == FC_INF) { *out = a; return true; }
+        if (a == one) { *out = 0; return true; }
+        return false;
+    case PROVEN_FLOAT_FN_ATANH_:
+        if (x.cls == FC_ZERO) { *out = a; return true; }
+        if (x.cls == FC_INF || !below1) {
+            *out = x.cls == FC_FIN && top == 0 && x.mant == ((u64)1 << FMT_MANT(s)) ? (a & sb) | inf : nan;
+            return true;
+        }
+        return false;
+    default:
+        *out = 0;
+        return true;
+    }
+}
+
+/* The general case at n limbs, within a few units of the last place (see each function above).
+ * x is exact, of two limbs; the odd functions are evaluated at |x| and given x's sign. */
+static void fm_x_eval(mp_t *r, int fn, bool s, u64 a, int n) {
+    const fm_val v = fm_dec(a, s);
+    mp_t x, ax, c, t, w, z;
+    fm_mp_of(&x, &v, 2);
+    ax = x;
+    ax.neg = false;
+    switch (fn) {
+    case PROVEN_FLOAT_FN_EXP2_:
+        mp_const(&c, FM_LN2, FM_CONST_LIMBS, FM_LN2_EXP, n + 3);
+        mp_mul(&t, &x, &c, n + 3);                          /* |x ln2| < 2^11, its error 2^-(32n + 85) */
+        mp_exp(r, &t, n);
+        return;
+    case PROVEN_FLOAT_FN_EXP10_:
+        mp_const(&c, FM_LN10, FM_CONST_LIMBS, FM_LN10_EXP, n + 3);
+        mp_mul(&t, &x, &c, n + 3);
+        mp_exp(r, &t, n);
+        return;
+    case PROVEN_FLOAT_FN_EXPM1_:
+        mp_expm1(r, &x, n);
+        return;
+    case PROVEN_FLOAT_FN_LOG2_: case PROVEN_FLOAT_FN_LOG10_:
+        mp_log(&t, &x, n + 1);                              /* relative even near 1 */
+        if (fn == PROVEN_FLOAT_FN_LOG2_) mp_const(&c, FM_LOG2_E, FM_CONST_LIMBS, FM_LOG2_E_EXP, n + 1);
+        else mp_const(&c, FM_LOG10_E, FM_CONST_LIMBS, FM_LOG10_E_EXP, n + 1);
+        mp_mul(r, &t, &c, n);
+        return;
+    case PROVEN_FLOAT_FN_LOG1P_:
+        mp_log1p(r, &x, n);
+        return;
+    case PROVEN_FLOAT_FN_CBRT_:
+        mp_root(r, &ax, 3, n);
+        break;
+    case PROVEN_FLOAT_FN_ASIN_: case PROVEN_FLOAT_FN_ACOS_:
+        /* sqrt((1 - |x|)(1 + |x|)), the factors exact, then atan2 */
+        mp_one(&c, 1);
+        mp_sub(&t, &c, &ax, n + 3);
+        mp_add(&w, &c, &ax, n + 3);
+        mp_mul(&t, &t, &w, n + 2);
+        mp_root(&z, &t, 2, n + 2);
+        if (fn == PROVEN_FLOAT_FN_ASIN_) mp_atan2(r, &x, &z, n);
+        else mp_atan2(r, &z, &x, n);
+        return;
+    case PROVEN_FLOAT_FN_ATAN_:
+        mp_one(&c, 1);
+        mp_atan2(r, &x, &c, n);
+        return;
+    case PROVEN_FLOAT_FN_SINH_:
+        /* (E + E / (E + 1)) / 2, E = expm1|x|: no cancellation */
+        mp_expm1(&t, &ax, n + 2);
+        mp_one(&c, 1);
+        mp_add(&w, &t, &c, n + 2);
+        mp_div(&w, &t, &w, n + 2);
+        mp_add(r, &t, &w, n + 1);
+        break;
+    case PROVEN_FLOAT_FN_COSH_:
+        mp_exp(&t, &ax, n + 2);
+        mp_recip(&w, &t, n + 2);
+        mp_add(r, &t, &w, n + 1);
+        break;
+    case PROVEN_FLOAT_FN_TANH_:
+        /* E / (E + 2), E = expm1(2|x|) */
+        ax.e += 1;
+        mp_expm1(&t, &ax, n + 2);
+        mp_set_u64(&c, false, 2, 0, 1);
+        mp_add(&w, &t, &c, n + 2);
+        mp_div(r, &t, &w, n + 1);
+        break;
+    case PROVEN_FLOAT_FN_ASINH_:
+        /* log1p(|x| + x^2 / (1 + sqrt(1 + x^2))): no cancellation */
+        mp_mul(&t, &ax, &ax, n + 3);
+        mp_one(&c, 1);
+        mp_add(&w, &t, &c, n + 3);
+        mp_root(&z, &w, 2, n + 2);
+        mp_add(&z, &z, &c, n + 2);
+        mp_div(&t, &t, &z, n + 2);
+        mp_add(&t, &t, &ax, n + 2);
+        mp_log1p(r, &t, n + 1);
+        break;
+    case PROVEN_FLOAT_FN_ACOSH_:
+        /* log1p((x - 1) + sqrt((x - 1)(x + 1))), x - 1 exact */
+        mp_one(&c, 1);
+        mp_sub(&t, &x, &c, n + 3);
+        mp_add(&w, &x, &c, n + 3);
+        mp_mul(&w, &w, &t, n + 2);
+        mp_root(&z, &w, 2, n + 2);
+        mp_add(&t, &t, &z, n + 2);
+        mp_log1p(r, &t, n);
+        return;
+    case PROVEN_FLOAT_FN_ATANH_:
+        if (mp_top(&ax) < -2) {
+            mp_atanh_series(r, &ax, n + 1);                 /* |x| < 1/4 */
+        } else {
+            /* log((1 + |x|) / (1 - |x|)) / 2, the quotient at least 5/3 */
+            mp_one(&c, 1);
+            mp_add(&t, &c, &ax, n + 3);
+            mp_sub(&w, &c, &ax, n + 3);
+            mp_div(&t, &t, &w, n + 2);
+            mp_log_any(r, &t, n + 1);
+            if (r->n) r->e -= 1;
+        }
+        break;
+    default:
+        mp_zero(r);
+        return;
+    }
+    mp_copy(r, r, n);
+    if (fn == PROVEN_FLOAT_FN_SINH_ || fn == PROVEN_FLOAT_FN_COSH_) { if (r->n) r->e -= 1; }
+    if (v.neg && fn != PROVEN_FLOAT_FN_COSH_ && r->n) r->neg = true;
+}
+
+static u64 fm_x(int fn, u64 a, u64 b, bool s) {
+    u64 out = 0;
+    if (fm_x_special(fn, s, a, b, &out)) return out;
+    mp_t r;
+    for (int i = 0; i < FM_LEVELS; i++) {
+        fm_x_eval(&r, fn, s, a, fm_level(s, i));
+        if (mp_round_test(&r, s, &out)) return out;
+    }
+    return mp_round_nearest(&r, s);
+}
+
 /* The bits of a value and back, inline: these sit on the FPU path's every call, and a call to
  * float_ops.c's functions there cost more than CORE-MATH's own work in log. */
 static inline u64 fm_d2b(double x) { union { double d; u64 u; } v = { .d = x }; return v.u; }
@@ -1227,6 +1702,40 @@ float proven_cm_cosf_(float x);
 float proven_cm_tanf_(float x);
 float proven_cm_atan2f_(float y, float x);
 float proven_cm_powf_(float x, float y);
+double proven_cm_exp2_(double x);
+float proven_cm_exp2f_(float x);
+double proven_cm_exp10_(double x);
+float proven_cm_exp10f_(float x);
+double proven_cm_expm1_(double x);
+float proven_cm_expm1f_(float x);
+double proven_cm_log2_(double x);
+float proven_cm_log2f_(float x);
+double proven_cm_log10_(double x);
+float proven_cm_log10f_(float x);
+double proven_cm_log1p_(double x);
+float proven_cm_log1pf_(float x);
+double proven_cm_cbrt_(double x);
+float proven_cm_cbrtf_(float x);
+double proven_cm_hypot_(double x, double y);
+float proven_cm_hypotf_(float x, float y);
+double proven_cm_asin_(double x);
+float proven_cm_asinf_(float x);
+double proven_cm_acos_(double x);
+float proven_cm_acosf_(float x);
+double proven_cm_atan_(double x);
+float proven_cm_atanf_(float x);
+double proven_cm_sinh_(double x);
+float proven_cm_sinhf_(float x);
+double proven_cm_cosh_(double x);
+float proven_cm_coshf_(float x);
+double proven_cm_tanh_(double x);
+float proven_cm_tanhf_(float x);
+double proven_cm_asinh_(double x);
+float proven_cm_asinhf_(float x);
+double proven_cm_acosh_(double x);
+float proven_cm_acoshf_(float x);
+double proven_cm_atanh_(double x);
+float proven_cm_atanhf_(float x);
 
 double proven_cm_pow_fallback_(double x, double y) { return proven_float_from_bits(fm_pow(proven_float_to_bits(x), proven_float_to_bits(y), false)); }
 double proven_cm_atan2_fallback_(double y, double x) { return proven_float_from_bits(fm_atan2(proven_float_to_bits(y), proven_float_to_bits(x), false)); }
@@ -1279,6 +1788,42 @@ float proven_float32_tan(float x) { FM_CM1F(tan, x); return F32D(fm_trig(F32B(x)
 float proven_float32_atan2(float y, float x) { FM_CM2F(atan2, y, x); return F32D(fm_atan2(F32B(y), F32B(x), true)); }
 float proven_float32_pow(float x, float y) { FM_CM2F(pow, x, y); return F32D(fm_pow(F32B(x), F32B(y), true)); }
 
+double proven_float_exp2(double x) { FM_CM1(exp2, x); return F64D(fm_x(PROVEN_FLOAT_FN_EXP2_, F64B(x), 0, false)); }
+double proven_float_exp10(double x) { FM_CM1(exp10, x); return F64D(fm_x(PROVEN_FLOAT_FN_EXP10_, F64B(x), 0, false)); }
+double proven_float_expm1(double x) { FM_CM1(expm1, x); return F64D(fm_x(PROVEN_FLOAT_FN_EXPM1_, F64B(x), 0, false)); }
+double proven_float_log2(double x) { FM_CM1(log2, x); return F64D(fm_x(PROVEN_FLOAT_FN_LOG2_, F64B(x), 0, false)); }
+double proven_float_log10(double x) { FM_CM1(log10, x); return F64D(fm_x(PROVEN_FLOAT_FN_LOG10_, F64B(x), 0, false)); }
+double proven_float_log1p(double x) { FM_CM1(log1p, x); return F64D(fm_x(PROVEN_FLOAT_FN_LOG1P_, F64B(x), 0, false)); }
+double proven_float_cbrt(double x) { FM_CM1(cbrt, x); return F64D(fm_x(PROVEN_FLOAT_FN_CBRT_, F64B(x), 0, false)); }
+double proven_float_hypot(double x, double y) { FM_CM2(hypot, x, y); return F64D(fm_hypot(F64B(x), F64B(y), false)); }
+double proven_float_asin(double x) { FM_CM1(asin, x); return F64D(fm_x(PROVEN_FLOAT_FN_ASIN_, F64B(x), 0, false)); }
+double proven_float_acos(double x) { FM_CM1(acos, x); return F64D(fm_x(PROVEN_FLOAT_FN_ACOS_, F64B(x), 0, false)); }
+double proven_float_atan(double x) { FM_CM1(atan, x); return F64D(fm_x(PROVEN_FLOAT_FN_ATAN_, F64B(x), 0, false)); }
+double proven_float_sinh(double x) { FM_CM1(sinh, x); return F64D(fm_x(PROVEN_FLOAT_FN_SINH_, F64B(x), 0, false)); }
+double proven_float_cosh(double x) { FM_CM1(cosh, x); return F64D(fm_x(PROVEN_FLOAT_FN_COSH_, F64B(x), 0, false)); }
+double proven_float_tanh(double x) { FM_CM1(tanh, x); return F64D(fm_x(PROVEN_FLOAT_FN_TANH_, F64B(x), 0, false)); }
+double proven_float_asinh(double x) { FM_CM1(asinh, x); return F64D(fm_x(PROVEN_FLOAT_FN_ASINH_, F64B(x), 0, false)); }
+double proven_float_acosh(double x) { FM_CM1(acosh, x); return F64D(fm_x(PROVEN_FLOAT_FN_ACOSH_, F64B(x), 0, false)); }
+double proven_float_atanh(double x) { FM_CM1(atanh, x); return F64D(fm_x(PROVEN_FLOAT_FN_ATANH_, F64B(x), 0, false)); }
+
+float proven_float32_exp2(float x) { FM_CM1F(exp2, x); return F32D(fm_x(PROVEN_FLOAT_FN_EXP2_, F32B(x), 0, true)); }
+float proven_float32_exp10(float x) { FM_CM1F(exp10, x); return F32D(fm_x(PROVEN_FLOAT_FN_EXP10_, F32B(x), 0, true)); }
+float proven_float32_expm1(float x) { FM_CM1F(expm1, x); return F32D(fm_x(PROVEN_FLOAT_FN_EXPM1_, F32B(x), 0, true)); }
+float proven_float32_log2(float x) { FM_CM1F(log2, x); return F32D(fm_x(PROVEN_FLOAT_FN_LOG2_, F32B(x), 0, true)); }
+float proven_float32_log10(float x) { FM_CM1F(log10, x); return F32D(fm_x(PROVEN_FLOAT_FN_LOG10_, F32B(x), 0, true)); }
+float proven_float32_log1p(float x) { FM_CM1F(log1p, x); return F32D(fm_x(PROVEN_FLOAT_FN_LOG1P_, F32B(x), 0, true)); }
+float proven_float32_cbrt(float x) { FM_CM1F(cbrt, x); return F32D(fm_x(PROVEN_FLOAT_FN_CBRT_, F32B(x), 0, true)); }
+float proven_float32_hypot(float x, float y) { FM_CM2F(hypot, x, y); return F32D(fm_hypot(F32B(x), F32B(y), true)); }
+float proven_float32_asin(float x) { FM_CM1F(asin, x); return F32D(fm_x(PROVEN_FLOAT_FN_ASIN_, F32B(x), 0, true)); }
+float proven_float32_acos(float x) { FM_CM1F(acos, x); return F32D(fm_x(PROVEN_FLOAT_FN_ACOS_, F32B(x), 0, true)); }
+float proven_float32_atan(float x) { FM_CM1F(atan, x); return F32D(fm_x(PROVEN_FLOAT_FN_ATAN_, F32B(x), 0, true)); }
+float proven_float32_sinh(float x) { FM_CM1F(sinh, x); return F32D(fm_x(PROVEN_FLOAT_FN_SINH_, F32B(x), 0, true)); }
+float proven_float32_cosh(float x) { FM_CM1F(cosh, x); return F32D(fm_x(PROVEN_FLOAT_FN_COSH_, F32B(x), 0, true)); }
+float proven_float32_tanh(float x) { FM_CM1F(tanh, x); return F32D(fm_x(PROVEN_FLOAT_FN_TANH_, F32B(x), 0, true)); }
+float proven_float32_asinh(float x) { FM_CM1F(asinh, x); return F32D(fm_x(PROVEN_FLOAT_FN_ASINH_, F32B(x), 0, true)); }
+float proven_float32_acosh(float x) { FM_CM1F(acosh, x); return F32D(fm_x(PROVEN_FLOAT_FN_ACOSH_, F32B(x), 0, true)); }
+float proven_float32_atanh(float x) { FM_CM1F(atanh, x); return F32D(fm_x(PROVEN_FLOAT_FN_ATANH_, F32B(x), 0, true)); }
+
 bool proven_float_math_is_fpu_(void) { return fm_cm_ready(); }
 
 // -----------------------------------------------------------------------------
@@ -1294,7 +1839,7 @@ proven_u64 proven_float_math_int_(int fn, bool b32, proven_u64 a, proven_u64 b) 
     case PROVEN_FLOAT_FN_TAN_: return fm_trig(a, b32, FM_TAN);
     case PROVEN_FLOAT_FN_ATAN2_: return fm_atan2(a, b, b32);
     case PROVEN_FLOAT_FN_POW_: return fm_pow(a, b, b32);
-    default: return 0;
+    default: return fn < PROVEN_FLOAT_FN_COUNT_ ? fm_x(fn, a, b, b32) : 0;
     }
 }
 
@@ -1305,6 +1850,12 @@ proven_u64 proven_float_math_int_(int fn, bool b32, proven_u64 a, proven_u64 b) 
 static bool fm_eval(mp_t *r, int fn, bool s, u64 a, u64 b, int n) {
     const fm_val x = fm_dec(a, s), y = fm_dec(b, s);
     mp_t xv, yv;
+    if (fn > PROVEN_FLOAT_FN_POW_) {
+        u64 out;
+        if (fn >= PROVEN_FLOAT_FN_COUNT_ || fm_x_special(fn, s, a, b, &out)) return false;
+        fm_x_eval(r, fn, s, a, n);
+        return true;
+    }
     switch (fn) {
     case PROVEN_FLOAT_FN_EXP_:
         if (x.cls != FC_FIN) return false;

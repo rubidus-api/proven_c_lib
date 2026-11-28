@@ -979,7 +979,8 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `float_parse.h` | 로케일 없는 십진수·16진수 → `double`/`float` 파서 (`proven_strtod`, `proven_parse_double_ascii`) | 챕터 8 |
 | `float_format.h` | `double`/`float` → 십진수 formatter (고정 `%f`/`%e`, shortest) | 챕터 8 |
 | `float_ops.h` | 모든 타깃에서 같은 비트를 내는 binary64·binary32 연산: `add`/`sub`/`mul`/`div`/`fma`, 비교, `sqrt`, `floor`/`ceil`/`trunc`/`round`/`rint`, `fmod`, `frexp`/`ldexp`, 정수·binary32 변환, 분류; 명령 또는 정수 구현, FPU 없이도 | 챕터 8 |
-| `float_math.h` | binary64·binary32 `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2`, 올바른 반올림: 모든 타깃에서 같은 비트 | 챕터 8 |
+| `float_math.h` | binary64·binary32 `exp`, `exp2`, `exp10`, `expm1`, `log`, `log2`, `log10`, `log1p`, `pow`, `cbrt`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, 올바른 반올림: 모든 타깃에서 같은 비트 | 챕터 8 |
+| `complex.h` | 두 값의 쌍인 복소수, binary64·binary32: 사칙연산, `abs`, `arg`, `exp`, `log`, `pow`, `sqrt`, 삼각함수와 쌍곡선함수, 그 역함수, Annex G의 분지 절단과 특수값; 모든 타깃에서 같은 비트 | 챕터 8 |
 | `float_config.h` | Float 엔진 튜닝 (`PROVEN_FLOAT_BIGINT_LIMBS`, 정밀도 상한) | 챕터 6, 8 |
 | `array.h` | 제네릭 growable 벡터 | 챕터 4 |
 | `list.h` | 침입형(intrusive) 이중 연결 리스트 | 챕터 4 |
@@ -1041,9 +1042,18 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `printf` | `proven_println("{}", PROVEN_ARG(x))` | 타입이 포맷 문자열이 아니라 인자에서 옵니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `sprintf` | `proven_u8str_append_fmt` | 크기가 정해진 목적지에 쓰고, 그것을 넘기기를 거부합니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `sscanf` | `proven_scan_*`, `proven_scan_fmt` | 어느 필드가 실패했고 커서가 어디서 멈췄는지 알려 줍니다. [챕터 8](manual-08-fmt-scan-ko.md) |
+| `memchr`, `strspn`, `strcspn`, `strpbrk` | `proven_mem_find_byte`, `proven_mem_span`, `_span_not`, `_find_any` (`bytes.h`) | 뷰 위에서, 끝을 넘지 않습니다. 바이트 집합은 문자열이 아니라 값입니다. [챕터 3](manual-03-strings-text-ko.md) |
+| `isalpha`, `isdigit`, `toupper` ... | `proven_ascii_is_alpha`, `_is_digit`, `proven_ascii_upper` ... (`bytes.h`) | 로케일이 없고, 0x80부터의 바이트는 어느 분류에도 들지 않습니다. [챕터 3](manual-03-strings-text-ko.md) |
+| `strtol`, `strtoull` | `proven_u8str_view_parse_i64`, `_u64` | 2-36 아무 진법, 공백을 건너뛰지 않고, 넘치면 오류입니다. [챕터 3](manual-03-strings-text-ko.md) |
+| `strerror` | `proven_err_name`, `proven_err_message` | `proven_err_t`용, 정적 글. [챕터 1](manual-01-foundation-ko.md) |
+| `stdc_count_ones`, `stdc_bit_ceil` ..., `htonl` | `proven_bit_count_ones_u32`, `proven_bit_ceil_u32` ..., `proven_store_u32_be` (`bit.h`) | 0을 포함해 모든 입력에 정의됩니다. [챕터 4](manual-04-containers-algorithms-ko.md) |
 | `strtod` | `proven_parse_f64_ascii` | 올바르게 반올림하고, 로케일에 영향받지 않으며, `errno`를 쓰지 않습니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `sqrt`, `floor`, `fmod`, `fma`, `+ - * /` | `proven_float_sqrt`, `_floor`, `_fmod`, `_fma`, `_add` ... (`float_ops.h`) | FPU가 있든 없든, 어떤 타깃과 컴파일러 플래그에서든 같은 비트를 냅니다. [챕터 8](manual-08-fmt-scan-ko.md) |
-| `exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2` | `proven_float_exp` ... (`float_math.h`), `float`에는 `proven_float32_*` | 올바르게 반올림하므로 모든 빌드가 같은 비트를 내며, `errno`를 쓰지 않습니다. [챕터 8](manual-08-fmt-scan-ko.md) |
+| `remainder`, `nextafter`, `modf`, `ilogb`, `fdim`, `llround` ... | `proven_float_remainder`, `_nextafter`, `_modf`, `_ilogb`, `_fdim`, `_round_to_i64` ... (`float_ops.h`) | 정확하고 어디서나 같은 비트이며, 범위 밖 정수는 오류입니다. [챕터 8](manual-08-fmt-scan-ko.md) |
+| `setlocale`, `localeconv`(수에 대해) | `proven_numfmt_t`와 `proven_numfmt_f64`, `_parse_f64` ... (`numfmt.h`) | 표기는 프로세스 상태가 아니라 호출 하나에 넘기는 값입니다. [챕터 8](manual-08-fmt-scan-ko.md) |
+| `fesetround`, `fetestexcept` | `proven_float_env_t`와 `proven_float_env_add` ... (`float_env.h`) | 방향과 플래그는 프로세서의 상태가 아니라 넘기는 값입니다. [챕터 8](manual-08-fmt-scan-ko.md) |
+| `exp`, `exp2`, `exp10`, `expm1`, `log`, `log2`, `log10`, `log1p`, `pow`, `cbrt`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh` | `proven_float_exp` ... (`float_math.h`), `float`에는 `proven_float32_*` | 올바르게 반올림하므로 모든 빌드가 같은 비트를 내며, `errno`를 쓰지 않습니다. [챕터 8](manual-08-fmt-scan-ko.md) |
+| `<complex.h>`: `cexp`, `clog`, `csqrt`, `cpow`, ... | `proven_complex_t`와 `proven_complex_exp` ... (`complex.h`), `float`에는 `proven_complex32_*` | 두 부분의 구조체로, 모든 컴파일러(MSVC 포함)에서 같고 모든 타깃에서 같은 비트를 냅니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `fopen` / `fread` / `fclose` | `proven_fs_open`, `_read`, `_close`, 또는 `proven_fs_read_all_u8str` | 명시적인 에러, 숨은 버퍼링 없음, 파일 전체를 한 번의 호출로. [챕터 5](manual-05-hosted-services-ko.md) |
 | `fgets` | `proven_sysio_read_line`, `proven_reader_read_line` | 버퍼를 정확히 꽉 채우는 줄도 잃어버리지 않고 반환합니다. [챕터 5](manual-05-hosted-services-ko.md) |
 | `qsort` | `proven_array_sort` | introsort입니다: 퀵소트의 최악 경우가 아니라 *O(n log n)* 보장. [챕터 4](manual-04-containers-algorithms-ko.md) |

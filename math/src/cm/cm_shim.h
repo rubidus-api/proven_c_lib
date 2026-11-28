@@ -51,6 +51,7 @@
 #define FE_OVERFLOW 4
 #define FE_DIVBYZERO 8
 #define FE_INVALID 16
+#define FE_ALL_EXCEPT 31
 typedef int fenv_t;
 typedef int fexcept_t;
 static inline int proven_cm_fegetround(void) { return FE_TONEAREST; }

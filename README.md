@@ -1,4 +1,4 @@
-[한국어](README-ko.md) | **English** - **Proven C library v0.121.1** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.1/proven_c_lib-v0.121.1.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.1/proven_c_lib-v0.121.1-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.121.1/proven_c_lib-v0.121.1-ko-manual.pdf)
+[한국어](README-ko.md) | **English** - **Proven C library v0.122.0** - [ZIP](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.122.0/proven_c_lib-v0.122.0.zip) | [PDF(en)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.122.0/proven_c_lib-v0.122.0-en-manual.pdf) | [PDF(ko)](https://github.com/rubidus-api/proven_c_lib/releases/download/v0.122.0/proven_c_lib-v0.122.0-ko-manual.pdf)
 
 # Proven C library
 
@@ -39,7 +39,7 @@ than looked up.
 programs, each adding one idea: printing, text with a length, errors as values, allocators, arenas,
 a container and a file. Chapter 0 is the place to go after it.
 
-- Version: proven_c_lib-v0.121.1 | Standard: C23 | License: MIT
+- Version: proven_c_lib-v0.122.0 | Standard: C23 | License: MIT
 - Versions are semantic, `MAJOR.MINOR.PATCH`, from v0.0.1 (2026-09-04); the releases before it carry
   date-based numbers (`v26.MM.DDx`) and stay as they were published.
 - Seven functions named `*_internal` or `*_impl` sit in public headers because macros call them;
@@ -729,7 +729,10 @@ legacy hashes, AES and the AEAD ciphers, key exchange, signing keys, DER and X.5
 **proven_net** - `net/` - is sockets, the event loop, TLS, HTTP/1.1, HTTP/2, HTTP/3 over QUIC,
 WebSocket and server-sent events. **proven_math** - `math/` - is binary64 and binary32 arithmetic,
 `fma`, comparisons, conversions, `sqrt`, rounding, `fmod`, `frexp`/`ldexp` (`float_ops.h`) and
-`exp`, `log`, `pow`, `sin`, `cos`, `tan`, `atan2` correctly rounded (`float_math.h`), with the same
+math.h's transcendental functions correctly rounded (`float_math.h`: `exp`, `exp2`, `exp10`,
+`expm1`, `log`, `log2`, `log10`, `log1p`, `pow`, `cbrt`, `hypot`, the trigonometric and
+hyperbolic functions and their inverses), the floating-point environment as a value
+(`float_env.h`) and complex numbers (`complex.h`), with the same
 bits on every target and no FPU needed (decimal parsing and formatting stay in the base). Each uses nothing of the ones below it but their public headers
 (tests hold those lines): crypto, codec and math stand on the base alone, the network library on
 the base, crypto and codec, and the base knows nothing of any of them.
