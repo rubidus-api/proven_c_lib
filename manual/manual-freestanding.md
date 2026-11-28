@@ -1,4 +1,4 @@
-# Proven Freestanding Mode (v0.122.0)
+# Proven Freestanding Mode (v0.123.0)
 
 **Part VI - Going further. Prerequisites: Parts II-V, and
 [Chapter 6](manual-06-execution-and-platform.md).**
@@ -220,7 +220,7 @@ on every release, not asserted in this table.
 | `float_format.h` | Available without `fmt.h` integration | The binary64 formatter is integer-only and compiles, but the current profile defines `PROVEN_FMT_NO_FLOAT`, so `{}` will not render a float. Call the `float_format.h` entry points directly if you need digits on a target where you have decided the code size is worth it. |
 | `float_ops.h` | Available | Made for it (RFC-0054): integer work on the bits, no libm and no `errno`; the square root takes the IEEE instruction where the target has one (SSE2, AArch64, WebAssembly `f64.sqrt`) and an integer root elsewhere, with the same bits. RFC-0055 adds the arithmetic (`add` `sub` `mul` `div` `fma`, comparisons, conversions) and a binary32 set: the instruction on x86 SSE2, AArch64, ARM VFP, RISC-V F/D and WebAssembly, the integers with the same bits on a core without an FPU - no soft-float runtime (`__aeabi_dadd` and the like) needed. `PROVEN_FLOAT_SOFT=1` forces the integers. |
 | `float_env.h` | Available | The rounding direction and the five IEEE exceptions as a value (RFC-0058): arithmetic and conversions in each direction, by integers, the same bits and flags everywhere. |
-| `float_math.h` | Available | the 24 functions of chapter 8 - `exp` ... `atanh` (RFC-0056, RFC-0058) - correctly rounded: the integer path in a freestanding build (no FPU, no soft-float runtime; up to about 7.5 KiB of stack, measured on Cortex-M3 with clang -O2, and about 59 KB of code and tables in `float_math.o`, less what the link drops), or the CORE-MATH FPU path on AArch64, on WebAssembly (with the 128-bit helpers it needs, weak) and on x86-64 built for FMA and AVX2; the same bits either way. `PROVEN_FLOAT_MATH_SMALL=1` leaves the FPU path's code and tables out. |
+| `float_math.h` | Available | the 35 functions of chapter 8 - `exp` ... `atanh`, `erf` ... `lgamma`, `sinpi` ... `compoundn` (RFC-0056, RFC-0058) - correctly rounded: the integer path in a freestanding build (no FPU, no soft-float runtime; up to about 8.8 KiB of stack, measured on Cortex-M3 with clang -O2, and about 79 KB of code and tables in `float_math.o`, less what the link drops), or the CORE-MATH FPU path on AArch64, on WebAssembly (with the 128-bit helpers it needs, weak) and on x86-64 built for FMA and AVX2; the same bits either way. `PROVEN_FLOAT_MATH_SMALL=1` leaves the FPU path's code and tables out. |
 | `complex.h` | Available | complex numbers (RFC-0058): pure computation on `float_ops.h` and `float_math.h`, so the same bits as a hosted build; no `_Complex` type needed. |
 | `time.h` | Limited | Core datetime formatting can compile; real PAL time is excluded. |
 | `heap.h` | Stub | `proven_heap_allocator()` returns an invalid allocator. |

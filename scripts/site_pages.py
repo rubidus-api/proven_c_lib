@@ -97,15 +97,16 @@ STR = {
                repo='Repo', repo_t='This project on GitHub',
                home='All projects', home_t='rubidus-api.github.io — every published project',
                repos='All repos', repos_t='github.com/rubidus-api — every repository',
-               back='Back', lang='Language', width='Text width', w960='960',
-               wfit='Fit the window', layout='Layout', l_auto='Auto', l_wide='Wide',
-               l_narrow='Narrow', site='rubidus-api'),
+               back='Back', bar_prev='Prev', bar_toc='TOC', bar_next='Next', lang='Language',
+               width='Text width', w960='960', wfit='Fit the window', layout='Layout',
+               l_auto='Auto', l_desktop='PC', l_mobile='Mobile', toc_full='Detailed contents',
+               git_t='This project on GitHub', site='rubidus-api'),
     'ko': dict(short='proven_c_lib 매뉴얼', contents='목차', here='이 페이지 안에서',
                prev='이전', next='다음', top='목차', menu='메뉴', settings='설정',
                set_width='가로폭 제한', set_theme='테마', th_auto='시스템',
                th_light='밝게', th_dark='어둡게', set_colors='색', c_fg='글자',
                c_bg='배경', c_link='링크',
-               set_note='설정은 이 브라우저에만 저장됩니다.',
+               set_note='설정은 이 브라우저에만 저장된다.',
                pdf='PDF', other='English', search='검색',
                search_ph='함수나 제목으로 찾기',
                search_none='찾은 것이 없습니다',
@@ -114,9 +115,10 @@ STR = {
                repo='저장소', repo_t='이 프로젝트의 GitHub 저장소',
                home='전체 사이트', home_t='rubidus-api.github.io — 공개된 모든 프로젝트',
                repos='저장소 목록', repos_t='github.com/rubidus-api — 모든 저장소',
-               back='이전', lang='언어', width='본문 폭', w960='960', wfit='창에 맞춤',
-               layout='배치', l_auto='자동', l_wide='넓게', l_narrow='좁게',
-               site='rubidus-api'),
+               back='뒤로', bar_prev='이전', bar_toc='목차', bar_next='다음', lang='언어',
+               width='본문 폭', w960='960', wfit='창에 맞춤', layout='배치', l_auto='자동',
+               l_desktop='PC', l_mobile='모바일', toc_full='상세 차례',
+               git_t='이 프로젝트의 GitHub 저장소', site='rubidus-api'),
 }
 
 REPO = 'https://github.com/rubidus-api/proven_c_lib'
@@ -127,46 +129,19 @@ REPOS_ROOT = 'https://github.com/rubidus-api'
 # chapter that owns the call, so these lose to any chapter that also uses the name.
 LAST_RESORT = ('index', 'manual-00-start-here')
 
-# The site's design rules N-W2/N-W4: the menu bar and its settings are the site's (rubidus-api.github.io): the
-# same storage key and the same values, so a theme or width chosen on the landing page holds here.
-SITE_KEY = 'rubidus-api.site'
+# The bar, the menu panel and the reading settings come from the workspace's document kit (its
+# docweb.py), so that they are the same on every published site (doc-standard DS-G6, DS-G6a,
+# DS-G6b, DS-G7): the buttons, their words, the settings record and its script. DOC_KIT names the
+# kit's tools folder; the build passes it. What is this manual's own stays here: the search over
+# every public function and "on this page".
+_KIT = os.environ.get('DOC_KIT')
+if not _KIT or not os.path.exists(os.path.join(_KIT, 'docweb.py')):
+    sys.exit('site_pages: set DOC_KIT to the tools folder of the workspace document kit (it holds docweb.py)')
+sys.path.insert(0, _KIT)
+import docweb  # noqa: E402
 
-# Applied in <head>, before the body is painted. A theme applied afterwards shows the light
-# page first and then repaints - the flash of unstyled content the book documents.
-APPLY_JS = (
-    "(function(){try{var s=JSON.parse(localStorage.getItem('" + SITE_KEY + "')||'{}'),"
-    "r=document.documentElement;"
-    "if(s.theme==='light'||s.theme==='dark')r.setAttribute('data-theme',s.theme);"
-    "if(s.width==='fit')r.setAttribute('data-width','fit');"
-    "if(s.layout==='wide'||s.layout==='narrow')r.setAttribute('data-layout',s.layout);"
-    "}catch(e){}})();"
-)
-
-# The menu (a <details>): its radios show and change the settings; Escape and a click outside
-# close it, and so does following a link to a section of this page. The back button goes back
-# in the history when there is one, and to the contents otherwise.
-PANEL_JS = (
-    "(function(){var K='" + SITE_KEY + "',d=document,r=d.documentElement,m=d.querySelector('.menu'),s={};"
-    "try{s=JSON.parse(localStorage.getItem(K))||{};}catch(e){}"
-    "['theme','width','layout'].forEach(function(g){var v=s[g]||({theme:'system',width:'960',layout:'auto'})[g],"
-    "x=d.getElementById(g+'-'+v);if(x)x.checked=true;});"
-    "function apply(){var t=s.theme;if(t==='light'||t==='dark')r.setAttribute('data-theme',t);"
-    "else r.removeAttribute('data-theme');"
-    "if(s.width==='fit')r.setAttribute('data-width','fit');else r.removeAttribute('data-width');"
-    "if(s.layout==='wide'||s.layout==='narrow')r.setAttribute('data-layout',s.layout);"
-    "else r.removeAttribute('data-layout');}"
-    "d.addEventListener('change',function(e){var t=e.target;if(t.type!=='radio'||!m||!m.contains(t))return;"
-    "s[t.name]=t.id.slice(t.name.length+1);try{localStorage.setItem(K,JSON.stringify(s));}catch(e){}apply();});"
-    "if(!m)return;"
-    "d.addEventListener('keydown',function(e){if(e.key==='Escape'&&m.open){m.open=false;"
-    "m.querySelector('summary').focus();}});"
-    "d.addEventListener('click',function(e){if(m.open&&!m.contains(e.target))m.open=false;});"
-    "m.addEventListener('click',function(e){var a=e.target.closest('a');"
-    "if(a&&(a.getAttribute('href')||'').charAt(0)==='#')m.open=false;});"
-    "var b=d.querySelector('.bar .back');if(b)b.addEventListener('click',function(e){"
-    "if(history.length>1){e.preventDefault();history.back();}});"
-    "})();"
-)
+APPLY_JS = docweb.apply_js('')          # no older record to move: the landing page keeps its own
+PANEL_JS = docweb.panel_js()
 
 # The index is fetched on the first keystroke, not on load: a reader who never searches never
 # pays for it.
@@ -264,13 +239,14 @@ def public_symbols(root):
     declares. Reading them from the headers rather than scraping the pages is what keeps a
     type (`proven_err_t`) and a truncated fragment out of a search for a *call*."""
     names = set()
-    hdr = os.path.join(root, 'include', 'proven')
-    if not os.path.isdir(hdr):
-        return names
-    for f in sorted(os.listdir(hdr)):
-        if not f.endswith('.h'):
-            continue
-        text = open(os.path.join(hdr, f), encoding='utf-8', errors='replace').read()
+    # proven_base's headers, and those of the libraries split off it (proven_net, proven_crypto,
+    # proven_codec, proven_math), each under its own <lib>/include/proven
+    dirs = [os.path.join(root, 'include', 'proven')]
+    dirs += sorted(os.path.join(root, d, 'include', 'proven') for d in os.listdir(root)
+                   if os.path.isdir(os.path.join(root, d, 'include', 'proven')))
+    files = [os.path.join(h, f) for h in dirs if os.path.isdir(h) for f in sorted(os.listdir(h)) if f.endswith('.h')]
+    for path in files:
+        text = open(path, encoding='utf-8', errors='replace').read()
         for m in re.finditer(r'\b(proven_[A-Za-z0-9_]*)\(', text):
             names.add(m.group(1))
         for m in re.finditer(r'^#define\s+(PROVEN_[A-Za-z0-9_]*)\(', text, re.M):
@@ -332,72 +308,48 @@ def search_index(lang, pages, bodies, outlines, symbols):
     return entries
 
 
-def settings_html(lang):
-    """N-W4: theme, text width (960 by default), and layout (N-W1) - the landing page's set."""
+WEB = {'home': SITE_ROOT, 'repos': REPOS_ROOT}
+
+
+def kit_words(lang):
+    """The words the kit's parts read: this manual's names and titles, then the kit's fixed words
+    for the bar and the panel over them (a project cannot change those)."""
     s = STR[lang]
-    def group(name, legend, opts, default):
-        rows = ''.join('<label><input type="radio" name="%s" id="%s-%s"%s> %s</label>'
-                       % (name, name, v, ' checked' if v == default else '', html.escape(t))
-                       for v, t in opts)
-        return '<fieldset><legend>%s</legend>%s</fieldset>' % (html.escape(legend), rows)
-    return (group('theme', s['set_theme'], [('system', s['th_auto']), ('light', s['th_light']),
-                                            ('dark', s['th_dark'])], 'system')
-            + group('width', s['width'], [('960', s['w960']), ('fit', s['wfit'])], '960')
-            + group('layout', s['layout'], [('auto', s['l_auto']), ('wide', s['l_wide']),
-                                            ('narrow', s['l_narrow'])], 'auto'))
+    k = dict(s, toc_full=s['toc_full'], pdf=s['pdf'], t_repo=s['git_t'], t_home=s['home_t'],
+             l_home=s['home'], t_repos=s['repos_t'], l_repos=s['repos'])
+    docweb.fixed_words(k, lang)
+    return k
 
 
-def language_html(lang, other_href):
-    """N-W4's language: the two editions; the one being read is marked, the other is a link."""
-    s = STR[lang]
-    rows = []
-    for code, label in (('en', 'English'), ('ko', '한국어')):
-        if code == lang:
-            rows.append('<span class="cur" aria-current="true">%s</span>' % label)
-        else:
-            rows.append('<a href="%s" hreflang="%s">%s</a>' % (other_href, code, label))
-    return '<fieldset class="langs"><legend>%s</legend>%s</fieldset>' % (s['lang'], ''.join(rows))
-
-
-def bar_html(lang, here_text, here_href, items, panel_inner, back_href):
-    """N-W2: from the left, the menu (N-W4's settings inside), back, where the reader is; on a
-    wide window the items spread to the right, on a narrow one (N-L3: 900) they move into the
-    menu. The same bar as the site's landing page."""
-    s = STR[lang]
-    links = ''.join('<a href="%s"%s>%s</a>' % (h, (' title="%s"' % html.escape(t)) if t else '', html.escape(x))
-                    for x, h, t in items)
-    return ('<nav class="bar" aria-label="%s">'
-            '<details class="menu"><summary aria-label="%s">☰</summary>'
-            '<div class="panel"><nav class="goto">%s</nav>%s</div></details>'
-            '<a class="back" href="%s" aria-label="%s" title="%s">←</a>'
-            '<a class="here" href="%s">%s</a>'
-            '<div class="items">%s</div></nav>'
-            % (s['menu'], s['menu'], links, panel_inner, back_href, s['back'], s['back'],
-               here_href, html.escape(here_text), links))
+def page_bar(lang, place, nav, panel_inner, back='index.html'):
+    """The bar - menu, Back, where the reader is, then the page buttons when a page has them - and
+    the panel the menu opens (the kit's markup, so the kit's script drives it)."""
+    k = kit_words(lang)
+    return ('<div class="bar">%s%s%s%s</div><div id="here-panel" class="here-panel" hidden>%s</div>'
+            % (docweb.menu_button(k), docweb.back_button(k, back), place, nav, panel_inner))
 
 
 def bar(lang, name, pages, outline, version, pdf_url):
     s = STR[lang]
+    k = kit_words(lang)
     i = pages.index(name)
     prev = pages[i - 1] if i > 0 else None
     nxt = pages[i + 1] if i + 1 < len(pages) else None
     other = 'ko' if lang == 'en' else 'en'
-    items = [(s['contents'], 'index.html', '')]
-    if prev:
-        items.append(('← ' + s['prev'], prev + '.html', TITLES[lang][prev]))
-    if nxt:
-        items.append((s['next'] + ' →', nxt + '.html', TITLES[lang][nxt]))
-    items += [(s['pdf'], pdf_url, ''), (s['repo'], REPO, s['repo_t']), (s['site'], SITE_ROOT, s['home_t'])]
+    nav = docweb.bar_nav(k, prev + '.html' if prev else None, 'index.html' if name != 'index' else None,
+                         nxt + '.html' if nxt else None)
+    cur = '' if name == 'index' else '<span class="cur"> \u203a %s</span>' % html.escape(TITLES[lang][name])
+    place = '<span class="place"><strong><a href="index.html">%s</a></strong>%s</span>' % (html.escape(s['short']), cur)
     search = ('<div class="search"><label class="setlbl" for="q">%s</label> '
               '<input type="search" id="q" placeholder="%s" autocomplete="off">'
               '<p class="hint">%s</p><ul id="qr"></ul></div>'
               % (s['search'], html.escape(s['search_ph']), s['search_hint']))
     rows = ''.join('<a href="#%s">%s</a>' % (a, html.escape(t)) for lv, a, t in outline if lv == 2)
     here = ('<div class="here-sec"><div class="setlbl">%s</div>%s</div>' % (s['here'], rows)) if rows else ''
-    inner = (search + here + language_html(lang, '../%s/%s.html' % (other, name))
-             + settings_html(lang) + '<p class="ver">%s</p>' % html.escape(version))
-    here_text = TITLES[lang][name] if name != 'index' else s['short']
-    return bar_html(lang, here_text, '#top', items, inner, 'index.html')
+    inner = (docweb.settings_box(k, '../%s/%s.html' % (other, name))
+             + '<div class="tools">%s</div>' % docweb.tools_row(k, WEB, version, pdf_url, REPO, 'index.html')
+             + search + here)
+    return page_bar(lang, place, nav, inner)
 
 
 def full_contents(lang, pages, outlines):

@@ -932,6 +932,7 @@ static void mp_atan_fast(mp_t *out, const mp_t *a, const mp_t *b, int m) {
 #define FMT_QUIETB(s) ((s) ? (u64)0x00400000u : (u64)0x0008000000000000u)
 #define FMT_NANB(s) ((s) ? (u64)0x7fc00000u : (u64)0x7ff8000000000000u)
 #define FMT_ONEB(s) ((s) ? (u64)0x3f800000u : (u64)0x3ff0000000000000u)
+#define FMT_TWOB(s) ((s) ? (u64)0x40000000u : (u64)0x4000000000000000u)
 
 enum { FC_ZERO, FC_FIN, FC_INF, FC_NAN };
 
@@ -1356,6 +1357,431 @@ static void mp_expm1(mp_t *r, const mp_t *x, int n) {
     mp_copy(r, &u, n);
 }
 
+/*
+ * erf(x) for an exact x > 0 of at most two limbs, at n limbs:
+ * (2 / sqrt(pi)) x exp(-x^2) sum_k (2x^2)^k / (1 3 5 ... (2k + 1)). Every term is positive, so
+ * the sum does not cancel and its error is relative; the terms grow while 2k + 3 < 2x^2 and
+ * then fall, and once 2k + 3 >= 4x^2 each is below half the one before, so the rest is below
+ * the last term added: it stops when a term is below 2^-(32(n + 1) + 4) of the sum, past that
+ * point. x^2 is exact (four limbs), each step a few units at n + 1 limbs (the terms
+ * add a unit each: a few hundred at most, still far below one unit at n limbs).
+ */
+static void mp_erf_pos(mp_t *r, const mp_t *x, int n) {
+    const int m = n + 1;
+    mp_t q, term, sum, t, c;
+    mp_mul(&q, x, x, 4);
+    q.e += 1;                                               /* 2x^2, exact */
+    const proven_i64 room = ((proven_i64)32) * m + 4;
+    mp_one(&sum, m);
+    mp_one(&term, m);
+    for (u32 j = 3; j < 65535; j += 2) {                    /* j = 2k + 3 */
+        mp_mul(&term, &term, &q, m);
+        mp_div_small(&term, &term, j, m);
+        if (!term.n) break;
+        mp_add(&sum, &sum, &term, m);
+        /* past the largest term: j >= 2 (2x^2), i.e. j / 2 >= q */
+        if (mp_top(&term) < mp_top(&sum) - room) {
+            mp_set_u64(&t, false, j, -1, 2);
+            if (mp_cmp_abs(&t, &q) >= 0) break;
+        }
+    }
+    mp_copy(&t, &q, 4);
+    t.e -= 1;
+    t.neg = true;                                           /* -x^2 */
+    mp_exp(&c, &t, m);
+    mp_mul(&sum, &sum, &c, m);
+    mp_mul(&sum, &sum, x, m);
+    mp_const(&c, FM_2_SQRTPI, FM_CONST_LIMBS, FM_2_SQRTPI_EXP, m);
+    mp_mul(&sum, &sum, &c, m);
+    mp_copy(r, &sum, n);
+}
+
+/*
+ * erfc(x) for an exact x >= 4 of at most two limbs, at n limbs: exp(-x^2) / (sqrt(pi) T), T the
+ * continued fraction x + (1/2) / (x + 1 / (x + (3/2) / (x + ...))), its partial numerators k/2.
+ * Its convergents A_k / B_k come from A_k = x A_(k-1) + (k/2) A_(k-2) and the same for B (A_-1 = 1,
+ * A_0 = x, B_-1 = 0, B_0 = 1): sums of positive terms, so they do not cancel either, and each
+ * step adds a few units of relative error at m = n + 1 limbs. All its terms being positive, T lies
+ * between any two successive convergents, so it is within
+ * |A_k / B_k - A_(k-1) / B_(k-1)| = (1/2 ... k/2) / (B_k B_(k-1)) of A_k / B_k; it stops when
+ * that is below 2^-(32m + 4) of x <= T.
+ */
+static void mp_erfc_cf(mp_t *r, const mp_t *x, int n) {
+    const int m = n + 1;
+    mp_t a0, a1, b0, b1, ta, tb, P, t, c;
+    mp_one(&a0, m);                                         /* A_(k-2), A_(k-1) */
+    mp_copy(&a1, x, m);
+    mp_zero(&b0);
+    mp_one(&b1, m);
+    mp_one(&P, m);
+    const proven_i64 stop = mp_top(x) - (((proven_i64)32) * m + 4);
+    for (u32 k = 1; k < 1000000; k++) {
+        mp_mul(&ta, &a1, x, m);
+        mp_mul_small(&t, &a0, k, m);
+        if (t.n) t.e -= 1;
+        mp_add(&ta, &ta, &t, m);
+        mp_mul(&tb, &b1, x, m);
+        mp_mul_small(&t, &b0, k, m);
+        if (t.n) t.e -= 1;
+        mp_add(&tb, &tb, &t, m);
+        mp_mul_small(&P, &P, k, m);
+        if (P.n) P.e -= 1;
+        /* P / (B_k B_(k-1)) < 2^(top P + 1 - top B_k - top B_(k-1)) */
+        const bool done = mp_top(&P) + 1 - mp_top(&tb) - mp_top(&b1) < stop;
+        a0 = a1; a1 = ta; b0 = b1; b1 = tb;
+        if (done) break;
+    }
+    mp_mul(&t, x, x, 4);
+    t.neg = true;
+    mp_exp(&c, &t, m);                                      /* exp(-x^2) */
+    mp_mul(&c, &c, &b1, m);
+    mp_div(&c, &c, &a1, m);
+    mp_const(&t, FM_2_SQRTPI, FM_CONST_LIMBS, FM_2_SQRTPI_EXP, m);
+    mp_mul(&c, &c, &t, m);
+    if (c.n) c.e -= 1;                                      /* 1 / sqrt(pi) = (2 / sqrt(pi)) / 2 */
+    mp_copy(r, &c, n);
+}
+
+/* erf(x) for an exact x > 0 of at most two limbs, at n limbs: the series below 4; from 4 on,
+ * 1 - erfc(x) by the continued fraction, which takes fewer terms there (erfc(4) < 2^-25, so the
+ * result is above 1/2 and the subtraction does not cancel). */
+static void mp_erf(mp_t *r, const mp_t *x, int n) {
+    mp_t t, one;
+    mp_set_u64(&t, false, 4, 0, 1);
+    if (mp_cmp_abs(x, &t) < 0) { mp_erf_pos(r, x, n); return; }
+    mp_erfc_cf(&t, x, n);
+    mp_one(&one, 1);
+    mp_sub(r, &one, &t, n);
+}
+
+/* erfc(x) for an exact finite x other than 0, at n limbs: 1 + erf|x| below 0 (at least 1, no
+ * cancellation), 1 - erf x up to 4 (at least erfc(4) > 2^-26: one limb more covers what the
+ * subtraction cancels), the continued fraction above. */
+static void mp_erfc(mp_t *r, const mp_t *x, int n) {
+    mp_t ax = *x, t, one;
+    ax.neg = false;
+    mp_set_u64(&t, false, 4, 0, 1);
+    if (!x->neg && mp_cmp_abs(&ax, &t) >= 0) { mp_erfc_cf(r, &ax, n); return; }
+    mp_erf_pos(&t, &ax, n + 1);
+    mp_one(&one, 1);
+    if (x->neg) mp_add(r, &one, &t, n);
+    else mp_sub(r, &one, &t, n);
+}
+
+/*
+ * log Gamma(z) for an exact or rounded z >= X0 (FM_STIRLING_X0_LOG2 for m), at m limbs, by
+ * Stirling's series: (z - 1/2) log z - z + log(2 pi) / 2 + sum_j c_j z^-(2j - 1), c_j =
+ * B_2j / (2j (2j - 1)). For real z > 0 the rest of the series is below its first term left out;
+ * the table is made so that a term falls below 2^-(32m + 8) within FM_STIRLING_J of them while
+ * the terms still fall (j < pi z), and the sum stops at the first below 2^-(32m + 6). The sum is
+ * above 2^6 (z >= 32), so that is under 2^-(32m + 12) of it; the rest is a few units a term at m
+ * limbs (log z of a z of at least 32 is relative): under 2^7 units, the callers working at a
+ * limb or more past their result's.
+ */
+static void mp_stirling(mp_t *r, const mp_t *z, int m) {
+    const int w = m;
+    mp_t L, t, p, q, c, sum;
+    mp_log_any(&L, z, w);
+    mp_set_u64(&t, false, 1, -1, 1);
+    mp_sub(&t, z, &t, w + 1);                               /* z - 1/2 */
+    mp_mul(&sum, &t, &L, w);
+    mp_sub(&sum, &sum, z, w);
+    mp_const(&c, FM_HALF_LN_2PI, FM_CONST_LIMBS, FM_HALF_LN_2PI_EXP, w);
+    mp_add(&sum, &sum, &c, w);
+    mp_recip(&p, z, w);                                     /* z^-1, then z^-3, ... */
+    mp_mul(&q, &p, &p, w);
+    const proven_i64 stop = -(((proven_i64)32) * m + 6);
+    for (int j = 0; j < FM_STIRLING_J; j++) {
+        mp_const(&c, FM_STIRLING[j].d, FM_CONST_LIMBS, FM_STIRLING[j].e, w);
+        c.neg = FM_STIRLING[j].neg != 0;
+        mp_mul(&t, &c, &p, w);
+        mp_add(&sum, &sum, &t, w);
+        if (!t.n || mp_top(&t) < stop) break;
+        mp_mul(&p, &p, &q, w);
+    }
+    mp_copy(r, &sum, m);
+}
+
+/*
+ * For a z > 0 (exact, or rounded at m + 2 limbs): A = log Gamma(z + k) by Stirling's series and
+ * B = log(z (z + 1) ... (z + k - 1)), k the shift that takes z to X0 (none, and B = 0, from X0
+ * on), so log Gamma(z) = A - B. Each is within a few units at m limbs; their difference may
+ * cancel (near 1 and 2), which the callers measure. The factors are rounded at m + 2 limbs, which
+ * is relative: they are at least z.
+ */
+static void mp_lgamma_parts(mp_t *A, mp_t *B, const mp_t *z, int m) {
+    const int lg = FM_STIRLING_X0_LOG2[m > 40 ? 40 : m];
+    mp_t X0, y, P, t;
+    mp_set_u64(&X0, false, 1, lg, 1);
+    if (mp_cmp_abs(z, &X0) >= 0) { mp_stirling(A, z, m); mp_zero(B); return; }
+    const u32 k = ((u32)1 << lg) - (u32)mp_floor_long(z);  /* z + k >= X0 */
+    mp_set_u64(&t, false, k, 0, 1);
+    mp_add(&y, z, &t, m + 2);
+    mp_stirling(A, &y, m);
+    mp_copy(&P, z, m + 1);
+    for (u32 i = 1; i < k; i++) {
+        mp_set_u64(&t, false, i, 0, 1);
+        mp_add(&y, z, &t, m + 2);
+        mp_mul(&P, &P, &y, m + 1);
+    }
+    mp_log_any(B, &P, m);
+}
+
+/* The bits a difference a - b lost: how far its top is below the larger operand's. */
+static proven_i64 fm_lost(const mp_t *d, const mp_t *a, const mp_t *b) {
+    proven_i64 big = a->n ? mp_top(a) : -((proven_i64)1 << 62);
+    if (b->n && mp_top(b) > big) big = mp_top(b);
+    if (!d->n) return ((proven_i64)32) * MP_CAP;
+    return big - mp_top(d);
+}
+
+/* sin(pi f) for an exact 0 < f <= 1/2 of at most two limbs, at n limbs, relative: sin(pi f) up
+ * to 1/4, cos(pi (1/2 - f)) above, 1/2 - f exact; the argument of each at most pi/4. */
+static void mp_sinpi(mp_t *r, const mp_t *f, int n) {
+    const int m = n + 1;
+    mp_t a = *f, q, t, c;
+    a.neg = false;
+    mp_set_u64(&q, false, 1, -2, 1);
+    const bool use_cos = mp_cmp_abs(&a, &q) > 0;
+    if (use_cos) { mp_set_u64(&q, false, 1, -1, 1); mp_sub(&a, &q, &a, 4); }
+    mp_const(&c, FM_PI_2, FM_CONST_LIMBS, FM_PI_2_EXP, m + 1);
+    c.e += 1;                                               /* pi */
+    mp_mul(&t, &c, &a, m);
+    if (FM_FAST(m)) mp_sincos_fast(use_cos ? (mp_t *)0 : r, use_cos ? r : (mp_t *)0, &t, m);
+    else mp_sincos(use_cos ? (mp_t *)0 : r, use_cos ? r : (mp_t *)0, &t, m);
+    mp_copy(r, r, n);
+}
+
+/* Not inlined where that keeps a frame off the deepest chain of calls (the stack on a
+ * microcontroller): what it holds is dead before the deep calls that follow it. */
+#if defined(__GNUC__)
+#define FM_NOINLINE __attribute__((noinline))
+#else
+#define FM_NOINLINE
+#endif
+
+/*
+ * The reflection's first part for an exact negative non-integer x of at most two limbs:
+ * log Gamma(x) = log pi - log|sin(pi x)| - log Gamma(1 - x), |sin(pi x)| = sin(pi f) with f the
+ * distance from |x| to its nearest integer (exact). *odd: whether the integer below |x| is odd,
+ * the sign of sin(pi x) being (-1)^(I + 1) and Gamma(x)'s with it. C = log pi - log sin(pi f),
+ * at least log pi > 1; the callers take log Gamma(1 - x) (mp_reflect_parts).
+ */
+FM_NOINLINE static void mp_reflect_c(mp_t *C, const mp_t *x, bool *odd, int m) {
+    mp_t ax = *x, f, one, t, s;
+    ax.neg = false;
+    mp_one(&one, 1);
+    u64 I = 0;
+    if (mp_cmp_abs(&ax, &one) < 0) {
+        f = ax;
+    } else {
+        /* |x| = M 2^e with 1 <= |x| < 2^52 and not an integer: 0 < -e <= 63 */
+        const u64 M = ax.n >= 2 ? ((u64)ax.d[ax.n - 1] << 32) | ax.d[ax.n - 2] : ax.d[0];
+        const proven_i64 e = ax.e + ((proven_i64)32) * (ax.n >= 2 ? ax.n - 2 : 0);
+        const int sh = (int)-e;
+        I = M >> sh;
+        mp_set_u64(&f, false, M & (((u64)1 << sh) - 1u), e, 2);
+    }
+    *odd = (I & 1u) != 0;
+    mp_set_u64(&t, false, 1, -1, 1);
+    if (mp_cmp_abs(&f, &t) > 0) mp_sub(&f, &one, &f, 3);    /* the nearer integer, exactly */
+    mp_sinpi(&s, &f, m);
+    mp_log_any(&t, &s, m);                                  /* log of a value in (0, 1] */
+    mp_const(C, FM_LN_PI, FM_CONST_LIMBS, FM_LN_PI_EXP, m);
+    mp_sub(C, C, &t, m);
+}
+
+/* C as above, and A and B of log Gamma(1 - x) (mp_lgamma_parts), 1 - x rounded at m + 2 limbs. */
+static void mp_reflect_parts(mp_t *C, mp_t *A, mp_t *B, const mp_t *x, bool *odd, int m) {
+    mp_t t, one;
+    mp_reflect_c(C, x, odd, m);
+    mp_one(&one, 1);
+    mp_sub(&t, &one, x, m + 2);                             /* 1 - x = 1 + |x| */
+    mp_lgamma_parts(A, B, &t, m);
+}
+
+/* Whether |x| is below 2^-(32(n + 1) + 10), where Gamma(x) is 1/x and log Gamma(x) is -log|x|
+ * within 2^-(32(n + 1) + 9) of themselves (Gamma(x) = (1 - gamma x + ...) / x). */
+static bool fm_gamma_tiny(const mp_t *x, int n) {
+    return mp_top(x) < -(((proven_i64)32) * (n + 1) + 10);
+}
+
+/*
+ * log|Gamma(x)| for an exact finite x of at most two limbs, not 1 or 2, not 0 or a negative
+ * integer, at n limbs, relative to the result. Its parts, a few units (under 2^7) at m limbs,
+ * are measured: when their difference lost more than 32(m - n) - 16 bits, so that its error
+ * could pass 2^-9 units at n limbs, they are made again with the bits it lost and 40 more
+ * (twice at most). The inputs
+ * where it cancels are the floats next to the zeros of log Gamma (1, 2, and two between each
+ * pair of negative integers down to about -20), and a binary64 or binary32 value is never
+ * closer to those than a few units of its own last place.
+ */
+static void mp_lgamma(mp_t *r, const mp_t *x, int n) {
+    mp_t ax = *x;
+    ax.neg = false;
+    if (fm_gamma_tiny(x, n)) { mp_log(r, &ax, n); r->neg = !r->neg; return; }
+    int m = n + 1;
+    for (int tries = 0; ; tries++) {
+        mp_t A, B, C;
+        const mp_t *big = &A;                               /* the larger operand, for the loss */
+        if (!x->neg) {
+            mp_lgamma_parts(&A, &B, x, m);
+            mp_sub(r, &A, &B, m);
+        } else {
+            bool odd;
+            mp_reflect_parts(&C, &A, &B, x, &odd, m);
+            if (mp_cmp_abs(&C, &A) > 0) big = &C;
+            mp_sub(r, &B, &A, m);                           /* B - A + C */
+            mp_add(r, r, &C, m);
+        }
+        const proven_i64 lost = fm_lost(r, big, &B);
+        if (lost <= ((proven_i64)32) * (m - n) - 16 || tries == 2 || m >= MP_CAP - 6) {
+            mp_copy(r, r, n);
+            return;
+        }
+        m = n + 2 + (int)((lost + 40) / 32);
+        if (m > MP_CAP - 6) m = MP_CAP - 6;
+    }
+}
+
+/*
+ * Gamma(x) for an exact finite x of at most two limbs, not 0 or an integer below 1 (and not a
+ * positive integer: those are exact, fm_x_special), at n limbs: 1/x for a tiny x; else
+ * exp(log Gamma(x)), whose error is that exponent's absolute error: its parts, under 2^7 units
+ * at m limbs of Stirling's sum, are made at n + 1 limbs while X0 is at most 64 (the sum below
+ * 2^9: 2^-(32n + 16) in all) and at n + 2 above (below 2^17); for x < 0 the
+ * reflection, exp(log pi - log|sin(pi x)| - log Gamma(1 - x)) with Gamma(x)'s sign. The
+ * exponent is below 710 in magnitude wherever the result is in range (fm_x_special takes the
+ * rest).
+ */
+static void mp_tgamma(mp_t *r, const mp_t *x, int n) {
+    if (fm_gamma_tiny(x, n)) { mp_recip(r, x, n); return; }
+    const int m = n + 1 + (FM_STIRLING_X0_LOG2[n + 1 > 40 ? 40 : n + 1] > 6 ? 1 : 0);
+    mp_t A, B, T;
+    bool neg = false;
+    if (!x->neg) {
+        mp_lgamma_parts(&A, &B, x, m);
+        mp_sub(&T, &A, &B, m);
+    } else {
+        bool odd;
+        mp_reflect_parts(&T, &A, &B, x, &odd, m);
+        mp_sub(&T, &T, &A, m);                              /* C - A + B */
+        mp_add(&T, &T, &B, m);
+        neg = !odd;
+    }
+    mp_exp(r, &T, n);
+    if (r->n) r->neg = neg;
+}
+
+/*
+ * |x| = I + f for a finite x: *odd the parity of the integer I (even once |x| >= 2^54), f's
+ * numerator and its weight (f = num 2^fex, exact), and where f stands against 1/4, 1/2 and 3/4
+ * (-1 below, 0 at, 1 above; *q4 = 4f when f is a multiple of 1/4, else -1).
+ */
+typedef struct { bool odd; u64 num; int fex; int vs_half; int q4; } fm_unit_t;
+
+static fm_unit_t fm_unit(const fm_val *v) {
+    fm_unit_t u = { false, 0, 0, -1, -1 };
+    if (v->ex >= 0) { u.odd = v->ex == 0 && (v->mant & 1u); u.q4 = 0; return u; }   /* an integer */
+    const int sh = -v->ex;
+    u.fex = v->ex;
+    if (sh >= 64) { u.num = v->mant; return u; }            /* below 2^-11: f = |x| < 1/4 */
+    u.odd = sh < 64 && ((v->mant >> sh) & 1u);
+    u.num = v->mant & (((u64)1 << sh) - 1u);
+    const u64 half = (u64)1 << (sh - 1);
+    u.vs_half = u.num < half ? -1 : u.num > half ? 1 : 0;
+    if (!u.num) u.q4 = 0;
+    else if (sh >= 2 && !(u.num & ((half >> 1) - 1u))) u.q4 = (int)(u.num >> (sh - 2));
+    else if (sh == 1) u.q4 = 2;
+    return u;
+}
+
+/* sin(pi a) and cos(pi a) (either may be NULL) for an exact 0 <= a <= 1/4, at n limbs, relative:
+ * pi a at most pi/4, mp_sincos's range. */
+static void mp_sincospi(mp_t *S, mp_t *C, const mp_t *a, int n) {
+    const int m = n + 1;
+    mp_t c, t;
+    mp_const(&c, FM_PI_2, FM_CONST_LIMBS, FM_PI_2_EXP, m + 1);
+    c.e += 1;
+    mp_mul(&t, &c, a, m);
+    if (FM_FAST(m)) mp_sincos_fast(S, C, &t, m); else mp_sincos(S, C, &t, m);
+    if (S) mp_copy(S, S, n);
+    if (C) mp_copy(C, C, n);
+}
+
+/*
+ * sin, cos or tan of pi x for a finite x that is not a multiple of 1/4 (sin, cos: of 1/2), at n
+ * limbs, relative, its sign set: |x| = I + f (fm_unit), each argument passed on exact - an f of
+ * more than 64 fraction bits (|x| < 2^-11) is below 1/4 and taken as it is, and from 1/4 on f
+ * has at most 64, so 1/2 - f and 1 - f are exact in three limbs.
+ */
+static void mp_trigpi(mp_t *r, int fn, const fm_val *v, int n) {
+    const fm_unit_t u = fm_unit(v);
+    mp_t f, g, h, q, S, C;
+    mp_set_u64(&f, false, u.num, u.fex, 2);
+    mp_set_u64(&q, false, 1, -2, 1);                        /* 1/4 */
+    mp_one(&h, 1);
+    if (u.vs_half > 0) mp_sub(&g, &h, &f, 3); else g = f;  /* g = min(f, 1 - f), exact */
+    const bool low = mp_cmp_abs(&g, &q) <= 0;               /* g <= 1/4 */
+    if (!low) { mp_set_u64(&h, false, 1, -1, 1); mp_sub(&h, &h, &g, 3); }   /* 1/2 - g, exact */
+    bool neg;
+    if (fn == PROVEN_FLOAT_FN_SINPI_) {
+        /* sin(pi f) = sin(pi g) = cos(pi (1/2 - g)) */
+        if (low) mp_sincospi(r, (mp_t *)0, &g, n); else mp_sincospi((mp_t *)0, r, &h, n);
+        neg = v->neg != u.odd;
+    } else if (fn == PROVEN_FLOAT_FN_COSPI_) {
+        /* cos(pi f) = +-cos(pi g) (- when f > 1/2) = +-sin(pi (1/2 - g)) */
+        if (low) mp_sincospi((mp_t *)0, r, &g, n); else mp_sincospi(r, (mp_t *)0, &h, n);
+        neg = (u.vs_half > 0) != u.odd;
+    } else {
+        /* tan(pi f) = +-tan(pi g) (- when f > 1/2): sin / cos of pi g, or cos / sin of pi (1/2 - g) */
+        if (low) { mp_sincospi(&S, &C, &g, n + 1); mp_div(r, &S, &C, n); }
+        else { mp_sincospi(&S, &C, &h, n + 1); mp_div(r, &C, &S, n); }
+        neg = v->neg != (u.vs_half > 0);
+    }
+    if (r->n) r->neg = neg;
+}
+
+/* The magnitude of an i64 as a u64, INT64_MIN included. */
+static u64 fm_uabs(proven_i64 k) { return k < 0 ? (u64)0 - (u64)k : (u64)k; }
+
+/* The bit index of a's lowest set bit (a nonzero). */
+static proven_i64 mp_low_bit(const mp_t *a) {
+    for (int i = 0; i < a->n; i++)
+        if (a->d[i]) { u32 v = a->d[i]; int b = 0; while (!(v & 1u)) { v >>= 1; b++; } return a->e + ((proven_i64)32) * i + b; }
+    return 0;
+}
+
+/*
+ * b^k for an exact b > 0 of at most four limbs and k != 0, when that can be found with integers:
+ * b a power of 2 (2^(t k): out of range past 2^4000), or k > 0 and b's odd part times itself k
+ * times within 1,000 bits (computed exactly, then rounded once: this is where a result is exact
+ * or halfway). Otherwise b^k is neither, and false.
+ */
+static bool fm_exact_pow_mp(const mp_t *b, proven_i64 k, bool neg, bool s, u64 *out) {
+    const proven_i64 top = mp_top(b), low = mp_low_bit(b);
+    const u64 sb = FMT_SIGNB(s), inf = FMT_INFB(s);
+    if (top == low) {
+        const u64 ak = fm_uabs(k);
+        const u64 at = fm_uabs(top);
+        if (top && (ak > 4000 || at * ak > 4000)) { *out = (neg ? sb : 0) | (((top > 0) == (k > 0)) ? inf : 0); return true; }
+        const proven_i64 N = top * k;
+        *out = proven_float_pack_(neg, N, 1, s);
+        return true;
+    }
+    if (k < 0 || (u64)(top - low + 1) * (u64)k > 1000) return false;
+    mp_t r, base;
+    mp_copy(&base, b, 34);
+    mp_copy(&r, b, 34);
+    for (proven_i64 i = 1; i < k; i++) mp_mul(&r, &r, &base, 34);
+    r.neg = neg;
+    *out = mp_round_nearest(&r, s);
+    return true;
+}
+
+/* An integer k as an exact value of two limbs. */
+static void mp_of_i64(mp_t *r, proven_i64 k) { mp_set_u64(r, k < 0, fm_uabs(k), 0, 2); }
+
 /* q = floor(sqrt(N)) for N = nh 2^64 + nl, digit by digit; *inexact when N is not q^2. */
 static u64 fm_isqrt128(u64 nh, u64 nl, bool *inexact) {
     u64 rh = 0, rl = 0, q = 0;
@@ -1460,6 +1886,16 @@ static bool fm_x_special(int fn, bool s, u64 a, u64 b, u64 *out) {
     if (fn == PROVEN_FLOAT_FN_HYPOT_) { *out = fm_hypot(a, b, s); return true; }
     const fm_val x = fm_dec(a, s);
     const u64 sb = FMT_SIGNB(s), inf = FMT_INFB(s), one = FMT_ONEB(s), nan = FMT_NANB(s);
+    const proven_i64 k = (proven_i64)b;                     /* pown, rootn, compoundn: the integer */
+    /* pown(x, 0) = 1 even for a quiet NaN, as pow's; a signalling one gives itself, quieted */
+    const bool xsig = x.cls == FC_NAN && !(a & FMT_QUIETB(s));
+    if (fn == PROVEN_FLOAT_FN_POWN_ && k == 0 && !xsig) { *out = one; return true; }
+    if (fn == PROVEN_FLOAT_FN_COMPOUNDN_ && k == 0 && !xsig) {  /* 1 for x >= -1 and a NaN; below -1 invalid */
+        const bool below = x.neg && x.cls != FC_NAN && x.cls != FC_ZERO
+                        && (x.cls == FC_INF || (a & ~sb) > one);
+        *out = below ? nan : one;
+        return true;
+    }
     if (x.cls == FC_NAN) { *out = a | FMT_QUIETB(s); return true; }
     mp_t t;
     proven_i64 top = 0;
@@ -1543,6 +1979,146 @@ static bool fm_x_special(int fn, bool s, u64 a, u64 b, u64 *out) {
             return true;
         }
         return false;
+    case PROVEN_FLOAT_FN_ERF_:
+        /* |x| >= 8 (binary32 4): 1 less erfc(8) < 2^-95 (erfc(4) < 2^-25.9), so +-1 */
+        if (x.cls == FC_ZERO) { *out = a; return true; }
+        if (x.cls == FC_INF || top >= (s ? 2 : 3)) { *out = (a & sb) | one; return true; }
+        return false;
+    case PROVEN_FLOAT_FN_ERFC_:
+        if (x.cls == FC_ZERO) { *out = one; return true; }
+        if (x.neg && (x.cls == FC_INF || top >= (s ? 2 : 3))) { *out = FMT_TWOB(s); return true; }  /* 2 less below 2^-25.9 */
+        if (x.cls == FC_INF || top >= (s ? 4 : 5)) { *out = 0; return true; }   /* x >= 16 (32): below 2^-370 */
+        return false;
+    case PROVEN_FLOAT_FN_SINPI_: case PROVEN_FLOAT_FN_COSPI_: case PROVEN_FLOAT_FN_TANPI_: {
+        if (x.cls == FC_INF) { *out = nan; return true; }
+        if (x.cls == FC_ZERO) { *out = fn == PROVEN_FLOAT_FN_COSPI_ ? one : a; return true; }
+        const fm_unit_t u = fm_unit(&x);
+        const u64 xs = a & sb;
+        if (fn == PROVEN_FLOAT_FN_SINPI_) {
+            if (u.q4 == 0) { *out = xs; return true; }                 /* sinpi(+-n) = +-0 */
+            if (u.q4 == 2) { *out = (u.odd ? xs ^ sb : xs) | one; return true; }
+        } else if (fn == PROVEN_FLOAT_FN_COSPI_) {
+            if (u.q4 == 0) { *out = u.odd ? sb | one : one; return true; }
+            if (u.q4 == 2) { *out = 0; return true; }                  /* cospi(n + 1/2) = +0 */
+        } else {
+            if (u.q4 == 0) { *out = u.odd ? xs ^ sb : xs; return true; }  /* +-0, -+0 for odd n */
+            if (u.q4 == 2) { *out = (u.odd != (xs != 0)) ? sb | inf : inf; return true; }   /* the poles */
+            if (u.q4 == 1 || u.q4 == 3) { *out = (u.q4 == 3 ? xs ^ sb : xs) | one; return true; }
+        }
+        return false;
+    }
+    case PROVEN_FLOAT_FN_POWN_: {
+        /* within the format's integers, pow with that y: the same function, correctly rounded */
+        const u64 lim = s ? (u64)1 << 24 : (u64)1 << 53;
+        if (fm_uabs(k) <= lim) {
+            const u64 yb = s ? (u64)proven_float32_to_bits(proven_float32_from_i32((proven_i32)k)) : proven_float_to_bits(proven_float_from_i64(k));
+            *out = fm_pow(a, yb, s);
+            return true;
+        }
+        const bool odd = (k & 1) != 0, rneg = x.neg && odd;
+        if (x.cls == FC_ZERO) { *out = (odd ? a & sb : 0) | (k < 0 ? inf : 0); return true; }
+        if (x.cls == FC_INF) { *out = (rneg ? sb : 0) | (k < 0 ? 0 : inf); return true; }
+        if ((a & ~sb) == one) { *out = (rneg ? sb : 0) | one; return true; }
+        mp_t L, kv, z;
+        t.neg = false;
+        mp_log(&L, &t, 2);
+        mp_of_i64(&kv, k);
+        mp_mul(&z, &L, &kv, 2);
+        if (z.n && mp_top(&z) >= 11) { *out = (rneg ? sb : 0) | (z.neg ? 0 : inf); return true; }   /* |k log|x|| >= 2^11 */
+        return false;
+    }
+    case PROVEN_FLOAT_FN_ROOTN_: {
+        const bool odd = (k & 1) != 0;
+        if (k == 0) { *out = nan; return true; }
+        if (x.cls == FC_ZERO) { *out = (odd ? a & sb : 0) | (k < 0 ? inf : 0); return true; }
+        if (x.cls == FC_INF) { *out = x.neg && !odd ? nan : (a & sb) | (k < 0 ? 0 : inf); return true; }
+        if (x.neg && !odd) { *out = nan; return true; }
+        if (k == 1) { *out = a; return true; }
+        if (k == -1) { *out = s ? proven_float32_to_bits(proven_float32_div(1.0f, proven_float32_from_bits((proven_u32)a))) : proven_float_to_bits(proven_float_div(1.0, proven_float_from_bits(a))); return true; }
+        if (k == 2) { *out = s ? proven_float32_to_bits(proven_float32_sqrt(proven_float32_from_bits((proven_u32)a))) : proven_float_to_bits(proven_float_sqrt(proven_float_from_bits(a))); return true; }
+        /* exact: |x| = om 2^oe with om = w^|k| and k dividing oe (w = 1 for k < 0) */
+        const u64 ak = fm_uabs(k);
+        if (ak <= 4000) {
+            const u32 q = fm_udiv((u32)(oe < 0 ? -oe : oe), (u32)ak);
+            if ((u64)q * ak == (u64)(oe < 0 ? -oe : oe)) {
+                const proven_i64 e1 = oe < 0 ? -(proven_i64)q : (proven_i64)q;
+                if (om == 1) { *out = proven_float_pack_(x.neg, k < 0 ? -e1 : e1, 1, s); return true; }
+                if (k > 0 && ak <= 53) {
+                    u64 lo = 1, hi = (u64)1 << (54 / ak + 1);
+                    while (hi - lo > 1) {
+                        const u64 mid = (lo + hi) >> 1;
+                        u64 p = 1;
+                        bool big = false;
+                        for (u64 i = 0; i < ak && !big; i++) { if (p > (((u64)1 << 54) / mid)) big = true; else p *= mid; }
+                        if (!big && p <= om) lo = mid; else hi = mid;
+                    }
+                    u64 p = 1;
+                    for (u64 i = 0; i < ak; i++) p *= lo;
+                    if (p == om) { *out = proven_float_pack_(x.neg, e1, lo, s); return true; }
+                }
+            }
+        }
+        return false;
+    }
+    case PROVEN_FLOAT_FN_COMPOUNDN_: {
+        if (x.cls == FC_INF) { *out = x.neg ? nan : (k < 0 ? 0 : inf); return true; }
+        if (x.cls == FC_ZERO) { *out = one; return true; }
+        if (x.neg && top >= 0) {                            /* x <= -1 */
+            if (top == 0 && x.mant == ((u64)1 << FMT_MANT(s))) { *out = k < 0 ? inf : 0; return true; }
+            *out = nan;
+            return true;
+        }
+        /* 1 + x exactly, when it spans at most 120 bits: then the exact and halfway powers */
+        mp_t bv, onev, L, kv, z;
+        mp_one(&onev, 1);
+        const proven_i64 hi = top > 0 ? top + 1 : 1;
+        if (hi - oe <= 120) {
+            mp_add(&bv, &onev, &t, 4);
+            if (fm_exact_pow_mp(&bv, k, false, s, out)) return true;
+        }
+        mp_log1p(&L, &t, 2);
+        mp_of_i64(&kv, k);
+        mp_mul(&z, &L, &kv, 2);
+        if (z.n && mp_top(&z) >= 11) { *out = z.neg ? 0 : inf; return true; }
+        return false;
+    }
+    case PROVEN_FLOAT_FN_RSQRT_:
+        if (x.cls == FC_ZERO) { *out = (a & sb) | inf; return true; }
+        if (x.neg) { *out = nan; return true; }
+        if (x.cls == FC_INF) { *out = 0; return true; }
+        if (om == 1 && !(oe & 1)) { *out = proven_float_pack_(false, -oe / 2, 1, s); return true; }   /* 4^k */
+        return false;
+    case PROVEN_FLOAT_FN_TGAMMA_: case PROVEN_FLOAT_FN_LGAMMA_: {
+        const bool tg = fn == PROVEN_FLOAT_FN_TGAMMA_;
+        if (x.cls == FC_INF) { *out = tg && x.neg ? nan : inf; return true; }
+        if (x.cls == FC_ZERO) { *out = tg ? (a & sb) | inf : inf; return true; }
+        if (oe >= 0) {                                      /* an integer */
+            if (x.neg) { *out = tg ? nan : inf; return true; }   /* the poles */
+            if (!tg) { if (om == 1 && oe <= 1) { *out = 0; return true; } return false; }   /* log Gamma(1) = log Gamma(2) = 0 */
+            if (top >= 8 || (om << oe) >= (s ? 36u : 172u)) { *out = inf; return true; }
+            /* Gamma(N) = (N - 1)!, exactly (170! has 1,024 bits), rounded once */
+            const u64 N = om << oe;
+            mp_t f;
+            mp_one(&f, 34);
+            for (u32 i = 2; i < (u32)N; i++) mp_mul_small(&f, &f, i, 34);
+            *out = mp_round_nearest(&f, s);
+            return true;
+        }
+        if (tg) {
+            mp_t lim;
+            mp_set_u64(&lim, false, s ? 36 : 172, 0, 1);
+            if (!x.neg && mp_cmp_abs(&t, &lim) >= 0) { *out = inf; return true; }       /* Gamma(171.62...) is the largest double */
+            mp_set_u64(&lim, false, s ? 50 : 200, 0, 1);
+            if (x.neg && mp_cmp_abs(&t, &lim) >= 0) {
+                /* |Gamma(x)| < 1 / (200! ulp(200)) < 2^-1200 (binary32: 50, 2^-196); the sign is
+                 * negative when the integer below |x| is even */
+                const u64 I = x.ex >= 0 ? 0 : (x.ex <= -64 ? 0 : x.mant >> -x.ex);
+                *out = (I & 1u) ? 0 : sb;
+                return true;
+            }
+        }
+        return false;
+    }
     default:
         *out = 0;
         return true;
@@ -1551,7 +2127,7 @@ static bool fm_x_special(int fn, bool s, u64 a, u64 b, u64 *out) {
 
 /* The general case at n limbs, within a few units of the last place (see each function above).
  * x is exact, of two limbs; the odd functions are evaluated at |x| and given x's sign. */
-static void fm_x_eval(mp_t *r, int fn, bool s, u64 a, int n) {
+static void fm_x_eval(mp_t *r, int fn, bool s, u64 a, u64 b, int n) {
     const fm_val v = fm_dec(a, s);
     mp_t x, ax, c, t, w, z;
     fm_mp_of(&x, &v, 2);
@@ -1652,6 +2228,40 @@ static void fm_x_eval(mp_t *r, int fn, bool s, u64 a, int n) {
             if (r->n) r->e -= 1;
         }
         break;
+    case PROVEN_FLOAT_FN_ERF_:
+        mp_erf(r, &ax, n);
+        break;
+    case PROVEN_FLOAT_FN_ERFC_:
+        mp_erfc(r, &x, n);
+        return;
+    case PROVEN_FLOAT_FN_SINPI_: case PROVEN_FLOAT_FN_COSPI_: case PROVEN_FLOAT_FN_TANPI_:
+        mp_trigpi(r, fn, &v, n);
+        return;
+    case PROVEN_FLOAT_FN_RSQRT_:
+        mp_root(&t, &x, 2, n + 1);
+        mp_recip(r, &t, n);
+        return;
+    case PROVEN_FLOAT_FN_POWN_: case PROVEN_FLOAT_FN_ROOTN_: case PROVEN_FLOAT_FN_COMPOUNDN_: {
+        /* exp(y log|x|), y = k or 1/k, or exp(k log1p(x)); |y log| below 2^11 here */
+        const proven_i64 k = (proven_i64)b;
+        mp_of_i64(&c, k);
+        if (fn == PROVEN_FLOAT_FN_COMPOUNDN_) {
+            mp_log1p(&t, &x, n + 2);
+            mp_mul(&w, &t, &c, n + 2);
+            mp_exp(r, &w, n);
+            return;
+        }
+        if (fn == PROVEN_FLOAT_FN_ROOTN_) mp_recip(&w, &c, n + 2); else w = c;
+        mp_pow_core(r, &ax, &w, n);
+        if (r->n) r->neg = v.neg && (k & 1);
+        return;
+    }
+    case PROVEN_FLOAT_FN_TGAMMA_:
+        mp_tgamma(r, &x, n);
+        return;
+    case PROVEN_FLOAT_FN_LGAMMA_:
+        mp_lgamma(r, &x, n);
+        return;
     default:
         mp_zero(r);
         return;
@@ -1666,7 +2276,7 @@ static u64 fm_x(int fn, u64 a, u64 b, bool s) {
     if (fm_x_special(fn, s, a, b, &out)) return out;
     mp_t r;
     for (int i = 0; i < FM_LEVELS; i++) {
-        fm_x_eval(&r, fn, s, a, fm_level(s, i));
+        fm_x_eval(&r, fn, s, a, b, fm_level(s, i));
         if (mp_round_test(&r, s, &out)) return out;
     }
     return mp_round_nearest(&r, s);
@@ -1736,6 +2346,22 @@ double proven_cm_acosh_(double x);
 float proven_cm_acoshf_(float x);
 double proven_cm_atanh_(double x);
 float proven_cm_atanhf_(float x);
+double proven_cm_erf_(double x);
+float proven_cm_erff_(float x);
+double proven_cm_erfc_(double x);
+float proven_cm_erfcf_(float x);
+double proven_cm_tgamma_(double x);
+float proven_cm_tgammaf_(float x);
+double proven_cm_lgamma_(double x);
+float proven_cm_lgammaf_(float x);
+double proven_cm_sinpi_(double x);
+float proven_cm_sinpif_(float x);
+double proven_cm_cospi_(double x);
+float proven_cm_cospif_(float x);
+double proven_cm_tanpi_(double x);
+float proven_cm_tanpif_(float x);
+double proven_cm_rsqrt_(double x);
+float proven_cm_rsqrtf_(float x);
 
 double proven_cm_pow_fallback_(double x, double y) { return proven_float_from_bits(fm_pow(proven_float_to_bits(x), proven_float_to_bits(y), false)); }
 double proven_cm_atan2_fallback_(double y, double x) { return proven_float_from_bits(fm_atan2(proven_float_to_bits(y), proven_float_to_bits(x), false)); }
@@ -1805,6 +2431,22 @@ double proven_float_tanh(double x) { FM_CM1(tanh, x); return F64D(fm_x(PROVEN_FL
 double proven_float_asinh(double x) { FM_CM1(asinh, x); return F64D(fm_x(PROVEN_FLOAT_FN_ASINH_, F64B(x), 0, false)); }
 double proven_float_acosh(double x) { FM_CM1(acosh, x); return F64D(fm_x(PROVEN_FLOAT_FN_ACOSH_, F64B(x), 0, false)); }
 double proven_float_atanh(double x) { FM_CM1(atanh, x); return F64D(fm_x(PROVEN_FLOAT_FN_ATANH_, F64B(x), 0, false)); }
+double proven_float_erf(double x) { FM_CM1(erf, x); return F64D(fm_x(PROVEN_FLOAT_FN_ERF_, F64B(x), 0, false)); }
+double proven_float_erfc(double x) { FM_CM1(erfc, x); return F64D(fm_x(PROVEN_FLOAT_FN_ERFC_, F64B(x), 0, false)); }
+double proven_float_tgamma(double x) { FM_CM1(tgamma, x); return F64D(fm_x(PROVEN_FLOAT_FN_TGAMMA_, F64B(x), 0, false)); }
+double proven_float_lgamma(double x) { FM_CM1(lgamma, x); return F64D(fm_x(PROVEN_FLOAT_FN_LGAMMA_, F64B(x), 0, false)); }
+double proven_float_sinpi(double x) { FM_CM1(sinpi, x); return F64D(fm_x(PROVEN_FLOAT_FN_SINPI_, F64B(x), 0, false)); }
+double proven_float_cospi(double x) { FM_CM1(cospi, x); return F64D(fm_x(PROVEN_FLOAT_FN_COSPI_, F64B(x), 0, false)); }
+double proven_float_tanpi(double x) { FM_CM1(tanpi, x); return F64D(fm_x(PROVEN_FLOAT_FN_TANPI_, F64B(x), 0, false)); }
+double proven_float_rsqrt(double x) { FM_CM1(rsqrt, x); return F64D(fm_x(PROVEN_FLOAT_FN_RSQRT_, F64B(x), 0, false)); }
+double proven_float_pown(double x, proven_i64 n) {
+#if PROVEN_CM
+    if (fm_cm_ready() && fm_uabs(n) <= ((u64)1 << 53)) return F64D(fm_fix(F64B(proven_cm_pow_(x, (double)n)), F64B(x), 0, 1, false));
+#endif
+    return F64D(fm_x(PROVEN_FLOAT_FN_POWN_, F64B(x), (u64)n, false));
+}
+double proven_float_rootn(double x, proven_i64 n) { return F64D(fm_x(PROVEN_FLOAT_FN_ROOTN_, F64B(x), (u64)n, false)); }
+double proven_float_compoundn(double x, proven_i64 n) { return F64D(fm_x(PROVEN_FLOAT_FN_COMPOUNDN_, F64B(x), (u64)n, false)); }
 
 float proven_float32_exp2(float x) { FM_CM1F(exp2, x); return F32D(fm_x(PROVEN_FLOAT_FN_EXP2_, F32B(x), 0, true)); }
 float proven_float32_exp10(float x) { FM_CM1F(exp10, x); return F32D(fm_x(PROVEN_FLOAT_FN_EXP10_, F32B(x), 0, true)); }
@@ -1823,6 +2465,22 @@ float proven_float32_tanh(float x) { FM_CM1F(tanh, x); return F32D(fm_x(PROVEN_F
 float proven_float32_asinh(float x) { FM_CM1F(asinh, x); return F32D(fm_x(PROVEN_FLOAT_FN_ASINH_, F32B(x), 0, true)); }
 float proven_float32_acosh(float x) { FM_CM1F(acosh, x); return F32D(fm_x(PROVEN_FLOAT_FN_ACOSH_, F32B(x), 0, true)); }
 float proven_float32_atanh(float x) { FM_CM1F(atanh, x); return F32D(fm_x(PROVEN_FLOAT_FN_ATANH_, F32B(x), 0, true)); }
+float proven_float32_erf(float x) { FM_CM1F(erf, x); return F32D(fm_x(PROVEN_FLOAT_FN_ERF_, F32B(x), 0, true)); }
+float proven_float32_erfc(float x) { FM_CM1F(erfc, x); return F32D(fm_x(PROVEN_FLOAT_FN_ERFC_, F32B(x), 0, true)); }
+float proven_float32_tgamma(float x) { FM_CM1F(tgamma, x); return F32D(fm_x(PROVEN_FLOAT_FN_TGAMMA_, F32B(x), 0, true)); }
+float proven_float32_lgamma(float x) { FM_CM1F(lgamma, x); return F32D(fm_x(PROVEN_FLOAT_FN_LGAMMA_, F32B(x), 0, true)); }
+float proven_float32_sinpi(float x) { FM_CM1F(sinpi, x); return F32D(fm_x(PROVEN_FLOAT_FN_SINPI_, F32B(x), 0, true)); }
+float proven_float32_cospi(float x) { FM_CM1F(cospi, x); return F32D(fm_x(PROVEN_FLOAT_FN_COSPI_, F32B(x), 0, true)); }
+float proven_float32_tanpi(float x) { FM_CM1F(tanpi, x); return F32D(fm_x(PROVEN_FLOAT_FN_TANPI_, F32B(x), 0, true)); }
+float proven_float32_rsqrt(float x) { FM_CM1F(rsqrt, x); return F32D(fm_x(PROVEN_FLOAT_FN_RSQRT_, F32B(x), 0, true)); }
+float proven_float32_pown(float x, proven_i64 n) {
+#if PROVEN_CM
+    if (fm_cm_ready() && fm_uabs(n) <= ((u64)1 << 24)) return F32D(fm_fix(F32B(proven_cm_powf_(x, (float)n)), F32B(x), 0, 1, true));
+#endif
+    return F32D(fm_x(PROVEN_FLOAT_FN_POWN_, F32B(x), (u64)n, true));
+}
+float proven_float32_rootn(float x, proven_i64 n) { return F32D(fm_x(PROVEN_FLOAT_FN_ROOTN_, F32B(x), (u64)n, true)); }
+float proven_float32_compoundn(float x, proven_i64 n) { return F32D(fm_x(PROVEN_FLOAT_FN_COMPOUNDN_, F32B(x), (u64)n, true)); }
 
 bool proven_float_math_is_fpu_(void) { return fm_cm_ready(); }
 
@@ -1853,7 +2511,7 @@ static bool fm_eval(mp_t *r, int fn, bool s, u64 a, u64 b, int n) {
     if (fn > PROVEN_FLOAT_FN_POW_) {
         u64 out;
         if (fn >= PROVEN_FLOAT_FN_COUNT_ || fm_x_special(fn, s, a, b, &out)) return false;
-        fm_x_eval(r, fn, s, a, n);
+        fm_x_eval(r, fn, s, a, b, n);
         return true;
     }
     switch (fn) {

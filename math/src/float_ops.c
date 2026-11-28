@@ -1196,6 +1196,14 @@ proven_err_t proven_float_rint_to_i64(double x, proven_i64 *out) {
     return proven_float_to_i64(proven_float_rint(x), out);
 }
 
+proven_err_t proven_float_round_to_i32(double x, proven_i32 *out) {
+    return proven_float_to_i32(proven_float_round(x), out);
+}
+
+proven_err_t proven_float_rint_to_i32(double x, proven_i32 *out) {
+    return proven_float_to_i32(proven_float_rint(x), out);
+}
+
 /* binary32: through binary64, where each of these is exact, and back (also exact); nextafter
  * on binary32's own bits. */
 float proven_float32_remainder(float x, float y) {
@@ -1238,6 +1246,22 @@ float proven_float32_fdim(float x, float y) {
 proven_err_t proven_float32_round_to_i64(float x, proven_i64 *out) { return proven_float_round_to_i64(proven_float_from_float32(x), out); }
 
 proven_err_t proven_float32_rint_to_i64(float x, proven_i64 *out) { return proven_float_rint_to_i64(proven_float_from_float32(x), out); }
+
+proven_err_t proven_float32_round_to_i32(float x, proven_i32 *out) { return proven_float_round_to_i32(proven_float_from_float32(x), out); }
+
+proven_err_t proven_float32_rint_to_i32(float x, proven_i32 *out) { return proven_float_rint_to_i32(proven_float_from_float32(x), out); }
+
+/* x compared with y in binary64, where x is exact: one step on x's own bits, as nextafter. */
+float proven_float32_nexttoward(float x, double y) {
+    const proven_u32 a = proven_float32_to_bits(x);
+    if ((a & 0x7fffffffu) > 0x7f800000u) return proven_float32_from_bits(a | 0x00400000u);
+    if (proven_float_is_nan(y)) return proven_float_to_float32(y);    /* quieted, the payload's top */
+    const int c = proven_float_compare(proven_float_from_float32(x), y);
+    if (c == 0) return proven_float_to_float32(y);                     /* exact: y is x's value */
+    if ((a & 0x7fffffffu) == 0) return proven_float32_from_bits((proven_u32)((proven_float_to_bits(y) >> 32) & 0x80000000u) | 1u);
+    const bool up = c < 0, neg = (a & 0x80000000u) != 0;
+    return proven_float32_from_bits(up != neg ? a + 1u : a - 1u);
+}
 
 // -----------------------------------------------------------------------------
 // The floating-point environment as a value (float_env.h, RFC-0058)
@@ -1334,6 +1358,22 @@ float proven_float32_env_rint(proven_float_env_t *env, float x) {
     /* through binary64, where it is exact; the result is integral, so narrowing it is too */
     f_env f = f_env_in(env);
     const proven_u64 r = f_rint_env(f_widen(F32_BITS(x)), &f);
+    f_env_out(env, &f);
+    return F_FLT(f_narrow(r));
+}
+
+/* nearbyint: rint in the direction, its inexact not raised (f starts with no flags) */
+double proven_float_env_nearbyint(proven_float_env_t *env, double x) {
+    f_env f = f_env_in(env);
+    const proven_u64 r = f_rint_env(F_BITS(x), &f);
+    f.flags &= ~(unsigned)FF_INEXACT;
+    f_env_out(env, &f);
+    return F_DBL(r);
+}
+float proven_float32_env_nearbyint(proven_float_env_t *env, float x) {
+    f_env f = f_env_in(env);
+    const proven_u64 r = f_rint_env(f_widen(F32_BITS(x)), &f);
+    f.flags &= ~(unsigned)FF_INEXACT;
     f_env_out(env, &f);
     return F_FLT(f_narrow(r));
 }

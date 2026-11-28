@@ -33,15 +33,31 @@ enum {
     PROVEN_FLOAT_FN_ASINH_,
     PROVEN_FLOAT_FN_ACOSH_,
     PROVEN_FLOAT_FN_ATANH_,
+    PROVEN_FLOAT_FN_ERF_,
+    PROVEN_FLOAT_FN_ERFC_,
+    PROVEN_FLOAT_FN_TGAMMA_,
+    PROVEN_FLOAT_FN_LGAMMA_,
+    PROVEN_FLOAT_FN_SINPI_,
+    PROVEN_FLOAT_FN_COSPI_,
+    PROVEN_FLOAT_FN_TANPI_,
+    PROVEN_FLOAT_FN_RSQRT_,
+    PROVEN_FLOAT_FN_POWN_,
+    PROVEN_FLOAT_FN_ROOTN_,
+    PROVEN_FLOAT_FN_COMPOUNDN_,
     PROVEN_FLOAT_FN_COUNT_
 };
 
-/* Every function of float_math.h: X(ID, name, arguments), in the enum's order, for the checks. */
+/* Every function of float_math.h: X(ID, name, arguments), in the enum's order, for the checks.
+ * Arguments: 1 (x), 2 (x, y), or 3 (x and an integer n, proven_i64; passed as the second operand's
+ * 64 bits). */
 #define PROVEN_FLOAT_MATH_FNS(X) \
     X(EXP, exp, 1) X(LOG, log, 1) X(SIN, sin, 1) X(COS, cos, 1) X(TAN, tan, 1) X(ATAN2, atan2, 2) X(POW, pow, 2) \
     X(EXP2, exp2, 1) X(EXP10, exp10, 1) X(EXPM1, expm1, 1) X(LOG2, log2, 1) X(LOG10, log10, 1) X(LOG1P, log1p, 1) \
     X(CBRT, cbrt, 1) X(HYPOT, hypot, 2) X(ASIN, asin, 1) X(ACOS, acos, 1) X(ATAN, atan, 1) X(SINH, sinh, 1) \
-    X(COSH, cosh, 1) X(TANH, tanh, 1) X(ASINH, asinh, 1) X(ACOSH, acosh, 1) X(ATANH, atanh, 1)
+    X(COSH, cosh, 1) X(TANH, tanh, 1) X(ASINH, asinh, 1) X(ACOSH, acosh, 1) X(ATANH, atanh, 1) \
+    X(ERF, erf, 1) X(ERFC, erfc, 1) X(TGAMMA, tgamma, 1) X(LGAMMA, lgamma, 1) \
+    X(SINPI, sinpi, 1) X(COSPI, cospi, 1) X(TANPI, tanpi, 1) X(RSQRT, rsqrt, 1) \
+    X(POWN, pown, 3) X(ROOTN, rootn, 3) X(COMPOUNDN, compoundn, 3)
 
 
 [[nodiscard]] proven_u64 proven_float_math_int_(int fn, bool b32, proven_u64 a, proven_u64 b);

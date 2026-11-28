@@ -979,7 +979,7 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `float_parse.h` | 로케일 없는 십진수·16진수 → `double`/`float` 파서 (`proven_strtod`, `proven_parse_double_ascii`) | 챕터 8 |
 | `float_format.h` | `double`/`float` → 십진수 formatter (고정 `%f`/`%e`, shortest) | 챕터 8 |
 | `float_ops.h` | 모든 타깃에서 같은 비트를 내는 binary64·binary32 연산: `add`/`sub`/`mul`/`div`/`fma`, 비교, `sqrt`, `floor`/`ceil`/`trunc`/`round`/`rint`, `fmod`, `frexp`/`ldexp`, 정수·binary32 변환, 분류; 명령 또는 정수 구현, FPU 없이도 | 챕터 8 |
-| `float_math.h` | binary64·binary32 `exp`, `exp2`, `exp10`, `expm1`, `log`, `log2`, `log10`, `log1p`, `pow`, `cbrt`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, 올바른 반올림: 모든 타깃에서 같은 비트 | 챕터 8 |
+| `float_math.h` | binary64·binary32 `exp`, `exp2`, `exp10`, `expm1`, `log`, `log2`, `log10`, `log1p`, `pow`, `cbrt`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `erf`, `erfc`, `tgamma`, `lgamma`, `sinpi`, `cospi`, `tanpi`, `rsqrt`, `pown`, `rootn`, `compoundn`, 올바른 반올림: 모든 타깃에서 같은 비트 | 챕터 8 |
 | `complex.h` | 두 값의 쌍인 복소수, binary64·binary32: 사칙연산, `abs`, `arg`, `exp`, `log`, `pow`, `sqrt`, 삼각함수와 쌍곡선함수, 그 역함수, Annex G의 분지 절단과 특수값; 모든 타깃에서 같은 비트 | 챕터 8 |
 | `float_config.h` | Float 엔진 튜닝 (`PROVEN_FLOAT_BIGINT_LIMBS`, 정밀도 상한) | 챕터 6, 8 |
 | `array.h` | 제네릭 growable 벡터 | 챕터 4 |
@@ -1052,7 +1052,7 @@ Freestanding 모드는 OS 기반 서비스를 제거한 축소된 서브셋을 �
 | `remainder`, `nextafter`, `modf`, `ilogb`, `fdim`, `llround` ... | `proven_float_remainder`, `_nextafter`, `_modf`, `_ilogb`, `_fdim`, `_round_to_i64` ... (`float_ops.h`) | 정확하고 어디서나 같은 비트이며, 범위 밖 정수는 오류입니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `setlocale`, `localeconv`(수에 대해) | `proven_numfmt_t`와 `proven_numfmt_f64`, `_parse_f64` ... (`numfmt.h`) | 표기는 프로세스 상태가 아니라 호출 하나에 넘기는 값입니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `fesetround`, `fetestexcept` | `proven_float_env_t`와 `proven_float_env_add` ... (`float_env.h`) | 방향과 플래그는 프로세서의 상태가 아니라 넘기는 값입니다. [챕터 8](manual-08-fmt-scan-ko.md) |
-| `exp`, `exp2`, `exp10`, `expm1`, `log`, `log2`, `log10`, `log1p`, `pow`, `cbrt`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh` | `proven_float_exp` ... (`float_math.h`), `float`에는 `proven_float32_*` | 올바르게 반올림하므로 모든 빌드가 같은 비트를 내며, `errno`를 쓰지 않습니다. [챕터 8](manual-08-fmt-scan-ko.md) |
+| `exp`, `exp2`, `exp10`, `expm1`, `log`, `log2`, `log10`, `log1p`, `pow`, `cbrt`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `erf`, `erfc`, `tgamma`, `lgamma`, `sinpi`, `cospi`, `tanpi`, `rsqrt`, `pown`, `rootn`, `compoundn` | `proven_float_exp` ... (`float_math.h`), `float`에는 `proven_float32_*` | 올바르게 반올림하므로 모든 빌드가 같은 비트를 내며, `errno`를 쓰지 않습니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `<complex.h>`: `cexp`, `clog`, `csqrt`, `cpow`, ... | `proven_complex_t`와 `proven_complex_exp` ... (`complex.h`), `float`에는 `proven_complex32_*` | 두 부분의 구조체로, 모든 컴파일러(MSVC 포함)에서 같고 모든 타깃에서 같은 비트를 냅니다. [챕터 8](manual-08-fmt-scan-ko.md) |
 | `fopen` / `fread` / `fclose` | `proven_fs_open`, `_read`, `_close`, 또는 `proven_fs_read_all_u8str` | 명시적인 에러, 숨은 버퍼링 없음, 파일 전체를 한 번의 호출로. [챕터 5](manual-05-hosted-services-ko.md) |
 | `fgets` | `proven_sysio_read_line`, `proven_reader_read_line` | 버퍼를 정확히 꽉 채우는 줄도 잃어버리지 않고 반환합니다. [챕터 5](manual-05-hosted-services-ko.md) |

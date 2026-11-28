@@ -127,6 +127,15 @@ int main(void) {
         ok &= B(proven_float_env_from_i64(&i64, ((proven_i64)1 << 53) + 1)) == 0x4340000000000000u && i64.flags == PROVEN_FLOAT_INEXACT;
         ok &= BF(proven_float32_env_from_i64(&i64, 16777217)) == 0x4b800000u;
         PROVEN_TEST_ASSERT(ok, "rint and to_i64 of +-2.5 in each direction; out of range is invalid; narrowing and from_i64 in a direction", "");
+        bool nb = true;
+        for (int k = 0; k < 4; k++) {
+            proven_float_env_t e = { r[k].round, 0 }, e32 = { r[k].round, 0 };
+            nb &= B(proven_float_env_nearbyint(&e, -2.5)) == B((double)want[k][1]) && e.flags == 0;
+            nb &= BF(proven_float32_env_nearbyint(&e32, 2.5f)) == BF((float)want[k][0]) && e32.flags == 0;
+        }
+        proven_float_env_t ei = { PROVEN_ROUND_NEAREST, PROVEN_FLOAT_INEXACT };
+        nb &= B(proven_float_env_nearbyint(&ei, 0.5)) == 0 && ei.flags == PROVEN_FLOAT_INEXACT;   /* a flag raised before stays */
+        PROVEN_TEST_ASSERT(nb, "nearbyint: rint's result in each direction, no inexact raised, earlier flags kept", "");
         PROVEN_TEST_ASSERT(B(proven_float_env_add(NULL, 0.1, 0.2)) == B(proven_float_add(0.1, 0.2)), "a NULL env is nearest-even", "");
     }
 

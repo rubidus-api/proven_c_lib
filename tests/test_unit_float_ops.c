@@ -40,6 +40,7 @@ static double D(uint64_t u) { double x; memcpy(&x, &u, sizeof x); return x; }
 #define ONE 0x3ff0000000000000u
 #define PINF_D (proven_float_from_bits(PINF))
 #define NINF_D (proven_float_from_bits(NINF))
+#define BF(x) proven_float32_to_bits(x)
 
 typedef double (*f1_t)(double);
 typedef struct { uint64_t in, out; } row1_t;
@@ -261,7 +262,7 @@ int main(void) {
         PROVEN_TEST_ASSERT(bad == 0, "random values both ways agree with the compiler's conversions", "");
     }
 
-    PROVEN_TEST_SECTION("RFC-0058's exact functions", "remainder, remquo, nextafter, modf, ilogb, logb, fdim, round_to_i64 and rint_to_i64 by tables of bits; remainder also as x - n*y checked exactly on random inputs.", "Check f_remquo's quotient bits and its |x| < |y| branch, and nextafter's direction.");
+    PROVEN_TEST_SECTION("RFC-0058's exact functions", "remainder, remquo, nextafter, nexttoward, modf, ilogb, logb, fdim, round_to_i64, rint_to_i64, round_to_i32 and rint_to_i32 by tables of bits; remainder also as x - n*y checked exactly on random inputs.", "Check f_remquo's quotient bits and its |x| < |y| branch, and nextafter's direction.");
     {
         int q = 0;
         PROVEN_TEST_ASSERT(B(proven_float_remainder(D(0x4014000000000000u), D(0x4000000000000000u))) == ONE              /* 5 rem 2 = 1 (n = 2, even) */
@@ -292,6 +293,18 @@ int main(void) {
             && proven_float_round_to_i64(D(0x4004000000000000u), &v) == PROVEN_OK && v == 3 && proven_float_rint_to_i64(D(0x4004000000000000u), &v) == PROVEN_OK && v == 2
             && proven_float_round_to_i64(D(QNAN), &v) == PROVEN_ERR_OUT_OF_BOUNDS,
             "fdim; 2.5 rounds to 3 away from zero and to 2 to even", "");
+        proven_i32 w = 0;
+        PROVEN_TEST_ASSERT(proven_float_round_to_i32(D(0xc004000000000000u), &w) == PROVEN_OK && w == -3 && proven_float_rint_to_i32(D(0xc004000000000000u), &w) == PROVEN_OK && w == -2
+            && proven_float_round_to_i32(2147483647.4, &w) == PROVEN_OK && w == 2147483647 && proven_float_round_to_i32(2147483647.5, &w) == PROVEN_ERR_OUT_OF_BOUNDS
+            && proven_float_rint_to_i32(-2147483648.5, &w) == PROVEN_OK && w == INT32_MIN && proven_float_round_to_i32(-2147483648.5, &w) == PROVEN_ERR_OUT_OF_BOUNDS
+            && proven_float_rint_to_i32(D(QNAN), &w) == PROVEN_ERR_OUT_OF_BOUNDS
+            && proven_float32_round_to_i32(2.5f, &w) == PROVEN_OK && w == 3 && proven_float32_rint_to_i32(2.5f, &w) == PROVEN_OK && w == 2,
+            "round_to_i32 and rint_to_i32 (C's lround, lrint): -2.5, the ends of the range by half a unit, a NaN, binary32", "");
+        PROVEN_TEST_ASSERT(BF(proven_float32_nexttoward(1.0f, 1.0 + 0x1p-40)) == 0x3f800001u && BF(proven_float32_nexttoward(1.0f, 1.0 - 0x1p-40)) == 0x3f7fffffu
+            && BF(proven_float32_nexttoward(1.0f, 1.0)) == 0x3f800000u && BF(proven_float32_nexttoward(0.0f, -0x1p-1000)) == 0x80000001u
+            && BF(proven_float32_nexttoward(-0.0f, 0.0)) == 0u && BF(proven_float32_nexttoward(3.4028234663852886e38f, PINF_D)) == 0x7f800000u
+            && BF(proven_float32_nexttoward(1.0f, D(QNAN))) == 0x7fc00000u,
+            "nexttoward (binary32 toward a binary64): a y between two floats still moves x, equal gives y, through zero, to infinity, a NaN", "");
         int bad = 0;
         for (int i = 0; i < 300000; i++) {
             const double x = rnd_double(), y = rnd_double();

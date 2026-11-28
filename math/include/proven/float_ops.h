@@ -149,6 +149,10 @@
  *         and llrint): PROVEN_ERR_OUT_OF_BOUNDS for a NaN and outside [-2^63, 2^63). */
 [[nodiscard]] proven_err_t proven_float_round_to_i64(double x, proven_i64 *out);
 [[nodiscard]] proven_err_t proven_float_rint_to_i64(double x, proven_i64 *out);
+/** @brief The same into 32 bits (C's lround and lrint where `long` has 32 bits):
+ *         PROVEN_ERR_OUT_OF_BOUNDS for a NaN and outside [-2^31, 2^31). */
+[[nodiscard]] proven_err_t proven_float_round_to_i32(double x, proven_i32 *out);
+[[nodiscard]] proven_err_t proven_float_rint_to_i32(double x, proven_i32 *out);
 
 /*
  * binary32 (RFC-0055): every function above for `float`, with the same contract. The integral
@@ -196,11 +200,17 @@
 [[nodiscard]] float proven_float32_remainder(float x, float y);
 [[nodiscard]] float proven_float32_remquo(float x, float y, int *quo);
 [[nodiscard]] float proven_float32_nextafter(float x, float y);
+/** @brief The next binary32 value after `x` toward a binary64 `y` (C's nexttowardf, whose `y` is
+ *         wider so that it can lie between two floats); `y` narrowed when they are equal. binary64
+ *         has no wider type here: its nexttoward is proven_float_nextafter. */
+[[nodiscard]] float proven_float32_nexttoward(float x, double y);
 [[nodiscard]] float proven_float32_modf(float x, float *int_part);
 [[nodiscard]] int proven_float32_ilogb(float x);
 [[nodiscard]] float proven_float32_logb(float x);
 [[nodiscard]] float proven_float32_fdim(float x, float y);
 [[nodiscard]] proven_err_t proven_float32_round_to_i64(float x, proven_i64 *out);
 [[nodiscard]] proven_err_t proven_float32_rint_to_i64(float x, proven_i64 *out);
+[[nodiscard]] proven_err_t proven_float32_round_to_i32(float x, proven_i32 *out);
+[[nodiscard]] proven_err_t proven_float32_rint_to_i32(float x, proven_i32 *out);
 
 #endif /* PROVEN_FLOAT_OPS_H */

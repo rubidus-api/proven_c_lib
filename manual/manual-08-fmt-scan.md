@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v0.122.0)
+# Chapter 8: Formatting and Scanning (v0.123.0)
 
 **Part IV - Text in and out. Prerequisite: [Chapter 3](manual-03-strings-text.md) section 3-section 4.**
 **After this chapter** you can format any value, teach the formatter a type of your own, parse
@@ -535,10 +535,12 @@ root that gives the same bits elsewhere. No libm, no `errno`; freestanding.
 | `proven_float_to_bits` `proven_float_from_bits` | the bits of a double, and back |
 | `proven_float_remainder(x, y)`, `_remquo` | IEEE 754 remainder, exact; a zero result has `x`'s sign; `remquo` also gives the sign and low 31 bits of the quotient |
 | `proven_float_nextafter(x, y)` | the next value after `x` toward `y` |
+| `proven_float32_nexttoward(x, y)` | binary32 `x` toward a binary64 `y`, which can lie between two floats (C's `nexttowardf`; binary64 has no wider type here, so its `nexttoward` is `nextafter`) |
 | `proven_float_modf(x, &i)` | the fraction, and the integral part in `i` |
 | `proven_float_ilogb`, `proven_float_logb` | the exponent, as an `int` or a double |
 | `proven_float_fdim(x, y)` | `x - y` when `x > y`, else +0 |
 | `proven_float_round_to_i64`, `_rint_to_i64` | `llround` and `llrint`, with `PROVEN_ERR_OUT_OF_BOUNDS` instead of an unspecified value |
+| `proven_float_round_to_i32`, `_rint_to_i32` | the same into 32 bits: `lround` and `lrint` where `long` has 32 bits |
 
 A NaN given comes back with its payload and the quiet bit set; a NaN made here is
 `0x7FF8000000000000`. So four builds of one program - native, another compiler, exported C,
@@ -598,8 +600,17 @@ const float f[] = { proven_float32_remainder(7.0f, 2.0f), proven_float32_remquo(
 const int ex32 = proven_float32_ilogb(8.0f);
 const proven_err_t e3 = proven_float32_round_to_i64(-0.5f, &n32);   /* -1 */
 const proven_err_t e4 = proven_float32_rint_to_i64(-0.5f, &n32);    /* -0, so 0 */
+proven_i32 n31 = 0;
+const proven_err_t e5 = proven_float_round_to_i32(-2.5, &n31);       /* -3: C's lround, 32 bits */
+const proven_err_t e6 = proven_float_rint_to_i32(3e9, &n31);         /* PROVEN_ERR_OUT_OF_BOUNDS */
+const proven_err_t e7 = proven_float32_round_to_i32(2.5f, &n31);     /* 3 */
+const proven_err_t e8 = proven_float32_rint_to_i32(2.5f, &n31);      /* 2 */
+const float toward = proven_float32_nexttoward(1.0f, 1.0 + 0x1p-40); /* 1 + 2^-23: y lies between floats */
+proven_float_env_t near = { PROVEN_ROUND_UP, 0 };
+const double nb = proven_float_env_nearbyint(&near, 2.1);            /* 3.0, and near.flags stays 0 */
+const float nb32 = proven_float32_env_nearbyint(&near, -2.1f);       /* -2.0f */
 (void)r; (void)rq; (void)up; (void)frac; (void)ex; (void)lb; (void)dim; (void)e1; (void)e2;
-(void)f; (void)ex32; (void)e3; (void)e4;
+(void)f; (void)ex32; (void)e3; (void)e4; (void)e5; (void)e6; (void)e7; (void)e8; (void)toward; (void)nb; (void)nb32;
 ```
 
 `remainder` is IEEE 754's: exact, and a zero result has `x`'s sign (glibc's gives the other sign
@@ -695,6 +706,7 @@ should use it; nothing else is touched, and every other function keeps rounding 
 |---|---|
 | `proven_float_env_add`, `_sub`, `_mul`, `_div`, `_fma`, `_sqrt` | the arithmetic |
 | `proven_float_env_rint`, `_to_i64` | to an integral value or an integer (C's `rint`, `llrint`) |
+| `proven_float_env_nearbyint` | `rint` without raising inexact (C's `nearbyint`) |
 | `proven_float_env_to_float32`, `_from_i64` | between the formats, and from integers |
 | `proven_float32_env_*` | the same for binary32 |
 
@@ -852,7 +864,7 @@ Two paths give these bits:
   x86-64 at 6-36 ns a call, 0.65-1.9 times glibc's libm, which is not correctly rounded.
   WebAssembly has no fused multiply-add, so fma is computed exactly without one there (binary32
   about 10-35 ns a call under Node.js, binary64 30 ns to 2 us). Each function's code is its own, so a module links only the
-  functions it calls: all 24 in both formats add about 380 KB to a wasm module (the first seven
+  functions it calls: all 35 in both formats add about 615 KB to a wasm module (the first seven
   about 220 KB), which `PROVEN_FLOAT_MATH_SMALL=1` saves. On wasm proven_math also supplies, as weak
   definitions, the three 128-bit integer helpers clang calls there (`__multi3`, `__lshrti3`,
   `__ashlti3`), so a `-nostdlib` link needs nothing more; a toolchain's own win.
@@ -976,6 +988,145 @@ float rf = proven_float32_atanh(-0.5f);               /* -0.54930615f */
 (void)l; (void)m; (void)n; (void)o; (void)p; (void)q; (void)af; (void)bf; (void)cf; (void)df;
 (void)ef; (void)ff; (void)gf; (void)hf; (void)jf; (void)kf; (void)lf; (void)mf; (void)nf; (void)of;
 (void)pf; (void)qf; (void)rf;
+```
+
+### The error function (`erf`, `erfc`, RFC-0058)
+
+`proven_float_erf` and `proven_float_erfc`, and the same with `proven_float32_`, are correctly
+rounded on the same two paths. `erfc(x)` is `1 - erf(x)` without the cancellation, so for a
+large `x` it keeps its digits down to the subnormals: `erfc(27)` is 5.2e-319, and from about
+27.23 (binary32: 10.06) it rounds to +0. On the integer path `erf` is a series of positive
+terms below 4, and above 4 `erfc` is a continued fraction whose convergents are sums of
+positive terms, so neither cancels. A call there takes 1-25 us on x86-64, the most near 4.
+The testing is the same as above: CORE-MATH's lists (about 66,000 inputs for `erf` and
+119,000 for `erfc`), every 61st binary32 input, and random inputs, against MPFR on both paths.
+
+| Function | Special values (C23 Annex F) |
+|---|---|
+| `erf` | odd: `erf(+-0) = +-0`, `erf(+-inf) = +-1` |
+| `erfc` | `erfc(+-0) = 1`, `erfc(-inf) = 2`, `erfc(+inf) = +0` |
+
+```c
+#include "proven/float_math.h"
+
+double a = proven_float_erf(0.5);                     /* 0.5204998778130465 */
+double b = proven_float_erf(-3.0);                    /* -0.9999779095030014 */
+double c = proven_float_erf(6.0);                     /* 1.0: 1 - 2e-17 rounds to 1 */
+double d = proven_float_erfc(1.0);                    /* 0.15729920705028513 */
+double e = proven_float_erfc(-1.0);                   /* 1.8427007929497148 */
+double f = proven_float_erfc(10.0);                   /* 2.088487583762545e-45, not 1 - erf(10) = 0 */
+double g = proven_float_erfc(27.0);                   /* 5.23705e-319: a subnormal */
+float af = proven_float32_erf(0.5f);                  /* 0.5204999f */
+float bf = proven_float32_erfc(5.0f);                 /* 1.5374598e-12f */
+float cf = proven_float32_erfc(10.0f);                /* 1e-45f: the smallest subnormal */
+(void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g; (void)af; (void)bf; (void)cf;
+```
+
+### The gamma function (`tgamma`, `lgamma`, RFC-0058)
+
+`proven_float_tgamma` and `proven_float_lgamma`, and the same with `proven_float32_`, are
+correctly rounded on the same two paths. `lgamma(x)` is `log|Gamma(x)|`. C's `lgamma` also
+stores the sign of `Gamma(x)` in the global `signgam`; proven keeps no state, so it does not.
+Where `tgamma(x)` is in range, its sign is that sign. `tgamma` of a positive integer `n` is
+`(n - 1)!` rounded once, exact while it fits. `tgamma` overflows past 171.62 (binary32: 35.04).
+Below about -178 (binary32: -38) its result is a signed zero. Next to a negative integer it stays
+nonzero further down, to about -183 (binary32: -41).
+
+On the integer path the core is `log Gamma` by Stirling's series. It starts at 32 at the
+first precision and higher at the higher ones, with a table of 50 coefficients. Smaller
+arguments are shifted up to it, and negative ones reflected. `tgamma` is `exp` of that core.
+Near the zeros of `lgamma` the difference of its parts cancels: at 1 and 2, and at two points
+between each pair of negative integers. The loss is measured and the parts made again with
+more bits: the floats next to every zero lose 71 bits at most. A call there takes 3-30 us on
+x86-64. The testing is the same as above: CORE-MATH's lists, binary32 sampled across the
+format, random inputs, every positive integer for `tgamma`, and the floats next to `lgamma`'s
+117 zeros, against MPFR on both paths.
+
+| Function | Special values (C23 Annex F) |
+|---|---|
+| `tgamma` | `tgamma(+-0) = +-inf`; a negative integer or `-inf` gives a NaN; `tgamma(+inf) = +inf` |
+| `lgamma` | `lgamma(1) = lgamma(2) = +0`; `+inf` at the poles (`+-0` and the negative integers) and at `+-inf` |
+
+```c
+#include "proven/float_math.h"
+
+double a = proven_float_tgamma(0.5);                  /* 1.772453850905516: sqrt(pi) */
+double b = proven_float_tgamma(5.0);                  /* 24.0: 4!, exactly */
+double c = proven_float_tgamma(171.0);                /* 7.257415615307999e+306: 170!, rounded once */
+double d = proven_float_tgamma(-0.5);                 /* -3.544907701811032 */
+double e = proven_float_tgamma(-150.5);               /* -4.478447658150641e-264 */
+double f = proven_float_lgamma(0.5);                  /* 0.5723649429247001 */
+double g = proven_float_lgamma(-2.5);                 /* -0.056243716497674054: log 0.945... */
+double h = proven_float_lgamma(1.0 + 0x1p-52);        /* -1.2816762426960008e-16, near the zero at 1 */
+double i = proven_float_lgamma(1e300);                /* 6.897755278982137e+302 */
+float af = proven_float32_tgamma(4.5f);               /* 11.631728f */
+float bf = proven_float32_tgamma(-1.5f);              /* 2.3632717f */
+float cf = proven_float32_lgamma(10.0f);              /* 12.801827f: log 9! */
+(void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g; (void)h; (void)i; (void)af; (void)bf; (void)cf;
+```
+
+### `sinpi`, `cospi`, `tanpi`, `rsqrt` and integer powers (C23, RFC-0058)
+
+These are C23's additions to `<math.h>`, for binary64 and binary32, all correctly rounded:
+
+- **`sinpi`, `cospi` and `tanpi`** are `sin`, `cos` and `tan` of `pi x`. The reduction is exact
+  for every finite `x`, so a large argument loses nothing.
+- **`rsqrt`** is `1 / sqrt(x)`, rounded once rather than twice.
+- **`pown(x, n)`, `rootn(x, n)` and `compoundn(x, n)`** take an integer `n` (`proven_i64`).
+  - `pown` is `x^n`.
+  - `rootn` is the `n`-th root; a negative `x` has one when `n` is odd.
+  - `compoundn` is `(1 + x)^n` without rounding `1 + x` first, so compound interest at a small
+    rate keeps its digits.
+
+The paths:
+
+- **The first four** take CORE-MATH's code on the FPU path. On the integer path they reduce
+  exactly and then use the series of `sin` and `cos`, or the square root.
+- **`pown`** is `pow` with an exact `y` while `n` fits the format (2^53, binary32 2^24), on
+  both paths. Past that it is `exp(n log|x|)`, which stays in range only very near 1.
+- **`rootn` and `compoundn`** have no FPU path: CORE-MATH has neither. They take the integer
+  path everywhere, a few microseconds a call.
+
+Exact cases are found with integers first: a perfect power under `rootn`, and an exact or
+halfway power under `pown` and `compoundn`.
+
+Testing is against MPFR on both paths. The first four used CORE-MATH's lists and binary32
+sampled across the format, and all seven random inputs and the edge cases. For `compoundn` the
+reference is `mpfr_pow_si` on `1 + x` computed exactly. MPFR 4.2.2's own `mpfr_compound_si` was
+wrong in the last place for some negative `n`; exact rational arithmetic decided those cases.
+
+| Function | Special values (C23 Annex F) |
+|---|---|
+| `sinpi` | `+-0` at the integers, with `x`'s sign; `+-1` at the half-integers; a NaN at `+-inf` |
+| `cospi` | `+0` at the half-integers; `+-1` at the integers; a NaN at `+-inf` |
+| `tanpi` | `+-0` at the integers (`x`'s sign, flipped at the odd ones); `+-1` at the quarter points; `+inf` at `n + 1/2` for an even `n`, `-inf` for an odd one |
+| `rsqrt` | `+-inf` at `+-0`; a NaN below 0; `+0` at `+inf`; exact at the powers of 4 |
+| `pown` | `pown(x, 0) = 1` for every `x` (a quiet NaN too); otherwise as `pow` with an integer `y` |
+| `rootn` | a NaN for `n = 0` and for a negative `x` with an even `n`; `rootn(+-0, n)` is `+-0` for an odd `n > 0`, `+-inf` for an odd `n < 0` |
+| `compoundn` | 1 for `n = 0` when `x >= -1` or a NaN; a NaN below -1; `compoundn(-1, n)` is +0 for `n > 0` and +inf for `n < 0` |
+
+```c
+#include "proven/float_math.h"
+
+double a = proven_float_sinpi(1.0 / 3);               /* 0.8660254037844386: sin(pi/3) */
+double b = proven_float_sinpi(1e300);                 /* 0.0: an even integer, no reduction to get wrong */
+double c = proven_float_cospi(1e15 + 0.375);          /* 0.3826834323650898 */
+double d = proven_float_tanpi(-0.5);                  /* -inf: a pole */
+double e = proven_float_rsqrt(2.0);                   /* 0.7071067811865476 */
+double f = proven_float_pown(1.0001, 1000000);        /* 2.6747109931126854e+43 */
+double g = proven_float_pown(0.1, 3);                 /* 0.0010000000000000002: the double 0.1, cubed, rounded once */
+double h = proven_float_rootn(-27.0, 3);              /* -3.0, exactly */
+double i = proven_float_rootn(2.0, 12);               /* 1.0594630943592953: a semitone */
+double j = proven_float_compoundn(0.05 / 12, 120);    /* 1.647009497690283: ten years of 5 % a month */
+float af = proven_float32_rsqrt(4.0f);                /* 0.5f, exactly */
+float bf = proven_float32_compoundn(1.0f, 10);        /* 1024.0f, exactly */
+float cf = proven_float32_sinpi(0.5f);                /* 1.0f */
+float df = proven_float32_cospi(1.0f);                /* -1.0f */
+float ef = proven_float32_tanpi(0.25f);               /* 1.0f */
+float ff = proven_float32_pown(2.0f, -3);             /* 0.125f */
+float gf = proven_float32_rootn(-8.0f, 3);            /* -2.0f */
+(void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g; (void)h; (void)i; (void)j; (void)af; (void)bf;
+(void)cf; (void)df; (void)ef; (void)ff; (void)gf;
 ```
 
 ### Complex numbers (`complex.h`, RFC-0058)

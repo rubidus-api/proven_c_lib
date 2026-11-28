@@ -27,9 +27,10 @@ SOFTWARE.
 /* proven_math (RFC-0056): ported from CORE-MATH 03948b7170fe, src/binary32/pow/powf.c. Changed: the
  * headers of fenv, errno, stdio, stdlib, math, inttypes and x86intrin are not included
  * (cm_shim.h: rounding to nearest, no flags); x86-64 MXCSR and intrinsic branches take the
- * portable one; unreachable exits return the integer path's result; the sqrt and nanf
- * builtins are float_ops.h's functions and round, fmax, fmin cm_shim.h's inline ones (the
- * same bits, no libm); cr_NAME is
+ * portable one; unreachable exits return the integer path's result; the sqrt, nan, nanf
+ * and ldexp builtins are float_ops.h's functions and round, fmax, fmin cm_shim.h's inline ones
+ * (the same bits, no libm); no function is marked cold; nothing is written to signgam;
+ * cr_NAME is
  * proven_cm_NAME_; FENV_ACCESS left out on wasm; non-ASCII letters in comments
  * transliterated. Nothing else. */
 

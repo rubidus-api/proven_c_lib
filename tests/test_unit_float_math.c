@@ -9,7 +9,7 @@
 #include <string.h>
 
 /*
- * float_math (RFC-0056, RFC-0058): the 24 functions of PROVEN_FLOAT_MATH_FNS, correctly rounded,
+ * float_math (RFC-0056, RFC-0058): the 35 functions of PROVEN_FLOAT_MATH_FNS, correctly rounded,
  * binary64 and binary32. The special values of C23 Annex F as bits; hard-to-round inputs and random ones
  * with MPFR's results (test_unit_float_math_vectors.h) through the public function and through
  * the integer path; and the two paths against each other on random inputs. The full lists
@@ -24,6 +24,7 @@ static float F(uint32_t u) { float x; memcpy(&x, &u, sizeof x); return x; }
 
 #define CALL_1(f, x, y) f(x)
 #define CALL_2(f, x, y) f(x, y)
+#define CALL_3(f, x, y) f(x, (proven_i64)b)
 static uint64_t pub(int fn, bool s, uint64_t a, uint64_t b) {
     if (s) {
         const float x = F((uint32_t)a), y = F((uint32_t)b);
@@ -145,11 +146,42 @@ static const row_t SPECIAL64[] = {
     { PROVEN_FLOAT_FN_ACOSH_, NINF, 0, QNAN },
     { PROVEN_FLOAT_FN_ATANH_, ONE, 0, INF }, { PROVEN_FLOAT_FN_ATANH_, M1, 0, NINF }, { PROVEN_FLOAT_FN_ATANH_, TWO, 0, QNAN },
     { PROVEN_FLOAT_FN_ATANH_, NZ, 0, NZ },
+    { PROVEN_FLOAT_FN_ERF_, 0, 0, 0 }, { PROVEN_FLOAT_FN_ERF_, NZ, 0, NZ }, { PROVEN_FLOAT_FN_ERF_, INF, 0, ONE },
+    { PROVEN_FLOAT_FN_ERF_, NINF, 0, M1 }, { PROVEN_FLOAT_FN_ERF_, 0x4020000000000000u, 0, ONE }, { PROVEN_FLOAT_FN_ERF_, 1, 0, 1 },
+    { PROVEN_FLOAT_FN_ERF_, SNAN, 0, SNANQ },
+    { PROVEN_FLOAT_FN_ERFC_, 0, 0, ONE }, { PROVEN_FLOAT_FN_ERFC_, NZ, 0, ONE }, { PROVEN_FLOAT_FN_ERFC_, INF, 0, 0 },
+    { PROVEN_FLOAT_FN_ERFC_, NINF, 0, TWO }, { PROVEN_FLOAT_FN_ERFC_, 0xc020000000000000u, 0, TWO },
+    { PROVEN_FLOAT_FN_ERFC_, 0x4020000000000000u, 0, 0x39ec74fc41217dfbu },               /* erfc(8) */
+    { PROVEN_FLOAT_FN_ERFC_, 0x403b000000000000u, 0, 0x19e0fu },                          /* erfc(27): subnormal */
+    { PROVEN_FLOAT_FN_ERFC_, 0x403b400000000000u, 0, 0 }, { PROVEN_FLOAT_FN_ERFC_, 1, 0, ONE },
+    { PROVEN_FLOAT_FN_TGAMMA_, 0, 0, INF }, { PROVEN_FLOAT_FN_TGAMMA_, NZ, 0, NINF }, { PROVEN_FLOAT_FN_TGAMMA_, INF, 0, INF },
+    { PROVEN_FLOAT_FN_TGAMMA_, NINF, 0, QNAN }, { PROVEN_FLOAT_FN_TGAMMA_, M1, 0, QNAN }, { PROVEN_FLOAT_FN_TGAMMA_, M2, 0, QNAN },
+    { PROVEN_FLOAT_FN_TGAMMA_, ONE, 0, ONE }, { PROVEN_FLOAT_FN_TGAMMA_, THREE, 0, TWO }, { PROVEN_FLOAT_FN_TGAMMA_, SNAN, 0, SNANQ },
+    { PROVEN_FLOAT_FN_TGAMMA_, 0x4065800000000000u, 0, INF },                              /* 172 */
+    { PROVEN_FLOAT_FN_LGAMMA_, ONE, 0, 0 }, { PROVEN_FLOAT_FN_LGAMMA_, TWO, 0, 0 }, { PROVEN_FLOAT_FN_LGAMMA_, 0, 0, INF },
+    { PROVEN_FLOAT_FN_LGAMMA_, NZ, 0, INF }, { PROVEN_FLOAT_FN_LGAMMA_, INF, 0, INF }, { PROVEN_FLOAT_FN_LGAMMA_, NINF, 0, INF },
+    { PROVEN_FLOAT_FN_LGAMMA_, M1, 0, INF }, { PROVEN_FLOAT_FN_LGAMMA_, M2, 0, INF }, { PROVEN_FLOAT_FN_LGAMMA_, SNAN, 0, SNANQ },
+    { PROVEN_FLOAT_FN_SINPI_, ONE, 0, 0 }, { PROVEN_FLOAT_FN_SINPI_, M1, 0, NZ }, { PROVEN_FLOAT_FN_SINPI_, HALF, 0, ONE },
+    { PROVEN_FLOAT_FN_SINPI_, 0xbff8000000000000u, 0, ONE }, { PROVEN_FLOAT_FN_SINPI_, INF, 0, QNAN }, { PROVEN_FLOAT_FN_SINPI_, NZ, 0, NZ },
+    { PROVEN_FLOAT_FN_COSPI_, HALF, 0, 0 }, { PROVEN_FLOAT_FN_COSPI_, 0xbff8000000000000u, 0, 0 }, { PROVEN_FLOAT_FN_COSPI_, ONE, 0, M1 },
+    { PROVEN_FLOAT_FN_COSPI_, NZ, 0, ONE }, { PROVEN_FLOAT_FN_COSPI_, NINF, 0, QNAN },
+    { PROVEN_FLOAT_FN_TANPI_, HALF, 0, INF }, { PROVEN_FLOAT_FN_TANPI_, 0xbfe0000000000000u, 0, NINF }, { PROVEN_FLOAT_FN_TANPI_, 0x3ff8000000000000u, 0, NINF },
+    { PROVEN_FLOAT_FN_TANPI_, ONE, 0, NZ }, { PROVEN_FLOAT_FN_TANPI_, TWO, 0, 0 }, { PROVEN_FLOAT_FN_TANPI_, 0x3fd0000000000000u, 0, ONE },
+    { PROVEN_FLOAT_FN_TANPI_, 0x3fe8000000000000u, 0, M1 }, { PROVEN_FLOAT_FN_TANPI_, NZ, 0, NZ },
+    { PROVEN_FLOAT_FN_RSQRT_, 0, 0, INF }, { PROVEN_FLOAT_FN_RSQRT_, NZ, 0, NINF }, { PROVEN_FLOAT_FN_RSQRT_, INF, 0, 0 },
+    { PROVEN_FLOAT_FN_RSQRT_, M1, 0, QNAN }, { PROVEN_FLOAT_FN_RSQRT_, 0x4010000000000000u, 0, HALF },
+    { PROVEN_FLOAT_FN_POWN_, QNAN, 0, ONE }, { PROVEN_FLOAT_FN_POWN_, SNAN, 0, SNANQ }, { PROVEN_FLOAT_FN_POWN_, NZ, (uint64_t)-3, NINF },
+    { PROVEN_FLOAT_FN_POWN_, NINF, 3, NINF }, { PROVEN_FLOAT_FN_POWN_, M1, (uint64_t)INT64_MIN, ONE }, { PROVEN_FLOAT_FN_POWN_, TWO, 10, 0x4090000000000000u },
+    { PROVEN_FLOAT_FN_POWN_, 0x3ff0000000000001u, (uint64_t)1 << 62, 0x7ff0000000000000u },
+    { PROVEN_FLOAT_FN_ROOTN_, 0xc020000000000000u, 3, M2 }, { PROVEN_FLOAT_FN_ROOTN_, TWO, 0, QNAN }, { PROVEN_FLOAT_FN_ROOTN_, M2, 2, QNAN },
+    { PROVEN_FLOAT_FN_ROOTN_, NZ, (uint64_t)-3, NINF }, { PROVEN_FLOAT_FN_ROOTN_, NINF, 3, NINF }, { PROVEN_FLOAT_FN_ROOTN_, 0x4050000000000000u, 6, TWO },
+    { PROVEN_FLOAT_FN_COMPOUNDN_, M1, (uint64_t)-1, INF }, { PROVEN_FLOAT_FN_COMPOUNDN_, M1, 2, 0 }, { PROVEN_FLOAT_FN_COMPOUNDN_, M2, 0, QNAN },
+    { PROVEN_FLOAT_FN_COMPOUNDN_, QNAN, 0, ONE }, { PROVEN_FLOAT_FN_COMPOUNDN_, ONE, 10, 0x4090000000000000u }, { PROVEN_FLOAT_FN_COMPOUNDN_, NINF, 1, QNAN },
 };
 
 int main(void) {
     PROVEN_TEST_SUITE("float_math: math.h's transcendental functions correctly rounded",
-        "RFC-0056, RFC-0058: exp, exp2, exp10, expm1, log, log2, log10, log1p, pow, cbrt, hypot, the trigonometric and hyperbolic functions and their inverses; the special values of Annex F as bits, hard-to-round and random inputs with MPFR's results through both paths, and the two paths against each other.",
+        "RFC-0056, RFC-0058: exp, exp2, exp10, expm1, log, log2, log10, log1p, pow, cbrt, hypot, the trigonometric and hyperbolic functions and their inverses, erf, erfc, tgamma, lgamma, sinpi, cospi, tanpi, rsqrt, pown, rootn and compoundn; the special values of Annex F as bits, hard-to-round and random inputs with MPFR's results through both paths, and the two paths against each other.",
         "Inspect math/src/float_math.c: the special branches of fm_exp / fm_log / fm_trig / fm_atan2 / fm_pow / fm_x_special, mp_round_test, and the function named; for the FPU path math/src/cm and fm_fix.");
 
     PROVEN_TEST_SECTION("which path", "On x86-64 with FMA and AVX2 the public functions take the FPU path (CORE-MATH), unless PROVEN_FLOAT_SOFT or PROVEN_FLOAT_MATH_SMALL.", "Check cm_config.h and fm_cm_ready in math/src/float_math.c.");
@@ -191,6 +223,10 @@ int main(void) {
             && BF(proven_float32_acos(F(0xbf800000u))) == pi32 && BF(proven_float32_atanh(F(0xbf800000u))) == 0xff800000u
             && BF(proven_float32_expm1(F(0xff800000u))) == 0xbf800000u && BF(proven_float32_cosh(F(0x80000000u))) == one32,
             "binary32: 10^10, log2 of the smallest subnormal (-149), cbrt(-27), hypot(inf, NaN), 5-12-13, asin(2), acos(-1), atanh(-1), expm1(-inf), cosh(-0)", "");
+        PROVEN_TEST_ASSERT(BF(proven_float32_erf(F(0xc0800000u))) == 0xbf800000u && BF(proven_float32_erf(F(1))) == 1
+            && BF(proven_float32_erfc(F(0x40800000u))) == 0x32846ee9u && BF(proven_float32_erfc(F(0xc0800000u))) == 0x40000000u
+            && BF(proven_float32_erfc(F(0x41200000u))) == 1 && BF(proven_float32_erfc(F(0x41210000u))) == 0,
+            "binary32: erf(-4) = -1, erf of the smallest subnormal, erfc(4), erfc(-4) = 2, erfc(10) the smallest subnormal, erfc(10.0625) = +0", "");
     }
 
     PROVEN_TEST_SECTION("MPFR's results", "Hard-to-round inputs from CORE-MATH's lists and random ones, each with MPFR's correctly rounded result, through the public function and the integer path.", "Run the failing input through the private MPFR check; then the path that differs.");
@@ -199,7 +235,18 @@ int main(void) {
         const size_t n = sizeof FM_VECTORS / sizeof FM_VECTORS[0];
         for (size_t i = 0; i < n; i++) {
             const fm_vector_t *v = &FM_VECTORS[i];
-            if (pub(v->fn, v->b32 != 0, v->a, v->b) != v->want) bad_pub++;
+            uint64_t want_pub = v->want;
+#if defined(__i386__)
+            /* 32-bit x86 quiets a signalling NaN on its way through the x87 registers (float_ops.h):
+             * the public function sees it quiet, as the integer path does given it quiet */
+            const bool nth = v->fn == PROVEN_FLOAT_FN_POWN_ || v->fn == PROVEN_FLOAT_FN_ROOTN_ || v->fn == PROVEN_FLOAT_FN_COMPOUNDN_;
+#define Q32(u) ((((u) & 0x7fffffffu) > 0x7f800000u) ? (u) | 0x00400000u : (u))
+            const uint64_t qa = v->b32 ? Q32(v->a) : quiet64(v->a);
+            const uint64_t qb = nth ? v->b : v->b32 ? Q32(v->b) : quiet64(v->b);   /* n is an integer, not a float */
+#undef Q32
+            want_pub = proven_float_math_int_(v->fn, v->b32 != 0, qa, qb);
+#endif
+            if (pub(v->fn, v->b32 != 0, v->a, v->b) != want_pub) bad_pub++;
             if (proven_float_math_int_(v->fn, v->b32 != 0, v->a, v->b) != v->want) bad_int++;
         }
         char msg[160];
@@ -229,6 +276,9 @@ int main(void) {
                         a = (r1 & 0x800fffffffffffffu) | ((uint64_t)(1013 + (r1 >> 52) % 20) << 52);
                         b = (r2 & 0x800fffffffffffffu) | ((uint64_t)(1013 + (r2 >> 52) % 20) << 52);
                     }
+                    /* pown, rootn, compoundn: the second operand is the integer n, here -20 .. 20 */
+                    if (fn == PROVEN_FLOAT_FN_POWN_ || fn == PROVEN_FLOAT_FN_ROOTN_ || fn == PROVEN_FLOAT_FN_COMPOUNDN_)
+                        b = (uint64_t)((int64_t)(r2 % 41) - 20);
                     if (pub(fn, s, a, b) != proven_float_math_int_(fn, s, a, b)) bad++;
                 }
             }

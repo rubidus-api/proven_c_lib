@@ -68,7 +68,7 @@ POSSIBILITY OF SUCH DAMAGE.
 
 `math/src/cm/` holds the binary64 and binary32 `exp`, `exp2`, `exp10`, `expm1`, `log`, `log2`,
 `log10`, `log1p`, `pow`, `cbrt`, `hypot`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`,
-`sinh`, `cosh`, `tanh`, `asinh`, `acosh` and `atanh` of the CORE-MATH project (https://core-math.gitlabpages.inria.fr/, Inria and CERN;
+`sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `erf`, `erfc`, `tgamma`, `lgamma`, `sinpi`, `cospi`, `tanpi` and `rsqrt` of the CORE-MATH project (https://core-math.gitlabpages.inria.fr/, Inria and CERN;
 authors Alexei Sibidanov, Paul Zimmermann, Tom Hubrecht and others named in each file), ported
 for proven_math's FPU path (RFC-0056, RFC-0058). Each file keeps its copyright lines and this MIT
 licence; the changes made in porting are listed at the top of each file.

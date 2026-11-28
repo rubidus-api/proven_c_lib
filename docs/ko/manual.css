@@ -74,29 +74,34 @@ body { margin:0; background:var(--bg); color:var(--fg); line-height:1.72;
 .skip:focus { left:.6rem; top:.6rem; z-index:60; background:var(--bg); color:var(--link);
   padding:.4rem .7rem; border:1px solid var(--rule); }
 
-/* ── The menu bar (N-L1, N-W2): the menu, back, where the reader is; on a wide window
-   the items spread to its right, and at 900 or less (N-L3) they move into the menu. The same
-   bar as the site's landing page (rubidus-api.github.io). */
+/* ── The bar and its panel (N-L1, N-W2, doc-standard DS-G6, DS-G6b): the workspace's document kit
+   makes the markup and drives it (docweb.py); these are its rules in this manual's design.
+   The bar: the menu, Back, where the reader is, then Prev · TOC · Next on every page and screen. */
 .bar { position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:.25rem;
   min-height:44px; padding:0 .5rem; background:var(--bg2); border-bottom:1px solid var(--line);
   font-size:14px; line-height:1.4; }
-.bar a, .bar summary { color:var(--fg); text-decoration:none; }
-.bar .here { font-weight:700; color:var(--honey-text); padding:.4rem .5rem; white-space:nowrap;
-  overflow:hidden; text-overflow:ellipsis; min-width:0; }
-.bar .items { display:flex; overflow-x:auto; white-space:nowrap; margin-left:auto; }
-.bar .items a { padding:.55rem .6rem; }
-.bar a:hover, .bar summary:hover { background:var(--bg3); }
-.bar .back { display:flex; align-items:center; justify-content:center; min-width:38px;
-  min-height:38px; font-size:18px; }
-.menu { position:relative; }
-.menu summary { list-style:none; cursor:pointer; display:flex; align-items:center;
-  justify-content:center; min-width:38px; min-height:38px; font-size:20px; line-height:1; }
-.menu summary::-webkit-details-marker { display:none; }
-.menu[open] summary { background:var(--bg3); }
-/* A floating box (N-D1): a translucent face, square corners with brackets (N-D6), lines only (N-D7). */
-.panel { position:absolute; top:calc(100% + 4px); left:0; width:min(30rem, calc(100vw - 1rem));
-  max-height:calc(100vh - 60px); overflow-y:auto; padding:.7rem .9rem; border:1px solid var(--line);
-  line-height:1.3; --k:var(--line-strong);
+.bar a { color:var(--fg); text-decoration:none; }
+.bar .menu-btn { flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center;
+  min-width:38px; min-height:38px; padding:0; font:inherit; font-size:20px; line-height:1;
+  color:var(--fg); background:none; border:0; cursor:pointer; }
+.bar .menu-btn[aria-expanded="true"] { background:var(--bg3); }
+/* Back and the three page buttons share one look: a thin frame, the word beside the arrow */
+.bar .back, .bar .bar-nav .nb { flex:0 0 auto; display:inline-flex; align-items:center; gap:.3em;
+  min-height:32px; padding:0 .65rem; border:1px solid var(--line); background:var(--bg);
+  color:var(--fg); font-weight:600; white-space:nowrap; text-decoration:none; }
+.bar .place { flex:1 1 auto; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
+  padding:0 .35rem; }
+.bar .place strong a { color:var(--honey-text); }
+.bar .place .cur { color:var(--fg); }
+.bar .bar-nav { flex:0 0 auto; display:flex; gap:.3rem; align-items:center; white-space:nowrap; }
+.bar .bar-nav .off { color:var(--muted); border-color:var(--line); opacity:.45; }
+.bar .back:hover, .bar .menu-btn:hover, .bar .bar-nav a.nb:hover, .bar .place a:hover { background:var(--bg3); }
+/* The panel: a floating box under the menu button (N-D1), a translucent face, square corners
+   with brackets (N-D6), lines only (N-D7); it covers the text without pushing it. */
+.here-panel { position:fixed; top:46px; left:clamp(.2rem,1vw,1rem); z-index:19;
+  width:min(32rem, calc(100vw - .4rem)); max-height:calc(100vh - 54px); overflow:auto;
+  padding:.7rem .9rem .9rem; border:1px solid var(--line); line-height:1.4; font-size:14px;
+  --k:var(--line-strong);
   background:
     linear-gradient(var(--k), var(--k)) left top / 8px 3px no-repeat,
     linear-gradient(var(--k), var(--k)) left top / 3px 8px no-repeat,
@@ -107,18 +112,27 @@ body { margin:0; background:var(--bg); color:var(--fg); line-height:1.72;
     linear-gradient(var(--k), var(--k)) right bottom / 8px 3px no-repeat,
     linear-gradient(var(--k), var(--k)) right bottom / 3px 8px no-repeat,
     color-mix(in srgb, var(--bg) 97%, transparent); }
-.panel fieldset { border:0; margin:0 0 .7rem; padding:0; }
-.panel legend, .panel .setlbl { font-size:12px; font-weight:700; padding:0; margin-bottom:.2rem; color:var(--fg); }
-.panel label { display:flex; align-items:center; gap:.4rem; min-height:30px; cursor:pointer; }
-.panel label:hover, .panel .langs a:hover, .here-sec a:hover, .panel .goto a:hover { background:var(--bg3); }
-.panel input[type=radio] { accent-color:var(--accent); margin:0 .1rem; }
-.panel .langs a, .panel .langs .cur { display:inline-flex; align-items:center; min-height:30px; padding:0 .6rem 0 0; }
-.panel .langs .cur { font-weight:700; }
-.panel .goto { display:none; margin-bottom:.7rem; }
-.panel .goto a { display:block; padding:.3rem 0; color:var(--accent); }
+.here-panel[hidden] { display:none; }
+.here-panel .setlbl { font-size:12px; font-weight:700; padding:0; color:var(--fg); }
+/* The settings (DS-G6b): a label and a row of buttons a line; the chosen one looks pressed. */
+.setbox { margin:0 0 .6rem; }
+.setrow { display:flex; flex-wrap:wrap; gap:.4rem .5rem; align-items:center; margin:.35rem 0; }
+.setrow .setlbl { min-width:4.2rem; }
+.seg { display:inline-flex; flex-wrap:wrap; gap:.25rem; }
+.col { display:inline-flex; align-items:center; gap:.3rem; font-size:.88rem; }
+.col input[type=color] { width:2rem; height:1.4rem; padding:0; border:1px solid var(--line-strong);
+  background:none; cursor:pointer; }
+.setnote { margin:.5rem 0 0; font-size:.82rem; }
+/* The tool row: the edition first, then the buttons; it wraps when narrow. */
+.here-panel .tools { display:flex; flex-wrap:wrap; gap:.3rem .4rem; align-items:center; margin:0 0 .7rem; }
+.tool, .segb { font:inherit; font-size:.88rem; color:var(--fg); background:none;
+  border:1px solid var(--line-strong); padding:0 .6rem; min-height:30px;
+  display:inline-flex; align-items:center; text-decoration:none; cursor:pointer; white-space:nowrap; }
+.tool:hover, .segb:hover, .here-sec a:hover { background:var(--bg3); }
+.segb[aria-pressed="true"] { background:var(--select); border-color:var(--accent); font-weight:700; }
+.here-panel .ver { font-size:.82rem; color:var(--muted); padding:.2rem .45rem .2rem 0; white-space:nowrap; }
 .here-sec { margin:0 0 .7rem; }
 .here-sec a { display:block; padding:.15rem 0; color:var(--fg); }
-.panel .ver { color:var(--muted); font-family:"PCL Mono",monospace; font-size:12px; margin:0; }
 
 /* ── Search. A reader of a reference arrives with a function name, so the index is every
    public function and every heading; the answer is the page and section it is explained in. */
@@ -147,7 +161,7 @@ nav.contents li a:hover { color:var(--link); text-decoration:underline; }
 main { flex:1; min-width:0; padding:1.4rem clamp(.9rem,3vw,2.4rem) 5rem; }
 /* N-W4's text width: at most 960 by default, the window's width by choice. */
 main .content { max-width:960px; margin:0 auto; }
-:root[data-width="fit"] main .content { max-width:none; }
+:root[data-measure="fit"] main .content { max-width:none; }
 
 h1,h2,h3,h4 { line-height:1.35; padding-bottom:.18rem; }
 h1 { font-size:clamp(1.5rem,3.4vw,2.05rem); margin:.2rem 0 .9rem; padding-bottom:.3rem;
@@ -199,24 +213,36 @@ ul,ol { padding-left:1.4rem; margin:.8rem 0; } li { margin:.25rem 0; }
 /* Focus is always visible (N-I6): a 2 px accent2 outline. */
 :focus-visible { outline:2px solid var(--accent2); outline-offset:2px; }
 /* Only short background changes move (N-M1), and none when the system asks for less motion. */
-a, summary, label { transition:background-color .08s; }
+a, label, button { transition:background-color .08s; }
 @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
-/* Window widths (N-L3): at 900 or less the bar's items move into the menu. */
+/* Layout (DS-G6a): Auto follows the screen; PC and Mobile are the reader's choice (data-layout on
+   the root). The narrow rules apply in Auto on a narrow or portrait screen, and in Mobile
+   anywhere; PC never takes them. The place name gives way first, then the words of Prev and Next. */
 @media (max-width: 900px), (orientation: portrait) {
-  .bar .items { display:none; }
-  .panel .goto { display:block; }
+  :root:not([data-layout="desktop"]) .bar .place .cur { display:none; }
+  :root:not([data-layout="desktop"]) .bar .bar-nav { margin-left:auto; }
+  :root:not([data-layout="desktop"]) .bar .back,
+  :root:not([data-layout="desktop"]) .bar .bar-nav .nb { min-height:40px; padding:0 .5rem; }
 }
-/* Touch (N-I3): the menu button, back and the menu's rows get a 44 hit area. */
+@media (max-width: 480px) {
+  :root:not([data-layout="desktop"]) .bar .back .lbl,
+  :root:not([data-layout="desktop"]) .bar .bar-nav .prev .lbl,
+  :root:not([data-layout="desktop"]) .bar .bar-nav .next .lbl { display:none; }
+  :root:not([data-layout="desktop"]) .bar .back,
+  :root:not([data-layout="desktop"]) .bar .bar-nav .nb { min-width:44px; justify-content:center; }
+  :root:not([data-layout="desktop"]) .bar { gap:.2rem; }
+}
+:root[data-layout="mobile"] .bar .place .cur { display:none; }
+:root[data-layout="mobile"] .bar .bar-nav { margin-left:auto; }
+:root[data-layout="mobile"] .bar .back, :root[data-layout="mobile"] .bar .bar-nav .nb { min-height:40px; padding:0 .5rem; }
+:root[data-layout="mobile"] main .content { max-width:34rem; }
+/* Touch (N-I3): the menu button, Back and the bar's buttons get a 44 hit area. */
 @media (pointer: coarse), (max-width: 900px) {
-  .menu summary, .bar .back { min-width:44px; min-height:44px; }
-  .panel label, .panel .goto a, .here-sec a { min-height:44px; display:flex; align-items:center; }
+  .bar .menu-btn { min-width:44px; min-height:44px; }
+  .tool, .segb { min-height:38px; }
+  .here-sec a { min-height:44px; display:flex; align-items:center; }
 }
-/* The reader may pick the wide or the narrow design whatever the window (N-W1). */
-:root[data-layout="narrow"] .bar .items { display:none; }
-:root[data-layout="narrow"] .panel .goto { display:block; }
-:root[data-layout="wide"] .bar .items { display:flex; }
-:root[data-layout="wide"] .panel .goto { display:none; }
 @media print {
-  .bar, nav.toc, .nav, .anchor { display:none; }
+  .bar, .here-panel, nav.toc, .nav, .anchor { display:none; }
   main { padding:0; }
 }

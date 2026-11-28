@@ -23,7 +23,7 @@ Do not mix alias documentation with canonical API documentation. Use this index 
 
 ## Alias table
 
-1884 aliases: 1469 lowercase `xcv_` names and 415 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
+1913 aliases: 1498 lowercase `xcv_` names and 415 uppercase `XCV_` names. The table is generated from `include/proven/alias_xcv.h`; `tests/test_docs_alias_completeness` fails the build if a public function has no alias. That gate compares the headers with each other, not with this appendix - the table had fallen 61 rows behind the header before it was regenerated, so regenerate it from the header rather than editing rows by hand.
 
 There is deliberately no line-number column. It was wrong after every alias that got inserted above it, which is worse than having no column at all.
 
@@ -767,20 +767,25 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_float32_cbrt` | `proven_float32_cbrt` |
 | `xcv_float32_ceil` | `proven_float32_ceil` |
 | `xcv_float32_compare` | `proven_float32_compare` |
+| `xcv_float32_compoundn` | `proven_float32_compoundn` |
 | `xcv_float32_copysign` | `proven_float32_copysign` |
 | `xcv_float32_cos` | `proven_float32_cos` |
 | `xcv_float32_cosh` | `proven_float32_cosh` |
+| `xcv_float32_cospi` | `proven_float32_cospi` |
 | `xcv_float32_div` | `proven_float32_div` |
 | `xcv_float32_env_add` | `proven_float32_env_add` |
 | `xcv_float32_env_div` | `proven_float32_env_div` |
 | `xcv_float32_env_fma` | `proven_float32_env_fma` |
 | `xcv_float32_env_from_i64` | `proven_float32_env_from_i64` |
 | `xcv_float32_env_mul` | `proven_float32_env_mul` |
+| `xcv_float32_env_nearbyint` | `proven_float32_env_nearbyint` |
 | `xcv_float32_env_rint` | `proven_float32_env_rint` |
 | `xcv_float32_env_sqrt` | `proven_float32_env_sqrt` |
 | `xcv_float32_env_sub` | `proven_float32_env_sub` |
 | `xcv_float32_env_to_i64` | `proven_float32_env_to_i64` |
 | `xcv_float32_eq` | `proven_float32_eq` |
+| `xcv_float32_erf` | `proven_float32_erf` |
+| `xcv_float32_erfc` | `proven_float32_erfc` |
 | `xcv_float32_exp` | `proven_float32_exp` |
 | `xcv_float32_exp10` | `proven_float32_exp10` |
 | `xcv_float32_exp2` | `proven_float32_exp2` |
@@ -805,6 +810,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_float32_is_nan` | `proven_float32_is_nan` |
 | `xcv_float32_ldexp` | `proven_float32_ldexp` |
 | `xcv_float32_le` | `proven_float32_le` |
+| `xcv_float32_lgamma` | `proven_float32_lgamma` |
 | `xcv_float32_log` | `proven_float32_log` |
 | `xcv_float32_log10` | `proven_float32_log10` |
 | `xcv_float32_log1p` | `proven_float32_log1p` |
@@ -814,19 +820,28 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_float32_modf` | `proven_float32_modf` |
 | `xcv_float32_mul` | `proven_float32_mul` |
 | `xcv_float32_nextafter` | `proven_float32_nextafter` |
+| `xcv_float32_nexttoward` | `proven_float32_nexttoward` |
 | `xcv_float32_pow` | `proven_float32_pow` |
+| `xcv_float32_pown` | `proven_float32_pown` |
 | `xcv_float32_remainder` | `proven_float32_remainder` |
 | `xcv_float32_remquo` | `proven_float32_remquo` |
 | `xcv_float32_rint` | `proven_float32_rint` |
+| `xcv_float32_rint_to_i32` | `proven_float32_rint_to_i32` |
 | `xcv_float32_rint_to_i64` | `proven_float32_rint_to_i64` |
+| `xcv_float32_rootn` | `proven_float32_rootn` |
 | `xcv_float32_round` | `proven_float32_round` |
+| `xcv_float32_round_to_i32` | `proven_float32_round_to_i32` |
 | `xcv_float32_round_to_i64` | `proven_float32_round_to_i64` |
+| `xcv_float32_rsqrt` | `proven_float32_rsqrt` |
 | `xcv_float32_sin` | `proven_float32_sin` |
 | `xcv_float32_sinh` | `proven_float32_sinh` |
+| `xcv_float32_sinpi` | `proven_float32_sinpi` |
 | `xcv_float32_sqrt` | `proven_float32_sqrt` |
 | `xcv_float32_sub` | `proven_float32_sub` |
 | `xcv_float32_tan` | `proven_float32_tan` |
 | `xcv_float32_tanh` | `proven_float32_tanh` |
+| `xcv_float32_tanpi` | `proven_float32_tanpi` |
+| `xcv_float32_tgamma` | `proven_float32_tgamma` |
 | `xcv_float32_to_bits` | `proven_float32_to_bits` |
 | `xcv_float32_to_i32` | `proven_float32_to_i32` |
 | `xcv_float32_to_i64` | `proven_float32_to_i64` |
@@ -845,15 +860,18 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_float_cbrt` | `proven_float_cbrt` |
 | `xcv_float_ceil` | `proven_float_ceil` |
 | `xcv_float_compare` | `proven_float_compare` |
+| `xcv_float_compoundn` | `proven_float_compoundn` |
 | `xcv_float_copysign` | `proven_float_copysign` |
 | `xcv_float_cos` | `proven_float_cos` |
 | `xcv_float_cosh` | `proven_float_cosh` |
+| `xcv_float_cospi` | `proven_float_cospi` |
 | `xcv_float_div` | `proven_float_div` |
 | `xcv_float_env_add` | `proven_float_env_add` |
 | `xcv_float_env_div` | `proven_float_env_div` |
 | `xcv_float_env_fma` | `proven_float_env_fma` |
 | `xcv_float_env_from_i64` | `proven_float_env_from_i64` |
 | `xcv_float_env_mul` | `proven_float_env_mul` |
+| `xcv_float_env_nearbyint` | `proven_float_env_nearbyint` |
 | `xcv_float_env_rint` | `proven_float_env_rint` |
 | `xcv_float_env_sqrt` | `proven_float_env_sqrt` |
 | `xcv_float_env_sub` | `proven_float_env_sub` |
@@ -861,6 +879,8 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_float_env_to_float32` | `proven_float_env_to_float32` |
 | `xcv_float_env_to_i64` | `proven_float_env_to_i64` |
 | `xcv_float_eq` | `proven_float_eq` |
+| `xcv_float_erf` | `proven_float_erf` |
+| `xcv_float_erfc` | `proven_float_erfc` |
 | `xcv_float_exp` | `proven_float_exp` |
 | `xcv_float_exp10` | `proven_float_exp10` |
 | `xcv_float_exp2` | `proven_float_exp2` |
@@ -892,6 +912,7 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_float_is_nan` | `proven_float_is_nan` |
 | `xcv_float_ldexp` | `proven_float_ldexp` |
 | `xcv_float_le` | `proven_float_le` |
+| `xcv_float_lgamma` | `proven_float_lgamma` |
 | `xcv_float_log` | `proven_float_log` |
 | `xcv_float_log10` | `proven_float_log10` |
 | `xcv_float_log1p` | `proven_float_log1p` |
@@ -902,18 +923,26 @@ There is deliberately no line-number column. It was wrong after every alias that
 | `xcv_float_mul` | `proven_float_mul` |
 | `xcv_float_nextafter` | `proven_float_nextafter` |
 | `xcv_float_pow` | `proven_float_pow` |
+| `xcv_float_pown` | `proven_float_pown` |
 | `xcv_float_remainder` | `proven_float_remainder` |
 | `xcv_float_remquo` | `proven_float_remquo` |
 | `xcv_float_rint` | `proven_float_rint` |
+| `xcv_float_rint_to_i32` | `proven_float_rint_to_i32` |
 | `xcv_float_rint_to_i64` | `proven_float_rint_to_i64` |
+| `xcv_float_rootn` | `proven_float_rootn` |
 | `xcv_float_round` | `proven_float_round` |
+| `xcv_float_round_to_i32` | `proven_float_round_to_i32` |
 | `xcv_float_round_to_i64` | `proven_float_round_to_i64` |
+| `xcv_float_rsqrt` | `proven_float_rsqrt` |
 | `xcv_float_sin` | `proven_float_sin` |
 | `xcv_float_sinh` | `proven_float_sinh` |
+| `xcv_float_sinpi` | `proven_float_sinpi` |
 | `xcv_float_sqrt` | `proven_float_sqrt` |
 | `xcv_float_sub` | `proven_float_sub` |
 | `xcv_float_tan` | `proven_float_tan` |
 | `xcv_float_tanh` | `proven_float_tanh` |
+| `xcv_float_tanpi` | `proven_float_tanpi` |
+| `xcv_float_tgamma` | `proven_float_tgamma` |
 | `xcv_float_to_bits` | `proven_float_to_bits` |
 | `xcv_float_to_float32` | `proven_float_to_float32` |
 | `xcv_float_to_i32` | `proven_float_to_i32` |

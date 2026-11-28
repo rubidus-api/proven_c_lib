@@ -1,4 +1,4 @@
-# Chapter 8: Formatting and Scanning (v0.122.0)
+# Chapter 8: Formatting and Scanning (v0.123.0)
 
 이 장은 `fmt.h`와 `scan.h`에 대한 상세 레퍼런스다.
 Chapter 3은 더 짧은 개요와 일상적인 예제를 제공한다.
@@ -509,10 +509,12 @@ freestanding에서 쓸 수 있다.
 | `proven_float_to_bits` `proven_float_from_bits` | double의 비트, 그리고 그 반대 |
 | `proven_float_remainder(x, y)`, `_remquo` | IEEE 754 나머지, 정확함; 결과가 0이면 `x`의 부호; `remquo`는 몫의 부호와 아래 31비트도 준다 |
 | `proven_float_nextafter(x, y)` | `x`에서 `y` 쪽으로 다음 값 |
+| `proven_float32_nexttoward(x, y)` | binary32 `x`에서 binary64 `y` 쪽으로; `y`는 두 float 사이에 있을 수 있다(C의 `nexttowardf`; binary64에는 더 넓은 타입이 없으므로 그 `nexttoward`는 `nextafter`다) |
 | `proven_float_modf(x, &i)` | 소수 부분, 그리고 `i`에 정수 부분 |
 | `proven_float_ilogb`, `proven_float_logb` | 지수, `int`로 또는 double로 |
 | `proven_float_fdim(x, y)` | `x > y`이면 `x - y`, 아니면 +0 |
 | `proven_float_round_to_i64`, `_rint_to_i64` | `llround`와 `llrint`; 정해지지 않은 값 대신 `PROVEN_ERR_OUT_OF_BOUNDS` |
+| `proven_float_round_to_i32`, `_rint_to_i32` | 같은 것을 32비트로: `long`이 32비트일 때의 `lround`와 `lrint` |
 
 들어온 NaN은 payload를 유지하고 quiet 비트를 켜서 돌려주며, 여기서 새로 만드는 NaN은
 `0x7FF8000000000000`이다. 그래서 한 프로그램의 네 빌드 - 네이티브, 다른 컴파일러, 내보낸 C,
@@ -571,8 +573,17 @@ const float f[] = { proven_float32_remainder(7.0f, 2.0f), proven_float32_remquo(
 const int ex32 = proven_float32_ilogb(8.0f);
 const proven_err_t e3 = proven_float32_round_to_i64(-0.5f, &n32);   /* -1 */
 const proven_err_t e4 = proven_float32_rint_to_i64(-0.5f, &n32);    /* -0, so 0 */
+proven_i32 n31 = 0;
+const proven_err_t e5 = proven_float_round_to_i32(-2.5, &n31);       /* -3: C's lround, 32 bits */
+const proven_err_t e6 = proven_float_rint_to_i32(3e9, &n31);         /* PROVEN_ERR_OUT_OF_BOUNDS */
+const proven_err_t e7 = proven_float32_round_to_i32(2.5f, &n31);     /* 3 */
+const proven_err_t e8 = proven_float32_rint_to_i32(2.5f, &n31);      /* 2 */
+const float toward = proven_float32_nexttoward(1.0f, 1.0 + 0x1p-40); /* 1 + 2^-23: y lies between floats */
+proven_float_env_t near = { PROVEN_ROUND_UP, 0 };
+const double nb = proven_float_env_nearbyint(&near, 2.1);            /* 3.0, and near.flags stays 0 */
+const float nb32 = proven_float32_env_nearbyint(&near, -2.1f);       /* -2.0f */
 (void)r; (void)rq; (void)up; (void)frac; (void)ex; (void)lb; (void)dim; (void)e1; (void)e2;
-(void)f; (void)ex32; (void)e3; (void)e4;
+(void)f; (void)ex32; (void)e3; (void)e4; (void)e5; (void)e6; (void)e7; (void)e8; (void)toward; (void)nb; (void)nb32;
 ```
 
 `remainder`는 IEEE 754의 것이다. 정확하고, 결과가 0이면 부호는 `x`를 따른다(`y`가 가장 작은 비정규수일
@@ -667,6 +678,7 @@ C의 `<fenv.h>`는 반올림 방향과 예외 플래그 다섯 개를 프로세�
 |---|---|
 | `proven_float_env_add`, `_sub`, `_mul`, `_div`, `_fma`, `_sqrt` | 산술 |
 | `proven_float_env_rint`, `_to_i64` | 정수 값이나 정수로(C의 `rint`, `llrint`) |
+| `proven_float_env_nearbyint` | inexact를 올리지 않는 `rint`(C의 `nearbyint`) |
 | `proven_float_env_to_float32`, `_from_i64` | 형식 사이, 그리고 정수에서 |
 | `proven_float32_env_*` | binary32에 대해 같은 것 |
 
@@ -819,7 +831,7 @@ int main(void) {
   프로젝트의 코드(MIT; `THIRD_PARTY_NOTICES.md`)가 계산한다. x86-64에서는 호출당 6~36 ns로, 올바르게
   반올림하지 않는 glibc libm의 0.65~1.9배다. WebAssembly에는 융합 곱셈-덧셈이 없어서 그곳에서는 fma를
   그 명령 없이 정확하게 계산한다(Node.js에서 binary32 호출당 약 10~35 ns, binary64 30 ns~2 us).
-  함수마다 코드가 따로 있으므로 모듈에는 부르는 함수만 링크된다. 24개 함수를 두 형식 모두 쓰면 wasm 모듈이 약 380 KB 커지며(앞의 일곱 함수만이면 약 220 KB), `PROVEN_FLOAT_MATH_SMALL=1`로 줄일 수 있다. wasm에서는 clang이 부르는
+  함수마다 코드가 따로 있으므로 모듈에는 부르는 함수만 링크된다. 35개 함수를 두 형식 모두 쓰면 wasm 모듈이 약 615 KB 커지며(앞의 일곱 함수만이면 약 220 KB), `PROVEN_FLOAT_MATH_SMALL=1`로 줄일 수 있다. wasm에서는 clang이 부르는
   128비트 정수 헬퍼 세 개(`__multi3`, `__lshrti3`, `__ashlti3`)도 proven_math가 weak 정의로 넣어 두므로
   `-nostdlib` 링크에 더 필요한 것이 없다. 툴체인이 자기 것을 링크하면 그쪽이 쓰인다.
 - **정수 경로.** 그 밖의 모든 타깃과 `PROVEN_FLOAT_SOFT=1` 또는 `PROVEN_FLOAT_MATH_SMALL=1`
@@ -936,6 +948,143 @@ float rf = proven_float32_atanh(-0.5f);               /* -0.54930615f */
 (void)l; (void)m; (void)n; (void)o; (void)p; (void)q; (void)af; (void)bf; (void)cf; (void)df;
 (void)ef; (void)ff; (void)gf; (void)hf; (void)jf; (void)kf; (void)lf; (void)mf; (void)nf; (void)of;
 (void)pf; (void)qf; (void)rf;
+```
+
+### 오차 함수 (`erf`, `erfc`, RFC-0058)
+
+`proven_float_erf`와 `proven_float_erfc`, 그리고 `proven_float32_`로 시작하는 같은 함수는 같은 두
+경로에서 올바르게 반올림한다. `erfc(x)`는 상쇄 없이 계산한 `1 - erf(x)`다. 그래서 `x`가 커도
+서브노멀까지 자릿수를 지킨다. `erfc(27)`은 5.2e-319이고, 약 27.23(binary32는 10.06)부터는 +0으로
+반올림된다. 정수 경로에서 `erf`는 4 아래에서 양수 항만 더하는 급수로 계산한다. 4 위에서 `erfc`는
+연분수로 계산하는데, 그 근사분수도 양수 항의 합이다. 그래서 어느 쪽도 상쇄가 없다. 그곳에서 호출 한
+번은 x86-64에서 1~25 us이고, 4 근처에서 가장 오래 걸린다. 검증은 앞과 같다. CORE-MATH의 목록(`erf`에
+약 66,000개, `erfc`에 약 119,000개), binary32 입력 61개마다 하나, 무작위 입력을 두 경로 모두 MPFR과
+비교했다.
+
+| 함수 | 특수값(C23 Annex F) |
+|---|---|
+| `erf` | 홀함수: `erf(+-0) = +-0`, `erf(+-inf) = +-1` |
+| `erfc` | `erfc(+-0) = 1`, `erfc(-inf) = 2`, `erfc(+inf) = +0` |
+
+```c
+#include "proven/float_math.h"
+
+double a = proven_float_erf(0.5);                     /* 0.5204998778130465 */
+double b = proven_float_erf(-3.0);                    /* -0.9999779095030014 */
+double c = proven_float_erf(6.0);                     /* 1.0: 1 - 2e-17 rounds to 1 */
+double d = proven_float_erfc(1.0);                    /* 0.15729920705028513 */
+double e = proven_float_erfc(-1.0);                   /* 1.8427007929497148 */
+double f = proven_float_erfc(10.0);                   /* 2.088487583762545e-45, not 1 - erf(10) = 0 */
+double g = proven_float_erfc(27.0);                   /* 5.23705e-319: a subnormal */
+float af = proven_float32_erf(0.5f);                  /* 0.5204999f */
+float bf = proven_float32_erfc(5.0f);                 /* 1.5374598e-12f */
+float cf = proven_float32_erfc(10.0f);                /* 1e-45f: the smallest subnormal */
+(void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g; (void)af; (void)bf; (void)cf;
+```
+
+### 감마 함수 (`tgamma`, `lgamma`, RFC-0058)
+
+`proven_float_tgamma`와 `proven_float_lgamma`, 그리고 `proven_float32_`로 시작하는 같은 함수는 같은
+두 경로에서 올바르게 반올림한다. `lgamma(x)`는 `log|Gamma(x)|`다. C의 `lgamma`는 `Gamma(x)`의 부호를
+전역 변수 `signgam`에도 넣는다. proven은 상태를 두지 않으므로 그렇게 하지 않는다. `tgamma(x)`가 범위
+안에 있는 곳에서는 그 부호가 곧 이 부호다. 양의 정수 `n`의 `tgamma`는 `(n - 1)!`을 한 번 반올림한 값이며,
+들어가는 동안은 정확하다. `tgamma`는 171.62(binary32는 35.04)를 넘으면 오버플로한다. 약 -178(binary32는
+-38)보다 작으면 결과는 부호 있는 0이다. 다만 음의 정수 바로 옆에서는 약 -183(binary32는 -41)까지
+0이 아니다.
+
+정수 경로의 중심은 Stirling 급수로 계산한 `log Gamma`다. 급수는 첫 정밀도에서 32부터 쓰고, 정밀도가
+높을수록 더 큰 값부터 쓴다. 계수 50개의 표를 쓴다. 그보다 작은 인수는 거기까지 옮기고, 음수는
+반사 공식으로 바꾼다. `tgamma`는 이 값의 `exp`다. `lgamma`의 영점 근처에서는 두 부분의 차가 상쇄된다.
+영점은 1과 2, 그리고 음의 정수 사이마다 두 곳이다. 이 손실을 재서 더 많은 비트로 부분을 다시 계산한다.
+모든 영점에 이웃한 float의 손실은 최대 71비트다. 그곳에서 호출 한 번은 x86-64에서 3~30 us다. 검증은
+앞과 같다. CORE-MATH의 목록, 형식 전체에서 뽑은 binary32 입력, 무작위 입력, `tgamma`의 모든 양의 정수,
+`lgamma`의 영점 117개에 이웃한 float를 두 경로 모두 MPFR과 비교했다.
+
+| 함수 | 특수값(C23 Annex F) |
+|---|---|
+| `tgamma` | `tgamma(+-0) = +-inf`; 음의 정수나 `-inf`는 NaN; `tgamma(+inf) = +inf` |
+| `lgamma` | `lgamma(1) = lgamma(2) = +0`; 극(`+-0`과 음의 정수)과 `+-inf`에서 `+inf` |
+
+```c
+#include "proven/float_math.h"
+
+double a = proven_float_tgamma(0.5);                  /* 1.772453850905516: sqrt(pi) */
+double b = proven_float_tgamma(5.0);                  /* 24.0: 4!, exactly */
+double c = proven_float_tgamma(171.0);                /* 7.257415615307999e+306: 170!, rounded once */
+double d = proven_float_tgamma(-0.5);                 /* -3.544907701811032 */
+double e = proven_float_tgamma(-150.5);               /* -4.478447658150641e-264 */
+double f = proven_float_lgamma(0.5);                  /* 0.5723649429247001 */
+double g = proven_float_lgamma(-2.5);                 /* -0.056243716497674054: log 0.945... */
+double h = proven_float_lgamma(1.0 + 0x1p-52);        /* -1.2816762426960008e-16, near the zero at 1 */
+double i = proven_float_lgamma(1e300);                /* 6.897755278982137e+302 */
+float af = proven_float32_tgamma(4.5f);               /* 11.631728f */
+float bf = proven_float32_tgamma(-1.5f);              /* 2.3632717f */
+float cf = proven_float32_lgamma(10.0f);              /* 12.801827f: log 9! */
+(void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g; (void)h; (void)i; (void)af; (void)bf; (void)cf;
+```
+
+### `sinpi`, `cospi`, `tanpi`, `rsqrt`와 정수 거듭제곱 (C23, RFC-0058)
+
+C23이 `<math.h>`에 더한 함수들이다. binary64와 binary32 모두 올바르게 반올림한다.
+
+- **`sinpi`, `cospi`, `tanpi`**는 `pi x`의 `sin`, `cos`, `tan`이다. 모든 유한한 `x`에서 정확하게
+  줄이므로 인수가 커도 잃는 것이 없다.
+- **`rsqrt`**는 `1 / sqrt(x)`를 두 번이 아니라 한 번 반올림한 값이다.
+- **`pown(x, n)`, `rootn(x, n)`, `compoundn(x, n)`**은 정수 `n`(`proven_i64`)을 받는다.
+  - `pown`은 `x^n`이다.
+  - `rootn`은 `n`제곱근이다. `n`이 홀수이면 음수 `x`에도 있다.
+  - `compoundn`은 `1 + x`를 먼저 반올림하지 않은 `(1 + x)^n`이다. 그래서 작은 이율의 복리도
+    자릿수를 지킨다.
+
+경로는 다음과 같다.
+
+- **앞의 네 함수**는 FPU 경로에서 CORE-MATH의 코드를 쓴다. 정수 경로에서는 정확하게 줄인 뒤
+  `sin`·`cos` 급수나 제곱근을 쓴다.
+- **`pown`**은 `n`이 형식 안에 들어가는 동안(2^53, binary32는 2^24) 정확한 `y`로 부른 `pow`이고,
+  두 경로 모두 그렇다. 그보다 크면 `exp(n log|x|)`이며, 1에 아주 가까울 때만 범위 안에 남는다.
+- **`rootn`과 `compoundn`**은 FPU 경로가 없다. CORE-MATH에 둘 다 없기 때문이다. 어디서나 정수
+  경로를 쓰며 호출 한 번에 몇 마이크로초가 걸린다.
+
+정확한 경우는 먼저 정수로 찾는다. `rootn`에서는 완전 거듭제곱을, `pown`과 `compoundn`에서는 정확한
+거듭제곱과 한가운데 거듭제곱을 찾는다.
+
+검증은 두 경로 모두 MPFR과 비교했다. 앞의 네 함수는 CORE-MATH의 목록과 형식 전체에서 뽑은 binary32
+입력으로, 일곱 함수 모두 무작위 입력과 경계 경우로 검사했다. `compoundn`의 기준값은 정확하게 계산한
+`1 + x`에 `mpfr_pow_si`를 쓴 것이다. MPFR 4.2.2의 `mpfr_compound_si`는 음수 `n` 일부에서 마지막
+자리가 틀렸고, 그 경우는 정확한 유리수 계산으로 판정했다.
+
+| 함수 | 특수값(C23 Annex F) |
+|---|---|
+| `sinpi` | 정수에서 `x`의 부호를 가진 `+-0`; 반정수에서 `+-1`; `+-inf`에서 NaN |
+| `cospi` | 반정수에서 `+0`; 정수에서 `+-1`; `+-inf`에서 NaN |
+| `tanpi` | 정수에서 `+-0`(`x`의 부호, 홀수에서는 뒤집힘); 4분점에서 `+-1`; 짝수 `n`의 `n + 1/2`에서 `+inf`, 홀수이면 `-inf` |
+| `rsqrt` | `+-0`에서 `+-inf`; 0보다 작으면 NaN; `+inf`에서 `+0`; 4의 거듭제곱에서 정확 |
+| `pown` | 모든 `x`(quiet NaN 포함)에서 `pown(x, 0) = 1`; 그 밖에는 정수 `y`를 준 `pow`와 같다 |
+| `rootn` | `n = 0`이거나 음수 `x`에 짝수 `n`이면 NaN; `rootn(+-0, n)`은 홀수 `n > 0`에서 `+-0`, 홀수 `n < 0`에서 `+-inf` |
+| `compoundn` | `n = 0`이면 `x >= -1`이거나 NaN일 때 1; -1보다 작으면 NaN; `compoundn(-1, n)`은 `n > 0`에서 +0, `n < 0`에서 +inf |
+
+```c
+#include "proven/float_math.h"
+
+double a = proven_float_sinpi(1.0 / 3);               /* 0.8660254037844386: sin(pi/3) */
+double b = proven_float_sinpi(1e300);                 /* 0.0: an even integer, no reduction to get wrong */
+double c = proven_float_cospi(1e15 + 0.375);          /* 0.3826834323650898 */
+double d = proven_float_tanpi(-0.5);                  /* -inf: a pole */
+double e = proven_float_rsqrt(2.0);                   /* 0.7071067811865476 */
+double f = proven_float_pown(1.0001, 1000000);        /* 2.6747109931126854e+43 */
+double g = proven_float_pown(0.1, 3);                 /* 0.0010000000000000002: the double 0.1, cubed, rounded once */
+double h = proven_float_rootn(-27.0, 3);              /* -3.0, exactly */
+double i = proven_float_rootn(2.0, 12);               /* 1.0594630943592953: a semitone */
+double j = proven_float_compoundn(0.05 / 12, 120);    /* 1.647009497690283: ten years of 5 % a month */
+float af = proven_float32_rsqrt(4.0f);                /* 0.5f, exactly */
+float bf = proven_float32_compoundn(1.0f, 10);        /* 1024.0f, exactly */
+float cf = proven_float32_sinpi(0.5f);                /* 1.0f */
+float df = proven_float32_cospi(1.0f);                /* -1.0f */
+float ef = proven_float32_tanpi(0.25f);               /* 1.0f */
+float ff = proven_float32_pown(2.0f, -3);             /* 0.125f */
+float gf = proven_float32_rootn(-8.0f, 3);            /* -2.0f */
+(void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g; (void)h; (void)i; (void)j; (void)af; (void)bf;
+(void)cf; (void)df; (void)ef; (void)ff; (void)gf;
 ```
 
 ### 복소수 (`complex.h`, RFC-0058)

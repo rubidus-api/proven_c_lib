@@ -76,6 +76,9 @@ print(emit("FM_LOG2_E", 1 / mpmath.log(2), LIMBS))
 print()
 print(emit("FM_LOG10_E", 1 / mpmath.log(10), LIMBS))
 print()
+# RFC-0058: erf, erfc
+print(emit("FM_2_SQRTPI", 2 / mpmath.sqrt(mpmath.pi), LIMBS))
+print()
 TAB = 6               # limbs of the tables of the first Ziv level (192 bits)
 
 
@@ -136,5 +139,46 @@ print(fixed("FM_INV_K_FX", [mpmath.mpf(0)] + [1 / mpmath.mpf(k) for k in range(1
 print()
 print("#define FM_TWO_OVER_PI_LIMBS %d" % TWO_OVER_PI_LIMBS)
 print(emit_fraction("FM_TWO_OVER_PI", 2 / mpmath.pi, TWO_OVER_PI_LIMBS))
+print()
+# RFC-0058: tgamma and lgamma - log Gamma by Stirling's series from X0 on
+print(emit("FM_LN_PI", mpmath.log(mpmath.pi), LIMBS))
+print()
+print(emit("FM_HALF_LN_2PI", mpmath.log(2 * mpmath.pi) / 2, LIMBS))
+print()
+STIRLING_J = 50
+_c = [mpmath.bernoulli(2 * j) / (2 * j * (2 * j - 1)) for j in range(1, STIRLING_J + 1)]
+print("/* Stirling's coefficients B_2j / (2j (2j - 1)), j = 1 .. %d: |c| = M * 2^e, M of %d limbs */" % (STIRLING_J, LIMBS))
+print("#define FM_STIRLING_J %d" % STIRLING_J)
+print("static const struct { proven_u32 d[%d]; int e; int neg; } FM_STIRLING[%d] = {" % (LIMBS, STIRLING_J))
+for v in _c:
+    m, e = mantissa(abs(v), LIMBS)
+    ls = limbs_of(m, LIMBS)
+    print("    { {" + ", ".join(f"0x{x:08x}u" for x in ls) + "}, %d, %d }," % (e, 1 if v < 0 else 0))
+print("};")
+print()
+
+
+def _x0(m):
+    """The smallest X0 = 2^k for which some term c_j X0^-(2j-1), j <= J, is below 2^-(32m + 8), the
+    shift X0 - x plus three operations a term the least."""
+    best = None
+    for k in range(5, 21):
+        X0 = mpmath.mpf(2) ** k
+        for j, c in enumerate(_c, 1):
+            if mpmath.log(abs(c) / X0 ** (2 * j - 1), 2) < -(32 * m + 8):
+                cost = 2 ** k + 3 * j
+                if best is None or cost < best[0]:
+                    best = (cost, k)
+                break
+    return best[1]
+
+
+print("/* log2 of Stirling's X0 for a precision of m limbs, m = 0 .. 40: from there the series' terms")
+print("   fall below 2^-(32m + 8) within FM_STIRLING_J of them (and are still falling: j < pi X0) */")
+print("static const unsigned char FM_STIRLING_X0_LOG2[41] = {")
+_ks = [_x0(max(m, 1)) for m in range(41)]
+for i in range(0, 41, 14):
+    print("    " + ", ".join(str(k) for k in _ks[i:i + 14]) + ",")
+print("};")
 print()
 print("#endif /* PROVEN_FLOAT_MATH_CONSTS_H */")

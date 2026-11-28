@@ -56,6 +56,8 @@ typedef struct {
 [[nodiscard]] double proven_float_env_sqrt(proven_float_env_t *env, double x);
 /** @brief To an integral value in the direction (C's rint); inexact when it changes the value. */
 [[nodiscard]] double proven_float_env_rint(proven_float_env_t *env, double x);
+/** @brief The same without inexact (C's nearbyint): an invalid for a signalling NaN only. */
+[[nodiscard]] double proven_float_env_nearbyint(proven_float_env_t *env, double x);
 /** @brief To an integer in the direction (C's llrint): PROVEN_ERR_OUT_OF_BOUNDS and invalid for
  *         a NaN or a value outside [-2^63, 2^63). */
 [[nodiscard]] proven_err_t proven_float_env_to_i64(proven_float_env_t *env, double x, proven_i64 *out);
@@ -71,6 +73,7 @@ typedef struct {
 [[nodiscard]] float proven_float32_env_fma(proven_float_env_t *env, float x, float y, float z);
 [[nodiscard]] float proven_float32_env_sqrt(proven_float_env_t *env, float x);
 [[nodiscard]] float proven_float32_env_rint(proven_float_env_t *env, float x);
+[[nodiscard]] float proven_float32_env_nearbyint(proven_float_env_t *env, float x);
 [[nodiscard]] proven_err_t proven_float32_env_to_i64(proven_float_env_t *env, float x, proven_i64 *out);
 [[nodiscard]] float proven_float32_env_from_i64(proven_float_env_t *env, proven_i64 v);
 

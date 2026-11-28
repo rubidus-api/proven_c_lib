@@ -24,6 +24,9 @@ typst=${TYPST:-typst}
 command -v "$typst" >/dev/null 2>&1 || typst="$tc/typst/typst"
 [ -x "$typst" ] || { echo "build-site: no typst binary (set TYPST)" >&2; exit 1; }
 fonts=${TYPST_FONT_PATHS:-$tc/fonts}
+# The bar, the panel and the reading settings are the workspace's document kit's (its docweb.py),
+# the same on every published site; DOC_KIT names the kit's tools folder (scripts/site_pages.py).
+[ -n "${DOC_KIT:-}" ] && [ -f "$DOC_KIT/docweb.py" ] || { echo "build-site: set DOC_KIT to the document kit's tools folder (it holds docweb.py)" >&2; exit 1; }
 
 version=$(sed -n 's/^#define PROVEN_VERSION_STRING "\(.*\)"$/\1/p' "$root/include/proven/version.h")
 [ -n "$version" ] || { echo "build-site: cannot read the version" >&2; exit 1; }

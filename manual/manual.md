@@ -1,4 +1,4 @@
-# Proven C Library Complete Manual (v0.122.0)
+# Proven C Library Complete Manual (v0.123.0)
 
 The manual of `proven`, an attempt to rebuild the C library from the bottom up in a modern style for C23 and after (chapter 0, section 6). Every chapter is one file under `manual/`;
 the Korean edition mirrors it under [`manual-ko/`](../manual-ko/manual-ko.md).
@@ -30,7 +30,7 @@ the Korean edition mirrors it under [`manual-ko/`](../manual-ko/manual-ko.md).
 
 - Author: rubidus - [rubidus@gmail.com](mailto:rubidus@gmail.com)
 - Repository: [github.com/rubidus-api/proven_c_lib](https://github.com/rubidus-api/proven_c_lib)
-- Edition: v0.122.0
+- Edition: v0.123.0
 - License: MIT - Copyright (c) 2026 rubidus-api. The library and this manual are under the same
   license; the text is in `LICENSE` at the repository root.
 - Every code example in this manual is compiled, and the quoted ones are run, by the build.

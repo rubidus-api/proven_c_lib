@@ -19,7 +19,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from site_pages import APPLY_JS, PANEL_JS, REPO, SITE_ROOT, bar_html, settings_html  # noqa: E402
+from site_pages import APPLY_JS, PANEL_JS, REPO, WEB, docweb, kit_words, page_bar  # noqa: E402
 
 
 STR = {
@@ -65,12 +65,13 @@ def edition(lang, data):
 
 def page(version, editions):
     switch = ' · '.join('<a href="#%s">%s</a>' % (lang, STR[lang]['name']) for lang in ORDER)
-    # The same menu bar as every page of the manual and the site's landing page (the site's design rule N-W2):
-    # the two editions are the items, and the menu holds the settings (N-W4).
-    items = [('English', '#en', ''), ('한국어', '#ko', ''), ('Repo', REPO, 'This project on GitHub'),
-             ('rubidus-api', SITE_ROOT, 'rubidus-api.github.io — every published project')]
-    inner = settings_html('en') + '<p class="ver">%s</p>' % html.escape(version)
-    menubar = bar_html('en', 'proven_c_lib', '#top', items, inner, SITE_ROOT)
+    # The same bar and panel as every page of the manual (the kit's, doc-standard DS-G6b). This page
+    # holds both editions: its language button goes to the other edition's contents below, and its
+    # tool row has the repository and the two places outside, with no page buttons in the bar.
+    k = kit_words('en')
+    place = '<span class="place"><strong><a href="#top">proven_c_lib</a></strong></span>'
+    tools = docweb.tools_row(k, WEB, version, 'en/manual.pdf', REPO, '')
+    menubar = page_bar('en', place, '', docweb.settings_box(k, '#ko') + '<div class="tools">%s</div>' % tools, back=WEB['home'])
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>

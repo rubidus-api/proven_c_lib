@@ -18,6 +18,111 @@ written; their tags still exist.
 
 ## [Unreleased]
 
+## [0.123.0] - 2026-11-28
+
+### Added
+
+- `float_math.h`: `proven_float_erf` and `proven_float_erfc`, and the binary32
+  `proven_float32_erf` and `proven_float32_erfc`. They are correctly rounded on both paths
+  (RFC-0058 3.2, D-17).
+  - **`erfc`** keeps its digits for a large `x`, down to the subnormals; from about 27.23
+    (binary32: 10.06) it rounds to +0.
+  - **The FPU path** is CORE-MATH 03948b7's code. `erfc`'s calls to `ldexp` go to
+    `float_ops.h`'s.
+  - **The integer path** sums a series of positive terms for `erf` below 4. Above 4 `erfc` is a
+    continued fraction whose convergents are sums of positive terms, so neither cancels. In between
+    the result is `1 - erf` or `1 + erf`. A call takes 1-25 us on x86-64.
+  - **Checked against MPFR on both paths:** CORE-MATH's lists (65,957 inputs for `erf` and 118,638
+    for `erfc`), every 61st binary32 input (70.4 million a function) and 200,000 random inputs a
+    function and format, 0 wrong. Each Ziv level is within 1.0 unit of the last place of the next,
+    against the 4 the rounding test allows.
+  - **Size:** the largest stack is unchanged (about 7.5 KiB on Cortex-M3), and `float_math.o` grows
+    from 59 KB to 62 KB.
+  - `xcv_` aliases for the four functions (1888 in all).
+- `float_math.h`: `proven_float_tgamma` and `proven_float_lgamma`, and the binary32
+  `proven_float32_tgamma` and `proven_float32_lgamma`. They are correctly rounded on both paths
+  (RFC-0058 3.2, D-17).
+  - **The sign of Gamma.** `lgamma` is `log|Gamma(x)|`. Unlike C's, it sets no global `signgam`:
+    nothing in proven keeps state. Where `tgamma` is in range, its sign is that sign.
+  - **Exact results.** `tgamma` of a positive integer is the factorial computed exactly and
+    rounded once. `lgamma(1)` and `lgamma(2)` are +0.
+  - **The FPU path** is CORE-MATH 03948b7's code. Its writes to `signgam` are dropped
+    (port.py).
+  - **The integer path** computes `log Gamma` by Stirling's series. It starts from 32 at the
+    first precision (higher at the higher ones) and uses a table of 50 coefficients. Smaller
+    arguments are shifted up to the start and negative ones reflected; `tgamma` is `exp` of the
+    result. Near `lgamma`'s zeros (1, 2 and two between each pair of negative integers) the
+    cancellation is measured and the parts made again with more bits: at most 71 bits are lost,
+    on the floats next to each of the 117 zeros. A call takes 3-30 us on x86-64.
+  - **Checked against MPFR on both paths, 0 wrong:**
+    - CORE-MATH's lists: 545,538 inputs for `tgamma` and 1,618,158 for `lgamma`;
+    - every 509th binary32 input, and every 61st on the FPU path;
+    - 200,000 random inputs a function and format;
+    - every positive integer for `tgamma`;
+    - the floats next to `lgamma`'s zeros.
+  - **Size:** `float_math.o` on Cortex-M3 grows from 62 KB to 74 KB, and the largest stack from
+    about 7.5 KiB to 8.7 KiB, through the reflection's `log Gamma(1 - x)`.
+  - `xcv_` aliases for the four functions (1892 in all).
+- `float_math.h`: C23's `sinpi`, `cospi`, `tanpi`, `rsqrt`, `pown`, `rootn` and `compoundn`, in
+  binary64 and binary32 (`proven_float_*`, `proven_float32_*`), correctly rounded on both paths.
+  `pown`, `rootn` and `compoundn` take the integer as a `proven_i64`. This completes RFC-0058
+  3.2's list (D-17).
+  - **`sinpi`, `cospi`, `tanpi`** reduce exactly for every finite `x`. The signs of their zeros
+    and poles are C23's.
+  - **`rsqrt`** rounds `1 / sqrt(x)` once. `rsqrt(-0)` is -inf, as in C23 and IEEE 754's rSqrt;
+    MPFR's `rec_sqrt` gives +inf there.
+  - **`pown`** is `pow` with an exact `y` while `n` fits the format, on both paths. Past that it
+    is `exp(n log|x|)`.
+  - **`rootn` and `compoundn`** take the integer path everywhere: CORE-MATH has neither. Perfect
+    powers, and exact or halfway powers, are found with integers first.
+  - **`compoundn(x, 0)`** is 1 for `x >= -1` and for a quiet NaN. Below -1 it is a NaN (IEEE 754
+    9.2).
+  - **The FPU path** for the first four is CORE-MATH 03948b7's code. port.py now also sends
+    `__builtin_nan` with a string to float_ops' NaN.
+  - **Checked against MPFR on both paths, 0 wrong:**
+    - CORE-MATH's lists for the first four (234,321 inputs);
+    - every 509th binary32 input, and every 61st on the FPU path;
+    - 200,000 random inputs a function and format;
+    - the edge cases.
+
+    The `compoundn` reference is `mpfr_pow_si` on `1 + x` computed exactly. MPFR 4.2.2's
+    `mpfr_compound_si` was a unit off in the last place for some negative `n`; exact rational
+    arithmetic decided those cases.
+  - **Ziv gaps:** at most 1.0 unit.
+  - **Speed:** 3-24 us a call on the integer path, at a load of 17.
+  - **Size:** `float_math.o` on Cortex-M3 grows to 79 KB, and the largest stack to 8.8 KiB.
+- `float_ops.h` and `float_env.h`, the rest of RFC-0058 3.2's exact functions:
+  - `proven_float32_nexttoward(float, double)`: C's `nexttowardf`, whose target can lie between
+    two floats. binary64 has no wider type here, so its `nexttoward` is `nextafter`.
+  - `proven_float_round_to_i32` and `_rint_to_i32`, and their binary32 forms: C's `lround` and
+    `lrint` where `long` has 32 bits.
+  - `proven_float_env_nearbyint` and `proven_float32_env_nearbyint`: `rint` in the
+    environment's direction without raising inexact.
+- `xcv_` aliases for the 21 new functions (1913 in all).
+
+### Changed
+
+- The web manual's bar and menu panel follow the workspace document standard (DS-G6, DS-G6a,
+  DS-G6b), as every published site does:
+  - **The bar** shows Back, Prev, TOC and Next on every page and screen. A button that does not
+    apply is greyed. On a narrow screen the place name gives way first, then the words of Prev and
+    Next.
+  - **The panel** has a row of buttons for each setting: language, text width (960 or fit the
+    window), layout (Auto, PC or Mobile), theme (System, Light or Dark) and a document's colours.
+    Below them are a line of tools: the edition, the detailed contents, the PDF, Git, all projects
+    and all repositories. The search and "On this page" follow.
+  - **Settings** are kept as one record under `doc-read`.
+  - **The markup and its script** come from the workspace's document kit (`docweb.py`), as on the
+    other sites. `scripts/build-site.sh` needs `DOC_KIT`, the kit's tools folder. The function
+    search and "On this page" stay this manual's own.
+- README: the top line links the project's Pages home.
+
+### Fixed
+
+- The web manual's search finds the functions of proven_net, proven_crypto, proven_codec and
+  proven_math as well (1,330 functions, from 578). It had read only proven_base's headers since
+  those libraries moved under their own `include/`.
+
 ## [0.122.0] - 2026-11-28
 
 ### Added
